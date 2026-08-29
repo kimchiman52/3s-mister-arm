@@ -2111,7 +2111,7 @@ static int test_rendezvous_cookie_codec(void) {
  *
  *   rendezvous.c:281  Rendezvous_HasMagic   — magic ONLY
  *   rendezvous.c:290  Rendezvous_FrameType  — magic AND version AND type
- *   direct_p2p.c:1372-1373 — the race's one shared receive path routes
+ *   direct_p2p.c:1567-1568 — the race's one shared receive path routes
  *                            with HasMagic ? FrameType : -1
  *   sdl_net_adapter.c:291,298 — the GekkoNet straggler drop
  *
@@ -2572,7 +2572,7 @@ static bool pred_two_cookied_requests(void) {
  * DIRECT_P2P_HANDOFF is NOT the same observable. On the host's bilateral
  * rung the worker raises s_bilateral_handoff_pending and Tick then does
  * set_state(HANDOFF) IMMEDIATELY BEFORE calling do_handoff
- * (direct_p2p.c:4340-4348), so a state-only wait can return with the
+ * (direct_p2p.c:4591-4599), so a state-only wait can return with the
  * handoff arguments not yet written — and, if the pending flag were ever
  * dropped, would still be satisfied by any other path that publishes the
  * state. Counting do_handoff calls is what pins the host worker ->
@@ -2811,9 +2811,9 @@ static int test_host_cookie_handshake(void) {
      *    alone. This is the suite's only wait on a handoff from a HOST
      *    session, and therefore its only coverage of the
      *    s_bilateral_handoff_pending chain: the punch worker raises the
-     *    flag (direct_p2p.c:2407), Tick observes it, joins the worker,
+     *    flag (direct_p2p.c:2658), Tick observes it, joins the worker,
      *    publishes HANDOFF and calls do_handoff
-     *    (direct_p2p.c:4340-4348). A state-only wait is satisfied one
+     *    (direct_p2p.c:4591-4599). A state-only wait is satisfied one
      *    statement earlier, before any handoff argument is written, and
      *    would also be satisfied by any other path that publishes the
      *    state — so both are waited on, state first. */
@@ -2849,7 +2849,7 @@ static int test_host_cookie_handshake(void) {
         }
         /* THE PLAYER NUMBER — the host half of the pair asserted on the
          * join side by 19-handoff-player2. The host is player 1
-         * (direct_p2p.c:4348, and :3702 on the direct-receive rung).
+         * (direct_p2p.c:4599, and :3953 on the direct-receive rung).
          * Nothing else in this suite reads it: with both host sites
          * changed to 2 the endpoint, the timing, the state and the
          * status text are all still exactly right, GekkoNet is handed
@@ -4841,21 +4841,21 @@ static int test_s7_disable_pairing(void) {
 
 /*
  * do_handoff's first argument is the ONLY thing that tells GekkoNet
- * which side we are (direct_p2p.c:3091). It is a LITERAL at every call
+ * which side we are (direct_p2p.c:3342). It is a LITERAL at every call
  * site — nothing downstream can correct a wrong one — and two peers that
  * both hand off as the same number get identical local and remote roles,
  * so the session never starts.
  *
  * Three call sites ship (direct_p2p.c, as of this test):
  *
- *   :3702  host_tick_receive   — the DIRECT rung        -> 1
- *   :4348  Tick, on s_bilateral_handoff_pending          -> 1
- *   :3710  join_tick_handoff                             -> 2
+ *   :3953  host_tick_receive   — the DIRECT rung        -> 1
+ *   :4599  Tick, on s_bilateral_handoff_pending          -> 1
+ *   :3961  join_tick_handoff                             -> 2
  *
- * Only two of them have runtime coverage: :4348 via 13-handoff-player1
- * and :3710 via 19-handoff-player2. NOTHING in this suite reaches
+ * Only two of them have runtime coverage: :4599 via 13-handoff-player1
+ * and :3961 via 19-handoff-player2. NOTHING in this suite reaches
  * host_tick_receive — a full run logs zero "Host received first inbound"
- * lines — so :3702 cannot be pinned by an end-to-end assertion without a
+ * lines — so :3953 cannot be pinned by an end-to-end assertion without a
  * rig that does not exist. It is pinned HERE instead, at the source, the
  * same way test 23a pins the disable-UPnP discipline.
  *
@@ -6130,7 +6130,7 @@ static int test_race_deliver_overlaps_seed(void) {
          * exactly right when the number is wrong.
          *
          * This is the JOIN side, and join is player 2
-         * (direct_p2p.c:3710). The host half is pinned at runtime in
+         * (direct_p2p.c:3961). The host half is pinned at runtime in
          * test 13 (13-handoff-player1), and all three call sites are
          * pinned at the source in test 33. */
         EXPECT_TRUE("19-handoff-player2", hplayer == 2);
@@ -7357,15 +7357,16 @@ done:
  * WHAT IS ASSERTED, AND WHY IT IS NOT THE OLD ASSERTION.
  *
  * The old points expected PUNCHED at punch_end-owd, punch_end and
- * punch_end+owd. That expectation was produced by a rule that the relay
- * removal deliberately deleted: a candidate used to stay on the RECEIVE
- * path past its send window whenever a relay leg was still deciding, and
- * that deferral was scoped to `relay_in_play` — with no relay it never
- * applied even before the removal. Today section 2 of p2p_race tears a
- * candidate down at the end of its own `punch_leg_ms` window, full stop
- * (direct_p2p.c:1322-1340), and its comment states the consequence
- * outright: "With no relay there is nothing to disagree about: both
- * peers simply fail."
+ * punch_end+owd. That expectation was produced by a rule that the first
+ * draft of the relay removal deleted: a candidate stays on the RECEIVE
+ * path past its send window, which had been scoped to `relay_in_play`
+ * and went out with the relay. It is back, unconditionally, as
+ * `RACE_PUNCH_SETTLE_MS` (direct_p2p.c) — see the record below for what
+ * this test measured while it was missing — so those instants can once
+ * again end PUNCHED. They are deliberately NOT pinned either way here:
+ * whether the last punch in flight lands before or after a teardown is
+ * a scheduling detail, and pinning it would make this test a
+ * thermometer for the machine it runs on.
  *
  * So the property asserted at the punch-send-window instants is the one
  * that survived, and it is the one the whole split-brain hunt was
@@ -7383,9 +7384,14 @@ done:
  *   - the CONTROL skew, comfortably inside the overlap, must converge on
  *     PUNCHED. If it reds the rig is broken, not the code.
  *   - the PAST skew, a full punch window plus several delays beyond the
- *     end, must converge on EXHAUSTED — the direct assertion of the
- *     "both peers simply fail" claim, and the point that catches a rig
- *     that is not injecting the delay it says it is.
+ *     end, must converge on EXHAUSTED. This is the anchor that keeps the
+ *     settle window HONEST: a fix that merely relocated the band, or one
+ *     that made every skew punch by listening forever, reds here. It is
+ *     also the point that catches a rig not injecting the delay it says
+ *     it is. It is meaningful only while it sits past the last instant
+ *     either peer can still be confirmed, `punch_leg + settle - owd`;
+ *     `past` is `punch_leg + 3*owd + 500`, so that holds for every
+ *     owd above (RACE_PUNCH_SETTLE_MS - 500) / 4 = 25 ms.
  *
  * Both punch legs are DP2P_PUNCH_REAL (no oracle), so this runs the real
  * Stun_PunchBegin / Pump / Offer / Settled machine over real loopback
@@ -7395,7 +7401,13 @@ done:
  * WHAT THIS TEST FOUND THE MOMENT IT WAS RESTORED — READ BEFORE
  * "FIXING" THE TEST.
  *
- * It goes RED at skew = punch_leg - owd, and the red is the shipping
+ * (FIXED in direct_p2p.c, not here. The record below is what this test
+ * measured against the first draft of the relay removal, and it is the
+ * red this test must still produce if `RACE_PUNCH_SETTLE_MS` is ever
+ * taken back out. Verified by reverting direct_p2p.c to that draft and
+ * re-running: the 2350 ms row below reproduces exactly.)
+ *
+ * It went RED at skew = punch_leg - owd, and the red was the shipping
  * code, not the rig:
  *
  *   skew= 500 ms -> A=PUNCHED   B=PUNCHED     (control)
@@ -7416,9 +7428,9 @@ done:
  * because by then the early peer has stopped punching before the late
  * peer armed and neither side can confirm.
  *
- * The early peer B stops SENDING and stops LISTENING at the same instant
- * (direct_p2p.c:1330-1340). The late peer A arms one owd before that, so
- * A is confirmed by B's last punches while A's own first punch reaches B
+ * The mechanism: the early peer B stopped SENDING and stopped LISTENING
+ * at the same instant. The late peer A arms one owd before that, so A is
+ * confirmed by B's last punches while A's own first punch reaches B
  * exactly as B tears the leg down — section 2 runs before the shared
  * receive path in the same loop iteration, so B never sees it. A hands
  * off to GekkoNet; B reports failure.
@@ -7426,10 +7438,10 @@ done:
  * This band did not exist before the relay was removed. The deferral
  * that closed it — hold a candidate on the RECEIVE path past its send
  * window — was scoped to `relay_in_play`, and in production a relay leg
- * was always possible, so it always applied. The removal deleted the
- * deferral along with the relay, and direct_p2p.c:1327-1329 now asserts
- * in prose the thing this test measures to be false: "With no relay
- * there is nothing to disagree about: both peers simply fail."
+ * was always possible, so it always applied. The first draft of the
+ * removal deleted the deferral along with the relay and asserted in
+ * prose the thing this test measures to be false: "With no relay there
+ * is nothing to disagree about: both peers simply fail."
  *
  * The base suite could not see this: its rig always ran with
  * relay_leg = true, so the only configuration it ever probed was the one
@@ -7440,10 +7452,10 @@ done:
  * LISTENING here, the late peer's punch would confirm one-sidedly and
  * the band would simply have moved to this instant instead."
  *
- * The fix belongs in direct_p2p.c section 2 of p2p_race (keep a
- * send-expired candidate on the receive path for a bounded tail, now
- * unconditionally rather than only while a relay leg was deciding), NOT
- * in this file. Do not relax the convergence assertion to make this
+ * THE FIX BELONGS IN direct_p2p.c, NOT IN THIS FILE. It is section 2 of
+ * p2p_race keeping a send-expired candidate on the receive path for
+ * `RACE_PUNCH_SETTLE_MS`, unconditionally rather than only while a relay
+ * leg was deciding. Do not relax the convergence assertion to make this
  * green.
  */
 
@@ -7641,7 +7653,7 @@ static bool sb6_run_two_peer(int skew_ms, int owd_ms,
 
     /* No signal leg and no signal endpoint: with the relay gone there is
      * nothing in this rig for a rendezvous server to do, and RunRace
-     * treats a NULL signal_ip as "no legs" (direct_p2p.c:1574-1591). The
+     * treats a NULL signal_ip as "no legs" (direct_p2p.c:1825-1842). The
      * seed candidate — the delay line — is the whole race. */
     a.cfg.host_role = true;
     a.cfg.sock = net_a;
@@ -7726,7 +7738,7 @@ static int test_race_two_peer_convergence(void) {
           "one owd AFTER the punch send window ends" },
         /* The anti-triviality anchor at the EXHAUSTED end. */
         { past, false, true,
-          "past every punch: both peers must fail (direct_p2p.c:1327-1329)" },
+          "past every punch and past every settle window: both peers must fail" },
     };
 
     for (size_t i = 0; i < sizeof(points) / sizeof(points[0]); i++) {

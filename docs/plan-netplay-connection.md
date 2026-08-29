@@ -58,7 +58,7 @@ All from `src/netplay/direct_p2p.c` (current lines); labels from
 | Terminal state | Status text | Raised at |
 |---|---|---|
 | `FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:266, 1025; thread-spawn failure paths in Begin* :1872/:1932; joiner: :1097 |
-| `FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:3567, 4402 |
+| `FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:3818, 4402 |
 | `FAILED_SYMMETRIC` | "Could not connect. Try a different network." | joiner bypasses :1152/:1158/:1165 (host side no longer has a terminal gate — same-IP DELIVERs are ignored as stale self-registrations, review H1) |
 | `FAILED_BILATERAL` | "Could not connect. Try a different network." | joiner signaling/punch failures :1189-:1336; host: punch-thread spawn failure :1719, retry-budget exhaustion :2130 (review M1: a single host-side punch failure returns to HOST_WAITING) |
 | `FAILED_HANDSHAKE` | MIST reject reason | R-1 path, :1435 |
@@ -95,7 +95,7 @@ Demonstrated end-to-end against the real server (see §3.4).
 
 Mechanics verified in code; classifications are standard NAT taxonomy.
 "UPnP" means the host's router granted the mapping
-(`try_portmap`, direct_p2p.c:1737-1813) and its external IP is not
+(`try_portmap`, direct_p2p.c:1988-2064) and its external IP is not
 provably non-public (CGNAT gate, §3.6; review M3).
 
 | Host \ Joiner | Full-cone / restricted | Port-restricted | Symmetric |
@@ -144,7 +144,7 @@ bilateral fallback could never pair those hosts.
 Every `netplay-direct-p2p-stun-keepalive-ms` (default 20 000 ms, ≤ 0
 disables) while HOST_WAITING, the main thread re-issues a STUN Binding
 Request on the same socket toward the server that answered discovery
-(`host_stun_keepalive_tick`, direct_p2p.c:3142-3158;
+(`host_stun_keepalive_tick`, direct_p2p.c:3393-3409;
 `Stun_SendKeepalive`, stun.c). The probe refreshes the advertised NAT
 mapping; the response is routed through a new STUN gate in
 `host_tick_receive` (direct_p2p.c:1752-1762) — which also fixes a
@@ -156,7 +156,7 @@ latent pre-S1 bug where a straggler Binding Response from a slower
 last known one, the NAT rebound and the displayed code is already
 dead. We re-encode and **display the NEW code** with status "Network
 changed! Share the NEW code." (`host_handle_stun_rebind`,
-direct_p2p.c:3211-3251), and restart the rendezvous loop under the new
+direct_p2p.c:3462-3502), and restart the rendezvous loop under the new
 session key (cancel+join before mutating the fields it reads).
 Review M2: the rewrite is debounced — a drift commits only when two
 consecutive keepalives report the same new endpoint, so a NAT that
@@ -193,7 +193,7 @@ unsolicited DELIVER push (pair-able). Output is in the S1 task report.
 
 ### 3.5 UPnP lease renewal
 The 1-hour lease (upnp.c:71) is renewed at half-life (30 min,
-`upnp_renew_tick`, direct_p2p.c:2425-2572), retry at 5 min on failure,
+`upnp_renew_tick`, direct_p2p.c:2676-2823), retry at 5 min on failure,
 **including mid-session**: `main.c` now ticks the orchestrator from
 the active-session branch (main.c, `DirectP2P_Tick` beside
 `Netplay_Run`), because the mapping is what carries the peer's
@@ -321,7 +321,7 @@ post-S2 tree.
   discovery on local_port 0 with the previous socket closed, so the
   retry binds a FRESH local port (dodges stuck conntrack/NAT state;
   also covers host-still-in-UPnP-probe start-skew). (b) host —
-  Tick's FAILED_STUN case (direct_p2p.c:2979) re-spawns
+  Tick's FAILED_STUN case (direct_p2p.c:3230) re-spawns
   host_thread_fn after a 5 s backoff, ≤3 retries per hosting session,
   instead of parking terminal; composes with (and does not touch) the
   S1 bilateral-failure return-to-HOST_WAITING path.
@@ -592,7 +592,7 @@ cadence). The host receives CHALLENGEs on the **main** thread while
 REGISTER resends are built on the rendezvous **worker** thread, so the
 8-byte cookie crosses via a seqlock (`signal_cookie_publish`, direct_p2p.c:546;
 `signal_cookie_snapshot`, direct_p2p.c:546) and the main thread also
-echoes immediately (`host_handle_challenge`, direct_p2p.c:3534).
+echoes immediately (`host_handle_challenge`, direct_p2p.c:3785).
 `Rendezvous_ParseChallenge` (rendezvous.c:193) validates magic, version,
 type **and** that the frame carries *our* session key (cross-talk +
 forgery gate — the key embeds the S4b nonce), and **zeroes its output on
@@ -981,9 +981,24 @@ Why it went:
   review rounds to close (S6 review H-3/H-4/H-7, then a second review's
   H-A/H-B/H-C after the first round's fix turned out to have relocated
   the defect rather than closed it — §8.9). Removing the relay deletes
-  the whole class: with only punch candidates in the race, there is
-  nothing to disagree about, since every candidate targets the same
-  peer.
+  the *arbitration*: with only punch candidates in the race, every
+  candidate targets the same peer, so there is no second TRANSPORT to
+  choose between and no ordering rule is needed.
+
+  **It does not delete the split brain.** The first draft of this
+  removal claimed it did, and that claim was false — measured, on the
+  restored two-peer rig (test 34), at `A=PUNCHED / B=EXHAUSTED` for
+  start skews in `[punch_leg - owd, punch_leg]`, reproduced across three
+  `(owd, punch_leg)` configurations. PUNCHED on one side and EXHAUSTED
+  on the other is a disagreement by itself, and it is the same 15 s hang
+  for the same reason: GekkoNet registers the remote once by source
+  address with no relearn path. What actually closed the band was never
+  the relay's arbitration but the **receive-only hold** the second
+  review added underneath it — a candidate listening one peer-to-peer
+  round trip past its own send window — which had merely been *scoped*
+  to "a relay leg is still deciding". That hold is now unconditional and
+  relay-free: `RACE_PUNCH_SETTLE_MS` in `src/netplay/direct_p2p.c`,
+  applied in section 2 of `p2p_race`. See §8.4a.
 
 The symmetric×symmetric cell this closed is terminal again (§2, §6.7).
 
@@ -1078,13 +1093,89 @@ the relay was transient, not terminal, because racing could ask before
 the peer's own REGISTER had landed server-side.
 
 All four rules, `RACE_RELAY_ARM_MS`, `RACE_RELAY_GRACE_MS`, and the
-per-candidate relay-deferral machinery are gone with S5 (§7). Removing
-the relay leg removes the whole split-brain failure class these rules
-existed to manage: with only `punch[0]` and `punch[1]` in the race, both
-candidates target the *same* peer via different candidate endpoints, so
-there is no second transport to disagree about, and no arbitration rule
-is needed. Whichever punch candidate confirms first hands off; that is
-the entire ordering rule now.
+per-candidate relay-deferral machinery are gone with S5 (§7). The
+ARBITRATION they performed is genuinely gone with them: with only
+`punch[0]` and `punch[1]` in the race, both candidates target the *same*
+peer via different candidate endpoints, so there is no second transport
+to choose between. Whichever punch candidate confirms first hands off;
+that is the entire ordering rule now.
+
+### 8.4a The settle window (the part that was NOT about the relay)
+
+The first draft of the removal also deleted the **receive-only hold**
+that rule 1b had been carrying, on the reasoning that with no relay
+there was nothing left to disagree about. That reasoning was wrong, and
+the restored two-peer rig (test 34) measured it wrong immediately:
+
+| skew | peer A | peer B | |
+|---|---|---|---|
+| 500 ms | PUNCHED | PUNCHED | control |
+| **2 350 ms** | **PUNCHED** | **EXHAUSTED** | **split brain** |
+| 2 650 ms | EXHAUSTED | EXHAUSTED | |
+| 3 450 ms | EXHAUSTED | EXHAUSTED | past every punch |
+
+Reproduced across three `(owd, punch_leg)` configurations, the band was
+`skew ∈ [punch_leg - owd, punch_leg]`. `PUNCHED` on one side with
+`EXHAUSTED` on the other is a disagreement in its own right, and it
+costs the same 15 s hang for the same reason — GekkoNet registers the
+remote once by source address, with no relearn path.
+
+So the hold is restored, **unconditional and relay-free**, as
+`RACE_PUNCH_SETTLE_MS` (600 ms) in `src/netplay/direct_p2p.c`, applied
+in section 2 of `p2p_race`:
+
+- A candidate SENDS for `punch_leg_ms` from its own arm time, exactly as
+  before, then stays on the **receive path** for one
+  `RACE_PUNCH_SETTLE_MS` before it is torn down. A late peer's punch can
+  still confirm it there; `Stun_PunchOffer` clears `sent_any`, so the
+  pump resumes on the same loop iteration and the confirmation tail goes
+  out, which is what confirms the other peer in turn. That mutual tail
+  is why it converges rather than moving the problem.
+- **Sizing is a network quantity.** With start skew `s`, one-way delay
+  `d`, send window `L` and settle `G`, the two peers' direct-confirm
+  thresholds are `L + d` and `L + G - d`; the one-sided band between
+  them vanishes exactly when
+
+  > `G >= 2 * one-way delay` — one peer-to-peer **round trip**
+
+  and where it does not, the residual band is `2d - G` wide and sits
+  just past the send window. This is the same condition the second S6
+  review derived and measured over five `(owd, grace)` configurations
+  (`9240aa50:src/netplay/direct_p2p.c:1153-1176`); only the trigger
+  changed. 600 ms covers every pair up to a 600 ms RTT.
+- **The send window is NOT shortened to make room.** The S5-era code
+  capped it so `send_end + grace` fell before `race_budget_ms`. That
+  deletes punch traffic the budget would otherwise have allowed, and a
+  punch that would have confirmed in the last 600 ms of the budget is
+  then never sent — the exact class of race the H-1 exemption exists to
+  rescue, and applied unconditionally it turns **test 23** red. Instead
+  the settle is allowed to run past the raw budget on the *same*
+  one-tail extension H-1 already grants. A `_Static_assert` pins
+  `RACE_PUNCH_SETTLE_MS <= STUN_PUNCH_CONFIRM_MS` so a settle always
+  fits inside that one extension. Section 2 does still recognise the
+  budget as a send end (the pump stops there regardless), which is what
+  keeps the settle non-empty when `race_budget_ms < punch_leg_ms`.
+- **A confirmation that lands inside the settle gets a SECOND tail —
+  and needs one.** The settle can carry a confirmation as late as
+  `budget + one tail`; that leg then owes its peer a full tail from
+  *there*. Cutting it at `budget + one tail` throws away a punch that
+  provably reached us and reports a NAT failure — H-1's own defect, one
+  tail later — and the peer that sent it has already been confirmed by
+  our partial tail, so the two sides disagree. **Measured** on the
+  two-peer rig with `S6_SPLIT_BUDGET_MS=2700` against a 2 500 ms send
+  window (owd 150, skew 2 650): the early peer confirmed at t+2 810 ms,
+  needed to settle at t+3 410 ms, was cut at the t+3 300 ms cap, and the
+  probe reported `A=PUNCHED B=EXHAUSTED`; `S6_SPLIT_BUDGET_MS=2000`
+  split for the same reason. A confirmed leg therefore gets one more
+  tail and no more, so the loop stays hard-bounded at
+  `race_budget_ms + 2 * STUN_PUNCH_CONFIRM_MS`. That is tight, not
+  arbitrary: the latest reachable confirmation is `budget + one tail`
+  and a tail is one tail long. The failure path never reaches it — it
+  has no confirmed leg by definition.
+- `race_budget_expired()` itself is **unchanged**. Only the flag handed
+  to it widens, the second tail is a separate bounded guard in the
+  caller, and the H-1 log line stays gated on `tail_outstanding` alone
+  so it keeps meaning "a CONFIRMED punch was rescued".
 
 The detailed defect history this section used to carry (the H-3 split
 brain, its measured divergence bands, the H-A/H-B re-anchor, the H-4
@@ -1132,12 +1223,25 @@ completes in **~230 ms** (test 19). Pre-S6 the earliest possible handoff
 on that path was > 2 500 ms, because the direct punch had to expire
 first.
 
-**What the race is now hard-bounded by (S6 review, H-1).** The overall
-deadline is `race_budget_ms`, **plus at most one `STUN_PUNCH_CONFIRM_MS`
-(600 ms) confirmation tail** when a leg has already confirmed and is
-still owing its peer that tail — see §8.9. Worst case per attempt is
-therefore 8 600 ms on the defaults, 17 200 ms for the joiner's two
-attempts. Verified headroom against the callers:
+**What the race is now hard-bounded by (S6 review, H-1; extended by
+§8.4a).** The overall deadline is `race_budget_ms`, **plus at most one
+`STUN_PUNCH_CONFIRM_MS` (600 ms) confirmation tail** — granted when a
+leg has already confirmed and is still owing its peer that tail (§8.9),
+and, since §8.4a, on the same terms to a leg still inside its
+`RACE_PUNCH_SETTLE_MS` settle window (the two do not stack; a settle is
+asserted at compile time to fit inside one tail). **Plus one more tail,
+and only for a race that CONFIRMED**, because the settle can carry a
+confirmation as late as `budget + one tail` and that confirmation owes a
+full tail from there — see §8.4a for the measurement that established
+it. So:
+
+| outcome | hard bound | on the defaults |
+|---|---|---|
+| failure (no leg ever confirmed) | `race_budget_ms + one tail` | **8 600 ms** |
+| success (a leg confirmed) | `race_budget_ms + two tails` | **9 200 ms** |
+
+Worst case per attempt is therefore 9 200 ms on the defaults, 18 400 ms
+for the joiner's two attempts. Verified headroom against the callers:
 
 - `CONNECT_TIMEOUT_CONNECTING_MS` (15 000 ms, `connect_fail.h:241`) does
   **not** bound the race: it is armed on entry to
@@ -1145,9 +1249,10 @@ attempts. Verified headroom against the callers:
   handoff, and bounds GekkoNet's sync, not establishment.
 - The bound that does apply is nav's `NAV_WAIT_ORCH_TIMEOUT_FRAMES`
   (`netplay_nav.c:120` = `150 * 60` frames = 150 000 ms, enforced at
-  `netplay_nav.c:391`). 17 200 ms of race against 150 000 ms is **8.7x
-  headroom**, and the +1 200 ms the tail exemption adds across two
-  attempts is 0.8% of it.
+  `netplay_nav.c:391`). 18 400 ms of race against 150 000 ms is **8.2x
+  headroom**, and the +2 400 ms the two tail exemptions add across two
+  attempts is 1.6% of it. The *failure* path — the one a user actually
+  waits through, since a success hands off — is unchanged at 17 200 ms.
 - The suite's own bound, `S6_WORST_CASE_BOUND_MS` = 22 000 ms, is met:
   the black-hole probe measured **16 228 ms** total post-fix.
 
@@ -1565,18 +1670,26 @@ the neutralisation record.
 
 ### 8.10 Residuals, stated rather than hidden
 
-> **Closed by the S5 removal (§7), not by any fix.** Every residual below
-> that is about the relay leg — the split-brain band and its
-> `2*owd - RACE_RELAY_GRACE_MS` width, the ~2.5 s extra wait before a
-> relayed handoff, the "relayed where the pre-S6 code would have punched"
-> regression, the relay-vs-punch upgrade idea, and **(L-4)** the grace
-> being suppressed for a slow relay — is **moot**: there is no relay leg,
-> no `RACE_RELAY_GRACE_MS` and no `RACE_RELAY_ARM_MS` in the tree. They
-> are kept as the record of what the two-transport race cost, which is a
-> large part of why the relay went. The residuals that remain OPEN are the
-> ones that are not about the relay: the 8 s signalling leg, the S2
-> auto-retry doubling, and the unmeasured field distribution of start
-> skew.
+> **Mostly closed by the S5 removal (§7), but read the exception first.**
+> The residuals below that are genuinely about the relay LEG — the
+> ~2.5 s extra wait before a relayed handoff, the "relayed where the
+> pre-S6 code would have punched" regression, the relay-vs-punch upgrade
+> idea, and **(L-4)** the grace being suppressed for a slow relay — are
+> **moot**: there is no relay leg, no `RACE_RELAY_GRACE_MS` and no
+> `RACE_RELAY_ARM_MS` in the tree. They are kept as the record of what
+> the two-transport race cost, which is a large part of why the relay
+> went.
+>
+> **The split-brain band is NOT moot** and the first draft of this
+> removal was wrong to file it here. It is a property of two peers
+> starting at different times, not of two transports, and it survived
+> the relay intact — see §8.4a. Wherever a bullet below says
+> `RACE_RELAY_GRACE_MS`, read `RACE_PUNCH_SETTLE_MS`: the band, its
+> `2*owd - G` width, the "must fit inside the race" requirement and the
+> above-600 ms-RTT coverage limit are all still live, with the same
+> formula and the same knob. The residuals that were never about the
+> relay also remain OPEN: the 8 s signalling leg, the S2 auto-retry
+> doubling, and the unmeasured field distribution of start skew.
 
 - **Scenario A is still 8 s/attempt**, because the 8 000 ms signalling
   budget is the longest single leg and racing cannot shorten it. Cutting
@@ -1595,20 +1708,26 @@ the neutralisation record.
 
   - The host enters the race **only** from `try_handle_deliver`, and
     only while still in `HOST_WAITING`
-    (`src/netplay/direct_p2p.c:4062-4067`, spawn at `:4162`).
+    (`src/netplay/direct_p2p.c:3658`, gate at `:3662`, spawn at
+    `:3755`).
   - The server sets `pairedPeer` only on the REGISTER that fills the
     joiner slot and then pushes **one** unsolicited DELIVER to the host
-    (`tools/rendezvous-server/rendezvous-server.js:1256-1258` and
-    `:1283-1286`). It is a bare `socket.send` — **no retransmit**.
+    (`tools/rendezvous-server/rendezvous-server.js:692` and `:719`). It
+    is a bare `socket.send` — **no retransmit**.
   - So when that push arrives, the host starts roughly one server
     one-way delay plus one frame behind the joiner: far below every band
-    measured in §8.4 rule 1b.
+    measured in §8.4a.
   - When it is **lost**, the host learns only from the reply DELIVER to
-    its own next REGISTER (`rendezvous-server.js:1279-1280`), and that
-    interval is **5 000 ms** (`src/port/config/config.c:111`, loop at
-    `src/netplay/direct_p2p.c:2686-2733`). One lost datagram therefore
-    places the host's race start at a roughly uniform point in the next
-    5 s — a range that spans every band measured.
+    its own next REGISTER (`rendezvous-server.js:714`), and that
+    interval is **5 000 ms** (`src/port/config/config.c:111`, read at
+    `src/netplay/direct_p2p.c:2523`). One lost datagram therefore places
+    the host's race start at a roughly uniform point in the next 5 s —
+    **which is exactly where the band sits at production constants**,
+    since `punch_leg_ms` is 5 000 ms. The band's location and its
+    reachability are not independent questions: this is the mechanism
+    that makes a ~5 s start skew an ordinary event rather than a
+    pathological one, and it is why the settle window has to hold at
+    production scale and not only at the rig's 2 500 ms.
 
   Both the loss rate and the resulting distribution are unmeasured;
   there is no real-network capture of the pairing path. The rate is
@@ -1617,29 +1736,58 @@ the neutralisation record.
   reason to prefer it over sizing a timer against a guess about how
   skewed a real pair can get.
 - **Above a 600 ms RTT the split brain is still reachable, and the band
-  is `2*owd - RACE_RELAY_GRACE_MS` wide.** Measured on the post-fix tree
-  at a 400 ms one-way delay: splits at skew 5 200 and 5 300 ms, 200 ms
-  wide, immediately past the punch send end — the width and the location
-  the condition in §8.4 rule 1b predicts. It is stated here rather than
-  hidden because the fix's guarantee is conditional and the condition is
-  checkable: raise `RACE_RELAY_GRACE_MS` above the pair's RTT and it
-  closes. That is the difference from the shipped H-3 grace, which no
-  value closed. Not fixed by raising the default because 600 ms already
-  covers roughly 3x the worst transatlantic RTT and every extra
-  millisecond is paid by *every* relayed pair, on the connection path.
-- **The grace has to fit inside the race budget or it is not a grace.**
-  If `race_budget_ms - (punch send end) < RACE_RELAY_GRACE_MS` the budget
-  fires part-way through the grace, the early peer commits inside a
-  window it promised to spend listening, and the band returns —
-  reproduced at `S6_SPLIT_BUDGET_MS=5200` with a split at skew 5 050 ms.
-  The punch SEND window is therefore capped so a full grace always fits
-  (`direct_p2p.c`, section 2 of `p2p_race`); re-running the same probe
-  after the cap gives **0 splits across 41 races**. On the shipped
-  defaults the cap never binds for `punch[0]` (5 000 + 600 against an
-  8 000 ms budget); it binds only for a DELIVER candidate armed later
-  than `race_budget - grace - punch_leg` = 2 400 ms, and it trades some
-  of that candidate's punch window for a decision both peers can agree
-  on.
+  is `2*owd - RACE_PUNCH_SETTLE_MS` wide.** (LIVE — see §8.4a; only the
+  constant's name changed.) It is stated rather than hidden because the
+  fix's guarantee is conditional and the condition is checkable: raise
+  `RACE_PUNCH_SETTLE_MS` above the pair's RTT and it closes. That is the
+  difference from the shipped H-3 anchor, which no value closed. Not
+  fixed by raising the default because 600 ms already covers roughly 3x
+  the worst transatlantic RTT and every extra millisecond is paid by
+  *every* failing pair, on the connection path.
+
+  **Measured on THIS tree, in both directions.** Test 34's four probe
+  points are `punch_leg - owd`, `punch_leg`, `punch_leg + owd` and
+  `punch_leg + 3*owd + 500`, and the residual band is
+  `(punch_leg + G - owd, punch_leg + owd]`. While `owd < G` the only
+  probe point that touches the band is its upper ENDPOINT, so a
+  converging run there proves nothing about the interior; the probe at
+  `skew = punch_leg` falls strictly INSIDE the band exactly when
+  `owd > G`. Running both sides of that line (`punch_leg` 2 500,
+  `G` 600, exit code of the whole suite):
+
+  | `S6_SPLIT_OWD_MS` | `2*owd` vs `G` | predicted band | result |
+  |---|---|---|---|
+  | 150 | 300 < 600 | none | converged at every point, **exit 0** |
+  | 250 | 500 < 600 | none | converged, **exit 0** |
+  | 300 | 600 = 600 | none | converged, **exit 0** |
+  | 400 | 800 > 600 | (2 700, 2 900] — interior not sampled | converged, **exit 0** (not evidence either way) |
+  | **800** | 1 600 > 600 | **(2 300, 3 300]** | **SPLIT at skew 2 500**, `A=PUNCHED B=EXHAUSTED`, exit 1 |
+  | **1 000** | 2 000 > 600 | **(2 100, 3 500]** | **SPLIT at skew 2 500**, exit 1 |
+
+  The two splits land where the formula puts them and nowhere else, and
+  they disappear below `owd = G/2`. That is the coverage limit stated as
+  a checkable condition rather than a hope — it is not a defect to fix
+  by raising the default, because 600 ms already covers roughly 3x the
+  worst transatlantic RTT and every extra millisecond is paid by *every*
+  failing pair on the connection path.
+- **The settle window has to fit inside the race or it is not a settle
+  window.** (LIVE.) If the race ends part-way through it, the early peer
+  stops listening inside a window it promised to spend listening and the
+  band returns — reproduced on the S5-era rig at
+  `S6_SPLIT_BUDGET_MS=5200` with a split at skew 5 050 ms. The S5-era
+  answer was to CAP the punch send window so the grace fitted before
+  `race_budget_ms`. That answer is **not** used any more, and the reason
+  is worth recording: capping the send window means a punch that would
+  have confirmed in the last 600 ms of the budget is never sent, which
+  is exactly the class of race the H-1 exemption exists to rescue —
+  applied unconditionally it turns test 23 red. The settle is instead
+  allowed to run past the raw budget on the same one-tail extension H-1
+  already grants, so the loop's hard bound is unchanged at
+  `race_budget_ms + STUN_PUNCH_CONFIRM_MS`, no punch traffic is deleted,
+  and a `_Static_assert` keeps `RACE_PUNCH_SETTLE_MS` inside that
+  extension. Section 2 does still treat the budget as a send end, which
+  is what keeps the settle non-empty when
+  `race_budget_ms < punch_leg_ms`.
 - **A relayed pair now waits ~2.5 s longer for its handoff.** This is
   the price of the H-A re-anchor and it is paid by exactly the pairs
   that end up on the relay. The relay used to commit one grace window
@@ -1650,10 +1798,16 @@ the neutralisation record.
   ARMS at 2 500 ms and still does its REQ/GRANT/PIN work concurrently
   with the punch, which is where S6's measured win came from — pre-S6
   the same pair paid 5 000 ms of punch **plus** up to 4 000 ms of relay
-  serially. The pure-failure path is unchanged: with no relay leg in
-  play there is nothing to diverge about, so candidates are torn down at
-  `punch_leg_ms` exactly as before and §8.5's scenario-A/B timings and
-  test 18's cascade bound are untouched.
+  serially. (The last sentence this bullet used to carry — "the
+  pure-failure path is unchanged, with no relay leg in play there is
+  nothing to diverge about" — was the premise that turned out to be
+  false; see §8.4a. A production failing race now ends one
+  `RACE_PUNCH_SETTLE_MS` after its send window, which is what the
+  shipped pre-removal build already did, since a relay leg was always
+  possible there. Test 18's cascade bound is unaffected in the harness
+  because its legs are oracle-driven and put nothing on the wire, so
+  they have no late confirmation to wait for and take a zero settle:
+  measured 10 244 ms against 10 231 ms before the fix, bound 12 000 ms.)
 - **A pair that needs longer than `punch_leg_ms` to punch is still
   relayed** where the pre-S6 code would have punched for the full
   bilateral window on both sides first. That bound is now the *punch's
@@ -1909,7 +2063,7 @@ at once.
 `UpnpMapping` gained two fields (upnp.h:14-39): `backend`
 (`PortMapBackend` NONE/UPNP/NATPMP/PCP) and `lifetime_s`.
 
-- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:1956),
+- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:2207),
   and every removal site goes through it. `Upnp_RemoveMapping` and
   `Natpmp_RemoveMapping` each additionally **refuse** a mapping they do
   not own. This is not defensive decoration: on a router that speaks
@@ -1925,7 +2079,7 @@ at once.
   existing `preferred_external = s_upnp_mapping.external_port` line
   already did.
 - **The renewal interval now follows the granted lease**
-  (`portmap_renew_interval_ms`, direct_p2p.c:2081). RFC 6886 §3.3: "The
+  (`portmap_renew_interval_ms`, direct_p2p.c:2332). RFC 6886 §3.3: "The
   NAT gateway MAY reduce the lifetime from what the client requested."
   A router granting 120 s against our 3600 s request would have
   silently lost the mapping 28 minutes before a fixed half-hour timer
@@ -2272,14 +2426,14 @@ runs on Linux.
   worker is either joined or detached-and-abandoned, and that a detached
   straggler can never be followed by a renewal. That covers a *renewal*.
   It does not cover a second *probe*, and the second probe is reachable:
-  `SDL_DetachThread` (`direct_p2p.c:1981`) abandons the timed-out
+  `SDL_DetachThread` (`direct_p2p.c:2232`) abandons the timed-out
   worker, and `try_portmap` returns false **without** adopting the
   result — the `s_upnp_mapping` assignment is on the joined path only
-  (`direct_p2p.c:2447`) — so `s_upnp_mapping.active` stays false; the
+  (`direct_p2p.c:2698`) — so `s_upnp_mapping.active` stays false; the
   FAILED_STUN auto-retry re-spawns `host_thread_fn`
-  (`direct_p2p.c:4248`); the "reuse the live mapping" shortcut is gated
-  on that same `s_upnp_mapping` flag (`direct_p2p.c:2557`) and is
-  therefore skipped; and `try_portmap` runs again (`direct_p2p.c:1719`),
+  (`direct_p2p.c:4499`); the "reuse the live mapping" shortcut is gated
+  on that same `s_upnp_mapping` flag (`direct_p2p.c:2808`) and is
+  therefore skipped; and `try_portmap` runs again (`direct_p2p.c:1970`),
   spawning a second worker into `Natpmp_AddMapping` while the straggler
   may still be inside it. `s_pcp_nonce` / `s_pcp_nonce_valid` /
   `s_pcp_nonce_port` (`s_pcp_nonce` is at `natpmp.c:496`) and

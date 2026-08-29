@@ -957,14 +957,18 @@ static int stun_budget_ms(void) {
  * reader/writer, exactly as it had before.
  *
  * A FOURTH leg used to run here: the S5 relay rung (RELAY_REQ -> GRANT
- * -> PIN -> ACK). It was REMOVED as a product decision. Everything that
- * existed only to order the relay against the punches went with it —
- * the arm delay, the per-candidate deferral, the commit grace, and the
- * receive-only hold that kept a candidate listening past its send
- * window. Each candidate now simply punches for its full
- * `punch_leg_ms` and is torn down at the end of it, which is what the
- * relay-free path already did (the hold was scoped to
- * "a relay leg exists and has not finished").
+ * -> PIN -> ACK). It was REMOVED as a product decision, and everything
+ * that existed only to ORDER the relay against the punches went with
+ * it — the arm delay, the per-candidate arm deferral, and the relay's
+ * commit grace.
+ *
+ * ONE thing that was scoped to the relay did NOT go with it, because it
+ * was never about the relay: the receive-only hold that keeps a
+ * candidate listening past its send window. It is what makes two peers
+ * starting at different times reach the SAME outcome, and PUNCHED on
+ * one side with EXHAUSTED on the other is a split brain whether or not
+ * a relay exists. It is now unconditional. See RACE_PUNCH_SETTLE_MS and
+ * section 2 below.
  */
 
 /* Loop period. The legs' own cadences are 50-500 ms; 5 ms keeps the
@@ -1145,6 +1149,94 @@ static const char* arm_punch_target_ip(const char* ip, uint16_t port) {
 #define ARM_PUNCH_TARGET_IP(ip, port) ((void)(port), (ip))
 #endif
 
+/*
+ * How long a punch candidate stays on the RECEIVE path after it has
+ * stopped SENDING, before it is torn down.
+ *
+ * WHAT THIS IS FOR. Two peers start their races an arbitrary skew `s`
+ * apart. If a candidate stops listening at the same instant it stops
+ * sending, there is a band of skews in which exactly ONE side confirms:
+ * the late peer arms just inside the early peer's send window, is
+ * confirmed by the early peer's last punches, and its own first punch
+ * reaches the early peer one one-way delay `d` LATER — after the early
+ * peer has already torn the leg down. The late peer hands off to
+ * GekkoNet; the early peer reports failure. GekkoNet registers the
+ * remote ONCE by source address at configure time (netplay.c) with no
+ * relearn path, so the connected side then hangs for the whole
+ * CONNECT_TIMEOUT_CONNECTING_MS and gives up. That is the split brain.
+ *
+ * DERIVATION — this is a NETWORK quantity, not a harness constant.
+ * Write `L` for `punch_leg_ms`, `d` for the one-way delay, `s` for the
+ * start skew (peer B at 0, peer A at s >= 0), and `G` for this window.
+ * Each side sends over [own_arm, own_arm+L] and listens over
+ * [own_arm, own_arm+L+G]. A confirmation on either side resumes THAT
+ * side's tail immediately (Stun_PunchOffer clears `sent_any`, so the
+ * pump in section 5 sends on the very next iteration), and that tail is
+ * what confirms the other side. So:
+ *
+ *   - A is confirmed directly by B's stream iff  s <= L + d.
+ *     A then answers, and B must still be listening at s + d:
+ *     s + d <= L + G. Worst case s = L + d gives  G >= 2d.
+ *   - Otherwise (s > L + d) A's own stream reaches B at s + d, so B is
+ *     confirmed directly iff s <= L + G - d. B then answers, and A is
+ *     still listening at s + 2d because s + 2d <= s + L + G always.
+ *   - For s > L + G - d neither side hears the other and BOTH exhaust.
+ *
+ * The two direct thresholds are L + d and L + G - d. They coincide, and
+ * the one-sided band between them vanishes, exactly when
+ *
+ *     G >= 2 * one-way delay   (i.e. G >= one peer-to-peer ROUND TRIP)
+ *
+ * and where they do not, the residual band is (2d - G) wide and sits
+ * just past the send window. This is the same condition the S5-era
+ * review derived and measured for the relay's commit grace, over five
+ * (owd, grace) configurations, at 9240aa50:src/netplay/direct_p2p.c:
+ * 1153-1176 — the mechanism is unchanged, only its trigger is: it used
+ * to be scoped to "a relay leg is still deciding" and is now
+ * unconditional, because the relay is gone and the property it was
+ * protecting never belonged to the relay in the first place.
+ *
+ * SIZING. 600 ms covers every pair up to a 600 ms ROUND TRIP. Real
+ * one-way delays: transatlantic 35-90 ms (RTT 70-180), intercontinental
+ * with a mobile last hop 100-200 ms (RTT 200-400), geostationary
+ * satellite ~250 ms (RTT ~500). A pair above 600 ms RTT cannot play a
+ * rollback fighting game at all. It is also exactly one
+ * STUN_PUNCH_CONFIRM_MS — the same quantity the punch itself spends
+ * making sure its peer heard it — which is not a coincidence: both are
+ * "one round trip plus slack" measured against the same network.
+ *
+ * The derivation uses `L` for the send window because that is the
+ * common case; it only ever needs the two windows to be one `G` shorter
+ * than the two listen windows, so it holds unchanged when the race
+ * budget — not `punch_leg_ms` — is what ends a send (section 2), and it
+ * holds when the two peers' send windows differ in LENGTH, which is
+ * what happens when one side's candidate was armed by a DELIVER later
+ * than the other's.
+ *
+ * COST. On the failure path a race now ends `G` later than the send
+ * window, which is what the shipped pre-removal build already did in
+ * production (a relay leg was always possible there, so the deferral
+ * always applied). It is bounded twice: by G itself, and by the race
+ * deadline, which grants the settle the same single-tail extension the
+ * H-1 exemption grants a confirmed punch. A confirmation landing inside
+ * the settle owes a tail from there, so the loop's hard bound becomes
+ * `race_budget_ms + 2 * STUN_PUNCH_CONFIRM_MS` — reached only by a race
+ * that CONFIRMED, never by a failing one. See section 2 and the
+ * deadline check in section 8.
+ */
+#define RACE_PUNCH_SETTLE_MS 600u
+
+/* The settle window is allowed to run past `race_budget_ms` on the same
+ * one-tail extension the H-1 exemption uses (race_budget_expired, and
+ * section 8 of p2p_race), which extends the deadline by exactly one
+ * STUN_PUNCH_CONFIRM_MS. A settle window LONGER than that extension
+ * would be silently truncated by the budget in precisely the
+ * configurations it exists to protect, so the coupling is asserted
+ * rather than left to a comment. Raise the extension, not this alone. */
+_Static_assert(RACE_PUNCH_SETTLE_MS <= STUN_PUNCH_CONFIRM_MS,
+               "RACE_PUNCH_SETTLE_MS must fit in the one-tail deadline extension "
+               "race_budget_expired() grants, or the race budget truncates it");
+
 /* One punch candidate. `oracle` is DP2P_PUNCH_REAL for every production
  * leg; the other two values make the leg a pure clock with no wire
  * traffic, for the offline harnesses. */
@@ -1158,6 +1250,14 @@ typedef struct {
     uint16_t     port;
     DirectP2PPunchOracleResult oracle;
     bool         oracle_confirmed;
+    /* `punch_leg_ms` is the window in which we SEND. A candidate that
+     * reaches the end of it stops sending but is NOT torn down: it stays
+     * on the receive path for RACE_PUNCH_SETTLE_MS so a peer that
+     * started late can still confirm it. `send_end_ms` is when the
+     * sending stopped, and it is the anchor the settle window is
+     * measured from. */
+    bool         send_expired;
+    uint32_t     send_end_ms;
 } RacePunchCandidate;
 
 static bool race_cancelled(const RaceCfg* cfg) {
@@ -1216,10 +1316,13 @@ static void race_finish_punch(RacePunchCandidate* c, uint32_t now) {
     if (!c->armed || c->finished) {
         return;
     }
-    /* `punch=` in a report line means "how long this candidate spent
-     * punching", and a candidate is torn down at the end of its send
-     * window, so the two instants coincide. */
-    c->alive_ms = now - c->armed_ms;
+    /* `punch=` in a report line has always meant "how long this candidate
+     * spent punching". A candidate being held on the receive path past
+     * its send window is no longer punching, so the reported number stops
+     * at `send_end_ms` and the report keeps its established meaning. */
+    c->alive_ms = (c->send_expired && c->send_end_ms != 0)
+                      ? (c->send_end_ms - c->armed_ms)
+                      : (now - c->armed_ms);
     if (c->oracle == DP2P_PUNCH_REAL) {
         Stun_PunchEnd(&c->leg);
     }
@@ -1320,23 +1423,109 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
         }
 
         /* --- 2) leg lifetimes ---------------------------------------- */
-        /* A candidate punches for `punch_leg_ms` from its OWN arm time and
-         * is torn down at the end of that window. (Between S6 and the
-         * relay's removal a candidate was additionally held on the
-         * receive path past its send window whenever a relay leg was
-         * still deciding, so that the two peers could not disagree about
-         * which rung won. With no relay there is nothing to disagree
-         * about: both peers simply fail.) */
+        /*
+         * SENDING and LISTENING end at different times.
+         *
+         * A candidate SENDS for `punch_leg_ms` from its OWN arm time. At
+         * the end of that window it stops sending but stays on the
+         * receive path for RACE_PUNCH_SETTLE_MS — see the derivation at
+         * that constant for why a candidate that stops listening when it
+         * stops sending puts a whole band of start skews into split
+         * brain, and why one peer-to-peer round trip of listening closes
+         * it. A leg that is still listening can be confirmed by a late
+         * peer's punch; Stun_PunchOffer then sets `confirmed` and clears
+         * `sent_any`, so section 5 resumes pumping on this very
+         * iteration and the confirmation tail goes out — which is what
+         * confirms the OTHER peer in turn. That mutual tail is why this
+         * converges instead of merely moving the problem.
+         *
+         * This is UNCONDITIONAL. Between S6 and the relay's removal the
+         * same hold existed but was scoped to "a relay leg exists and
+         * has not finished", on the reasoning that with no relay there
+         * was nothing for the peers to disagree ABOUT. That reasoning
+         * was wrong: PUNCHED-vs-EXHAUSTED is a disagreement all by
+         * itself, and it is the one that hangs GekkoNet. The relay's
+         * removal deleted the mechanism along with its trigger, which is
+         * what test 34 (test_bilateral_punch.c) measured and reddened.
+         *
+         * THE SETTLE WINDOW MUST FIT INSIDE THE RACE, or it is not a
+         * settle window. If the race ends partway through it, the early
+         * peer stops listening inside a window it had promised to spend
+         * listening and the band comes straight back — measured on the
+         * S5-era rig with the budget squeezed to 5 200 ms against a
+         * 5 000 ms send window and a 600 ms grace, which split at skew
+         * 5 050 ms.
+         *
+         * There are two ways to make it fit, and only one of them is
+         * free. The S5-era code SHORTENED THE SEND WINDOW so that
+         * send_end + grace landed before `race_budget_ms`. That is not
+         * free: it deletes punch traffic the budget would otherwise have
+         * allowed, and a punch that would have confirmed in the last
+         * `settle` ms of the budget is then never sent at all — which is
+         * exactly the class of race the H-1 confirmation-tail exemption
+         * exists to rescue (see race_budget_expired, and test 23).
+         *
+         * So the send window is NOT shortened. It ends where it would
+         * have ended anyway — at `punch_leg_ms`, or at the budget, since
+         * the loop stops pumping there regardless — and the SETTLE is
+         * allowed to run past the raw budget, held open by the very same
+         * one-tail extension H-1 already uses. `RACE_PUNCH_SETTLE_MS`
+         * and `STUN_PUNCH_CONFIRM_MS` are equal (asserted above), so a
+         * settle window always fits inside that one extension. A
+         * confirmation that lands INSIDE the settle then owes a tail of
+         * its own from there, which is the second tail granted in
+         * section 8: the loop stays hard-bounded, at
+         * `race_budget_ms + 2 * STUN_PUNCH_CONFIRM_MS`, whatever the
+         * legs do. See the deadline check in section 8.
+         */
         for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
             if (!cands[i].armed || cands[i].finished ||
                 race_punch_confirmed(&cands[i])) {
                 continue;
             }
-            if ((int)(now - cands[i].armed_ms) < cfg->punch_leg_ms) {
+            /* An oracle-driven leg puts NOTHING on the wire and can never
+             * be confirmed by a peer, so there is no late confirmation
+             * for it to wait for and its settle window is zero. Same
+             * reasoning as race_punch_settled() above. In a production
+             * build PUNCH_ORACLE is DP2P_PUNCH_REAL unconditionally, so
+             * every shipped candidate takes the full window. */
+            const int settle_ms = (cands[i].oracle == DP2P_PUNCH_REAL)
+                                      ? (int)RACE_PUNCH_SETTLE_MS
+                                      : 0;
+            /* The budget already stops the pump, so recognising it here
+             * costs no wire traffic: it only moves the instant the leg
+             * is DECLARED done sending, which is what the settle window
+             * is measured from. Without this the budget would cut the
+             * leg mid-send with no settle at all whenever
+             * `race_budget_ms < punch_leg_ms`, and the band would be
+             * open in exactly that configuration. Never negative. */
+            int send_window_ms = cfg->punch_leg_ms;
+            {
+                const int to_budget = cfg->race_budget_ms -
+                                      (int)(cands[i].armed_ms - t0);
+                if (to_budget < send_window_ms) {
+                    send_window_ms = (to_budget > 0) ? to_budget : 0;
+                }
+            }
+            if ((int)(now - cands[i].armed_ms) < send_window_ms) {
+                continue;
+            }
+            if (!cands[i].send_expired) {
+                cands[i].send_expired = true;
+                cands[i].send_end_ms = (now != 0) ? now : 1u;
+                SDL_Log("[direct_p2p] S6 race: candidate %s:%u stopped punching after "
+                        "%d ms%s — listening %d ms more",
+                        cands[i].ip, (unsigned)cands[i].port, send_window_ms,
+                        (send_window_ms < cfg->punch_leg_ms)
+                            ? " (the race budget, not the punch leg, ended the send)"
+                            : "",
+                        settle_ms);
+            }
+            if ((int)(now - cands[i].send_end_ms) < settle_ms) {
                 continue;
             }
             SDL_Log("[direct_p2p] S6 race: candidate %s:%u timed out after %d ms",
-                    cands[i].ip, (unsigned)cands[i].port, cfg->punch_leg_ms);
+                    cands[i].ip, (unsigned)cands[i].port, send_window_ms);
             race_finish_punch(&cands[i], now);
         }
         if (signal_active && (int)(now - t0) >= cfg->signal_budget_ms) {
@@ -1347,6 +1536,12 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
         /* --- 5) pump the legs ---------------------------------------- */
         for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
             if (!cands[i].armed || cands[i].finished) continue;
+            /* Past its send window a candidate is receive-only — UNLESS
+             * it has just been confirmed by a late peer, in which case it
+             * owes that peer the confirmation tail and pumping resumes
+             * (Stun_PunchOffer cleared `sent_any`, so the first tail
+             * datagram leaves on this very iteration). */
+            if (cands[i].send_expired && !race_punch_confirmed(&cands[i])) continue;
             if (cands[i].oracle == DP2P_PUNCH_REAL) {
                 Stun_PunchPump(&cands[i].leg, cfg->sock, now);
             } else if (cands[i].oracle == DP2P_PUNCH_CONFIRM) {
@@ -1485,7 +1680,59 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                     tail_outstanding = true;
                 }
             }
-            if (race_budget_expired(now, t0, cfg->race_budget_ms, tail_outstanding)) {
+            /* The settle window gets the SAME one-tail extension, for the
+             * same reason: a leg still inside it has been PROMISED to the
+             * peer as listening time, and truncating that promise is what
+             * reopens the split-brain band (section 2). Because
+             * RACE_PUNCH_SETTLE_MS == STUN_PUNCH_CONFIRM_MS that extends
+             * the deadline to exactly one tail past the budget, and
+             * race_budget_expired() itself is untouched: only the flag
+             * handed to it widens. The H-1 LOG below stays gated on
+             * `tail_outstanding` alone, so it keeps meaning "a CONFIRMED
+             * punch was rescued" and nothing else. */
+            bool settle_outstanding = false;
+            for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
+                if (cands[i].armed && !cands[i].finished &&
+                    cands[i].send_expired && !race_punch_confirmed(&cands[i])) {
+                    settle_outstanding = true;
+                }
+            }
+            bool expired = race_budget_expired(now, t0, cfg->race_budget_ms,
+                                               tail_outstanding || settle_outstanding);
+            /*
+             * SECOND TAIL — and it is H-1's own argument, one tail later.
+             *
+             * A leg listening through its settle window can be confirmed
+             * as late as `send_end + RACE_PUNCH_SETTLE_MS`, and `send_end`
+             * can itself be the budget (section 2), so a confirmation can
+             * legitimately land at `budget + one tail`. It then owes its
+             * peer a FULL tail from THERE. Cutting it at `budget + one
+             * tail` discards a punch that provably reached us and reports
+             * a NAT failure — exactly the defect H-1 exists to prevent —
+             * and, worse, the peer that sent that punch has already been
+             * confirmed by our partial tail, so the two sides disagree.
+             *
+             * MEASURED, on the two-peer rig with the budget squeezed to
+             * 2 700 ms against a 2 500 ms send window (owd 150, skew
+             * 2 650): the early peer confirmed at t+2 810 ms, needed to
+             * settle at t+3 410 ms, and was cut at the t+3 300 ms cap —
+             * `A=PUNCHED B=EXHAUSTED`. The same probe at
+             * `S6_SPLIT_BUDGET_MS=2000` split for the same reason.
+             *
+             * So a CONFIRMED leg gets one more tail, and no more: the
+             * loop stays hard-bounded, now at
+             * `race_budget_ms + 2 * STUN_PUNCH_CONFIRM_MS`. That is
+             * sufficient AND tight — the latest reachable confirmation is
+             * `budget + one tail` and a tail is one tail long, so nothing
+             * needs a third. It costs nothing on the failure path, which
+             * has no confirmed leg by definition.
+             */
+            if (expired && tail_outstanding &&
+                (int)(now - t0) < cfg->race_budget_ms +
+                                      2 * STUN_PUNCH_CONFIRM_MS) {
+                expired = false;
+            }
+            if (expired) {
                 SDL_Log("[direct_p2p] S6 race: overall budget (%d ms) expired%s",
                         cfg->race_budget_ms,
                         tail_outstanding ? " (confirmation tail also exhausted)" : "");
@@ -1500,8 +1747,12 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                     "in its %d ms tail — holding the race open (hard cap %d ms)";
                 if (!logged_tail_hold) {
                     logged_tail_hold = true;
+                    /* The cap printed is the one that actually applies to a
+                     * CONFIRMED leg: the settle window can carry a
+                     * confirmation as late as budget + one tail, and that
+                     * confirmation owes a full tail from there. */
                     SDL_Log(k_msg, STUN_PUNCH_CONFIRM_MS,
-                            cfg->race_budget_ms + STUN_PUNCH_CONFIRM_MS);
+                            cfg->race_budget_ms + 2 * STUN_PUNCH_CONFIRM_MS);
                 }
             }
         }
