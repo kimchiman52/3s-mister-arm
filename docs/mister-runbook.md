@@ -518,6 +518,41 @@ cmake --install build/mister --prefix build/mister-install
 '
 ```
 
+### `mkdir: cannot create directory 'third_party': File exists` (worktree builds)
+
+Symptom:
+
+- `tools/mister/build-game.sh` dies seconds into the container step, in
+  `build-deps.sh`, on a directory the error says already exists
+
+Cause:
+
+- `third_party/` is gitignored, so a git worktree has none and lanes create it
+  as an **absolute symlink into the main checkout**. `rsync -a` staged that
+  symlink verbatim, the host path does not exist inside the container, and
+  `mkdir -p` fails on a dangling symlink.
+
+Fix:
+
+- Already fixed — both staging rsyncs in `tools/mister/build-game.sh` pass
+  `--copy-unsafe-links`, so the link is materialised as a real directory and a
+  worktree stages exactly what the main checkout stages. A lane workdir left
+  broken by an older build repairs itself on the next run.
+
+**Do not "fix" a dangling `third_party` by making the host path resolve inside
+the container.** Recreating the prefix so it points at `/src`
+(`ln -sfn /src /Users/sb/Developer/3sx-mister`) aims the ARM dependency build
+straight through the bind mount and into the host's own `third_party`. Observed
+2026-08-29 07:45–07:55: host `sdl3`, `GekkoNet`, `SDL_net`, `minizip-ng` and
+`tf-psa-crypto` were all replaced with ARM ELF artifacts. Nothing failed at
+build time; it surfaced later as the host harness aborting with
+`Library not loaded: @rpath/libSDL3.0.dylib` (SIGABRT, exit 134), and recovery
+was a full `build-deps.sh --profile desktop`. `build-game.sh` now refuses to run
+`build-deps.sh` unless `third_party` resolves inside the lane's own workdir, so
+that variant exits 6 instead of corrupting the host. If you ever do need a
+lane-private link, point it at a container-local path:
+`mkdir -p /armdeps/third_party && ln -sfn /armdeps <host-checkout-path>`.
+
 ### Missing resources
 
 Symptom:
