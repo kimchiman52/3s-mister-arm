@@ -94,8 +94,8 @@ None. Can start immediately.
 ### Files to create/modify
 1. `src/sf33rd/Source/Game/select_timer.h` — CREATE, copy `/tmp/3sxtra/src/sf33rd/Source/Game/select_timer.h` verbatim.
 2. `src/sf33rd/Source/Game/select_timer.c` — CREATE, copy `/tmp/3sxtra/src/sf33rd/Source/Game/select_timer.c` verbatim, BUT:
-   - Remove the `static s16 s_bcd_carry` and `static u8 sbcd(...)` function — we already have `u8 sbcd(u8 a, u8 b)` in `effa5.c` at line 16. Instead add `extern u8 sbcd(u8 a, u8 b);` forward declaration at the top of `select_timer.c` and call it via the existing symbol.
-   - **Alternative**: if `sbcd` in `effa5.c` is `static`, then keep 3sxtra's local `sbcd` + `s_bcd_carry` (rename `sbcd` to `select_timer_sbcd` to avoid future collision). Choose this if the `effa5.c` one is static. Verify by reading `effa5.c:16` before writing.
+   - Remove the `static s16 s_bcd_carry` and `static u8 sbcd(...)` function — we already have `u8 sbcd(u8 a, u8 b)` in `effa5.c` at line 17. Instead add `extern u8 sbcd(u8 a, u8 b);` forward declaration at the top of `select_timer.c` and call it via the existing symbol.
+   - **Alternative**: if `sbcd` in `effa5.c` is `static`, then keep 3sxtra's local `sbcd` + `s_bcd_carry` (rename `sbcd` to `select_timer_sbcd` to avoid future collision). Choose this if the `effa5.c` one is static. Verify by reading `effa5.c:17` before writing.
 
    **Pick the approach that produces the least linker/build risk.** The BCD implementations are byte-identical between the two files; correctness is preserved either way.
 

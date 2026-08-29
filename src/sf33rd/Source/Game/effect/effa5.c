@@ -5,6 +5,7 @@
 
 #include "sf33rd/Source/Game/effect/effa5.h"
 #include "common.h"
+#include "constants.h"
 #include "sf33rd/Source/Game/debug/Debug.h"
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
@@ -66,7 +67,7 @@ void effect_A5_move(WORK_Other* ewk) {
             break;
         }
 
-        Unit_Of_Timer = 60;
+        Unit_Of_Timer = UNIT_OF_TIMER_MAX;
         bcdext = 0;
 
         if ((Select_Timer = sbcd(1, Select_Timer)) == 0) {
@@ -83,7 +84,7 @@ void effect_A5_move(WORK_Other* ewk) {
 
         if (Select_Timer) {
             ewk->wu.routine_no[0] = 1;
-            Unit_Of_Timer = 60;
+            Unit_Of_Timer = UNIT_OF_TIMER_MAX;
         } else if (--ewk->wu.dir_timer == 0) {
             Time_Over = 1;
             ewk->wu.routine_no[0]++;
@@ -100,7 +101,7 @@ void effect_A5_move(WORK_Other* ewk) {
 
         if (Select_Timer) {
             ewk->wu.routine_no[0] = 1;
-            Unit_Of_Timer = 60;
+            Unit_Of_Timer = UNIT_OF_TIMER_MAX;
         }
 
         break;
