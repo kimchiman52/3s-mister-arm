@@ -128,7 +128,15 @@ restore_console() {
         return 0
     fi
 
-    kbd_mode -a <"$console_path" >/dev/null 2>&1 || true
+    # -f forces the mode switch even when the kernel thinks it "would make
+    # the keyboard unusable" (kbd_mode --help). Without it, kbd_mode -a
+    # silently exits 1 and leaves KDSKBMODE untouched when the console is
+    # still in K_OFF (the mode ConsoleMode_Enter() sets in
+    # src/port/linux/console_mode.c, restored only via ConsoleMode_Exit()'s
+    # atexit hook — which never runs on a crash/kill). Verified live against
+    # /dev/tty1 forced to K_OFF: `kbd_mode -a` exits 1 and mode stays K_OFF
+    # (4); `kbd_mode -a -f` exits 0 and mode becomes K_XLATE (1).
+    kbd_mode -a -f <"$console_path" >/dev/null 2>&1 || true
     TERM=linux setterm -reset -default -blank poke -cursor on -clear all >"$console_path" 2>/dev/null || true
     printf '\033c' >"$console_path" 2>/dev/null || true
     chvt "${console_path#/dev/tty}" >/dev/null 2>&1 || true
