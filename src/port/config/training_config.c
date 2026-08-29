@@ -47,6 +47,30 @@ static const s8 max_values[2][2][7] = {
     { { 2, 3, 1, 3, 0, 0, 0 }, { 0, 0, 0, 0, 0, 0, 0 } }
 };
 
+/* TrainingConfig_Load() memcpy's the whole `contents` block straight into the
+ * live Training[] globals, sized by the FILE struct. The file struct and the
+ * game struct are declared in different translation units and nothing tied
+ * them together, so a change to TrainingData::contents alone would silently
+ * make that copy over- or under-run the destination. */
+_Static_assert(sizeof(((TrainingConfigFile*)0)->contents) == sizeof(Training[0].contents),
+               "TrainingConfigFile::contents must match TrainingData::contents — "
+               "TrainingConfig_Load memcpy's one into the other");
+
+/* max_values is the clamp applied to every value read off disk before it
+ * reaches Training[]. The clamp loop is bounded by the FILE struct's
+ * dimensions and subscripts max_values with the same indices, so max_values
+ * being smaller than what it bounds would turn the validation of an
+ * untrusted file into an out-of-bounds read of the bounds table itself. */
+_Static_assert(SDL_arraysize(max_values) ==
+                   SDL_arraysize(((TrainingConfigFile*)0)->contents),
+               "max_values player count must match TrainingConfigFile::contents");
+_Static_assert(SDL_arraysize(max_values[0]) ==
+                   SDL_arraysize(((TrainingConfigFile*)0)->contents[0]),
+               "max_values type count must match TrainingConfigFile::contents");
+_Static_assert(SDL_arraysize(max_values[0][0]) ==
+                   SDL_arraysize(((TrainingConfigFile*)0)->contents[0][0]),
+               "max_values slot count must match TrainingConfigFile::contents");
+
 // Read either a V1 or V2 file from `f` into `out`. Returns false on error or
 // unrecognized magic/version. V1 files migrate forward by zero-filling the
 // new slot[6] columns.
@@ -145,9 +169,9 @@ bool TrainingConfig_Load(void) {
     fclose(f);
 
     // Bounds-check loaded values; clamp anything out of range to 0
-    for (int id = 0; id < 2; id++) {
-        for (int type = 0; type < 2; type++) {
-            for (int slot = 0; slot < 7; slot++) {
+    for (int id = 0; id < SDL_arraysize(file.contents); id++) {
+        for (int type = 0; type < SDL_arraysize(file.contents[id]); type++) {
+            for (int slot = 0; slot < SDL_arraysize(file.contents[id][type]); slot++) {
                 if (file.contents[id][type][slot] < 0 ||
                     file.contents[id][type][slot] > max_values[id][type][slot]) {
                     file.contents[id][type][slot] = 0;
