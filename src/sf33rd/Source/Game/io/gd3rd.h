@@ -10,6 +10,19 @@ extern s16 plt_req[2];
 extern const u8 lpr_wrdata[3];
 extern const u8 lpt_seldat[4];
 
+/* Declared here rather than left to each consumer's own `extern`. Both of
+ * these were being re-declared by hand, with their dimensions written out a
+ * second time, in src/test/ldreq_timing_trace.c -- which then hashes
+ * `sizeof(ldreq_result)` and sweeps `q_ldreq` slot by slot to decide whether
+ * the loader barrier holds. A private copy of the dimension means the probe
+ * keeps compiling after the real array changes size and silently measures a
+ * PREFIX of it: the barrier evidence would still read green while covering
+ * less than the queue. With one declaration visible to every translation
+ * unit, a size change is a conflicting-declaration error at each site
+ * instead. */
+extern REQ q_ldreq[16];
+extern u8 ldreq_result[294];
+
 s32 fsOpen(REQ* req);
 void fsClose(REQ* /* unused */);
 u32 fsGetFileSize(u16 fnum);
