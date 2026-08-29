@@ -986,6 +986,19 @@ const LDREQ_Process_Func ldreq_process[6] = { q_ldreq_error,      q_ldreq_textur
 
 s8* ldreq_process_name[] = { "EMP", "TEX", "COL", "SCR", "SND", "KNJ" };
 
+/* These two are parallel tables indexed by the same `q_ldreq[].type`:
+ * ldreq_process[type](...) dispatches the handler, ldreq_process_name[type]
+ * labels it on the debug overlay. Only the first is bounded -- the name table
+ * is declared `s8* ldreq_process_name[]`, size inferred from its initialiser
+ * -- so adding a seventh handler without a seventh name is not a compile
+ * error, it is an out-of-bounds read of a char* that the overlay then
+ * dereferences and prints. Asserted here, after both definitions, because the
+ * forward declaration of the name table is an incomplete type. */
+_Static_assert(SDL_arraysize(ldreq_process) == SDL_arraysize(ldreq_process_name),
+               "ldreq_process and ldreq_process_name must stay parallel — both "
+               "are indexed by q_ldreq[].type, but only ldreq_process has a "
+               "declared bound");
+
 const LDREQ_TBL ldreq_tbl[294] = {
     {
         0x1,
