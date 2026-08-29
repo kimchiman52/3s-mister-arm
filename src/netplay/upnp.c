@@ -68,7 +68,7 @@ static bool upnp_ensure_cached(void) {
      *
      * Until now the only thing preventing it was a config flag read at
      * ONE call site — Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP)
-     * in upnp_worker_fn (src/netplay/direct_p2p.c:2134) — which every
+     * in upnp_worker_fn (src/netplay/direct_p2p.c:1954) — which every
      * test has to remember to set. A test-local convention is not a
      * safety property. This is: the refusal sits above the ONLY
      * upnpDiscover() call in the tree, so no entry point
