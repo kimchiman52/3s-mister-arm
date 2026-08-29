@@ -872,11 +872,12 @@ static void configure_gekko() {
 
 #if ENABLE_PERF_TELEMETRY
     /* Task #69.3 — session-start skew. This is the last moment before the
-     * rollback engine exists, and the LDREQ barrier is still OFF here
-     * (Ldreq_BarrierActive() keys on NETPLAY_SESSION_RUNNING, gd3rd.c:510,
-     * and this line runs while session_state is still TRANSITIONING). If
-     * two peers can hold different loader state at this instant, this is
-     * where it shows. */
+     * rollback engine exists (gekko_create() below), and the LDREQ barrier
+     * is already ON here: #72 widened Ldreq_BarrierActive() (gd3rd.c:623)
+     * from NETPLAY_SESSION_RUNNING-only to also cover TRANSITIONING and
+     * CONNECTING, and this line runs while
+     * session_state is still TRANSITIONING. If two peers can hold
+     * different loader state at this instant, this is where it shows. */
     Ldreq_LogSessionProbe("configure-gekko", s_last_advance_frame);
 #endif
 
@@ -1217,11 +1218,14 @@ static void process_session() {
                     s_session_uuid, s_last_advance_frame);
             session_state = NETPLAY_SESSION_RUNNING;
 #if ENABLE_PERF_TELEMETRY
-            /* Task #69.3 — the exact line the LDREQ barrier turns on at
-             * (gd3rd.c:510 reads this variable). Probed AFTER the
-             * assignment so the logged barrier= column reads 1, and the
-             * rest of the row is the state the barrier inherits rather
-             * than one it produced. */
+            /* Task #69.3 — probed after session_state becomes RUNNING, so
+             * the logged barrier= column reads 1 and the rest of the row
+             * is the state the barrier inherits rather than one it
+             * produced. This is no longer the line the barrier turns on
+             * at: #72 widened Ldreq_BarrierActive() (gd3rd.c:623) to also
+             * cover TRANSITIONING and CONNECTING, so the barrier has been
+             * active since session_state first became TRANSITIONING
+             * (netplay.c:1570 / :1612). */
             Ldreq_LogSessionProbe("session-running", s_last_advance_frame);
 #endif
             // P-2.1 fix: re-seed last-advance now so the watchdog clock
@@ -1628,9 +1632,12 @@ void Netplay_Run() {
 #if ENABLE_PERF_TELEMETRY
     /* Task #69.3 — the whole session-start window as a timeline, not two
      * point samples. TRANSITIONING and CONNECTING both step the engine
-     * with the barrier OFF (step_game() at the TRANSITIONING branch below;
-     * Ldreq_BarrierActive() is false until RUNNING, gd3rd.c:510), so this
-     * is the window in which two peers can drift apart.
+     * with the barrier ON now: #72 widened Ldreq_BarrierActive()
+     * (gd3rd.c:623) from RUNNING-only to also cover TRANSITIONING and
+     * CONNECTING, so this whole pre-RUNNING window is barrier-gated, not
+     * barrier-free. This probe still times the
+     * window end-to-end so any residual skew between the two peers still
+     * shows up in the log.
      *
      * Both arms are capped because this is a telemetry build that ships:
      * TRANSITIONING has NO wall-clock deadline (it waits on the peer, and

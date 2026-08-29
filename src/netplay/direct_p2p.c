@@ -3352,7 +3352,7 @@ static void do_handoff(int player, const char* peer_ip, uint16_t peer_port) {
      * remote_port from (player, ip). The STUN socket we hand off below is a
      * plain datagram socket with no connected-peer state, so GekkoNet sends
      * go to whatever remote_ip:remote_port configure_gekko stringifies
-     * (netplay.c:1484). For direct-P2P over the internet the real peer
+     * (netplay.c:1488). For direct-P2P over the internet the real peer
      * endpoint is the STUN-translated peer_port from the hole-punch, not
      * SetParams' hardcoded 50000. Override remote_port here so outbound
      * Gekko frames reach the actual punched endpoint instead of oblivion. */
