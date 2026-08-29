@@ -1029,7 +1029,6 @@ typedef enum {
 } RaceOutcome;
 
 typedef struct {
-    RaceRole role;
     NET_DatagramSocket* sock;
     StunResult* stun;                 /* diag sink (punch bad-token); may be NULL */
     const uint8_t* punch_token;       /* STUN_PUNCH_TOKEN_LEN bytes */
@@ -1829,7 +1828,6 @@ void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* pcfg,
 
     RaceCfg cfg;
     memset(&cfg, 0, sizeof(cfg));
-    cfg.role = pcfg->host_role ? RACE_ROLE_HOST : RACE_ROLE_JOIN;
     cfg.sock = pcfg->sock;
     cfg.stun = NULL;
     cfg.punch_token = pcfg->punch_token;
@@ -2603,7 +2601,6 @@ static int SDLCALL host_bilateral_punch_thread_fn(void* data) {
 
     RaceCfg cfg;
     memset(&cfg, 0, sizeof(cfg));
-    cfg.role = RACE_ROLE_HOST;
     cfg.sock = s_work.stun.socket;
     cfg.stun = &s_work.stun;
     /* S4a: the host punches with the token derived from its own advertised
@@ -3088,7 +3085,6 @@ static DirectP2PState join_attempt(void) {
 
     RaceCfg cfg;
     memset(&cfg, 0, sizeof(cfg));
-    cfg.role = RACE_ROLE_JOIN;
     cfg.sock = s_work.stun.socket;
     cfg.stun = &s_work.stun;
     cfg.punch_token = punch_token;
