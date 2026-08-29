@@ -91,8 +91,8 @@
  * the page-offset signature of an address-valued word. Nothing reads it:
  * the only readers of REQ.size are texgroup.c:259/381/435 and
  * color3rd.c:107/109, all inside ldreq_process[] whose sole call site is
- * gd3rd.c:721, reachable only with be != 0 (guards at gd3rd.c:850 and
- * :865); and every fresh request enters at rno == 0 (gd3rd.c:561) and is
+ * gd3rd.c:743, reachable only with be != 0 (guards at gd3rd.c:872 and
+ * :887); and every fresh request enters at rno == 0 (gd3rd.c:561) and is
  * assigned `size` at rno == 2 (texgroup.c:258, color3rd.c:106) before its
  * first read.
  */

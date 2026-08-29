@@ -225,7 +225,7 @@ void LdreqTimingTrace_FrameEnd(void) {
     }
 
     /* Check_PL_Load() and Check_LDREQ_Clear() are pure reads of
-     * ldreq_result[] / q_ldreq[] (gd3rd.c:921-923, sys_sub.c:898-904) —
+     * ldreq_result[] / q_ldreq[] (gd3rd.c:943-945, sys_sub.c:898-904) —
      * capturing them cannot perturb the run. They are recorded because
      * they are the exact expressions Exit_6th (sel_pl.c:1702-1707) gates
      * the SAVED Exit_No / Exit_Timer on. */
