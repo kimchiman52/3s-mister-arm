@@ -1225,7 +1225,7 @@ async function testKeyBudgetCoversLegitimateSignalling(handle) {
     //     INTERVAL_MS, default 5000 ms (src/port/config/config.c), floor
     //     1000 ms -> 1/s at the floor, 0.2/s at the default. The host does
     //     NOT also run a signalling leg inside the race (direct_p2p.c sets
-    //     cfg.signal_leg = false for RACE_ROLE_HOST: the DELIVER that
+    //     cfg.signal_leg = false when acting as host: the DELIVER that
     //     started that thread already proves it is paired).
     //   * one challenge-triggered immediate resend per side, at most once
     //     per cookie rotation (>= 60 s).

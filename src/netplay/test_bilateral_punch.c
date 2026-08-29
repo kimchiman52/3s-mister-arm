@@ -7396,8 +7396,11 @@ done:
  *
  * Both punch legs are DP2P_PUNCH_REAL (no oracle), so this runs the real
  * Stun_PunchBegin / Pump / Offer / Settled machine over real loopback
- * UDP on both sides. `RaceCfg.role` is written by RunRace and read
- * nowhere inside p2p_race, so HOST on both sides costs nothing.
+ * UDP on both sides. RaceCfg carries no role field at all — the race is
+ * symmetric by derivation (RACE_PUNCH_SETTLE_MS and the G >= 2d
+ * convergence condition have no role term), and RunRace never threads
+ * the probe's `host_role` flag into p2p_race, so HOST on both sides
+ * costs nothing.
  *
  * WHAT THIS TEST FOUND THE MOMENT IT WAS RESTORED — READ BEFORE
  * "FIXING" THE TEST.

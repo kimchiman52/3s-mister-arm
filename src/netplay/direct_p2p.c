@@ -1094,11 +1094,6 @@ static bool race_budget_expired(uint32_t now, uint32_t t0, int budget_ms,
 #define RACE_PUNCH_LEGS 2
 
 typedef enum {
-    RACE_ROLE_JOIN = 0,
-    RACE_ROLE_HOST
-} RaceRole;
-
-typedef enum {
     RACE_PUNCHED = 0,  /* a punch leg confirmed and finished its tail */
     RACE_CANCELLED,    /* caller-initiated abort                      */
     RACE_EXHAUSTED     /* every leg finished without a link           */
