@@ -103,7 +103,7 @@ Build flavors:
 Netplay builds:
 
 - Netplay is **ON by default** for MiSTer builds (`CMakeLists.txt` `PORT_MISTER` block, changed 2026-07-25). `tools/mister/build-game.sh --flavor telemetry` already produces a netplay-capable package — it bundles `libminiupnpc` and the direct-P2P + bilateral hole-punch stack. The RmlUi lobby cascade was dropped and is NOT required; there is no `ENABLE_RMLUI` option, and the RmlUi + FreeType `build-deps.sh` recipes were removed 2026-08-29 (neither library was ever referenced by `CMakeLists.txt`). See `docs/plan-netplay-port.md` §15 #8 for the `CFG_KEY_NETPLAY_*` runtime-config key convention.
-- Never ship a netplay-off MiSTer build: a netplay-off package omits `libminiupnpc`, and a `--delete` deploy then strips it (plus any other netplay libs) off-device. For the rare deliberate exception, pass `EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=OFF"`; the inner build prints the final cmake invocation so you can confirm the flag landed in the container log.
+- Never ship a netplay-off MiSTer build: a netplay-off package omits `libminiupnpc`, and the deploy then prunes it (plus any other netplay libs) off-device — correctly, since the previous deploy's manifest claims it, but the result is still a device without netplay libraries. For the rare deliberate exception, pass `EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=OFF"`; the inner build prints the final cmake invocation so you can confirm the flag landed in the container log.
 
 Validated dual-flavor Docker build/package commands:
 
@@ -374,45 +374,77 @@ Remote mutation safety:
 - `tools/mister/perf-sampler.sh --copy-afs` now restores the previous remote `SF33RD.AFS` on exit instead of leaving a replacement behind.
 - `tools/mister/perf-sampler.sh --tag` now accepts only safe basenames; do not use path-like tags.
 
-Recommended sync command (preserves staged `SF33RD.AFS` plus on-device
-`config`/`keymap`/`state`/`replays`/`training`/`balance.status`):
-
-Note that `deploy` runs `rsync --delete` scoped to `/media/fat/games/3s-arm/`.
-Everything the device generates at the pref path must therefore appear in the
-preserve list above, or a deploy silently destroys it. `training` (the user's
-training-mode settings, written by `src/port/config/training_config.c:133`) and
-`balance.status` (`src/arcade/arcade_balance.c:91`) were missing from that list
-until 2026-08-29 and were lost on a deploy; if you add a new pref-path runtime
-file, add it here and to `mister_rsync_expect`/`mister_rsync_deploy` in
-`tools/mister/mister-common.sh` in the same change.
+Recommended sync command:
 
 ```bash
 MISTER_HOST=192.168.1.171 MISTER_USER=root MISTER_PASSWORD=1 \
   tools/mister/misterctl.sh deploy --src build/mister-clean-package
 ```
 
+### What a deploy is allowed to delete
+
+`deploy` does **not** use `rsync --delete`. It deletes only paths that a
+previous deploy recorded in `/media/fat/games/3s-arm/.deploy-manifest` and that
+the package being deployed no longer contains. Anything else on the device —
+including a runtime file nobody has registered anywhere — survives by
+construction. On a device with no manifest yet, nothing is deleted at all.
+
+Before transferring anything the deploy prints the paths it intends to remove:
+
+```
+deploy: stale paths recorded by the previous deploy and absent from this package:
+  - lib/libminiupnpc.so
+```
+
+Removal is `rm -f <exact file>` plus `rmdir` for directories; there is no
+`rm -rf` in the path, so a directory that still holds runtime data cannot be
+taken out even if the manifest is wrong.
+
+Useful valves:
+
+- `MISTER_DEPLOY_PLAN_ONLY=1` — print the plan and stop before any transfer.
+- `MISTER_DEPLOY_NO_PRUNE=1` — install, skip the removals, leave the previous
+  manifest in place so the next deploy re-plans them.
+
+**You no longer need to register a new runtime file to keep it safe.** If you
+add one anyway, put it in `tools/mister/runtime-owned-paths.txt` with a
+`file:LINE` citation; `tools/mister/derive-runtime-paths.sh --check` reads the
+source and fails if the two disagree, and
+`tools/mister/tests/deploy-prune-test.sh` runs that check. The inventory is a
+tripwire — the deploy refuses to delete anything it names — not the safety
+mechanism.
+
+History, because this policy replaced one that destroyed real data twice: the
+deploy used to be `rsync -av --delete` shielding a fixed preserve list, so
+anything the device held and the package did not was deleted. It took out
+`libminiupnpc.so`, `replays/` and the user's ROM on 2026-07-25, and the user's
+`training` settings (`src/port/config/training_config.c:183`) plus
+`balance.status` (`src/arcade/arcade_balance.c:91`) on 2026-08-29, with no
+device backup. The list still did not cover `saves/` — the actual save data,
+`settings` and `sysdir` (`src/sf33rd/Source/PS2/mc/savesub.c:42,335,340`) — so
+the next loss was already queued.
+
 Use `build/mister-clean-package/` for normal play and `build/mister-telemetry-package/` when you need perf capture or parity tooling on the device.
 
-Low-level `rsync` still works, but do not prefer it in automation now that `misterctl.sh` exists. If you bypass `misterctl.sh`, dry-run first and keep the destination exactly `/media/fat/games/3s-arm/`:
+Low-level `rsync` still works, but do not prefer it in automation now that `misterctl.sh` exists. If you bypass `misterctl.sh`, **do not add `--delete`** — you would be reintroducing exactly the policy that destroyed user data twice, and you would do it without the manifest that bounds it. Dry-run first and keep the destination exactly `/media/fat/games/3s-arm/`:
 
 ```bash
-rsync -avn --itemize-changes --delete --omit-dir-times --no-perms --no-owner --no-group \
+rsync -avn --itemize-changes --omit-dir-times --no-perms --no-owner --no-group \
   --exclude 'resources/SF33RD.AFS' \
-  --filter 'P resources/SF33RD.AFS' \
+  --exclude 'resources/*.zip' \
   --exclude 'config' \
-  --filter 'P config' \
   --exclude 'keymap' \
-  --filter 'P keymap' \
   --exclude 'state' \
-  --filter 'P state' \
+  --exclude 'replays' \
   --exclude 'training' \
-  --filter 'P training' \
   --exclude 'balance.status' \
-  --filter 'P balance.status' \
+  --exclude 'saves' \
+  --exclude 'states' \
+  --exclude 'logs' \
   build/mister-clean-package/ root@192.168.1.171:/media/fat/games/3s-arm/
 ```
 
-Remove `-n` only after reviewing the itemized path list and confirming every changed file belongs to `games/3s-arm`.
+Remove `-n` only after reviewing the itemized path list and confirming every changed file belongs to `games/3s-arm`. Note these `--exclude`s now only stop the package overwriting a device-owned file; they are not delete shields, because nothing here deletes. The list is generated by `mister_deploy_preserve_paths` in `tools/mister/mister-common.sh` — read it there rather than trusting this copy.
 
 Required game data:
 
@@ -517,6 +549,41 @@ cmake --build build/mister --parallel 2
 cmake --install build/mister --prefix build/mister-install
 '
 ```
+
+### `mkdir: cannot create directory 'third_party': File exists` (worktree builds)
+
+Symptom:
+
+- `tools/mister/build-game.sh` dies seconds into the container step, in
+  `build-deps.sh`, on a directory the error says already exists
+
+Cause:
+
+- `third_party/` is gitignored, so a git worktree has none and lanes create it
+  as an **absolute symlink into the main checkout**. `rsync -a` staged that
+  symlink verbatim, the host path does not exist inside the container, and
+  `mkdir -p` fails on a dangling symlink.
+
+Fix:
+
+- Already fixed — both staging rsyncs in `tools/mister/build-game.sh` pass
+  `--copy-unsafe-links`, so the link is materialised as a real directory and a
+  worktree stages exactly what the main checkout stages. A lane workdir left
+  broken by an older build repairs itself on the next run.
+
+**Do not "fix" a dangling `third_party` by making the host path resolve inside
+the container.** Recreating the prefix so it points at `/src`
+(`ln -sfn /src /Users/sb/Developer/3sx-mister`) aims the ARM dependency build
+straight through the bind mount and into the host's own `third_party`. Observed
+2026-08-29 07:45–07:55: host `sdl3`, `GekkoNet`, `SDL_net`, `minizip-ng` and
+`tf-psa-crypto` were all replaced with ARM ELF artifacts. Nothing failed at
+build time; it surfaced later as the host harness aborting with
+`Library not loaded: @rpath/libSDL3.0.dylib` (SIGABRT, exit 134), and recovery
+was a full `build-deps.sh --profile desktop`. `build-game.sh` now refuses to run
+`build-deps.sh` unless `third_party` resolves inside the lane's own workdir, so
+that variant exits 6 instead of corrupting the host. If you ever do need a
+lane-private link, point it at a container-local path:
+`mkdir -p /armdeps/third_party && ln -sfn /armdeps <host-checkout-path>`.
 
 ### Missing resources
 

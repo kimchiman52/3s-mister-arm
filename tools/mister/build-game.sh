@@ -324,7 +324,11 @@ if [ -n "${mount_src}" ] && [ "${mount_src}" != "${ROOT_DIR}" ]; then
     mkdir -p "${staging_host_dir}"
     # Same exclude set as the in-container rsync below, so the staged tree is
     # byte-identical to what a same-checkout build would have shipped.
-    rsync -a --delete \
+    #
+    # Task #90: --copy-unsafe-links. See the matching comment on the
+    # in-container rsync below; both copies of this command need it, because a
+    # worktree's tree passes through both.
+    rsync -a --delete --copy-unsafe-links \
         --exclude='.git/' \
         --exclude='.claude/' \
         --exclude='.build-src/' \
@@ -484,7 +488,23 @@ mkdir -p "${workdir}"
 # the mount. It is never a build input -- excluding it keeps a concurrent
 # worktree build's staging tree out of this lane's workdir, and stops a build
 # of the container's own checkout from copying it in.
-rsync -a --delete \
+#
+# Task #90: --copy-unsafe-links. `third_party/` is gitignored, so a git
+# worktree does not get one from the checkout and lanes create it as an
+# absolute symlink into the main checkout instead. Plain `rsync -a` copies
+# that symlink verbatim; the host path it names does not exist inside the
+# container, so the link dangles and `mkdir -p third_party` in build-deps.sh
+# fails with "File exists" -- a mkdir error naming a directory that visibly
+# does exist, which reads as a permissions problem rather than a broken link.
+# --copy-unsafe-links materialises the contents of any symlink pointing
+# outside the transfer root, so a worktree build stages exactly the tree a
+# main-checkout build stages. It also replaces a dangling symlink already
+# sitting in the destination, so a lane workdir left broken by a pre-fix build
+# repairs itself on the next run. Verified against both implementations this
+# repo's builds pass through: host openrsync (macOS) and rsync 3.2.3 in the
+# container; the `third_party/sdl3/build/` exclude still applies through the
+# dereference in both.
+rsync -a --delete --copy-unsafe-links \
     --exclude='.git/' \
     --exclude='.claude/' \
     --exclude='.build-src/' \
@@ -562,6 +582,56 @@ if [ "${cross_build}" -eq 1 ]; then
         -DCMAKE_CXX_COMPILER_TARGET=arm-linux-gnueabihf
     )
 fi
+
+# -------------------------------------------------------------------------
+# Task #90 -- the host checkout must be unreachable from the ARM dependency
+# build
+# -------------------------------------------------------------------------
+#
+# build-deps.sh writes every dependency it builds into ${workdir}/third_party.
+# It resolves that path through whatever `third_party` happens to be, so if
+# `third_party` is a symlink leading out of the workdir, an ARM build writes
+# ARM ELF objects wherever the link lands.
+#
+# That is not hypothetical. The staged-symlink bug this guard accompanies
+# presents as `mkdir: cannot create directory 'third_party': File exists`, and
+# the obvious way to "fix" a dangling link is to recreate the missing prefix
+# inside the container so it resolves -- for the worktree case that means
+# pointing the host checkout path at /src, e.g.
+# `ln -sfn /src /Users/sb/Developer/3sx-mister`. /src is the bind mount of the
+# host repo. The dependency build then writes straight through it. Observed
+# 2026-08-29: host third_party/sdl3, GekkoNet, SDL_net, minizip-ng and
+# tf-psa-crypto were all overwritten with ARM artifacts. Nothing failed at
+# build time; it surfaced later as the host test harness aborting with
+# `Library not loaded: @rpath/libSDL3.0.dylib` (SIGABRT, exit 134), and cost a
+# full `build-deps.sh --profile desktop` to recover.
+#
+# So the workaround is not merely discouraged here, it is refused: the build
+# will not start unless third_party resolves inside this lane's own workdir.
+# The safe lane-private form of the same workaround -- a link into a
+# container-local directory, e.g. `mkdir -p /armdeps/third_party &&
+# ln -sfn /armdeps <host-checkout-path>` -- is what the message points at, but
+# note that with --copy-unsafe-links above no workaround should be needed at
+# all: third_party arrives as a real directory.
+if [ -L third_party ]; then
+    echo "ERROR: ${workdir}/third_party is a symlink -> $(readlink third_party)" >&2
+    echo "       build-deps.sh would build this lane's ARM dependencies through it." >&2
+    echo "       Refusing: third_party must be a real directory inside ${workdir}." >&2
+    exit 6
+fi
+third_party_resolved="$(readlink -f third_party 2>/dev/null || true)"
+case "${third_party_resolved}" in
+"${workdir}"/third_party) ;;
+*)
+    echo "ERROR: third_party resolves outside this lane's workdir." >&2
+    echo "       workdir:  ${workdir}" >&2
+    echo "       resolves: ${third_party_resolved:-<unresolvable>}" >&2
+    echo "       An ARM dependency build here would write outside the workdir;" >&2
+    echo "       if that path is under /src it would overwrite the host checkout's" >&2
+    echo "       desktop dependency tree with ARM objects. Refusing." >&2
+    exit 6
+    ;;
+esac
 
 JOBS="${jobs}" bash build-deps.sh --profile mister
 
