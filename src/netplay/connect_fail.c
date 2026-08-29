@@ -211,3 +211,128 @@ int ConnectFail_AbortHoldTick(int held_frames, bool button_down) {
 bool ConnectFail_AbortHoldFired(int held_frames) {
     return held_frames >= CONNECT_ABORT_HOLD_FRAMES;
 }
+
+/* --- #36: attribution confidence ---------------------------------------- */
+
+/* RULE ORDER IS THE CONTRACT. Read top to bottom:
+ *   1. success                                  -> OK
+ *   2. a confirm contradicts the code           -> AMBIG_CONFIRM
+ *   3. silence WITH a measured skew frame       -> VERSION_SKEW  (definite)
+ *   4. silence with nothing else                -> AMBIG_VERSION (honest)
+ *   5. otherwise                                -> SUPPORTED
+ *
+ * 2 outranks 3 because a confirm is evidence about OUR OWN socket
+ * (a datagram provably arrived), while a skew frame is evidence about
+ * the SERVER. If both are somehow present the socket-level fact is the
+ * one that contradicts the classified code, so it wins. */
+ConnectAttribution ConnectFail_Attribute(ConnectFailCode code,
+                                         bool race_confirm_seen,
+                                         unsigned race_badver_n) {
+    if (code == CONNECT_FAIL_NONE) {
+        return CONNECT_ATTRIB_OK;
+    }
+    /* A punch leg that reached CONFIRMED proves a datagram from the peer
+     * arrived at our socket and passed the token check. That single fact
+     * contradicts every code below, each for its own reason:
+     *
+     *   NAT_BLOCKED     — asserts the peer's datagrams could not reach
+     *                     us. One provably did.
+     *   SYMMETRIC_BOTH  — same assertion, plus a port-reassignment
+     *                     detail that a successful confirm makes moot.
+     *   HOST_OFFLINE    — classified from `deliver_any && !deliver_real`,
+     *                     i.e. "the server never had this host". But the
+     *                     SEED punch leg (the endpoint decoded from the
+     *                     room code) can confirm without the rendezvous
+     *                     server ever naming the host, and a confirm
+     *                     there proves the host IS online and answering.
+     *                     The user string — "Host not found. Code stale
+     *                     or host offline." — is then a flat
+     *                     contradiction of the wire evidence.
+     *   HAIRPIN         — asserts the router cannot loop a packet back to
+     *                     the LAN. A confirm on that path proves loopback
+     *                     worked.
+     *   PUNCH_AUTH      — asserts the peer's punch failed the token
+     *                     check. A leg that CONFIRMED passed that very
+     *                     check, so the bad-token record must have come
+     *                     from a DIFFERENT datagram. That is mixed
+     *                     evidence, not a clean auth verdict.
+     *
+     * DELIBERATELY NOT IN THIS SET: CONNECT_FAIL_COOKIE_REJECTED. Do not
+     * "fix" that omission. The cookie is the RENDEZVOUS SERVER's
+     * return-routability challenge — the server refused to bind our
+     * REGISTER because our cookie echo did not verify. That is a
+     * client<->server fact. A punch confirm is a client<->PEER fact on a
+     * different conversation with a different counterparty, and the two
+     * can be simultaneously true with no contradiction whatsoever: the
+     * peer can answer us perfectly while the server still rejects our
+     * cookie. Marking it ambiguous would be inventing doubt about a
+     * verdict the evidence fully supports, which is the same class of
+     * error as inventing certainty. */
+    if (race_confirm_seen &&
+        (code == CONNECT_FAIL_NAT_BLOCKED ||
+         code == CONNECT_FAIL_SYMMETRIC_BOTH ||
+         code == CONNECT_FAIL_HOST_OFFLINE ||
+         code == CONNECT_FAIL_HAIRPIN ||
+         code == CONNECT_FAIL_PUNCH_AUTH)) {
+        return CONNECT_ATTRIB_AMBIG_CONFIRM;
+    }
+    if (code == CONNECT_FAIL_RENDEZVOUS_DOWN) {
+        /* SILENCE WITH A WITNESS. RENDEZVOUS_DOWN is inferred from the
+         * absence of parseable frames — but p2p_race also counts the
+         * '3SXR' frames that arrived FROM THE RENDEZVOUS ENDPOINT and
+         * carried a protocol version this build cannot parse. When that
+         * counter is non-zero the silence is not unexplained: the server
+         * answered, we could not read the answer. That is a DEFINITE
+         * verdict with a definite remedy (update the game, or the
+         * server), and reporting it as "ambiguous" would bury the one
+         * case this counter exists to attribute. */
+        if (race_badver_n > 0u) {
+            return CONNECT_ATTRIB_VERSION_SKEW;
+        }
+        /* TRUE silence: zero frames of any kind. Now the ambiguity is
+         * real and must be stated. The causes are bit-for-bit identical
+         * on the wire: the server is unreachable, or the server speaks a
+         * protocol version we do not and DROPS our frame with no reply
+         * whatsoever (the deployed v1-vs-v2 case — that direction is
+         * undetectable precisely because it produces no frame for
+         * badver_n to count). The header documents four more silent-drop
+         * causes on a LIVE server, which this same ambiguity covers. */
+        return CONNECT_ATTRIB_AMBIG_VERSION;
+    }
+    return CONNECT_ATTRIB_SUPPORTED;
+}
+
+const char* ConnectFail_AttributionText(ConnectAttribution a) {
+    switch (a) {
+    case CONNECT_ATTRIB_OK:            return "ok";
+    case CONNECT_ATTRIB_SUPPORTED:     return "supported";
+    case CONNECT_ATTRIB_AMBIG_CONFIRM: return "ambiguous-punch-confirmed";
+    case CONNECT_ATTRIB_AMBIG_VERSION: return "ambiguous-rendezvous-silent";
+    case CONNECT_ATTRIB_VERSION_SKEW:  return "version-skew";
+    }
+    return "supported";
+}
+
+const char* ConnectFail_AttributionNote(ConnectAttribution a) {
+    switch (a) {
+    case CONNECT_ATTRIB_AMBIG_CONFIRM:
+        return "a punch leg was CONFIRMED during the race but the race still ended "
+               "EXHAUSTED — do NOT read this as a NAT failure; the peer's datagram "
+               "provably reached us";
+    case CONNECT_ATTRIB_AMBIG_VERSION:
+        return "zero rendezvous frames: an unreachable server and a server speaking a "
+               "different protocol version are indistinguishable on the wire (a "
+               "version-mismatched server drops our frame with no reply)";
+    case CONNECT_ATTRIB_VERSION_SKEW:
+        /* Deliberately contains no hedging word. The frames were counted
+         * from the rendezvous endpoint itself; there is nothing to hedge
+         * about. */
+        return "the rendezvous server answered with a '3SXR' protocol version this "
+               "build does not speak — this is a build/server version mismatch, not a "
+               "network failure; update the game (or the server)";
+    case CONNECT_ATTRIB_OK:
+    case CONNECT_ATTRIB_SUPPORTED:
+        break;
+    }
+    return "";
+}

@@ -256,6 +256,55 @@ int ConnectFail_AbortHoldTick(int held_frames, bool button_down);
 /* True once the hold counter has crossed the abort threshold. */
 bool ConnectFail_AbortHoldFired(int held_frames);
 
+/* --- #36: attribution confidence ---------------------------------------
+ *
+ * #36: does the recorded evidence actually SUPPORT the classified code, or
+ * is the attribution ambiguous? A log that confidently blames the wrong
+ * leg is worse than no log (the H-1 misattribution).
+ *
+ * This is a SECOND field beside the code, never a replacement for it: it
+ * DOES NOT change the returned ConnectFailCode, does not change any
+ * existing classifier, and does not change any user-facing string. Every
+ * existing test keeps passing unchanged. */
+typedef enum ConnectAttribution {
+    CONNECT_ATTRIB_OK = 0,          /* success                               */
+    CONNECT_ATTRIB_SUPPORTED,       /* evidence supports the code            */
+    CONNECT_ATTRIB_AMBIG_CONFIRM,   /* NAT blamed, but a punch DID confirm   */
+    CONNECT_ATTRIB_AMBIG_VERSION,   /* rendezvous silent: dead vs version-skew*/
+    /* NOT ambiguous — the opposite. The server answered with a '3SXR'
+     * frame carrying a protocol version this build cannot parse, so the
+     * silence that produced RENDEZVOUS_DOWN has a MEASURED cause. The
+     * governing principle cuts both ways: where the evidence is
+     * genuinely ambiguous say so, and where it is definite do not
+     * pretend otherwise. */
+    CONNECT_ATTRIB_VERSION_SKEW
+} ConnectAttribution;
+
+/* Pure. Two pieces of race evidence, and the rule order between them
+ * matters (see the implementation):
+ *
+ *   `race_confirm_seen` — RaceResult.confirm_seen carried out through
+ *      s_work: "a punch leg reached CONFIRMED at some point during the
+ *      race", including confirms that never settled (those are precisely
+ *      the ones the race discards).
+ *   `race_badver_n` — RaceResult.badver_n: how many '3SXR' frames FROM
+ *      THE RENDEZVOUS ENDPOINT carried a protocol version we do not
+ *      speak. Source-gated in p2p_race precisely because it is
+ *      load-bearing here; an ungated counter would let an off-path
+ *      spoofer manufacture the definite verdict below. */
+ConnectAttribution ConnectFail_Attribute(ConnectFailCode code,
+                                         bool race_confirm_seen,
+                                         unsigned race_badver_n);
+/* Stable machine string for logs: "ok" / "supported" /
+ * "ambiguous-punch-confirmed" / "ambiguous-rendezvous-silent" /
+ * "version-skew". Never NULL. */
+const char* ConnectFail_AttributionText(ConnectAttribution a);
+/* Human sentence explaining what the code alone does not say — WHY the
+ * attribution is ambiguous, or (VERSION_SKEW) what the measured cause
+ * actually is. "" when there is nothing to add (OK / SUPPORTED).
+ * Never NULL. */
+const char* ConnectFail_AttributionNote(ConnectAttribution a);
+
 #ifdef __cplusplus
 }
 #endif

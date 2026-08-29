@@ -1080,6 +1080,13 @@ int Netplay_Test_SparseEffectSave(void);
 // exercises the REGISTER/POLL/DELIVER round-trip plus the LAN-bypass
 // table; no external network dep.
 int Netplay_Test_BilateralPunch(void);
+// #36: forward-decl of the connect-observability proof harness
+// (src/netplay/test_connect_observability.c). Same gating pattern as the
+// other Phase 6 tests. Induces a rendezvous protocol-version skew and a
+// silent rendezvous server on loopback UDP, then reads the per-session
+// netplay log file back off disk to prove the attribution evidence
+// reaches it; also hammers the thread-safe log sink from 4 threads.
+int Netplay_Test_ConnectObservability(void);
 // M-3 coverage guard: forward-decl of the GameState save/load
 // field-coverage harness (src/netplay/test_gs_coverage.c). Randomized
 // load->save round-trip over the whole GameState; any struct byte that
@@ -1125,6 +1132,7 @@ int main(int argc, const char* argv[]) {
     if (configuration.test_netplay_event_queue || configuration.test_mist_handshake ||
         configuration.test_room_code || configuration.test_stun_mock ||
         configuration.test_sparse_effect_save || configuration.test_bilateral_punch ||
+        configuration.test_connect_observability ||
         configuration.test_gs_coverage) {
         SDL_SetAssertionHandler(test_harness_assert_handler, NULL);
     }
@@ -1185,6 +1193,16 @@ int main(int argc, const char* argv[]) {
 #else
         fprintf(stderr,
                 "--test-bilateral-punch requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+    if (configuration.test_connect_observability) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_ConnectObservability();
+#else
+        fprintf(stderr,
+                "--test-connect-observability requires a build with ENABLE_NETPLAY=ON.\n");
         return 2;
 #endif
     }

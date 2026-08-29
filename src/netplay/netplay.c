@@ -10,6 +10,10 @@
 #include "netplay/matchmaking.h"
 #include "netplay/mist_handshake.h"
 #include "netplay/net_tuning.h"
+// #44: Rendezvous_WireVersion() for the report header — the wire version is
+// a #define private to rendezvous.c, and duplicating the literal here is how
+// a header field silently drifts away from what we actually speak.
+#include "netplay/rendezvous.h"
 #include "netplay/sdl_net_adapter.h"
 #include "port/paths.h"
 #include "port/sdl/sdl_app.h"
@@ -38,6 +42,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3_net/SDL_net.h>
 
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -140,6 +145,71 @@ static uint32_t s_rb_buckets[5] = { 0 };
 // tees to SDL_Log + the file.
 static FILE* s_netplay_log = NULL;
 
+// === #36: thread-safe connect-log sink ===
+// Before #36 the FILE* above was documented MAIN THREAD ONLY and only
+// Netplay_LogConnectEvent (main thread, from DirectP2P_Tick) ever wrote
+// to it. Every cascade diagnostic in direct_p2p.c runs on a WORKER thread
+// and used bare SDL_Log, so none of it reached the file a tester sends.
+// Routing worker lines here needs one mutex; it is created once by
+// Netplay_LogSinkInit on the main thread BEFORE any worker spawns, which
+// is the happens-before that makes the pointer read below safe.
+// NULL mutex => single-threaded era => lock/unlock are no-ops, so the
+// pre-existing main-thread behaviour is unchanged even if Init never ran.
+static SDL_Mutex* s_netplay_log_mu = NULL;
+
+// Bound ONE session file. A cascade that retries for minutes can emit a
+// lot of lines and /media/fat is a shared SD card; past the budget the
+// lines still go to SDL_Log, they just stop hitting the disk.
+#define NETPLAY_LOG_MAX_BYTES (256u * 1024u)
+static size_t s_netplay_log_bytes = 0;
+static bool   s_netplay_log_truncated = false;
+
+// === #44: session-log pruning + the ONE file a tester sends ===
+//
+// Nothing has ever removed a netplay-<utc_ms>.log. Measured on the
+// development machine while writing this: 461 files / 87 MB in
+// ~/Library/Application Support/CrowdedStreet/3S-ARM/logs/. On a MiSTer
+// that directory lives on the SD card the whole system boots from
+// (Paths_GetPrefPath() -> /media/fat/games/3s-arm/, src/port/paths.c:33),
+// so unbounded growth is a device-health problem, not just clutter.
+//
+// Keep the newest NETPLAY_LOG_KEEP_FILES, ranked by the UTC-ms stamp the
+// FILENAME carries — no stat(), so a directory copied between machines or
+// restored from a backup still ranks correctly. Cap the scan so a hostile
+// or merely enormous directory cannot make startup unbounded.
+#define NETPLAY_LOG_KEEP_FILES 20
+#define NETPLAY_LOG_PRUNE_SCAN_MAX 512
+
+// The tester-facing report. <PrefPath>logs/netplay-report.txt carries ONLY
+// the attributed "[netplay-connect]" one-liners, across launches, so the
+// support request is "send me this one file" instead of "find the newest
+// of 461 files". Exactly two generations, so the pair is hard-bounded at
+// 2 * NETPLAY_REPORT_MAX_BYTES and stays pasteable into a chat message.
+#define NETPLAY_REPORT_MAX_BYTES (64u * 1024u)
+static FILE*  s_netplay_report = NULL;
+static size_t s_netplay_report_bytes = 0;
+// Defined below netplay_utc_ms (it needs the stamp); declared here because
+// netplay_log_close, which is above that point, closes it.
+static void netplay_report_close_locked(void);
+
+static void netplay_log_lock(void) {
+    if (s_netplay_log_mu != NULL) {
+        SDL_LockMutex(s_netplay_log_mu);
+    }
+}
+
+static void netplay_log_unlock(void) {
+    if (s_netplay_log_mu != NULL) {
+        SDL_UnlockMutex(s_netplay_log_mu);
+    }
+}
+
+void Netplay_LogSinkInit(void) {
+    if (s_netplay_log_mu == NULL) {
+        s_netplay_log_mu = SDL_CreateMutex();
+    }
+}
+
 // === Tier-1 netplay diag — Item 9: /proc/net/snmp UDP-drop snapshots ===
 // Captured at session start, on peer-disconnect, and at session end. The
 // heartbeat doesn't sample this — it's relatively expensive (file read +
@@ -218,13 +288,193 @@ static bool read_proc_net_snmp_udp(UdpSnmp* out) {
 // (via SDL_Log so existing log surfaces still receive them) and the
 // per-session netplay log file. Cheap — one fwrite per call once the
 // file is open.
+// CALLER HOLDS netplay_log_lock() when it can race (every #36 MT path).
+// The SDL_Log tee is deliberately inside the lock too: SDL_Log itself is
+// thread-safe, but keeping it inside keeps the two sinks in the same
+// order, which is what makes a field log readable.
+//
+// F4 SPLIT: the FILE half is factored out so a caller that already owns
+// its own console surface (the 1 Hz heartbeat writes to stderr by hand
+// for tail -f workflows) can get the byte budget WITHOUT a second copy
+// of every line appearing via SDL_Log. Before this split that caller
+// wrote the FILE* raw and so escaped the budget entirely — it kept
+// growing the session file after the TRUNCATED marker had been
+// published, which made the marker a lie.
+// CALLER HOLDS netplay_log_lock().
+static void netplay_log_file_line(const char* line) {
+    if (s_netplay_log == NULL) {
+        return;
+    }
+    // #36 byte budget: bound ONE session file. `+1` is the newline.
+    const size_t want = SDL_strlen(line) + 1u;
+    if (s_netplay_log_bytes + want > (size_t)NETPLAY_LOG_MAX_BYTES) {
+        if (!s_netplay_log_truncated) {
+            s_netplay_log_truncated = true;
+            char trunc[160];
+            // %lu, not %zu: SDL_snprintf's own formatter is the one that
+            // runs here and the codebase never relies on its 'z' support.
+            SDL_snprintf(trunc, sizeof(trunc),
+                         "[netplay-log] TRUNCATED at %lu bytes — further lines go to "
+                         "SDL_Log only",
+                         (unsigned long)s_netplay_log_bytes);
+            fputs(trunc, s_netplay_log);
+            fputc('\n', s_netplay_log);
+            fflush(s_netplay_log);
+        }
+        return;
+    }
+    fputs(line, s_netplay_log);
+    fputc('\n', s_netplay_log);
+    s_netplay_log_bytes += want;
+}
+
+// The full tee: system log + the budgeted file write above.
+// CALLER HOLDS netplay_log_lock() when it can race (every #36 MT path).
 static void netplay_log_line(const char* line) {
     SDL_Log("%s", line);
-    if (s_netplay_log != NULL) {
-        fputs(line, s_netplay_log);
-        fputc('\n', s_netplay_log);
+    netplay_log_file_line(line);
+}
+
+// #44: parse "netplay-<digits>.log" -> the UTC-ms stamp the name carries.
+// Returns 0 for ANY name that is not exactly that shape, and 0 is also the
+// "not a candidate" sentinel — a real stamp is a wall-clock millisecond
+// count, so it is never 0 on any machine whose clock is past 1970.
+//
+// This predicate is the entire safety argument for the prune below, so it
+// is deliberately strict on all three axes:
+//   - "netplay-report.txt"   fails the ".log" suffix test;
+//   - "netplay-report.1.txt" fails it too, and "report.1" is not digits;
+//   - "keepme.txt"           fails the "netplay-" prefix test.
+// The >20-digit rejection keeps the name length bounded (8 + 20 + 4 = 32)
+// AND rejects the only inputs that could overflow the unsigned long long
+// the ranking compares.
+static unsigned long long netplay_log_name_stamp(const char* name) {
+    static const char k_prefix[] = "netplay-";
+    static const char k_suffix[] = ".log";
+    const size_t plen = sizeof(k_prefix) - 1u;
+    const size_t slen = sizeof(k_suffix) - 1u;
+    const size_t nlen = SDL_strlen(name);
+    if (nlen <= plen + slen) {
+        return 0;
+    }
+    if (SDL_strncmp(name, k_prefix, plen) != 0) {
+        return 0;
+    }
+    if (SDL_strcmp(name + nlen - slen, k_suffix) != 0) {
+        return 0;
+    }
+    const size_t digits = nlen - slen - plen;
+    if (digits > 20u) {
+        return 0;
+    }
+    for (size_t i = plen; i < nlen - slen; i++) {
+        if (name[i] < '0' || name[i] > '9') {
+            return 0;
+        }
+    }
+    return SDL_strtoull(name + plen, NULL, 10);
+}
+
+// #44: keep the NETPLAY_LOG_KEEP_FILES newest session logs in `logs_dir`,
+// delete the rest. Called from netplay_log_open right after the directory
+// is created, i.e. once per session at most.
+//
+// Deliberate properties:
+//   - ONE opendir pass. Names are snapshotted into a heap array and every
+//     remove() happens AFTER closedir, because POSIX leaves the effect of
+//     unlinking during an active readdir loop unspecified.
+//   - Never recurses, never removes a directory, never touches a name
+//     netplay_log_name_stamp rejects. remove() on a directory fails with
+//     EISDIR anyway, but the name filter means we never even try.
+//   - Bounded: at most NETPLAY_LOG_PRUNE_SCAN_MAX entries are considered,
+//     so the cost of a startup in a pathological directory is capped.
+//   - Fails open. Any allocation or opendir failure means "prune nothing";
+//     losing the prune is a disk-space problem, deleting the wrong thing
+//     is a data-loss problem.
+typedef struct NetplayLogEnt {
+    unsigned long long ts;
+    char               name[36]; // >= 32 + NUL, see netplay_log_name_stamp
+} NetplayLogEnt;
+
+static void netplay_log_prune(const char* logs_dir) {
+    if (logs_dir == NULL || logs_dir[0] == '\0') {
+        return;
+    }
+    DIR* d = opendir(logs_dir);
+    if (d == NULL) {
+        return;
+    }
+    NetplayLogEnt* ents =
+        (NetplayLogEnt*)SDL_malloc(sizeof(NetplayLogEnt) * NETPLAY_LOG_PRUNE_SCAN_MAX);
+    if (ents == NULL) {
+        closedir(d);
+        return;
+    }
+
+    // Top-N stamps, kept sorted descending, so the cutoff is available
+    // without sorting the whole directory.
+    unsigned long long keep[NETPLAY_LOG_KEEP_FILES];
+    int nkeep = 0;
+    int nents = 0;
+    int examined = 0;
+    struct dirent* e;
+    while ((e = readdir(d)) != NULL && examined < NETPLAY_LOG_PRUNE_SCAN_MAX) {
+        examined++;
+        const unsigned long long ts = netplay_log_name_stamp(e->d_name);
+        if (ts == 0) {
+            continue;
+        }
+        if (nents < NETPLAY_LOG_PRUNE_SCAN_MAX) {
+            ents[nents].ts = ts;
+            SDL_strlcpy(ents[nents].name, e->d_name, sizeof(ents[nents].name));
+            nents++;
+        }
+        if (nkeep < NETPLAY_LOG_KEEP_FILES) {
+            int i = nkeep++;
+            while (i > 0 && keep[i - 1] < ts) {
+                keep[i] = keep[i - 1];
+                i--;
+            }
+            keep[i] = ts;
+        } else if (ts > keep[NETPLAY_LOG_KEEP_FILES - 1]) {
+            int i = NETPLAY_LOG_KEEP_FILES - 1;
+            while (i > 0 && keep[i - 1] < ts) {
+                keep[i] = keep[i - 1];
+                i--;
+            }
+            keep[i] = ts;
+        }
+    }
+    closedir(d);
+
+    if (nkeep < NETPLAY_LOG_KEEP_FILES) {
+        SDL_free(ents);
+        return; // fewer candidates than we keep — nothing to do
+    }
+    const unsigned long long cutoff = keep[NETPLAY_LOG_KEEP_FILES - 1];
+    int removed = 0;
+    for (int i = 0; i < nents; i++) {
+        if (ents[i].ts >= cutoff) {
+            continue;
+        }
+        char path[768];
+        SDL_snprintf(path, sizeof(path), "%s/%s", logs_dir, ents[i].name);
+        if (remove(path) == 0) {
+            removed++;
+        }
+    }
+    SDL_free(ents);
+    if (removed > 0) {
+        SDL_Log("[netplay-log] pruned %d old session log(s), kept the %d newest",
+                removed, NETPLAY_LOG_KEEP_FILES);
     }
 }
+
+#ifdef NETPLAY_TEST_HOOKS
+void Netplay_TestHook_LogPrune(const char* dir) {
+    netplay_log_prune(dir);
+}
+#endif
 
 // Opens <pref>/logs/netplay-<utc_ms>.log for the active session. Block
 // buffered (fflush is driven by the heartbeat at 1 Hz) so we avoid the
@@ -242,10 +492,17 @@ static void netplay_log_open(uint64_t utc_ms) {
     char logs_dir[512];
     SDL_snprintf(logs_dir, sizeof(logs_dir), "%slogs", pref);
     SDL_CreateDirectory(logs_dir);
+    // #44: prune BEFORE creating this session's file, so the file we are
+    // about to open is never a prune candidate for its own call.
+    netplay_log_prune(logs_dir);
     char path[640];
     SDL_snprintf(path, sizeof(path), "%s/netplay-%llu.log",
                  logs_dir, (unsigned long long)utc_ms);
     s_netplay_log = fopen(path, "w");
+    // #36: a fresh file gets a fresh budget. Reset unconditionally so a
+    // failed fopen cannot leave a stale "already truncated" latch behind.
+    s_netplay_log_bytes = 0;
+    s_netplay_log_truncated = false;
     if (s_netplay_log != NULL) {
         // Block-buffered with a small buffer; we drive fflush from the heartbeat.
         setvbuf(s_netplay_log, NULL, _IOFBF, 4096);
@@ -263,6 +520,10 @@ static void netplay_log_close(void) {
         fclose(s_netplay_log);
         s_netplay_log = NULL;
     }
+    // #44: the tester report is opened and closed on exactly the same
+    // paths as the session log, so there is no way to add a close for one
+    // and forget the other.
+    netplay_report_close_locked();
 }
 
 // UTC-ms helper used by the watchdog (Item 5), packet-ring (Item 4), and
@@ -275,6 +536,215 @@ static inline uint64_t netplay_utc_ms(void) {
     clock_gettime(CLOCK_REALTIME, &ts);
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000L);
 }
+
+// ======================================================================
+// #44 — <PrefPath>logs/netplay-report.txt, the ONE file a tester sends
+// ======================================================================
+//
+// The support loop today is: "which of your 461 netplay-<ms>.log files is
+// the one where it failed?" This file answers that by construction. It is
+// append-mode across launches, it carries ONLY the attributed
+// "[netplay-connect]" one-liners (the OK / FAIL / NOTE / ADVISORY /
+// PORTMAP / DEADLINE / ABORT lines), and it is hard-bounded so it stays
+// small enough to paste into a chat message.
+//
+// !! DEPLOY DEPENDENCY — READ BEFORE RELYING ON THIS ON A DEVICE !!
+// On this branch a redeploy DELETES the whole logs/ directory, this file
+// included. tools/mister/mister-common.sh keeps three copies of the rsync
+// preserve list and none of them names "logs" — `grep -n logs
+// tools/mister/mister-common.sh` returns nothing here — so the
+// `rsync -av --delete` in mister_rsync_deploy wipes it. The fix that adds
+// "logs" to the preserved set is commit f8b29ded on the unmerged branch
+// fix/tools-safety-93-90 (there: mister-common.sh:648). That file belongs
+// to that lane and is deliberately NOT edited from here. Until it merges,
+// tools/mister/collect-netplay-logs.sh must be run BEFORE updating a
+// tester's build, and its --help says so.
+//
+// Every function below is "_locked": the caller holds netplay_log_lock().
+// That is not decoration — the report is written from inside the same
+// critical section as the session log (netplay_log_connect_event), which
+// is what makes it thread-safe for free and what makes it impossible for
+// the two files to disagree about what happened.
+
+// MIST_BUILD_HASH is NOT a global compile definition: CMakeLists.txt:167-170
+// attaches it with set_property(SOURCE ...) to a specific source list. This
+// TU is on that list (see the same block), but the #ifdef stays so that a
+// build system change downgrades the header field to "unknown" instead of
+// failing to compile.
+#ifdef MIST_BUILD_HASH
+#define NETPLAY_REPORT_BUILD_HASH MIST_BUILD_HASH
+#else
+#define NETPLAY_REPORT_BUILD_HASH "unknown"
+#endif
+
+#ifdef NETPLAY_TEST_HOOKS
+// Test-only redirect. Without it the rotation test would have to write
+// 128 KB through — and then delete — the REAL user-facing report file in
+// PrefPath, which is the one artifact this feature exists to preserve.
+static char s_netplay_report_dir_override[512] = { 0 };
+#endif
+
+// Directory that holds netplay-report.txt. False when there is no usable
+// PrefPath, in which case the report is simply not written (the session
+// log makes the same call, netplay.c netplay_log_open).
+static bool netplay_report_dir(char* out, size_t cap) {
+#ifdef NETPLAY_TEST_HOOKS
+    if (s_netplay_report_dir_override[0] != '\0') {
+        SDL_strlcpy(out, s_netplay_report_dir_override, cap);
+        return true;
+    }
+#endif
+    const char* pref = Paths_GetPrefPath();
+    if (pref == NULL || pref[0] == '\0') {
+        return false;
+    }
+    SDL_snprintf(out, cap, "%slogs", pref);
+    return true;
+}
+
+static void netplay_report_paths(const char* dir,
+                                 char* live, size_t live_cap,
+                                 char* prev, size_t prev_cap) {
+    SDL_snprintf(live, live_cap, "%s/netplay-report.txt", dir);
+    SDL_snprintf(prev, prev_cap, "%s/netplay-report.1.txt", dir);
+}
+
+static size_t netplay_report_file_size(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (f == NULL) {
+        return 0;
+    }
+    size_t n = 0;
+    if (fseek(f, 0, SEEK_END) == 0) {
+        const long end = ftell(f);
+        if (end > 0) {
+            n = (size_t)end;
+        }
+    }
+    fclose(f);
+    return n;
+}
+
+static void netplay_report_close_locked(void) {
+    if (s_netplay_report != NULL) {
+        fflush(s_netplay_report);
+        fclose(s_netplay_report);
+        s_netplay_report = NULL;
+    }
+    s_netplay_report_bytes = 0;
+}
+
+static void netplay_report_open_locked(void) {
+    if (s_netplay_report != NULL) {
+        return;
+    }
+    char dir[512];
+    if (!netplay_report_dir(dir, sizeof(dir))) {
+        return;
+    }
+    SDL_CreateDirectory(dir);
+    char live[640];
+    char prev[640];
+    netplay_report_paths(dir, live, sizeof(live), prev, sizeof(prev));
+
+    // Cross-launch rotation: a file that already reached the cap is
+    // demoted now rather than being appended to forever. Exactly two
+    // generations, so the pair can never exceed 2 * the cap.
+    size_t existing = netplay_report_file_size(live);
+    if (existing >= (size_t)NETPLAY_REPORT_MAX_BYTES) {
+        remove(prev); // rename() replaces on POSIX; explicit is clearer
+        if (rename(live, prev) == 0) {
+            existing = 0;
+        }
+    }
+
+    s_netplay_report = fopen(live, "a");
+    s_netplay_report_bytes = existing;
+    if (s_netplay_report == NULL) {
+        s_netplay_report_bytes = 0;
+        return;
+    }
+    setvbuf(s_netplay_report, NULL, _IOLBF, 512);
+
+    // One header per open. build= identifies the binary, rend_ver= the
+    // rendezvous wire version we speak — the single most useful field
+    // when the symptom is "zero frames", because a version-mismatched
+    // server drops our frame with no reply and looks exactly like an
+    // unreachable one.
+    char hdr[256];
+    SDL_snprintf(hdr, sizeof(hdr),
+                 "=== 3S-ARM netplay report build=%s rend_ver=%d utc_ms=%llu ===",
+                 NETPLAY_REPORT_BUILD_HASH,
+                 Rendezvous_WireVersion(),
+                 (unsigned long long)netplay_utc_ms());
+    fputs(hdr, s_netplay_report);
+    fputc('\n', s_netplay_report);
+    s_netplay_report_bytes += SDL_strlen(hdr) + 1u;
+    fflush(s_netplay_report);
+}
+
+// Demote the live file and start a fresh one. Separate from the open-time
+// check on purpose: mid-run we rotate when the NEXT line would cross the
+// cap, so the live file is under the cap at the moment we rotate it and
+// the open-time ">= cap" test would decline to act.
+static void netplay_report_rotate_locked(void) {
+    char dir[512];
+    netplay_report_close_locked();
+    if (!netplay_report_dir(dir, sizeof(dir))) {
+        return;
+    }
+    char live[640];
+    char prev[640];
+    netplay_report_paths(dir, live, sizeof(live), prev, sizeof(prev));
+    remove(prev);
+    rename(live, prev);
+    netplay_report_open_locked();
+}
+
+// The filter that keeps this file worth sending: ONLY "[netplay-connect]"
+// lines. The heartbeat, the race spam and the kernel-UDP snapshots all
+// pass through the same sink and all belong in the session log, not here.
+static void netplay_report_line_locked(const char* line) {
+    static const char k_tag[] = "[netplay-connect]";
+    if (line == NULL || SDL_strncmp(line, k_tag, sizeof(k_tag) - 1u) != 0) {
+        return;
+    }
+    netplay_report_open_locked();
+    if (s_netplay_report == NULL) {
+        return;
+    }
+    // Stamped, because this file spans launches and sessions: without an
+    // absolute time there is no way to line a report line up against the
+    // session log, the wrapper log, or the tester's description.
+    char stamped[1024];
+    SDL_snprintf(stamped, sizeof(stamped), "%llu %s",
+                 (unsigned long long)netplay_utc_ms(), line);
+    const size_t want = SDL_strlen(stamped) + 1u;
+    if (s_netplay_report_bytes + want > (size_t)NETPLAY_REPORT_MAX_BYTES) {
+        netplay_report_rotate_locked();
+        if (s_netplay_report == NULL) {
+            return;
+        }
+    }
+    fputs(stamped, s_netplay_report);
+    fputc('\n', s_netplay_report);
+    s_netplay_report_bytes += want;
+    fflush(s_netplay_report); // a crash right after a FAIL line must not lose it
+}
+
+#ifdef NETPLAY_TEST_HOOKS
+void Netplay_TestHook_ReportDir(const char* dir) {
+    netplay_log_lock();
+    netplay_report_close_locked();
+    if (dir == NULL || dir[0] == '\0') {
+        s_netplay_report_dir_override[0] = '\0';
+    } else {
+        SDL_strlcpy(s_netplay_report_dir_override, dir,
+                    sizeof(s_netplay_report_dir_override));
+    }
+    netplay_log_unlock();
+}
+#endif
 
 // R-1: Layer 3 MIST handshake gate. Formerly conditioned on a
 // s_lobby_session flag that no live code path ever set (the RmlUi lobby
@@ -966,8 +1436,13 @@ static void configure_gekko() {
     // would early-return on the already-open handle and append the entire
     // session log to the failure-timestamped file. Retire any such
     // leftover log first; this session gets its own file.
+    // #36: close+open must be ONE critical section — a worker landing
+    // between them would lazily reopen a file this session is about to
+    // replace.
+    netplay_log_lock();
     netplay_log_close();
     netplay_log_open(s_session_started_unix_ms);
+    netplay_log_unlock();
 
     // Tier-1 netplay diag — Item 9: capture /proc/net/snmp UDP-row baseline
     // so peer-disconnect / session-end can emit deltas. Zeroed sample on
@@ -1150,7 +1625,9 @@ static void process_session() {
                          s_last_advance_frame,
                          (double)frames_behind,
                          (int)network_stats.rollback);
+            netplay_log_lock();   // #36: a direct_p2p worker may be live
             netplay_log_line(line);
+            netplay_log_unlock();
             s_watchdog_latched = true;
         }
     }
@@ -1200,7 +1677,9 @@ static void process_session() {
                                  (unsigned long long)(now_snmp.in_errors      - s_udp_snmp_session_start.in_errors),
                                  (unsigned long long)(now_snmp.rcvbuf_errors  - s_udp_snmp_session_start.rcvbuf_errors),
                                  (unsigned long long)(now_snmp.no_ports       - s_udp_snmp_session_start.no_ports));
+                    netplay_log_lock();   // #36
                     netplay_log_line(line);
+                    netplay_log_unlock();
                 }
                 SDLNetAdapter_DumpPacketRing(
                     netplay_utc_ms(),
@@ -1451,11 +1930,30 @@ static void update_network_stats() {
             fputs(line, stderr);
             fputc('\n', stderr);
             fflush(stderr);
+            // #36 / F4: through the budgeted writer, not a raw fputs. The
+            // heartbeat runs once per second for the whole session and was
+            // the ONE writer that bypassed s_netplay_log_bytes and the
+            // s_netplay_log_truncated latch, so it kept enlarging the file
+            // after the 256 KB marker claimed nothing more would be
+            // written.
+            //
+            // netplay_log_file_line, not netplay_log_line: the explicit
+            // stderr write above is this site's console surface (kept for
+            // the tail -f / wrapper-log workflow the original comment
+            // names), and netplay_log_line's SDL_Log tee would print a
+            // SECOND copy of every heartbeat to that same stderr. The
+            // split keeps the byte budget and leaves this site's console
+            // output byte-identical to before.
+            netplay_log_lock();
+            netplay_log_file_line(line);
+            // Load-bearing: the file is block-buffered on purpose and THIS
+            // is the 1 Hz flush that netplay_log_open's comment delegates
+            // to the heartbeat. Skipped when the budget already refused
+            // the line, which is harmless — there is nothing new to push.
             if (s_netplay_log != NULL) {
-                fputs(line, s_netplay_log);
-                fputc('\n', s_netplay_log);
                 fflush(s_netplay_log);
             }
+            netplay_log_unlock();
         }
 
         frame_max_rollback = 0;
@@ -1883,6 +2381,7 @@ void Netplay_Run() {
                     (int)final_stats.jitter,
                     (double)final_stats.kb_sent,
                     (double)final_stats.kb_received);
+            netplay_log_lock();   // #36: held across session-end + close
             netplay_log_line(line);
 
             // Tier-1 netplay diag — Item 9: final UDP-row delta on session-end.
@@ -1910,6 +2409,7 @@ void Netplay_Run() {
             // Tier-1 netplay diag — Item 7: close the netplay log file once
             // we've emitted session-end + the final SNMP delta.
             netplay_log_close();
+            netplay_log_unlock();
 
             s_session_uuid = 0;  // Mark closed so a stray re-entry doesn't double-log.
         }
@@ -2115,12 +2615,16 @@ void Netplay_SetSessionTeardownCallback(void (*cb)(void)) {
 // attributed failure line + stage timings, which is exactly what a field
 // report needs. Tees to SDL_Log via netplay_log_line and flushes
 // immediately (failure paths have no heartbeat to drive the 1 Hz flush).
-// MAIN THREAD ONLY — the log FILE* is unguarded; direct_p2p.c calls this
-// exclusively from DirectP2P_Tick's reporting path.
-void Netplay_LogConnectEvent(const char* line) {
+// #36: NO LONGER main-thread-only. The single implementation below runs
+// under s_netplay_log_mu, so the lazy open + write + flush sequence is
+// atomic with respect to any other caller on any thread. The observable
+// behaviour of the main-thread path is byte-identical to the pre-#36
+// version: same lazy open, same tee, same immediate flush.
+static void netplay_log_connect_event(const char* line) {
     if (line == NULL || line[0] == '\0') {
         return;
     }
+    netplay_log_lock();
     if (s_netplay_log == NULL) {
         netplay_log_open(netplay_utc_ms());
     }
@@ -2128,6 +2632,24 @@ void Netplay_LogConnectEvent(const char* line) {
     if (s_netplay_log != NULL) {
         fflush(s_netplay_log);
     }
+    // #44: the same line, inside the same critical section, into the
+    // tester-facing report — filtered to "[netplay-connect]" only. Wiring
+    // it HERE rather than in netplay_log_line is what keeps heartbeats and
+    // race spam out of it: those reach the session log by other paths.
+    netplay_report_line_locked(line);
+    netplay_log_unlock();
+}
+
+void Netplay_LogConnectEvent(const char* line) {
+    netplay_log_connect_event(line);
+}
+
+// #36: the worker-thread door. Same function, named separately so a
+// reader of direct_p2p.c can see at the call site which thread it is on
+// (and so the main-thread contract of the original name is not silently
+// widened out from under existing callers).
+void Netplay_LogConnectEventMT(const char* line) {
+    netplay_log_connect_event(line);
 }
 
 // === Tier-1 netplay diag — Item 10: SIGTERM flush hook ===
@@ -2138,7 +2660,19 @@ void Netplay_LogConnectEvent(const char* line) {
 void Netplay_FlushDiagnostics(void) {
     // No active session — nothing to flush. The s_session_uuid==0 sentinel
     // is set in the EXITING branch after final-summary emission.
-    if (s_session_uuid == 0 && s_netplay_log == NULL) {
+    //
+    // F7: s_netplay_log is read under the lock. Since #36 a worker thread
+    // can install that pointer (Netplay_LogConnectEventMT -> lazy open),
+    // so an unsynchronized read here is a genuine data race even though
+    // every caller today is the main thread on a shutdown path. Only the
+    // read is inside the critical section; the work below re-takes the
+    // lock around its own writes, which is fine — this early-out is a
+    // "nothing to do at all" test, not a guard whose result the rest of
+    // the function relies on staying true.
+    netplay_log_lock();
+    const bool have_log_file = (s_netplay_log != NULL);
+    netplay_log_unlock();
+    if (s_session_uuid == 0 && !have_log_file) {
         return;
     }
 
@@ -2154,6 +2688,7 @@ void Netplay_FlushDiagnostics(void) {
                      s_last_advance_frame,
                      (double)frames_behind,
                      s_session_end_reason[0] ? s_session_end_reason : "sigterm");
+        netplay_log_lock();   // #36
         netplay_log_line(line);
 
         // Item 9: SNMP UDP-row delta on shutdown.
@@ -2170,6 +2705,7 @@ void Netplay_FlushDiagnostics(void) {
                          (unsigned long long)(end_snmp.no_ports       - s_udp_snmp_session_start.no_ports));
             netplay_log_line(snmp_line);
         }
+        netplay_log_unlock();
 
         // Item 4: dump packet ring with a "sigterm" role tag so post-mortem
         // readers can distinguish the dump source from peer-disconnect /
@@ -2181,7 +2717,9 @@ void Netplay_FlushDiagnostics(void) {
     }
 
     // Item 7: flush + close the netplay log file.
+    netplay_log_lock();   // #36
     netplay_log_close();
+    netplay_log_unlock();
 
     // P-2.2 fix: clear the session-uuid sentinel so a second call to this
     // function is a no-op. Mirrors the EXITING branch's post-flush zeroing.

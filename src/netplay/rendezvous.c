@@ -287,6 +287,12 @@ bool Rendezvous_HasMagic(const uint8_t* pkt, int len) {
     return read_be32(&pkt[0]) == REND_MAGIC;
 }
 
+int Rendezvous_WireVersion(void) {
+    /* The single source of truth for pkt[4], shared with the comparison
+     * in Rendezvous_FrameType below so the two cannot drift. */
+    return (int)REND_VERSION;
+}
+
 int Rendezvous_FrameType(const uint8_t* pkt, int len) {
     if (!pkt || len < 6) {
         return 0;

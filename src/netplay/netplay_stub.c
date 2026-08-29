@@ -43,6 +43,26 @@ void Netplay_LogConnectEvent(const char* line) {
     (void)line;
 }
 
+void Netplay_LogSinkInit(void) {
+}
+
+void Netplay_LogConnectEventMT(const char* line) {
+    (void)line;
+}
+
+#ifdef NETPLAY_TEST_HOOKS
+/* #44: NETPLAY_TEST_HOOKS is an independent CMake option
+ * (CMakeLists.txt:57, 211-212) and is not implied by ENABLE_NETPLAY, so a
+ * hooks-on / netplay-off configuration must still link. */
+void Netplay_TestHook_LogPrune(const char* dir) {
+    (void)dir;
+}
+
+void Netplay_TestHook_ReportDir(const char* dir) {
+    (void)dir;
+}
+#endif
+
 void Netplay_SetMatchmakingParams(const char* server_ip, int server_port) {
     (void)server_ip;
     (void)server_port;

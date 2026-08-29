@@ -164,7 +164,15 @@ if(MIST_BUILD_HASH STREQUAL "")
     message(STATUS "MIST_BUILD_HASH: git unavailable, using fallback 0000000")
 else()
     message(STATUS "MIST_BUILD_HASH=${MIST_BUILD_HASH}")
+    # #44: netplay.c stamps the same hash into the header of
+    # <PrefPath>logs/netplay-report.txt, the one file a tester sends back.
+    # It must be THIS macro and not a second source of build identity: a
+    # report that disagrees with the MIST handshake's build_hash about
+    # which binary produced it is worse than no report. netplay.c keeps an
+    # #ifdef fallback so removing it here degrades to build=unknown rather
+    # than failing to compile.
     set_property(SOURCE "${CMAKE_SOURCE_DIR}/src/netplay/mist_handshake.c"
+                        "${CMAKE_SOURCE_DIR}/src/netplay/netplay.c"
                  APPEND PROPERTY COMPILE_DEFINITIONS
                  MIST_BUILD_HASH="${MIST_BUILD_HASH}")
 endif()
