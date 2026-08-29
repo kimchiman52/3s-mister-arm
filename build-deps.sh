@@ -28,6 +28,41 @@ if [ "$PROFILE" != "desktop" ] && [ "$PROFILE" != "mister" ] && [ "$PROFILE" != 
     exit 1
 fi
 
+# -----------------------------------------------------------------------
+# Dependency set
+# -----------------------------------------------------------------------
+#
+# Built by this script, in the order the sections appear below:
+#
+#   FFmpeg          desktop only            (ADX decode/encode)
+#   SDL3            desktop, mister, miyoo
+#   GekkoNet        desktop, mister         (rollback netcode; miyoo Cut 1
+#                                            builds ENABLE_NETPLAY=OFF)
+#   SDL3_net        desktop, mister         (same miyoo exclusion)
+#   libcdio         desktop only            (ISO import)
+#   minizip-ng      desktop, mister, miyoo
+#   tf-psa-crypto   desktop, mister, miyoo
+#
+# Every one of these is consumed by CMakeLists.txt: see the *_ROOT set()
+# lines and the link lists in the PORT_* blocks.
+#
+# NOTE: this script must run with the repo root as CWD. tf-psa-crypto is
+# configured with TF_PSA_CRYPTO_CONFIG_FILE="configs/crypto-config-ccm-aes-
+# sha256.h", a relative path that CMake resolves against the CWD, not
+# against $ROOT_DIR.
+#
+# REMOVED — do not re-add without a consumer:
+#   FreeType 2.13.3 and RmlUi 6.2 were added for the 3sxtra RmlUi lobby
+#   port (docs/plan-netplay-port.md Phase 4, TRACK_B_BLOCKED.md), which was
+#   abandoned in April 2026. Neither library was ever referenced by
+#   CMakeLists.txt or cmake/, so neither ever reached the binary; FreeType
+#   existed only because RmlUi needed it. They were cross-compiled on every
+#   `--profile mister` run regardless, and the FreeType tarball fetch from
+#   savannah.gnu.org later started failing (166-byte HTML error body
+#   2026-08-24, hard 502 2026-08-25), blocking ARM dependency builds outright.
+#   Both recipes were deleted 2026-08-29. If RmlUi is ever revived, recover
+#   the recipes from git history rather than rewriting them.
+
 # -----------------------------
 # ARM cross-toolchain guard (F5 — netplay Track B review finding)
 # -----------------------------
@@ -228,11 +263,14 @@ dep_cache_valid() {
 # -----------------------------------------------------------------------
 #
 # `curl -L -O <url>` without -f writes the server's error body to disk and
-# exits 0. A savannah.gnu.org hiccup returned a 166-byte HTTP error page in
-# place of the FreeType tarball; tar then failed deep in the build with an
-# unrelated-looking message. -f makes curl fail the transfer on HTTP >= 400,
-# and the sha256 pin catches every other way a fetch can be wrong (truncated
-# body, mirror serving a different release, MITM).
+# exits 0. The motivating incident was a savannah.gnu.org hiccup that returned
+# a 166-byte HTTP error page in place of a source tarball; tar then failed deep
+# in the build with an unrelated-looking message. (That particular fetch — the
+# FreeType recipe — has since been removed along with RmlUi, its only consumer;
+# see the "Dependency set" note at the top of this file. The hazard applies to
+# every remaining download.) -f makes curl fail the transfer on HTTP >= 400, and the
+# sha256 pin catches every other way a fetch can be wrong (truncated body,
+# mirror serving a different release, MITM).
 sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | awk '{print $1}'
@@ -942,136 +980,6 @@ else
 
     rm -rf "$TF_PSA_CRYPTO_SRC"
     echo "tf-psa-crypto installed to $TF_PSA_CRYPTO_BUILD"
-fi
-
-# -----------------------------
-# FreeType 2.13.3 (MiSTer profile only)
-# -----------------------------
-#
-# Needed by RmlUi for glyph rasterisation. MiSTer's Buildroot shipped FreeType
-# is older than the 2.13.3 pin RmlUi expects, so we static-link our own.
-# Mirrors the Batocera Pi4 recipe at
-# /tmp/3sxtra/tools/batocera/rpi4/download-deps_rpi4.sh:194-214 — main
-# adaptation is CMAKE_SYSTEM_PROCESSOR=arm (not aarch64) and we inherit the
-# toolchain environment from the Docker cross-build container rather than
-# hard-coding aarch64-linux-gnu-gcc. HarfBuzz/brotli/bz2/PNG/zlib are disabled
-# to keep the archive hermetic; RmlUi does not use them for our netplay set.
-
-if [ "$PROFILE" = "mister" ]; then
-    FREETYPE_VER="2.13.3"
-    FREETYPE_SHA256="0550350666d427c74daeb85d5ac7bb353acba5f76956395995311a9c6f063289"
-    FREETYPE_DIR="$THIRD_PARTY/freetype"
-    FREETYPE_BUILD="$FREETYPE_DIR/build"
-
-    if [ -d "$FREETYPE_BUILD/lib" ] && [ -f "$FREETYPE_BUILD/lib/libfreetype.a" ] \
-       && dep_cache_valid "FreeType" "$FREETYPE_BUILD/lib/libfreetype.a"; then
-        echo "FreeType already built at $FREETYPE_BUILD"
-    else
-        echo "Building FreeType $FREETYPE_VER at $FREETYPE_BUILD..."
-
-        rm -rf "$FREETYPE_BUILD"
-        mkdir -p "$FREETYPE_DIR"
-        if [ ! -d "$FREETYPE_DIR/src" ]; then
-            # sha256 pinned from a savannah.gnu.org download whose sha1
-            # (2437819d...1e96) and md5 (f3b4432c...bc64) match the digests
-            # SourceForge publishes for the same freetype-2.13.3.tar.xz, i.e.
-            # two independent mirrors agree on the bytes being hashed here.
-            fetch_verified \
-                "https://download.savannah.gnu.org/releases/freetype/freetype-$FREETYPE_VER.tar.xz" \
-                "$FREETYPE_DIR/freetype-$FREETYPE_VER.tar.xz" \
-                "$FREETYPE_SHA256"
-            mkdir -p "$FREETYPE_DIR/src"
-            tar xf "$FREETYPE_DIR/freetype-$FREETYPE_VER.tar.xz" -C "$FREETYPE_DIR/src" --strip-components=1
-            rm -f "$FREETYPE_DIR/freetype-$FREETYPE_VER.tar.xz"
-        fi
-
-        cmake -S "$FREETYPE_DIR/src" -B "$FREETYPE_DIR/cmake-build" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_SYSTEM_NAME=Linux \
-            -DCMAKE_SYSTEM_PROCESSOR=arm \
-            -DCMAKE_INSTALL_PREFIX="$FREETYPE_BUILD" \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DFT_DISABLE_HARFBUZZ=ON \
-            -DFT_DISABLE_BROTLI=ON \
-            -DFT_DISABLE_BZIP2=ON \
-            -DFT_DISABLE_PNG=ON \
-            -DFT_DISABLE_ZLIB=ON \
-            -DCMAKE_DISABLE_FIND_PACKAGE_ZLIB=TRUE \
-            -DCMAKE_DISABLE_FIND_PACKAGE_PNG=TRUE \
-            -DCMAKE_DISABLE_FIND_PACKAGE_BZip2=TRUE \
-            -DCMAKE_DISABLE_FIND_PACKAGE_HarfBuzz=TRUE \
-            -DCMAKE_DISABLE_FIND_PACKAGE_BrotliDec=TRUE
-
-        cmake --build "$FREETYPE_DIR/cmake-build" -j"$JOBS"
-        cmake --install "$FREETYPE_DIR/cmake-build"
-
-        rm -rf "$FREETYPE_DIR/cmake-build" "$FREETYPE_DIR/src"
-        echo "FreeType installed to $FREETYPE_BUILD"
-    fi
-else
-    echo "Skipping FreeType for profile '$PROFILE'"
-fi
-
-# -----------------------------
-# RmlUi 6.2 (MiSTer profile only)
-# -----------------------------
-#
-# Netplay UI is rendered via RmlUi. We pin to tag 6.2 (matches 3sxtra). Lua
-# bindings, samples, and tests are all disabled; RmlUi's samples/tests pull in
-# GLFW which is not available for our target. The FreeType font engine is
-# chosen explicitly via RMLUI_FONT_ENGINE=freetype and its path is injected via
-# CMAKE_PREFIX_PATH.
-
-if [ "$PROFILE" = "mister" ]; then
-    RMLUI_REF="6.2"
-    RMLUI_DIR="$THIRD_PARTY/rmlui"
-    RMLUI_BUILD="$RMLUI_DIR/build"
-
-    if [ -d "$RMLUI_BUILD/lib" ] && [ -f "$RMLUI_BUILD/lib/librmlui.a" ] \
-       && dep_cache_valid "RmlUi" "$RMLUI_BUILD/lib/librmlui.a"; then
-        echo "RmlUi already built at $RMLUI_BUILD"
-    else
-        echo "Building RmlUi @ $RMLUI_REF at $RMLUI_BUILD..."
-
-        rm -rf "$RMLUI_BUILD"
-        mkdir -p "$RMLUI_DIR"
-        RMLUI_SRC=$(mktemp -d)
-
-        git clone --depth 1 --branch "$RMLUI_REF" \
-            https://github.com/mikke89/RmlUi.git "$RMLUI_SRC"
-
-        # Notes on flags:
-        #   RMLUI_SAMPLES=OFF  : no sample binaries; avoids GLFW/SDL-shell deps.
-        #   BUILD_TESTING=OFF  : CMake-standard gate for RmlUi's tests; also
-        #                        prevents rmlui_core from being forced-static
-        #                        via the TESTS_ENABLED path.
-        #   RMLUI_LUA_BINDINGS=OFF : no Lua plugin per §15 decision.
-        #   RMLUI_BACKEND intentionally NOT set — backend source is only added
-        #     to the build tree when RMLUI_SHELL is auto-enabled, which
-        #     requires RMLUI_SAMPLES or RMLUI_TESTS. We vendor
-        #     Backends/RmlUi_Renderer_SDL.cpp into our tree in Phase 5.
-        cmake -S "$RMLUI_SRC" -B "$RMLUI_SRC/cmake-build" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_SYSTEM_NAME=Linux \
-            -DCMAKE_SYSTEM_PROCESSOR=arm \
-            -DCMAKE_INSTALL_PREFIX="$RMLUI_BUILD" \
-            -DCMAKE_PREFIX_PATH="$FREETYPE_BUILD" \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DBUILD_TESTING=OFF \
-            -DRMLUI_FONT_ENGINE=freetype \
-            -DRMLUI_LUA_BINDINGS=OFF \
-            -DRMLUI_SAMPLES=OFF \
-            -DRMLUI_PRECOMPILED_HEADERS=OFF \
-            -DCMAKE_DISABLE_FIND_PACKAGE_Lua=TRUE
-
-        cmake --build "$RMLUI_SRC/cmake-build" -j"$JOBS"
-        cmake --install "$RMLUI_SRC/cmake-build"
-
-        rm -rf "$RMLUI_SRC"
-        echo "RmlUi installed to $RMLUI_BUILD"
-    fi
-else
-    echo "Skipping RmlUi for profile '$PROFILE'"
 fi
 
 echo "Dependencies for profile '$PROFILE' installed in $THIRD_PARTY"
