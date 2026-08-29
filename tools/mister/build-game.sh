@@ -241,6 +241,28 @@ if [ -n "${mount_src}" ] && [ "${mount_src}" != "${ROOT_DIR}" ]; then
     staging_host_dir="${mount_src}/.build-src/${build_nonce}"
     container_src="/src/.build-src/${build_nonce}/"
 
+    # Reap staging directories stranded by builds that died without running
+    # their trap -- SIGKILL, or the host going down. Nothing else will ever
+    # remove them: they are keyed by a nonce no later build reuses, so without
+    # this they accumulate at ~600 MB each inside the container's overlay,
+    # which has run out of space mid-compile before.
+    #
+    # An age threshold is safe rather than merely convenient, because the
+    # container deletes its own staging directory immediately after rsyncing
+    # out of it. A live build's staging therefore survives seconds, not hours,
+    # and anything this old cannot belong to a build still using it. The
+    # threshold is left generous so that even a build parked on
+    # --wait-for-lane is never reaped out from under itself.
+    staging_reap_minutes="${MISTER_BUILD_STAGING_REAP_MINUTES:-360}"
+    if [ -d "${mount_src}/.build-src" ]; then
+        while IFS= read -r stale; do
+            [ -n "${stale}" ] || continue
+            echo "reaping stranded staging directory: ${stale}" >&2
+            rm -rf "${stale}"
+        done < <(find "${mount_src}/.build-src" -mindepth 1 -maxdepth 1 -type d \
+            -mmin "+${staging_reap_minutes}" 2>/dev/null)
+    fi
+
     # Advisory only. Staging copies the whole checkout, so doing it before
     # discovering the lane is busy wastes a few hundred MB of writes and a good
     # chunk of wall time. This probe acquires and immediately releases the lane
@@ -261,13 +283,42 @@ if [ -n "${mount_src}" ] && [ "${mount_src}" != "${ROOT_DIR}" ]; then
     fi
 
     # Remove the staging copy however we exit, including on failure, so a
-    # killed build cannot leave 600 MB of source inside the shared checkout.
+    # killed build cannot leave ~600 MB of source inside the shared checkout.
+    #
+    # This trap covers a normal exit, an error under `set -e`, SIGINT and
+    # SIGTERM. It cannot cover SIGKILL or the machine losing power, because no
+    # handler runs in those cases. That gap is not hypothetical here: long ARM
+    # builds on this machine have been killed by tool timeouts, and the
+    # container has run out of space mid-compile before, which presents as an
+    # unrelated ENOSPC rather than as "a dead build left its staging behind".
+    #
+    # Two things narrow it. The container deletes the staging directory itself
+    # as soon as it has rsynced out of it (see below), so the directory only
+    # exists for the first few seconds of a build rather than for its whole
+    # duration; and the reaper above sweeps anything a SIGKILL still managed to
+    # strand.
     cleanup_staging() {
         if [ -n "${staging_host_dir}" ] && [ -d "${staging_host_dir}" ]; then
             rm -rf "${staging_host_dir}"
         fi
     }
-    trap cleanup_staging EXIT INT TERM
+    # INT and TERM must exit explicitly. Trapping them to a handler that only
+    # cleans up leaves bash resuming the script afterwards, so a SIGTERM'd build
+    # deletes its own staging directory and then carries on compiling out of a
+    # tree it just removed -- measured, not theorised: with a plain
+    # `trap cleanup_staging EXIT INT TERM` the build was still running two
+    # minutes after the TERM was delivered.
+    #
+    # Note that bash cannot run either handler while a foreground command is in
+    # progress, so a signal arriving mid-build is only serviced once the inner
+    # `docker exec` returns. That is precisely why the staging directory is
+    # released container-side seconds into the build rather than here: by the
+    # time a mid-build signal can be serviced there is normally nothing left to
+    # clean. Killing this process also does not stop the container-side build,
+    # which keeps the lane locked -- see the lane-lock note above.
+    trap cleanup_staging EXIT
+    trap 'cleanup_staging; exit 130' INT
+    trap 'cleanup_staging; exit 143' TERM
 
     echo "staging ${ROOT_DIR} -> ${staging_host_dir} (task #81)"
     mkdir -p "${staging_host_dir}"
@@ -477,6 +528,25 @@ if [ "${container_fingerprint}" != "${host_fingerprint}" ]; then
     exit 4
 fi
 echo "source fingerprint verified: ${container_fingerprint} (lane=${lane} workdir=${workdir})"
+
+# Task #81 -- drop the staging copy the moment it is no longer needed.
+#
+# Everything below this point compiles out of ${workdir}; the staged tree has
+# already been rsynced in and its contents proven by the fingerprint check
+# above, so keeping it for the remaining half hour of the build only risks
+# stranding ~600 MB in the container overlay if this process is SIGKILLed.
+# Deleting it here rather than in the host-side trap means the window in which
+# an abnormal exit can strand anything is the few seconds between staging and
+# this line, instead of the whole build.
+#
+# The guard matters: container_src is exactly "/src/" for a build of the
+# container's own checkout, and that is the bind mount of a real working tree.
+case "${container_src}" in
+/src/.build-src/*)
+    rm -rf "${container_src}"
+    echo "staging copy released: ${container_src}"
+    ;;
+esac
 
 export CC="clang-${llvm_version}"
 export CXX="clang++-${llvm_version}"
