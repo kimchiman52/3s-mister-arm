@@ -1146,18 +1146,68 @@ fi
 echo "Saved perf JSON to ${local_output_path}"
 
 if command -v jq >/dev/null 2>&1; then
-    fps_mean="$(jq -r '.metrics.fps.mean // empty' "${local_output_path}")"
-    frame_mean_ms="$(jq -r '.metrics.frame_time.mean_ms // empty' "${local_output_path}")"
-    frame_max_ms="$(jq -r '.metrics.frame_time.max_ms // empty' "${local_output_path}")"
-    update_mean_ms="$(jq -r '.metrics.update.mean_ms // empty' "${local_output_path}")"
-    render_mean_ms="$(jq -r '.metrics.render.mean_ms // empty' "${local_output_path}")"
-    present_mean_ms="$(jq -r '.metrics.present.mean_ms // empty' "${local_output_path}")"
-    dominant_present_path="$(jq -r '
-        (.metrics.fbdev_present_path // {})
-        | to_entries
-        | map(select((.value.ratio // null) != null))
-        | if length == 0 then empty else max_by(.value.ratio).key end
-    ' "${local_output_path}")"
+    # [task #78] The blocks this replaced read ~110 distinct dotted JSON paths
+    # (.metrics.*, .test_state.*, .transition_state.*, .title_state.*,
+    # .attract_demo_logo_state.*) that perf_capture_write_summary() no longer
+    # writes. Verified against the current producer (src/port/sdl/sdl_app.c,
+    # perf_capture_write_summary(), ~line 1512) which only ever emits
+    # {schema_version, frames, avg_frame_ms, fps} -- the comment directly
+    # above it ("Phase D rip: the legacy renderer perf-capture surface is
+    # gone... downstream scripts that grep for the deleted keys will fail
+    # loudly (intentional)") documents the removal. Confirmed via git history:
+    # every one of those dotted paths was introduced by 93762472 ("MiSTer
+    # rendering: fbdev presenter, software frame, and native video") and
+    # removed wholesale by b2c79d7c ("giblet renderer and presenter", the
+    # schema_version 64->65 bump). Task #68 (830784e2) separately deleted a
+    # revived-but-consumerless engine-side counter struct that would have fed
+    # test_state.p*_super_art_command_*, explicitly noting the JSON writer
+    # was already gutted and restoring it was "a separate, much larger job" --
+    # this cleanup is that deferred reader-side half.
+    #
+    # Two fields were NOT simply removed and got fixed in place instead:
+    #   - .metrics.fps.mean never existed under that path in ANY schema
+    #     version (`git log -S'"fps": {'` across all history: zero hits) --
+    #     the real value has always been the top-level "fps" scalar.
+    #   - .metrics.frame_time.mean_ms moved to the top-level "avg_frame_ms"
+    #     scalar in schema_version 65.
+    # Both are read correctly below instead of being deleted.
+    #
+    # Two known gaps, not silently dropped:
+    #   - frame_time.max_ms and the update/render/present per-phase means
+    #     have no current JSON producer, but the underlying per-frame values
+    #     (update_ms/render_ms/present_ms) ARE still computed into
+    #     perf_samples[] in sdl_app.c (~line 3947-3949) -- perf_capture_write_
+    #     summary just never aggregates or emits them. Re-exposing them is a
+    #     small producer-side change, not implemented here (would need a
+    #     build+device verification pass, out of scope for this lane).
+    #   - transition_state.capture_start_{g_no,e_no,menu_task_condition,
+    #     menu_task_r_no,break_into,hnc_num,exec_wipe,active_wipe_type,
+    #     wipe_limit} duplicate data that IS still live today, just not in
+    #     JSON: src/main.c:913-923 logs a "PERF capture start: ... g_no=%d/%d
+    #     /%d/%d e_no=..." line with this exact snapshot on every
+    #     --gameplay-idle/--perf-wait-* capture. Nothing in this script
+    #     parses those extra log tokens (only stage_id/p1_character/
+    #     p2_character/p1_super_art/p2_super_art/test_phase/wait_test_phase/
+    #     wait_runtime_state are extracted into .metadata, see
+    #     extract_perf_log_field above). Wiring these in is a real, cheap
+    #     option for a future change; not done here to keep this fix scoped
+    #     to removing dead reads.
+    # All other fields below (fbdev_present_path, every software_frame_*
+    # metric and family list, test_state.* stock/ready/reachability/active/
+    # command blocks, the transition_state/title_state/attract_demo_logo_state
+    # accumulated *_frames_total counters) have no live producer of any kind
+    # -- fbdev itself is dead on this port (see docs/mister-runbook.md and
+    # project memory: the fbdev scaler path is never hit on the shipped
+    # core) -- so they are deleted outright rather than flagged as gaps.
+    #
+    # Also note: perf-sampler.sh drives a headless SSH capture
+    # (SDL_VIDEO_DRIVER=dummy / SDL_RENDER_DRIVER=software, see the remote
+    # run command above), and headless captures report inflated FPS that is
+    # not a real perf measurement on this project. That further weighs
+    # against spending effort wiring up the two flagged gaps above for THIS
+    # tool specifically.
+    fps_mean="$(jq -r '.fps // empty' "${local_output_path}")"
+    frame_mean_ms="$(jq -r '.avg_frame_ms // empty' "${local_output_path}")"
     metadata_stage_id="$(jq -r '.metadata.stage_id // empty' "${local_output_path}")"
     metadata_preset="$(jq -r '.metadata.test_scene_preset // empty' "${local_output_path}")"
     metadata_scale_mode="$(jq -r '.metadata.scale_mode // empty' "${local_output_path}")"
@@ -1165,261 +1215,9 @@ if command -v jq >/dev/null 2>&1; then
     metadata_test_phase="$(jq -r '.metadata.capture_start_test_phase // empty' "${local_output_path}")"
     metadata_runtime_state="$(jq -r '.metadata.perf_wait_runtime_state // empty' "${local_output_path}")"
 
-    printf 'Perf summary: tag=%s scene=%s fps=%s frame_mean_ms=%s frame_max_ms=%s update_mean_ms=%s render_mean_ms=%s present_mean_ms=%s dominant_present_path=%s stage_id=%s preset=%s scale_mode=%s software_frame_mode=%s test_phase=%s runtime_state=%s\n' \
-        "$tag" "$scene" "${fps_mean:-unknown}" "${frame_mean_ms:-unknown}" "${frame_max_ms:-unknown}" \
-        "${update_mean_ms:-unknown}" "${render_mean_ms:-unknown}" "${present_mean_ms:-unknown}" \
-        "${dominant_present_path:-unknown}" "${metadata_stage_id:-unknown}" "${metadata_preset:-none}" \
+    printf 'Perf summary: tag=%s scene=%s fps=%s frame_mean_ms=%s stage_id=%s preset=%s scale_mode=%s software_frame_mode=%s test_phase=%s runtime_state=%s\n' \
+        "$tag" "$scene" "${fps_mean:-unknown}" "${frame_mean_ms:-unknown}" \
+        "${metadata_stage_id:-unknown}" "${metadata_preset:-none}" \
         "${metadata_scale_mode:-unknown}" "${metadata_software_frame_mode:-unknown}" \
         "${metadata_test_phase:-unknown}" "${metadata_runtime_state:-none}"
-
-    software_frame_modulation_summary="$(jq -r '
-        if (.metrics.software_frame_fast_non_integer_alpha_only_pixels.mean // null) == null then
-            empty
-        else
-            "Software-frame modulation: " +
-            "fast_non_integer_alpha_only_tasks=" + ((.metrics.software_frame_fast_non_integer_alpha_only_tasks.mean // 0) | tostring) + " " +
-            "fast_non_integer_alpha_only_pixels=" + ((.metrics.software_frame_fast_non_integer_alpha_only_pixels.mean // 0) | tostring) + " " +
-            "fast_non_integer_rgb_mod_tasks=" + ((.metrics.software_frame_fast_non_integer_rgb_mod_tasks.mean // 0) | tostring) + " " +
-            "fast_non_integer_rgb_mod_pixels=" + ((.metrics.software_frame_fast_non_integer_rgb_mod_pixels.mean // 0) | tostring) + " " +
-            "generic_textured_alpha_only_tasks=" + ((.metrics.software_frame_generic_textured_alpha_only_tasks.mean // 0) | tostring) + " " +
-            "generic_textured_alpha_only_pixels=" + ((.metrics.software_frame_generic_textured_alpha_only_pixels.mean // 0) | tostring) + " " +
-            "generic_textured_rgb_mod_tasks=" + ((.metrics.software_frame_generic_textured_rgb_mod_tasks.mean // 0) | tostring) + " " +
-            "generic_textured_rgb_mod_pixels=" + ((.metrics.software_frame_generic_textured_rgb_mod_pixels.mean // 0) | tostring)
-        end
-    ' "${local_output_path}")"
-    if [ -n "$software_frame_modulation_summary" ]; then
-        printf '%s\n' "$software_frame_modulation_summary"
-    fi
-
-    textured_geometry_recovered_summary="$(jq -r '
-        (.metrics.software_frame_textured_geometry_recovered_families // [])
-        | .[:3]
-        | map(
-            "Geometry recovered family: " +
-            "kind=\(.family_kind) " +
-            "texture_handle=\(.texture_handle) " +
-            "palette_handle=\(.palette_handle) " +
-            "logical=\(.logical_source_kind):\(.logical_ix_num) " +
-            "tasks_total=\(.task_count_total) " +
-            "task_ratio=\(.task_ratio) " +
-            "pixels_total=\(.submitted_pixels_total) " +
-            "pixel_ratio=\(.submitted_pixel_ratio) " +
-            "source=\(.source_width)x\(.source_height) " +
-            "src_rect_x=\(.source_rect_x_min)-\(.source_rect_x_max) " +
-            "src_rect_y=\(.source_rect_y_min)-\(.source_rect_y_max) " +
-            "src_rect_w=\(.source_rect_w_min)-\(.source_rect_w_max) " +
-            "src_rect_h=\(.source_rect_h_min)-\(.source_rect_h_max) " +
-            "dst_height=\(.dst_height_min)-\(.dst_height_max) " +
-            "dst_top_width=\(.dst_top_width_min)-\(.dst_top_width_max) " +
-            "dst_bottom_width=\(.dst_bottom_width_min)-\(.dst_bottom_width_max) " +
-            "dst_left_dx=\(.dst_left_dx_min)-\(.dst_left_dx_max) " +
-            "dst_right_dx=\(.dst_right_dx_min)-\(.dst_right_dx_max)"
-          )
-        | join("\n")
-    ' "${local_output_path}")"
-    if [ -n "$textured_geometry_recovered_summary" ]; then
-        printf '%s\n' "$textured_geometry_recovered_summary"
-    fi
-
-    textured_geometry_fallback_summary="$(jq -r '
-        (.metrics.software_frame_textured_geometry_fallback_families // [])
-        | .[:3]
-        | map(
-            "Geometry fallback family: " +
-            "kind=\(.family_kind) " +
-            "texture_handle=\(.texture_handle) " +
-            "palette_handle=\(.palette_handle) " +
-            "logical=\(.logical_source_kind):\(.logical_ix_num) " +
-            "tasks_total=\(.task_count_total) " +
-            "task_ratio=\(.task_ratio) " +
-            "pixels_total=\(.submitted_pixels_total) " +
-            "pixel_ratio=\(.submitted_pixel_ratio) " +
-            "source=\(.source_width)x\(.source_height) " +
-            "src_rect_x=\(.source_rect_x_min)-\(.source_rect_x_max) " +
-            "src_rect_y=\(.source_rect_y_min)-\(.source_rect_y_max) " +
-            "src_rect_w=\(.source_rect_w_min)-\(.source_rect_w_max) " +
-            "src_rect_h=\(.source_rect_h_min)-\(.source_rect_h_max) " +
-            "dst_height=\(.dst_height_min)-\(.dst_height_max) " +
-            "dst_top_width=\(.dst_top_width_min)-\(.dst_top_width_max) " +
-            "dst_bottom_width=\(.dst_bottom_width_min)-\(.dst_bottom_width_max) " +
-            "dst_left_dx=\(.dst_left_dx_min)-\(.dst_left_dx_max) " +
-            "dst_right_dx=\(.dst_right_dx_min)-\(.dst_right_dx_max)"
-          )
-        | join("\n")
-    ' "${local_output_path}")"
-    if [ -n "$textured_geometry_fallback_summary" ]; then
-        printf '%s\n' "$textured_geometry_fallback_summary"
-    fi
-
-    stock_state_summary="$(jq -r '
-        if (.test_state // null) == null then
-            empty
-        else
-            "Stock state: p1_stock_frames=\(.test_state.p1_super_art_stock_available_frames_total // 0) " +
-            "p1_stock_first=\((.test_state.p1_super_art_stock_available_first_frame // "none") | tostring) " +
-            "p1_stock_max=\(.test_state.p1_super_art_max_store // 0)/\(.test_state.p1_super_art_store_max // 0) " +
-            "p1_gauge_max=\(.test_state.p1_super_art_gauge_max_value // 0)/\(.test_state.p1_super_art_gauge_max_capacity // 0) " +
-            "p2_stock_frames=\(.test_state.p2_super_art_stock_available_frames_total // 0) " +
-            "p2_stock_first=\((.test_state.p2_super_art_stock_available_first_frame // "none") | tostring) " +
-            "p2_stock_max=\(.test_state.p2_super_art_max_store // 0)/\(.test_state.p2_super_art_store_max // 0) " +
-            "p2_gauge_max=\(.test_state.p2_super_art_gauge_max_value // 0)/\(.test_state.p2_super_art_gauge_max_capacity // 0)"
-        end
-    ' "${local_output_path}")"
-    if [ -n "$stock_state_summary" ]; then
-        printf '%s\n' "$stock_state_summary"
-    fi
-
-    ready_state_summary="$(jq -r '
-        if (.test_state // null) == null then
-            empty
-        else
-            "Ready state: p1_ready_frames=\(.test_state.p1_super_art_ready_frames_total // 0) " +
-            "p1_ready_first=\((.test_state.p1_super_art_ready_first_frame // "none") | tostring) " +
-            "p1_ready_r1_hist=\((.test_state.p1_super_art_ready_routine1_frames // []) | map(tostring) | join("/")) " +
-            "p1_ready_rno_first=\(if (.test_state.p1_super_art_ready_first_routine // null) == null then "none" else (.test_state.p1_super_art_ready_first_routine | map(tostring) | join("/")) end) " +
-            "p1_ready_rno_last=\(if (.test_state.p1_super_art_ready_last_routine // null) == null then "none" else (.test_state.p1_super_art_ready_last_routine | map(tostring) | join("/")) end) " +
-            "p2_ready_frames=\(.test_state.p2_super_art_ready_frames_total // 0) " +
-            "p2_ready_first=\((.test_state.p2_super_art_ready_first_frame // "none") | tostring) " +
-            "p2_ready_r1_hist=\((.test_state.p2_super_art_ready_routine1_frames // []) | map(tostring) | join("/")) " +
-            "p2_ready_rno_first=\(if (.test_state.p2_super_art_ready_first_routine // null) == null then "none" else (.test_state.p2_super_art_ready_first_routine | map(tostring) | join("/")) end) " +
-            "p2_ready_rno_last=\(if (.test_state.p2_super_art_ready_last_routine // null) == null then "none" else (.test_state.p2_super_art_ready_last_routine | map(tostring) | join("/")) end)"
-        end
-    ' "${local_output_path}")"
-    if [ -n "$ready_state_summary" ]; then
-        printf '%s\n' "$ready_state_summary"
-    fi
-
-    super_reachability_summary="$(jq -r '
-        if (.test_state // null) == null then
-            empty
-        else
-            "Super reachability: " +
-            "p1_entries=\(.test_state.p1_super_art_entry_calls_total // 0) " +
-            "p1_cmd_sel_entries=\(.test_state.p1_super_art_entry_cmd_sel_calls_total // 0) " +
-            "p1_cmd_sel_not_ready=\(.test_state.p1_super_art_entry_cmd_sel_not_ready_total // 0) " +
-            "p1_direct_entries=\(.test_state.p1_super_art_entry_direct_calls_total // 0) " +
-            "p2_entries=\(.test_state.p2_super_art_entry_calls_total // 0) " +
-            "p2_cmd_sel_entries=\(.test_state.p2_super_art_entry_cmd_sel_calls_total // 0) " +
-            "p2_cmd_sel_not_ready=\(.test_state.p2_super_art_entry_cmd_sel_not_ready_total // 0) " +
-            "p2_direct_entries=\(.test_state.p2_super_art_entry_direct_calls_total // 0)"
-        end
-    ' "${local_output_path}")"
-    if [ -n "$super_reachability_summary" ]; then
-        printf '%s\n' "$super_reachability_summary"
-    fi
-
-    test_state_summary="$(jq -r '
-        if (.test_state // null) == null then
-            empty
-        else
-            "Test state: p1_super_active_frames=\(.test_state.p1_super_art_active_frames_total // 0) " +
-            "p1_super_active_starts=\(.test_state.p1_super_art_active_starts_total // 0) " +
-            "p1_super_first=\((.test_state.p1_super_art_active_first_frame // "none") | tostring) " +
-            "p1_metamorphose_frames=\(.test_state.p1_metamorphose_frames_total // 0) " +
-            "p1_metamorphose_first=\((.test_state.p1_metamorphose_first_frame // "none") | tostring) " +
-            "p2_super_active_frames=\(.test_state.p2_super_art_active_frames_total // 0) " +
-            "p2_super_active_starts=\(.test_state.p2_super_art_active_starts_total // 0) " +
-            "p2_super_first=\((.test_state.p2_super_art_active_first_frame // "none") | tostring) " +
-            "p2_metamorphose_frames=\(.test_state.p2_metamorphose_frames_total // 0) " +
-            "p2_metamorphose_first=\((.test_state.p2_metamorphose_first_frame // "none") | tostring)"
-        end
-    ' "${local_output_path}")"
-    if [ -n "$test_state_summary" ]; then
-        printf '%s\n' "$test_state_summary"
-    fi
-
-    super_command_summary="$(jq -r '
-        if (.test_state // null) == null then
-            empty
-        else
-            "Super command: " +
-            "p1_checks=\(.test_state.p1_super_art_command_check_calls_total // 0) " +
-            "p1_ready_checks=\(.test_state.p1_super_art_command_ready_checks_total // 0) " +
-            "p1_pcon_blocks=\(.test_state.p1_super_art_command_blocked_pcon_dp_total // 0) " +
-            "p1_ground_candidates=\(.test_state.p1_super_art_command_ground_candidate_checks_total // 0) " +
-            "p1_ground_preblocked=\(.test_state.p1_super_art_command_ground_precondition_blocked_total // 0) " +
-            "p1_ground_no_match=\(.test_state.p1_super_art_command_ground_no_match_total // 0) " +
-            "p1_air_candidates=\(.test_state.p1_super_art_command_air_candidate_checks_total // 0) " +
-            "p1_air_preblocked=\(.test_state.p1_super_art_command_air_precondition_blocked_total // 0) " +
-            "p1_air_no_match=\(.test_state.p1_super_art_command_air_no_match_total // 0) " +
-            "p1_matches=\(.test_state.p1_super_art_command_matches_total // 0) " +
-            "p2_checks=\(.test_state.p2_super_art_command_check_calls_total // 0) " +
-            "p2_ready_checks=\(.test_state.p2_super_art_command_ready_checks_total // 0) " +
-            "p2_pcon_blocks=\(.test_state.p2_super_art_command_blocked_pcon_dp_total // 0) " +
-            "p2_ground_candidates=\(.test_state.p2_super_art_command_ground_candidate_checks_total // 0) " +
-            "p2_ground_preblocked=\(.test_state.p2_super_art_command_ground_precondition_blocked_total // 0) " +
-            "p2_ground_no_match=\(.test_state.p2_super_art_command_ground_no_match_total // 0) " +
-            "p2_air_candidates=\(.test_state.p2_super_art_command_air_candidate_checks_total // 0) " +
-            "p2_air_preblocked=\(.test_state.p2_super_art_command_air_precondition_blocked_total // 0) " +
-            "p2_air_no_match=\(.test_state.p2_super_art_command_air_no_match_total // 0) " +
-            "p2_matches=\(.test_state.p2_super_art_command_matches_total // 0)"
-        end
-    ' "${local_output_path}")"
-    if [ -n "$super_command_summary" ]; then
-        printf '%s\n' "$super_command_summary"
-    fi
-
-    transition_state_summary="$(jq -r '
-        if (.transition_state // null) == null then
-            empty
-        else
-            "Transition state: start_g_no=\((.transition_state.capture_start_g_no // []) | map(tostring) | join("/")) " +
-            "start_e_no=\((.transition_state.capture_start_e_no // []) | map(tostring) | join("/")) " +
-            "menu_task=\(.transition_state.capture_start_menu_task_condition // 0):" +
-            "\((.transition_state.capture_start_menu_task_r_no // []) | map(tostring) | join("/")) " +
-            "start_break_into=\(.transition_state.capture_start_break_into // 0) " +
-            "start_hnc=\(.transition_state.capture_start_hnc_num // 0) " +
-            "start_exec_wipe=\(.transition_state.capture_start_exec_wipe // 0) " +
-            "start_wipe_type=\(.transition_state.capture_start_active_wipe_type // -1) " +
-            "start_wipe_limit=\(.transition_state.capture_start_wipe_limit // 0) " +
-            "break_into_frames=\(.transition_state.break_into_frames_total // 0) " +
-            "break_into_first=\((.transition_state.break_into_first_frame // "none") | tostring) " +
-            "hnc_frames=\(.transition_state.hnc_active_frames_total // 0) " +
-            "hnc_first=\((.transition_state.hnc_active_first_frame // "none") | tostring) " +
-            "hnc_max=\(.transition_state.hnc_max_num // 0) " +
-            "wipe_type1_frames=\(.transition_state.wipe_type1_active_frames_total // 0) " +
-            "wipe_type1_first=\((.transition_state.wipe_type1_active_first_frame // "none") | tostring) " +
-            "wipe_type1_max_limit=\(.transition_state.wipe_type1_max_limit // 0)"
-        end
-    ' "${local_output_path}")"
-    if [ -n "$transition_state_summary" ]; then
-        printf '%s\n' "$transition_state_summary"
-    fi
-
-    title_state_summary="$(jq -r '
-        if (.title_state // null) == null then
-            empty
-        else
-            "Title state: start_d_no=\((.title_state.capture_start_d_no // []) | map(tostring) | join("/")) " +
-            "start_title_tex=\(.title_state.capture_start_title_tex_flag // 0) " +
-            "start_opening_r_no=\(.title_state.capture_start_opening_r_no_0 // 0)/" +
-            "\(.title_state.capture_start_opening_r_no_1 // 0)/" +
-            "\(.title_state.capture_start_opening_r_no_2 // 0) " +
-            "start_opening_free_work=\(.title_state.capture_start_opening_free_work // 0) " +
-            "title_logo_frames=\(.title_state.title_logo_active_frames_total // 0) " +
-            "title_logo_first=\((.title_state.title_logo_active_first_frame // "none") | tostring)"
-        end
-    ' "${local_output_path}")"
-    if [ -n "$title_state_summary" ]; then
-        printf '%s\n' "$title_state_summary"
-    fi
-
-    attract_demo_logo_summary="$(jq -r '
-        if (.attract_demo_logo_state // null) == null then
-            empty
-        else
-            "Attract demo logo: " +
-            "start_demo_flag=\(.attract_demo_logo_state.capture_start_demo_flag // 0) " +
-            "start_effect_index=\((.attract_demo_logo_state.capture_start_effect_index // "none") | tostring) " +
-            "start_routine2=\((.attract_demo_logo_state.capture_start_routine2 // "none") | tostring) " +
-            "start_direction=\((.attract_demo_logo_state.capture_start_direction // "none") | tostring) " +
-            "start_dir_timer=\((.attract_demo_logo_state.capture_start_dir_timer // "none") | tostring) " +
-            "active_frames=\(.attract_demo_logo_state.active_frames_total // 0) " +
-            "active_first=\((.attract_demo_logo_state.active_first_frame // "none") | tostring) " +
-            "max_direction=\((.attract_demo_logo_state.max_direction // "none") | tostring)"
-        end
-    ' "${local_output_path}")"
-    if [ -n "$attract_demo_logo_summary" ]; then
-        printf '%s\n' "$attract_demo_logo_summary"
-    fi
 fi
