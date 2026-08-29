@@ -463,6 +463,22 @@ static void initialize_game() {
     init_windows_console();
 #endif
 
+    /* --probe-renderer-only: SDLApp_FullInit() has already run
+     * log_backend_diagnostics() (video/render/audio driver enumeration)
+     * and init_window() (actual SDL_CreateWindowAndRenderer + the
+     * "Selected video driver"/"Selected renderer" log lines) — that IS
+     * the SDL video/render backend probe the flag's help text promises.
+     * Stop here, before any ROM/AFS/netplay work, so the flag does what
+     * it says instead of silently falling through to a normal run.
+     * SDLApp_Quit() tears down the window/renderer/subsystems cleanly;
+     * exit() (not return) so the atexit(ConsoleMode_Exit) registered by
+     * ConsoleMode_Enter() on success still restores the console. */
+    if (configuration.probe_renderer_only) {
+        SDL_Log("--probe-renderer-only: SDL video/render backend probe complete, exiting.");
+        SDLApp_Quit();
+        exit(0);
+    }
+
     /* Ordering matters:
      *   AFS_Init          — the boot-time arcade adaptation reads each
      *                       character's PS2 char-data tail from the AFS;
