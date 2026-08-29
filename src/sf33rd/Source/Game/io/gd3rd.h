@@ -92,9 +92,9 @@ void Ldreq_SetBarrierForced(bool forced);
  *
  * WHAT IT DID NOT SETTLE. Nothing on the start path CLEARS the queue:
  * Init_Load_Request_Queue_1st has zero call sites under src/netplay/, and
- * System_all_clear_Level_B() (sys_sub.c:983-986, called by setup_vs_mode)
+ * System_all_clear_Level_B() (sys_sub.c:982-985, called by setup_vs_mode)
  * is only Bg_Close() + effect_work_init(). The TRANSITIONING flip is
- * gated on task[TASK_INIT].condition == 0 alone (netplay.c:1533) and on
+ * gated on task[TASK_INIT].condition == 0 alone (netplay.c:1551) and on
  * nothing at all for matchmaking (netplay.c:1584-1592), and the
  * G_No[1] 12 -> 1 path it then waits on (game.c:303-341) gates on
  * Switch_Screen(1), a frame-counted wipe, not on Check_PL_Load() or

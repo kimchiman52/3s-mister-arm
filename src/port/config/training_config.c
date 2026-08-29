@@ -110,7 +110,7 @@ bool TrainingConfig_Load(void) {
      * the user's real on-disk training config here would leak it into
      * the harness run instead: a saved ACTION=CPU/HUMAN (contents[0][0][0]
      * == 3 or 4) leaves control_pl_rno at DUMMY_ACTION_UNFORCED at the
-     * gameplay-entry latch (menu.c:4753-4778), so the P2 dummy runs
+     * gameplay-entry latch (menu.c:4347-4353), so the P2 dummy runs
      * cpu_algorithm (or reads real human input) instead of being pinned
      * to the script - verified live: with a stale ACTION=CPU config, the
      * trace shows P2/Ken throwing unrelated, non-deterministic attacks

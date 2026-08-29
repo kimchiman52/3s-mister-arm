@@ -87,7 +87,7 @@ typedef struct {
     s16 cg_ix;
     s16 cg_att_ix;
     u16 cg_hit_ix;
-    u16 cg_ja_atix;   /* engine's active-hitbox gate (hitcheck.c:1618) */
+    u16 cg_ja_atix;   /* engine's active-hitbox gate (hitcheck.c:1870) */
     u16 cg_ja_caix;   /* engine's catch-hitbox gate (throw active window) */
     u8  cg_cancel;    /* cancel-window flag — non-zero when cancellable */
     u8  cg_status;
@@ -125,7 +125,7 @@ typedef struct {
      *               _guard_pause_table[ground/air][dm_attlv].
      *               See bin2obj/etc.c:3, plpdm.c case 1.
      *   cg_wca_ix — guard-release animation entry point. char_move_wca()
-     *               (charset.c:237-244) sets cg_ix = (cg_wca_ix - 1)
+     *               (charset.c:262-268) sets cg_ix = (cg_wca_ix - 1)
      *               * cgd_type - cgd_type when the pause expires.
      * For investigating whether the cr.* low-block adv +2 (§13.2) is
      * block-specific or also fires on hit, we need these visible in
