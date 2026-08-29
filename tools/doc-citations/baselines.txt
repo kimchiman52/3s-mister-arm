@@ -1,0 +1,21 @@
+# Doc-citation error ceilings, enforced by check_baselines.py.
+#
+# Format:  <max_errors>  <scope>   # reason
+#
+# A scope that has been cleaned to a known count is recorded here so that it
+# cannot silently un-clean itself. This is a RATCHET, not a target: when a
+# scope improves, lower the number in the same commit that improves it. The
+# checker tells you when a ceiling has gone slack.
+#
+# Raising a number is a decision, and the reason column is where it gets
+# argued. "It went up" is not a reason.
+#
+# NOTE ON WHY THIS FILE EXISTS
+# These two ceilings were previously carried only in task briefs and prose --
+# "docs/plan-netplay-connection.md must stay at 0", "src/netplay/ must stay at
+# 11". A protection that lives in prose is protection that stops being true
+# without telling anybody, which is the exact failure mode this whole
+# documentation-hardening effort is about. So they are checked here instead.
+
+0    docs/plan-netplay-connection.md    # cleaned to zero; the reference for what a clean doc looks like
+11   src/netplay                        # cleaned during the relay-removal citation sweep; one of the 11 is the deliberate frozen-md5-transcript citation in the bilateral-punch test
