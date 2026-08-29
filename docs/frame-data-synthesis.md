@@ -15,6 +15,39 @@ agents should read it cover-to-cover before any frame-data
 investigation. When findings change, update this doc and prune what's
 stale; do not create sibling investigation docs.
 
+## Verification canon (live)
+
+This is the single **live** statement of the suite's verification
+numbers. Everything else in this document that quotes a suite count is
+a *dated historical record* of a past state — "Suite delta: 1,270/77 ->
+1,288/61", the 2026-07-18 audit, and so on — and must not be edited to
+match the present.
+
+| Quantity | Value |
+|---|---|
+| Corpora GREEN | 94<!-- canon:corpora --> |
+| Total rows | 1,349<!-- canon:total --> |
+| PASS | 1,296<!-- canon:pass --> |
+| XFAIL | 53<!-- canon:xfail --> |
+
+**These four numbers are generated, not typed.** They are the sum of
+the per-corpus golden tables under `tools/frame-data/golden/` — the
+same tables `run-suite.sh --check-golden` diffs against — and are
+regenerated and verified by:
+
+```sh
+python3 tools/frame-data/check-canon-numbers.py          # print the summed canon
+python3 tools/frame-data/check-canon-numbers.py --check  # fail if a doc disagrees
+```
+
+Each figure above carries an invisible `canon:<key>` HTML-comment
+marker. `--check` compares every marked figure in `docs/` against the
+summed truth and exits nonzero on disagreement, so a lever that flips a
+row cannot leave a stale number behind. The marker is opt-in precisely
+so that dated log entries are never swept up: **do not add a marker to
+a historical figure.** If you flip a row, run `--check`, and update
+only what it names.
+
 ## Arcade ground truth
 
 `docs/arcade-frame-data/q.json` (50 entries, fetched from
@@ -7137,7 +7170,8 @@ asserting the oracle, with the true mechanism documented — the honest floor.
 
 **§13.16 addendum (HONEST FLOOR, dated 2026-07-14, user decision —
 opus-substitute / WANTS FABLE RE-REVIEW).** As of the drive-to-zero closing
-pass the overlay is **frame-exact on 1,296 of 1,349 legs** (1,290 at the
+pass the overlay is **frame-exact on 1,296<!-- canon:pass --> of
+1,349<!-- canon:total --> legs** (1,290 at the
 2026-07-14 floor + 4 from the 2026-07-17 lever-V remy-sa1 resolution + 2 from
 the 2026-07-17 lever-W yang landing-cut re-anchor) and within ~1 frame on the
 remaining 53, with **every one of the 53 deviations diagnosed and terminally
@@ -7167,7 +7201,7 @@ partition into seven terminal classes, none of which admits a suite-safe fix:
 | **CONVENTION/RULED** | 6 | genuinely ambiguous mapping between two hardware-real quantities (yang startup 5-vs-7; yun-zesshou A 15-vs-16), user-ruled, both readings defensible |
 | **REACHABILITY-GAP** | 4 | the clean-whiff baseline is harness-unproducible (urien-chariot connects even at DIST_MAX; sean-sa1 Hadou-Burst projectile has no reachable whiff) |
 | **ENGINE-MODEL-LIMITATION** | 2 | urien-sa2 ×2 — re-adjudicated 2026-07-17 (digest finding #1): the earlier "ORACLE-TABLE-INCONSISTENCY / S+R=92>T=91 over-budget" label is REFUTED (the 91 is the engine meter window, not an oracle quantity; the arcade 94-frame post-flash busy window makes oracle S=1+R=91 jointly satisfiable). Terminal because the engine's single-slot proj-split model (`R = meter_len − proj_s`) cannot place S and R independently AND the engine meter window is 3 frames short of arcade's 94 at the window OPEN (sa_stop-vs-frz definitional gap; re-anchor path CLOSED 2026-07-18 — the oracle conventions sit on the engine's window and a re-anchor regresses 20+ passing S legs; see the Q6 closure above). S now displays oracle 1 (lever V, display-only); residual is A (travel-dependent, no flat canonical value) + the open 91-vs-94 window. The genuine cross-character oracle-table convention split is `twelve-sa1` (classified under CAPABILITY-GATED-remaining; `proj_spawn_raw=3` post-append consume, `proj-split/fit.md §1`) |
-| **Total** | **53** | all characterized known-limitations; zero UNCLASSIFIED |
+| **Total** | **53**<!-- canon:xfail --> | all characterized known-limitations; zero UNCLASSIFIED |
 
 No row remains UNCLASSIFIED. The engine is LAYER-1 arcade-faithful; the
 residual 53 are the diagnosed floor, held honestly rather than papered over.
