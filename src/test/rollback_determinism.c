@@ -1033,7 +1033,7 @@ void RollbackDeterminism_PreFrame(void) {
         (rbd_frame_index % (uint32_t)select_period) == 0) {
         /* Select-phase depth is governed SOLELY by
          * --rbd-select-rollback-depth (default 8 = production's
-         * input_prediction_window, netplay.c:903-905).
+         * input_prediction_window, netplay.c:914-916).
          *
          * It used to be `min(--rbd-rollback-depth, --rbd-select-rollback-depth)`,
          * and before that a hard clamp to 2. Both forms had the same defect:

@@ -90,12 +90,12 @@ Grep: `bg_w\.stage\s*=` restricted to assignments (not comparisons).
 |-----------|------------|--------|
 | `src/test/test_runner.c:1044` | `bg_w.stage = stage;` | Unit-test only. Not live. |
 | `src/sf33rd/Source/Game/demo/demo02.c:286` | `bg_w.stage = Demo_Stage_Play_Data[Demo_Stage_Index][rnd];` | Values = `{{15,19},{11,18},{2,16},{12,8}}` (demo02.c:257) — never 17. |
-| `src/sf33rd/Source/Game/screen/next_cpu.c:1120` | `bg_w.stage = Q_Country;` | Arcade mode only (inside `Setup_Next_Fighter`, reached via Game11 `Next_Q_1st` which sets `EM_id=17` before calling). `Q_Country` is written only at `manage.c:1879` in arcade ladder state `Game_Manage_11th`. Netplay does not reach these paths (see below). |
+| `src/sf33rd/Source/Game/screen/next_cpu.c:1120` | `bg_w.stage = Q_Country;` | Arcade mode only (inside `Setup_Next_Fighter`, reached via Game11 `Next_Q_1st` which sets `EM_id=17` before calling). `Q_Country` is written only at `manage.c:1877` in arcade ladder state `Game_Manage_11th`. Netplay does not reach these paths (see below). |
 | `src/sf33rd/Source/Game/screen/next_cpu.c:1128` | `bg_w.stage = Battle_Country;` | Arcade mode CPU-opponent picker. Netplay skips. |
 | `src/sf33rd/Source/Game/screen/next_cpu.c:1132` | `Battle_Country = bg_w.stage = Debug_w[31] - 1;` | Debug override. `Debug_w[31]` defaults to 0 (see Debug_w audit). |
 | `src/sf33rd/Source/Game/screen/next_cpu.c:1140` | `Super_Arts[COM_id] = bg_w.stage = Debug_w[32] - 1;` | Debug override (this line looks like a decomp transcription bug — it assigns `bg_w.stage` as a side effect of the `Super_Arts` `=` chain). `Debug_w[32]` defaults to 0. |
 | `src/sf33rd/Source/Game/screen/next_cpu.c:1491` | `bg_w.stage = Bonus_Type;` | Bonus stage init. `Bonus_Type` ∈ {20, 21}. |
-| `src/sf33rd/Source/Game/screen/sel_pl.c:1582` | `bg_w.stage = Battle_Country;` | **Primary path for netplay.** Inside `Exit_2nd`. Battle_Country = `Setup_Battle_Country()` return value on line 1581. |
+| `src/sf33rd/Source/Game/screen/sel_pl.c:1598` | `bg_w.stage = Battle_Country;` | **Primary path for netplay.** Inside `Exit_2nd`. Battle_Country = `Setup_Battle_Country()` return value on line 1597. |
 | `src/sf33rd/Source/Game/screen/sel_pl.c:1586` | `Battle_Country = bg_w.stage = Debug_w[31] - 1;` | Debug override, same semantics as next_cpu.c:1132. |
 | `src/sf33rd/Source/Game/screen/sel_pl.c:1710` | `bg_w.stage = Battle_Country;` | Inside `Exit_7th`, just a copy from the already-set `Battle_Country`. |
 | `src/sf33rd/Source/Game/menu/menu.c:1613` | `bg_w.stage = Replay_w.game_infor.stage;` | Replay mode only (`Mode_Type == MODE_REPLAY`). |
@@ -140,7 +140,7 @@ u8 Setup_Battle_Country() {
 
 ### In netplay
 
-`Mode_Type == MODE_NETWORK` (netplay.c:205, netplay_nav.c:121). Branch A is
+`Mode_Type == MODE_NETWORK` (netplay.c:205, netplay_nav.c:136). Branch A is
 skipped. Branches B/C/D all apply.
 
 ### State of Champion and New_Challenger at Exit_2nd
@@ -169,10 +169,10 @@ and `New_Challenger = 0` (BSS default, never written)**.
 
 ### Character assignment during char select
 
-`sel_pl.c:1161`: `My_char[PL_id] = ID_of_Face[Cursor_Y[PL_id]][Cursor_X[PL_id]];`
+`sel_pl.c:1177`: `My_char[PL_id] = ID_of_Face[Cursor_Y[PL_id]][Cursor_X[PL_id]];`
 when player presses `SWK_ATTACKS` (sel_pl.c:1156-1161).
 
-`ID_of_Face` is initialised from `Face_Cursor_Data` at sel_pl.c:340:
+`ID_of_Face` is initialised from `Face_Cursor_Data` at sel_pl.c:356:
 
 ```c
 for (y = 0; y < 3; y++)
@@ -252,7 +252,7 @@ Setup_Battle_Country).
 Citations-only call graph:
 
 ```
-NetplayNav_Arm()                              netplay_nav.c:138  (SDL_INIT → main_loop)
+NetplayNav_Arm()                              netplay_nav.c:156  (SDL_INIT → main_loop)
 └─ [nav state machine, frames]               netplay_nav.c:166-320
    ├─ NAV_PRESS_COIN → Start pressed          netplay_nav.c:233-259
    ├─ NAV_PRESS_TITLE → Start pressed         netplay_nav.c:261-282
@@ -281,7 +281,7 @@ Netplay_TickDirectP2P                        netplay.c:826-855
 session_state = NETPLAY_SESSION_TRANSITIONING → CONNECTING → RUNNING
 Then the normal game loop:
 
-Game_Task → Game_Jmp_Tbl[G_No[1]=1] = Game01   game.c:119
+Game_Task → Game_Jmp_Tbl[G_No[1]=1] = Game01   game.c:121
 └─ Game01 case 2/default                       game.c:327-428
    └─ Select_Player()                          sel_pl.c:146-167
       ├─ Sel_PL_Control                        sel_pl.c:215-226
@@ -290,7 +290,7 @@ Game_Task → Game_Jmp_Tbl[G_No[1]=1] = Game01   game.c:119
       │           └─ Sel_PL_Sub(PL_id, sw)     sel_pl.c:1119-1184
       │               └─ sw & SWK_ATTACKS:
       │                   My_char[PL_id] = ID_of_Face[Cursor_Y[PL_id]][Cursor_X[PL_id]]
-      │                                                  sel_pl.c:1161
+      │                                                  sel_pl.c:1177
       │                   ← human picks Q → My_char[0] = 17
       └─ Check_Exit                             sel_pl.c:1534-1538
          └─ Sel_Exit_Tbl[Exit_No] = Exit_2nd   sel_pl.c:1572-1606
@@ -300,7 +300,7 @@ Game_Task → Game_Jmp_Tbl[G_No[1]=1] = Game01   game.c:119
                ├─ Battle_Country = Setup_Battle_Country()  sel_pl.c:1581
                │   └─ branch C: My_char[NC=0] == 17 → return My_char[Champion=0] = 17
                ├─ bg_w.stage = Battle_Country = 17         sel_pl.c:1582
-               └─ Push_LDREQ_Queue_BG(17)                  sel_pl.c:1589
+               └─ Push_LDREQ_Queue_BG(17)                  sel_pl.c:1605
 
 Subsequently:
 Game2_0 → Game2_2 → bg_initialize              bg_sub.c:1100
@@ -347,7 +347,7 @@ Only mutation sites for `Debug_w[31]`:
 
 Neither fires automatically. In DEBUG builds without in-game manual
 interaction with the debug menu, `Debug_w[31]` stays 0 and the override at
-`sel_pl.c:1586` is dead.
+`sel_pl.c:1602` is dead.
 
 **Verdict**: Debug_w[31] is NOT the mechanism.
 
@@ -398,7 +398,7 @@ it in the match setup (`Game2_0 → Game2_2 → bg_initialize`).
 
 ### `VS_Stage` leak
 
-VS_Stage is set to `0x14` (= 20 = "random") at menu.c:358 when Mode_Select
+VS_Stage is set to `0x14` (= 20 = "random") at menu.c:345 when Mode_Select
 case 0 runs. Then setup_vs_mode zeroes it at netplay.c:366. In
 `Setup_Battle_Country`, `VS_Stage` only matters for `Mode_Type == MODE_VERSUS`
 (branch A, sel_pl.c:2017-2022). Netplay is `MODE_NETWORK`, so VS_Stage's
@@ -425,7 +425,7 @@ never injects SWK_ATTACKS.** Grep confirms:
 
 ```
 grep -n "p1sw_buff\|p2sw_buff\|SWK_" src/netplay/netplay_nav.c
-netplay_nav.c:90:    p1sw_buff |= SWK_START;
+netplay_nav.c:97:    p1sw_buff |= SWK_START;
 netplay_nav.c:91:    p2sw_buff |= SWK_START;
 ```
 
@@ -464,7 +464,7 @@ Citations:
 - Mode_Type in netplay: `src/netplay/netplay.c:205`, `src/netplay/netplay_nav.c:121`.
 - My_char assignment on ATTACKS press: `sel_pl.c:1156-1161`.
 - Face grid with Q at row 1 col 4: `src/sf33rd/Source/Game/screen/sel_data.c:8-10`.
-- bg_w.stage = Battle_Country: `sel_pl.c:1582`.
+- bg_w.stage = Battle_Country: `sel_pl.c:1598`.
 - Enum confirmation: `src/constants.h:36-60` (3SX enum used because
   `CMakeLists.txt:104` has CPS3 commented out).
 
@@ -534,12 +534,12 @@ regardless of who picks Q, restoring the arcade invariant.
    starting state" block of `setup_vs_mode`. Adding one line next to it is
    consistent with surrounding code.
 2. `New_Challenger` is included in the `GameState` rollback snapshot
-   (`src/netplay/game_state.c:138, 827`). Writing before the first saved
+   (`src/netplay/game_state.c:254, 994`). Writing before the first saved
    frame means both peers enter rollback-sync with the same NC value.
 3. The value `1` (not 0 or any runtime expression) guarantees Champion != NC
    regardless of peer identity.
 4. Downstream consumers of `New_Challenger` are all arcade / training /
-   break-in paths (grep: entry.c, effe4.c, sel_pl.c:679-681, sys_sub.c:1196).
+   break-in paths (grep: entry.c, effe4.c, sel_pl.c:679-681, sys_sub.c:1205).
    None of them is reached during netplay pre-first-match; the value is
    shadowed by Ck_Break_Into etc. in the arcade-progression sequences we
    never execute in netplay.

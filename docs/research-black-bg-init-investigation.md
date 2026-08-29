@@ -270,7 +270,7 @@ Looking at `Game01` case 2 and default branch (`src/sf33rd/Source/Game/game.c:37
 
 In the `Demo_Flag == 1` branch: `G_No[1] = 2; G_No[2] = 0; G_No[3] = 0; E_No[0..3] = 4,0,0,0;`. This jumps straight into Game02. But wait — `bg_w.stage` was NOT updated.
 
-`Select_Player()` is the UI loop at `src/sf33rd/Source/Game/screen/sel_pl.c:146+`. It presumably calls Exit_1st..Exit_7th internally. Let me verify:
+`Select_Player()` is the UI loop at `src/sf33rd/Source/Game/screen/sel_pl.c:174+`. It presumably calls Exit_1st..Exit_7th internally. Let me verify:
 
 Actually looking at `Select_Player` at `src/sf33rd/Source/Game/screen/sel_pl.c` — search for its use of `Exit_*`:
 

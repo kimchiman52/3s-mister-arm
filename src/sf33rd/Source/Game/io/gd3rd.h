@@ -10,6 +10,19 @@ extern s16 plt_req[2];
 extern const u8 lpr_wrdata[3];
 extern const u8 lpt_seldat[4];
 
+/* Declared here rather than left to each consumer's own `extern`. Both of
+ * these were being re-declared by hand, with their dimensions written out a
+ * second time, in src/test/ldreq_timing_trace.c -- which then hashes
+ * `sizeof(ldreq_result)` and sweeps `q_ldreq` slot by slot to decide whether
+ * the loader barrier holds. A private copy of the dimension means the probe
+ * keeps compiling after the real array changes size and silently measures a
+ * PREFIX of it: the barrier evidence would still read green while covering
+ * less than the queue. With one declaration visible to every translation
+ * unit, a size change is a conflicting-declaration error at each site
+ * instead. */
+extern REQ q_ldreq[16];
+extern u8 ldreq_result[294];
+
 s32 fsOpen(REQ* req);
 void fsClose(REQ* /* unused */);
 u32 fsGetFileSize(u16 fnum);
@@ -92,9 +105,9 @@ void Ldreq_SetBarrierForced(bool forced);
  *
  * WHAT IT DID NOT SETTLE. Nothing on the start path CLEARS the queue:
  * Init_Load_Request_Queue_1st has zero call sites under src/netplay/, and
- * System_all_clear_Level_B() (sys_sub.c:983-986, called by setup_vs_mode)
+ * System_all_clear_Level_B() (sys_sub.c:982-985, called by setup_vs_mode)
  * is only Bg_Close() + effect_work_init(). The TRANSITIONING flip is
- * gated on task[TASK_INIT].condition == 0 alone (netplay.c:1533) and on
+ * gated on task[TASK_INIT].condition == 0 alone (netplay.c:1551) and on
  * nothing at all for matchmaking (netplay.c:1584-1592), and the
  * G_No[1] 12 -> 1 path it then waits on (game.c:303-341) gates on
  * Switch_Screen(1), a frame-counted wipe, not on Check_PL_Load() or

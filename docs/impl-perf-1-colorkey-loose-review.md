@@ -231,7 +231,7 @@ not in color-mod. `_skipped` / `_ineligible` are at lines 6315-6319 and
 
 ### D. Config-key gate — OK
 
-- `CFG_KEY_COLORKEY_LOOSE_KERNEL_ENABLED` defined at `src/port/config/config.h:23`
+- `CFG_KEY_COLORKEY_LOOSE_KERNEL_ENABLED` defined at `src/port/config/config.h:35`
 - `sdl_app.c:9988-9990` reads it via `Config_GetBool` gated on `Config_HasExplicitKey`
   (precedent: `Config_GetBool(CFG_KEY_FULLSCREEN)` at line 9813)
 - `SDLGameRenderer_SetColorkeyLooseKernelEnabled` defined at

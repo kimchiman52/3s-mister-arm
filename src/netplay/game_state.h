@@ -863,6 +863,19 @@ typedef struct State {
 #define SPARSE_CEILING_BYTES (sizeof(GameState) + SPARSE_HEADER_BYTES + \
                               SPARSE_CEILING_SLOTS * SPARSE_FRW_SLOT_BYTES)
 
+/* SPARSE_CEILING_SLOTS is documented above as the "worst-case # of active
+ * slots". The pool has EFFECT_MAX slots, so an active count above EFFECT_MAX
+ * is not merely unlikely, it is unreachable — and a ceiling set above it makes
+ * save_state()'s `active > SPARSE_CEILING_SLOTS` full-state fallback dead code
+ * while still inflating every ring slot by the difference. Asserted rather than
+ * trusted to the comment, because 100-vs-82 has been edited repeatedly (see the
+ * DELIBERATELY-100 note above) and the next edit should hit a compile error
+ * rather than quietly disable the fallback. */
+_Static_assert(SPARSE_CEILING_SLOTS <= EFFECT_MAX,
+               "SPARSE_CEILING_SLOTS exceeds EFFECT_MAX — the active-slot count "
+               "can never reach it, so the full-state fallback in save_state() "
+               "becomes unreachable");
+
 void GameState_Save(GameState* dst);
 void GameState_Load(const GameState* src);
 

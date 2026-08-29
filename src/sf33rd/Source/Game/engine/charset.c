@@ -495,7 +495,7 @@ void char_move(WORK* wk) {
                      * exact: prior_add was added to this same counter earlier
                      * in the move and nothing clears it mid-engine-tick (the
                      * overlay's MOVE_START reset runs in the overlay tick,
-                     * main.c:615, strictly after the engine tick, main.c:603),
+                     * main.c:720, strictly after the engine tick, main.c:700),
                      * so the pre-subtract value is always >= prior_add.
                      * Mutation lever F (docs/plan-frame-data-harness.md
                      * §1.9 item 3, the mutation-test acceptance criterion):
@@ -573,7 +573,7 @@ void char_move(WORK* wk) {
             /* §13.12 (ENGINE-4): hit-checkable projectile split — latch
              * the exact pair hitcheck.c's attack_hit_check() gates the
              * hit-check on (atix != 0 AND att_hit_ok != 0,
-             * hitcheck.c:1618-1623). Written only on the RISING EDGE
+             * hitcheck.c:1870-1876). Written only on the RISING EDGE
              * (fd_engine_proj_hitok_armed 0->1) rather than re-asserted
              * every tick the pair holds: a WHIFF tama's att_hit_ok stays
              * 1 for its whole remaining flight (hitcheck.c only clears it

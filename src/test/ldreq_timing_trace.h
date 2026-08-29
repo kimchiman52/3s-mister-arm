@@ -51,8 +51,8 @@
  *     runner (test/test_runner.c:1358-1413), and --test-enable pins PS2
  *     balance (arcade/arcade_balance.c:115-121), which makes
  *     ArcadeBalance_IsEnabled() and therefore Netplay_ArmAllowed()
- *     (netplay/netplay.c:1973-1975) false, so netplay refuses to arm
- *     (netplay_nav.c:166-169, main.c:338-343).
+ *     (netplay/netplay.c:2030-2032) false, so netplay refuses to arm
+ *     (netplay_nav.c:166-169, main.c:339-344).
  *
  * The two automations are mutually exclusive by construction. The force
  * flag is what lets the barrier be exercised from the automation that
@@ -84,16 +84,16 @@
  * The OFF column is the neutralization: the probe goes red on demand.
  *
  * That `size` residue is dead, and provably so rather than by argument.
- * Push_LDREQ_Queue_Player/_Union/_Direct (gd3rd.c:320-403) never assign
+ * Push_LDREQ_Queue_Player/_Union/_Direct (gd3rd.c:405-488) never assign
  * REQ.size, and Push_LDREQ_Queue copies the whole stack-local struct
- * (gd3rd.c:472), so a drained slot carries a stack-garbage `size` — in
+ * (gd3rd.c:559), so a drained slot carries a stack-garbage `size` — in
  * the two runs above, 0x0056BC30 vs 0x02287C30, equal in the low 12 bits,
  * the page-offset signature of an address-valued word. Nothing reads it:
- * the only readers of REQ.size are texgroup.c:241/307/361 and
+ * the only readers of REQ.size are texgroup.c:259/381/435 and
  * color3rd.c:107/109, all inside ldreq_process[] whose sole call site is
- * gd3rd.c:520, reachable only with be != 0 (guards at gd3rd.c:621 and
- * :636); and every fresh request enters at rno == 0 (gd3rd.c:474) and is
- * assigned `size` at rno == 2 (texgroup.c:240, color3rd.c:106) before its
+ * gd3rd.c:743, reachable only with be != 0 (guards at gd3rd.c:872 and
+ * :887); and every fresh request enters at rno == 0 (gd3rd.c:561) and is
+ * assigned `size` at rno == 2 (texgroup.c:258, color3rd.c:106) before its
  * first read.
  */
 

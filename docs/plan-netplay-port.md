@@ -430,7 +430,7 @@ Individual phase commits: `48edcda2` (Phase 5 — RmlUi SDL blend-mode fix + fir
 
 **Pitch:** The biggest single phase. Bring in the actual UI — native menu_network + RmlUi overlays + all screen glue — so the user can actually navigate into a match.
 
-**Goal:** User-facing parity with 3sxtra's network menu surface on both RmlUi and native paths. Our current `Netplay_Menu` (verified at our `src/sf33rd/Source/Game/menu/menu.c:1451`, 2-item menu) is replaced by `Network_Lobby`-dispatching through the MenuScreen registry.
+**Goal:** User-facing parity with 3sxtra's network menu surface on both RmlUi and native paths. Our current `Netplay_Menu` (verified at our `src/sf33rd/Source/Game/menu/menu.c:1339`, 2-item menu) is replaced by `Network_Lobby`-dispatching through the MenuScreen registry.
 
 **Deliverables:**
 - `src/sf33rd/Source/Game/menu/menu_network.c` (1764 LOC, verified), `menu_network.h`, `menu_network_constants.h` — copied, patched for our engine symbol names.
@@ -470,7 +470,7 @@ Individual phase commits: `48edcda2` (Phase 5 — RmlUi SDL blend-mode fix + fir
 4. Copy `src/port/sdl/rmlui/` minus the non-netplay screens (`rmlui_char_select`, `rmlui_continue`, `rmlui_copyright`, etc.) unless they're transitively required by the wrapper or the netplay screens.
 5. Copy `assets/ui/` — all `.rml` / `.rcss` / `BoldPixels.ttf`.
 6. Wire `src/main.c` or `src/port/sdl/sdl_app.c` main-loop to the `MenuScreen_GetCurrent()`/`MenuScreen_Goto()` surface (research doc §11.4 references both).
-7. Replace our `menu.c:1451` 2-item `Netplay_Menu` with call into `Network_Lobby` dispatcher.
+7. Replace our `menu.c:1339` 2-item `Netplay_Menu` with call into `Network_Lobby` dispatcher.
 8. For the native-only LAN path (research doc §11.2 table: "LAN-only lobby ... 1305-1687 ... 100% native"), verify it compiles without RmlUi (stub the `rmlui_casual_lobby_get_room_code()` at discovery.c:138 and menu_network.c call sites to return `""`).
 
 **Risks:**
@@ -516,7 +516,7 @@ Individual phase commits: `36ffbb07` (Phase 7 — cross-compile GekkoNet + SDL3_
 **Sub-tasks:**
 1. Delete the `if [ "$PROFILE" = "desktop" ]` wrapping at `build-deps.sh:182` and `:218`, AND their else-arms at `:210-212` (GekkoNet `else; echo "Skipping GekkoNet for profile '$PROFILE'"; fi`) and `:244-246` (SDL3_net `else; echo "Skipping SDL3_net for profile '$PROFILE'"; fi`). Verified 2026-04-20 via re-read of `/Users/sb/Developer/3sx-mister/build-deps.sh:175-246`. Leaves a clean unconditional build for both dependencies.
 2. Run `build-deps.sh mister` in the Docker cross-compile container.
-3. Capture compile errors (ASIO header leakage most likely); patch around with `-DGEKKONET_NO_ASIO` at compile time if needed (research doc mentions define at our `CMakeLists.txt:113`).
+3. Capture compile errors (ASIO header leakage most likely); patch around with `-DGEKKONET_NO_ASIO` at compile time if needed (research doc mentions define at our `CMakeLists.txt:208`).
 4. Re-link our existing `3s-arm` binary (ENABLE_NETPLAY=ON) for mister; confirm symbol resolution.
 
 **Risks:**

@@ -1009,12 +1009,13 @@ static void apply_initial_super_full_overrides() {
  * report (<sp>/exsuper/step1-report.md): pins the training-mode S.A.GAUGE
  * menu option every frame, mirroring TestRunner_Epilogue's
  * Training[0/2].contents[0][1][6] "FRAME DATA" pin below. Two independent
- * hazards make a one-shot menu-cell write unsafe: (1) menu.c:4620
+ * hazards make a one-shot menu-cell write unsafe: (1) menu.c:4197
  * (`Training[0] = Training[2]`) copies over Training[0] on training-mode
  * menu entry, which can clobber a Training[0]-only poke landing before that
  * copy — writing both slots every frame survives it regardless of
- * ordering; (2) effect_E3_init (plcnt.c:1302-1307) consumes init_E3_flag on
- * its own schedule before this override gets a turn on the very first
+ * ordering; (2) effect_E3_move's routine 0 (effe3.c:28-32) consumes the
+ * init_E3_flag that effect_E3_init arms at round setup (plcnt.c:1326-1331),
+ * on its own schedule before this override gets a turn on the very first
  * latch, so the flag needs at least one re-arm to land the poke at all.
  *
  * What changed from the first attempt: holding init_E3_flag = 1 EVERY
@@ -1041,7 +1042,7 @@ static void apply_initial_super_full_overrides() {
  * re-arming — init_E3_flag stays at the 0 that case 0 already left it at,
  * so routine 1's restore-from-backup branch never fires again, and the
  * latch holds stable. If something later actually changes the observed
- * state away from the expected pattern (e.g. the menu.c:4620 copy landing
+ * state away from the expected pattern (e.g. the menu.c:4197 copy landing
  * with a stale Training[2] on some future entry), the mismatch reappears
  * and this re-arms again — bounded, not open-loop. Unset (-1, the default)
  * is still a hard no-op: zero gameplay behavior when the flag is not

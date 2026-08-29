@@ -25,6 +25,18 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 BUILD_DIR="${REPO_ROOT}/build/host"
 BIN_PATH="${BUILD_DIR}/3S-ARM.app/Contents/MacOS/3S-ARM"
 
+# Source-level gate, run before the build so it fails in seconds rather than
+# after a full compile. gd3rd.h derives LDREQ_BARRIER_BUDGET_MS from
+# GekkoNet's NetStats::DISCONNECT_TIMEOUT, but net.h is C++ and every
+# consumer of the budget is C, so no translation unit can see both constants
+# and a _Static_assert is unavailable. DISCONNECT_TIMEOUT also lives in
+# vendored code that build-deps.sh re-fetches, so it can change without a
+# commit to this repo. check_barrier_budget.py reads both values from their
+# real definitions and fails if the barrier could outlast the peer's
+# disconnect timeout -- the failure that would otherwise turn a slow disk
+# into a dropped match with the comment still asserting it cannot happen.
+python3 "${SCRIPT_DIR}/check_barrier_budget.py" --repo-root "${REPO_ROOT}"
+
 if [ -z "${LDT_SKIP_BUILD:-}" ]; then
     if [ ! -d "$BUILD_DIR" ]; then
         echo "[ldreq-timing/run.sh] build/host missing, configuring..." >&2

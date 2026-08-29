@@ -586,7 +586,7 @@ so A/B comparisons can flip the canvas format without rebuild. Default ON
 under `PORT_MISTER`, OFF on desktop.
 
 **Files to read first:**
-- `src/port/config/config.h:23` — item-1 `CFG_KEY_COLORKEY_LOOSE_KERNEL_ENABLED`
+- `src/port/config/config.h:35` — item-1 `CFG_KEY_COLORKEY_LOOSE_KERNEL_ENABLED`
   define.
 - `src/port/sdl/sdl_game_renderer.c:172-175` — item-1
   `colorkey_loose_kernel_enabled` static bool with comment block.

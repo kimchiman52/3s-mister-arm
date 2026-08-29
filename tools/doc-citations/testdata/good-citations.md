@@ -20,7 +20,7 @@ of this linter got wrong.
 ## A range citation whose subject appears inside the range
 
 `purge_texture_group` clears ok before calling `Push_ramcnt_key`, at
-`src/sf33rd/Source/Game/rendering/texgroup.c:561-563`.
+`src/sf33rd/Source/Game/rendering/texgroup.c:578-580`.
 
 ## A bare filename with a line number, the in-tree comment style
 
@@ -28,7 +28,7 @@ The re-entry is the purge_texture_group call at ramcnt.c:102.
 
 ## A citation to a call site rather than to a definition
 
-`Push_ramcnt_key` is called for the group key at texgroup.c:483.
+`Push_ramcnt_key` is called for the group key at texgroup.c:500.
 
 ## A path with no line number
 

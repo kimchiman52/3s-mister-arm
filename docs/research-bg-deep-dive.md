@@ -606,7 +606,7 @@ bg_initialize                       src/sf33rd/Source/Game/stage/bg_sub.c:1100
 Bg_Kakikae_Set (bg.c:83) runs after. Default case sets rw_num=0 for stage 17.
 
 Game2_2                              src/sf33rd/Source/Game/game.c:586
-├─ BG_Draw_System                    sys_sub.c:902
+├─ BG_Draw_System                    sys_sub.c:922
 ├─ ... setup/reset work ...
 └─ for i<3: if stage_bgw_number[stage][i]>0 Bg_On_R(1<<i)   game.c:634-638   ← re-asserts Screen_Switch=0x3
 
@@ -721,7 +721,7 @@ Yet the prompt log shows `bg_w.stage == 17` is reached. Search for other writes:
 
 ```
 src/sf33rd/Source/Game/screen/sel_pl.c:1582:   bg_w.stage = Battle_Country;         (VS-mode exit 2nd)
-src/sf33rd/Source/Game/screen/sel_pl.c:1586:   Battle_Country = bg_w.stage = Debug_w[31] - 1;
+src/sf33rd/Source/Game/screen/sel_pl.c:1602:   Battle_Country = bg_w.stage = Debug_w[31] - 1;
 src/sf33rd/Source/Game/screen/sel_pl.c:1710:   bg_w.stage = Battle_Country;         (Exit_6th alt path)
 src/sf33rd/Source/Game/screen/next_cpu.c:1120: bg_w.stage = Q_Country;              (EM_id==17 branch)
 src/sf33rd/Source/Game/screen/next_cpu.c:1128: bg_w.stage = Battle_Country;         (regular next-fighter)
@@ -741,8 +741,8 @@ For netplay, the **arcade CPU-progression path** (`next_cpu.c:1113-1145`) is not
    - If a dev/tester set `Debug_w[31] = 18` (to force stage 17 via the `Debug_w[31] - 1` formula), that override survives into netplay and pins `bg_w.stage = 17`.
    - Grep for Debug_w[31] writes in runtime code: none. It's set via a debug UI only.
 2. A netplay transition edge case where `bg_w` is loaded from an earlier save that had `stage=17` (e.g. replay of a prior session). `GS_LOAD(bg_w)` at `game_state.c:1273` would then clobber whatever `Setup_Battle_Country` computed. Would require stage=17 to appear in the **first** GameState hash exchange.
-3. A byte-swap / wrap-around in `Battle_Country`'s u8 vs `bg_w.stage`'s type. Grep: `struct BG.stage` is `u8` (see `src/sf33rd/Source/Game/stage/bg.h`). `Battle_Country` is `u8` in game_state.h:383 — same.
-4. `next_cpu.c:1120` Q_Country branch via some netplay-specific path. Q_Country is set at `manage.c:1879`. Would need trace to see if it fires.
+3. A byte-swap / wrap-around in `Battle_Country`'s u8 vs `bg_w.stage`'s type. Grep: `struct BG.stage` is `u8` (see `src/sf33rd/Source/Game/stage/bg.h`). `Battle_Country` is `u8` in game_state.h:386 — same.
+4. `next_cpu.c:1120` Q_Country branch via some netplay-specific path. Q_Country is set at `manage.c:1877`. Would need trace to see if it fires.
 
 This document cannot resolve how stage 17 actually leaks in without runtime instrumentation. **But it does not have to.** The fix in §G works regardless of how stage 17 is reached — the internal inconsistency is the bug, and the fix resolves it.
 

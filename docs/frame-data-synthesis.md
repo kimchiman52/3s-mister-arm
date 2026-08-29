@@ -15,6 +15,39 @@ agents should read it cover-to-cover before any frame-data
 investigation. When findings change, update this doc and prune what's
 stale; do not create sibling investigation docs.
 
+## Verification canon (live)
+
+This is the single **live** statement of the suite's verification
+numbers. Everything else in this document that quotes a suite count is
+a *dated historical record* of a past state — "Suite delta: 1,270/77 ->
+1,288/61", the 2026-07-18 audit, and so on — and must not be edited to
+match the present.
+
+| Quantity | Value |
+|---|---|
+| Corpora GREEN | 94<!-- canon:corpora --> |
+| Total rows | 1,349<!-- canon:total --> |
+| PASS | 1,296<!-- canon:pass --> |
+| XFAIL | 53<!-- canon:xfail --> |
+
+**These four numbers are generated, not typed.** They are the sum of
+the per-corpus golden tables under `tools/frame-data/golden/` — the
+same tables `run-suite.sh --check-golden` diffs against — and are
+regenerated and verified by:
+
+```sh
+python3 tools/frame-data/check-canon-numbers.py          # print the summed canon
+python3 tools/frame-data/check-canon-numbers.py --check  # fail if a doc disagrees
+```
+
+Each figure above carries an invisible `canon:<key>` HTML-comment
+marker. `--check` compares every marked figure in `docs/` against the
+summed truth and exits nonzero on disagreement, so a lever that flips a
+row cannot leave a stale number behind. The marker is opt-in precisely
+so that dated log entries are never swept up: **do not add a marker to
+a historical figure.** If you flip a row, run `--check`, and update
+only what it names.
+
 ## Arcade ground truth
 
 `docs/arcade-frame-data/q.json` (50 entries, fetched from
@@ -56,7 +89,7 @@ prior doc claims.
    `paring_counter[]` is a **bonus-mode score multiplier**, not a
    normal-play parry flag — it's only written under
    `Bonus_Game_Flag == 0 && spmv_ng_flag & 0x80` at
-   [`hitcheck.c:710`](../src/sf33rd/Source/Game/engine/hitcheck.c).
+   [`hitcheck.c:714`](../src/sf33rd/Source/Game/engine/hitcheck.c).
    Its value tells you nothing about whether parries happened in
    normal training. Likewise the earlier "`pat_status` 20/22/24/26
    are parry stances per `pls01.c:251`" claim is wrong — that line
@@ -160,7 +193,7 @@ sampled each game frame.
 - Set in `char_move()`:
   [`charset.c:421-425`](../src/sf33rd/Source/Game/engine/charset.c).
 - Reset:
-  [`main.c:547-548`](../src/main.c).
+  [`main.c:622-623`](../src/main.c).
 - Read by the overlay's `h_att_set` derivation in `fd_snap_player()`:
   [`frame_data_overlay.c:197-205`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c).
 
@@ -268,7 +301,7 @@ The overlay maintains two pieces of state:
   ([`frame_data_overlay.c:157-175`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)).
 
 Each tick (`frame_data_overlay_tick()`,
-[`frame_data_overlay.c:533`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)):
+[`frame_data_overlay.c:1526`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)):
 
 1. **Bail conditions.** Outside training mode → reset and clear
    latch. During super-freeze (`sa_stop_check() != 0`) → freeze
@@ -977,7 +1010,7 @@ only. |
 
 **M1 register — RESOLVED-BY-FIX (2026-07-13, BUFFER-1 capture-depth raise):** the FD_METER_LEN-raise fix-cycle candidate named above (24 legs / 11 moves, NOT STARTED) is now shipped. `frame_data_overlay.c:42`'s capture bound is split from the 72-cell display width: a new `FD_CAPTURE_LEN=256` constant now bounds `raw[]`/`meter_len`/`atk_cells`/`def_cells` (measurement), while `FD_METER_LEN=72` keeps its name, value, and every display use (meter geometry, `FdLatched` cell arrays, the draw-row clamp) — the on-screen meter is byte-identical at every capture depth (proven by the `FD_CAPTURE_LEN=72` mutation-contract identity run: 55/55 GREEN, zero drift). At 256, 21 of the 24 registered legs are clean oracle-equal conversions and ship `expect.R: from-qjson` measuring their pre-registered `busyr`/oracle value exactly: Akuma SA2 (37, ×3), Akuma SA3 (51, ×3), Chun-Li SA1 (48, ×3), Chun-Li SA2 HIT only (35), Chun-Li SA3 (46, WHIFF only — BLOCK/HIT are the separate non-M1 R-surplus shape, unconverted), Dudley MGB (EX) BLOCK (28), Dudley SA1 (31, ×3), Ken SA1 (45, ×3), Ken SA2 BLOCK/HIT (61, ×2 — WHIFF was already the wave-S1 control-negative). **Chun-Li SA2 BLOCK is the register's 22nd leg and does NOT convert**: measured post-fix R=38 matches this leg's own pre-registered `busyr` exactly but NOT the arcade oracle (`docs/arcade-frame-data/chunli.json` Houyoku Sen `Recovery`=35) — the busyr==oracle equality that holds on every other converted leg does not hold here, so R stays unasserted pending divergence classification, same disposition family as `yun-sa1` block/hit (`corpus-chunli-sa2.yaml`'s own dated note records this; the leg's pre-existing A-overcount `xfail` would otherwise silently absorb the mismatch, which the house rule against masked-by-an-unrelated-xfail wrong values forbids). **Ken SA3 (both legs) does NOT resolve** — measured post-fix BLOCK stays byte-identical at R=37 (zero drift at all) and HIT measures 11, neither matching the `excontact-r-findings.md` offline recount of 27 this row's own R DISPOSITION cited; the capture raise proves BLOCK's own append genuinely stops at the same point regardless of depth, meaning it was never actually FD_METER_LEN-capped the way the other 23 legs were — a genuine, still-open discrepancy between the prior offline recount and this fix's own direct measurement, reported rather than forced (`corpus-ken-sa3.yaml`'s own comments now record this). **A previously-untracked sibling member surfaced during this fix's own census/build-time diff and is folded into this closure**: `q-hsb-ex-whiff/-block/-hit` (Q's High Speed Barrage EX) shows the identical clean M1 signature (`busyr`=36=oracle on all three legs) and now also ships `R: from-qjson`, even though it was never carried in this register's leg count. **Side effect, reported prominently, not silently absorbed:** raising the capture depth also un-caps every `ended_by_partner_release` (command-throw/command-grab) move's raw[] capture, which previously saturated at the SAME 72-cell bound independently of the M1 mechanism above. This affects Hugo's six grab HIT rows (the `(FD_METER_LEN-1)-S-A` derived-convention formula §13.10 documents and — in that same subsection — explicitly REJECTS resizing FD_METER_LEN for: "it would only trade one convention's R for another with no arcade oracle either way"), plus `ken-throw-hit`, `makoto-karakusa-lk-hit`, `oro-throw-hit`, `twelve-throw-hit`, `yang-throw-hit`, `yun-throw-hit`, and `alex-powerbomb-lp-hit`/`-unblockable-probe` — all previously asserting a stale capture-bound convention R, all now DE-ASSERTED (not re-derived to a new formula, since no arcade oracle exists for the post-contact span either way) and re-measured to the true, larger post-release span. **This reopens §13.10's "No FD_METER_LEN resize" decision** — it was rejected FOR Hugo specifically at the time, and this fix (built for an unrelated reason, M1) undoes it as an unavoidable side effect. Also affected, with no oracle assertion at risk: `dudley-throw-hit`, `urien-throw-hit`, `akuma-ashura-whiff`/`dudley-crosscounter-lp-whiff` (no-active-signal WHIFF rows whose S now reads the true, longer `raw_len` instead of the old 72-cell cap), and `elena-exspinscythe-block` (a previously oracle-exact, unrelated row whose R was coincidentally correct at the old cap and now measures a genuine divergence — R stays asserted at the oracle value, converted from a plain PASS to an `xfail` per the house idiom, not de-asserted; see this section's own "BUFFER-1 capture-depth-raise regression" row above). `elena-exlynxtail-*` (the M1 register's own long-standing WHIFF/T=72 control-negative, `:947`) also drifts (0/7/7 → 25/25/25 across WHIFF/BLOCK/HIT) — its own capture window was ALSO extended by the raise, refining the "T=72 alone is not truncation" general rule further: that rule predicts whether the OLD, capped R was already correct, not whether raising the cap changes it. Full accounting: `<sp>/bufferfix/census.tsv` (pre-fix census), `<sp>/bufferfix/pre-drift-256.log` (post-fix full diff, the authoritative before/after list). Gate record: `FD_CAPTURE_LEN=72` identity run 55/55 GREEN zero drift; `FD_CAPTURE_LEN=256` pre-drift run matched the predicted table exactly on the 21 clean oracle-equal legs, the chunli-sa2-block busyr-only (non-oracle-equal, unasserted) leg, the Ken SA3 exception, and every side-effect row above; scoped `--update-golden` on the 25 affected corpora; final full `--check-golden` 55/55 GREEN zero drift; determinism ×2 (`ken-sa1`, byte-identical); eight house levers (F/G/H/I/J/M/N/O) re-grep-asserted `=1`; `git diff --stat src/` shows exactly `frame_data_overlay.c`.
 
-**SA-WHIFF-A — D2/D3 diagnosis outcome (2026-07-13, BUFFER-1 build window), Q2-D2 evidence-only per the bundled plan's own sequencing — NO conversion ships this cycle.** The offline declared-credit ledger walk (`<sp>/bufferfix/q2-ledger-report.md`, `<sp>/bufferfix/ledger_walk.py`) pre-registered D1 (ledger==displayed, dissolves the trigger with zero code change) as the expected outcome; the actual result is **MIXED, NOT D1**: Ken SA1 and Akuma SA2 both give **D2** (ledger total == oracle exactly — 34 and 24 respectively — NOT the displayed 33/23), and Dudley SA1 is **D3/inconclusive** (window-dependent: the naive `[move_start,atk_idle_F]` window gives 32, matching neither number; extending through the point `jatix` permanently stops gives 40 = oracle, but reproducing the EXACT snapshot tick requires modeling the §13.5.1 `cghi=1`-dwell commit state machine, not just the accumulator rules, which is out of the ledger walk's scope). Per the plan's own STOP rule for mixed verdicts across an adv-coupling-grouped trio, **no §2.4 conversion edits were applied this cycle** — `corpus-ken-sa1.yaml`/`corpus-dudley-sa1.yaml`/`corpus-akuma-sa2.yaml` A-fields are untouched. **This build window's own Q2-D2 diagnosis (env-gated `fprintf` probe in the `fd_engine_active_count` accumulator, `charset.c:454-561`, scratch-reverted, `git diff` on `charset.c` confirmed zero after revert) goes further and answers WHY the ledger walk's own hand-derivation (34/24) doesn't match live execution (33/23) — a finding the ledger walk itself couldn't produce, since it read only the static per-tick trace columns, not the live accumulator:** directly instrumenting every ADD/REVOKE/RESTORE site and the `engine_a_at_atk_idle` snapshot site, then running all three members' WHIFF legs, shows the LIVE accumulator's own running total already lands on the DISPLAYED value (33/39/23), not the ledger walk's hand-summed total (34/32/24) — the display is faithful to the accumulator; the accumulator itself, not the display, is what falls short of the oracle. The mechanism, reproduced identically on all three members: `fd_reset_move()`'s `fd_engine_active_count[i] = 0` MOVE_START reset (`frame_data_overlay.c:1214`) fires one game-tick AFTER `char_move()`/`charset.c`'s own engine-tick ADD has already credited the move's first active cell (the overlay's own tick runs after the engine tick within the same real frame, `main.c:603`/`:615`, but MOVE_START detection can lag the engine's first active-cgix add by a further whole tick when the r1 edge and the first `jatix!=0` cell don't coincide) — the first cell's credit is silently zeroed, and (on Akuma/Dudley, whose first cell persists ≥2 ticks) the SAME cell then gets mis-re-entered as if newly seen (since `fd_prev_active_cgix` was also reset to -1), contributing only its own decremented per-frame remainder instead of its true full clamped value. Net effect on all three members: exactly -1 relative to a reset-race-free implementation, matching the -1 vs oracle exactly. **Lever-F=0 toggle runs (env-gated, same probe build) on all three members show ZERO effect** (byte-identical A/R to lever-F=1) — confirming the ledger walk's own "0 same-tick revoke events" finding and definitively RULING OUT the revoke+restore mechanism as the cause; this is a different, previously-unnamed mechanism, not a "restore partially works" story. **Recorded as an ENGINE-candidate finding, strengthened-bar note (per §13.17's own precedent for RE-ANCHOR-1's ownership-fitted-rule census discipline): own recorded signature required (three independent members, identical mechanism) before it graduates past candidate status.** The env-gated `fprintf` probe's own per-tick ADD/REVOKE/RESTORE instrumentation output was NOT preserved anywhere (scratch-only, reverted per house rules, `git diff` on `charset.c` confirmed empty) and is not itself citable evidence. What IS preserved and artifact-backed: the lever-F=0 toggle runs (`<sp>/bufferfix/d2probe/{ken-sa1,dudley-sa1,akuma-sa2}-{normal,off}/trace.log`) show byte-identical WHIFF-leg A across lever-F on vs off on all three members (lever-F null, corroborating the ledger walk's own 0-revoke-events finding); those same preserved FINALs show `engine_a`=33 vs `box_a`=34 on Ken SA1's own WHIFF leg (F=150) — a real, artifact-backed 1-tick gap between the displayed accumulator and the raw box-frame tally; and the code-order facts that `njUserMain()` (`main.c:604`) runs before `frame_data_overlay_tick()` (`main.c:616`) each frame, with `fd_reset_move()`'s `fd_engine_active_count[i] = 0` reset sitting at `frame_data_overlay.c:1213-1216`. Framed honestly, the `fd_reset_move()`-vs-`char_move()` tick-ordering race described above is the LEADING HYPOTHESIS consistent with those three artifacts — not a logged signature of the mechanism's own operation, since no per-tick capture of the actual reset-vs-add ordering was preserved. Scope risk flagged explicitly: the reset-timing race is structural to `fd_reset_move()`/`char_move()`'s interaction on EVERY move using this code path, not just these three — it is only VISIBLE here because these three moves' whiff-path A happens to disagree with an independently-known oracle by exactly 1; whether it silently affects other currently-PASS or already-xfailed A readings elsewhere in the suite is unknown and NOT investigated this cycle (out of this window's Q2-D2/evidence-only scope). No fix ships. Ken SA1's own wave-S1 ESCALATED flag (`:951`, "flagged for orchestrator/user follow-up needing a lever-F toggle build") resolves to THIS finding: the lever-F toggle build ran, and it found the answer is NOT lever F.
+**SA-WHIFF-A — D2/D3 diagnosis outcome (2026-07-13, BUFFER-1 build window), Q2-D2 evidence-only per the bundled plan's own sequencing — NO conversion ships this cycle.** The offline declared-credit ledger walk (`<sp>/bufferfix/q2-ledger-report.md`, `<sp>/bufferfix/ledger_walk.py`) pre-registered D1 (ledger==displayed, dissolves the trigger with zero code change) as the expected outcome; the actual result is **MIXED, NOT D1**: Ken SA1 and Akuma SA2 both give **D2** (ledger total == oracle exactly — 34 and 24 respectively — NOT the displayed 33/23), and Dudley SA1 is **D3/inconclusive** (window-dependent: the naive `[move_start,atk_idle_F]` window gives 32, matching neither number; extending through the point `jatix` permanently stops gives 40 = oracle, but reproducing the EXACT snapshot tick requires modeling the §13.5.1 `cghi=1`-dwell commit state machine, not just the accumulator rules, which is out of the ledger walk's scope). Per the plan's own STOP rule for mixed verdicts across an adv-coupling-grouped trio, **no §2.4 conversion edits were applied this cycle** — `corpus-ken-sa1.yaml`/`corpus-dudley-sa1.yaml`/`corpus-akuma-sa2.yaml` A-fields are untouched. **This build window's own Q2-D2 diagnosis (env-gated `fprintf` probe in the `fd_engine_active_count` accumulator, `charset.c:454-561`, scratch-reverted, `git diff` on `charset.c` confirmed zero after revert) goes further and answers WHY the ledger walk's own hand-derivation (34/24) doesn't match live execution (33/23) — a finding the ledger walk itself couldn't produce, since it read only the static per-tick trace columns, not the live accumulator:** directly instrumenting every ADD/REVOKE/RESTORE site and the `engine_a_at_atk_idle` snapshot site, then running all three members' WHIFF legs, shows the LIVE accumulator's own running total already lands on the DISPLAYED value (33/39/23), not the ledger walk's hand-summed total (34/32/24) — the display is faithful to the accumulator; the accumulator itself, not the display, is what falls short of the oracle. The mechanism, reproduced identically on all three members: `fd_reset_move()`'s `fd_engine_active_count[i] = 0` MOVE_START reset (`frame_data_overlay.c:1214`) fires one game-tick AFTER `char_move()`/`charset.c`'s own engine-tick ADD has already credited the move's first active cell (the overlay's own tick runs after the engine tick within the same real frame, `main.c:700`/`:720`, but MOVE_START detection can lag the engine's first active-cgix add by a further whole tick when the r1 edge and the first `jatix!=0` cell don't coincide) — the first cell's credit is silently zeroed, and (on Akuma/Dudley, whose first cell persists ≥2 ticks) the SAME cell then gets mis-re-entered as if newly seen (since `fd_prev_active_cgix` was also reset to -1), contributing only its own decremented per-frame remainder instead of its true full clamped value. Net effect on all three members: exactly -1 relative to a reset-race-free implementation, matching the -1 vs oracle exactly. **Lever-F=0 toggle runs (env-gated, same probe build) on all three members show ZERO effect** (byte-identical A/R to lever-F=1) — confirming the ledger walk's own "0 same-tick revoke events" finding and definitively RULING OUT the revoke+restore mechanism as the cause; this is a different, previously-unnamed mechanism, not a "restore partially works" story. **Recorded as an ENGINE-candidate finding, strengthened-bar note (per §13.17's own precedent for RE-ANCHOR-1's ownership-fitted-rule census discipline): own recorded signature required (three independent members, identical mechanism) before it graduates past candidate status.** The env-gated `fprintf` probe's own per-tick ADD/REVOKE/RESTORE instrumentation output was NOT preserved anywhere (scratch-only, reverted per house rules, `git diff` on `charset.c` confirmed empty) and is not itself citable evidence. What IS preserved and artifact-backed: the lever-F=0 toggle runs (`<sp>/bufferfix/d2probe/{ken-sa1,dudley-sa1,akuma-sa2}-{normal,off}/trace.log`) show byte-identical WHIFF-leg A across lever-F on vs off on all three members (lever-F null, corroborating the ledger walk's own 0-revoke-events finding); those same preserved FINALs show `engine_a`=33 vs `box_a`=34 on Ken SA1's own WHIFF leg (F=150) — a real, artifact-backed 1-tick gap between the displayed accumulator and the raw box-frame tally; and the code-order facts that `njUserMain()` (`main.c:700`) runs before `frame_data_overlay_tick()` (`main.c:720`) each frame, with the MOVE_START block's `fd_engine_active_count[i] = 0` reset (immediately after its `fd_reset_move()` call at `:1581`, not inside that function) sitting at `frame_data_overlay.c:1625`. Framed honestly, the `fd_reset_move()`-vs-`char_move()` tick-ordering race described above is the LEADING HYPOTHESIS consistent with those three artifacts — not a logged signature of the mechanism's own operation, since no per-tick capture of the actual reset-vs-add ordering was preserved. Scope risk flagged explicitly: the reset-timing race is structural to `fd_reset_move()`/`char_move()`'s interaction on EVERY move using this code path, not just these three — it is only VISIBLE here because these three moves' whiff-path A happens to disagree with an independently-known oracle by exactly 1; whether it silently affects other currently-PASS or already-xfailed A readings elsewhere in the suite is unknown and NOT investigated this cycle (out of this window's Q2-D2/evidence-only scope). No fix ships. Ken SA1's own wave-S1 ESCALATED flag (`:951`, "flagged for orchestrator/user follow-up needing a lever-F toggle build") resolves to THIS finding: the lever-F toggle build ran, and it found the answer is NOT lever F.
 
 **SA-WHIFF-A register — member count update to 5, plus Part-A P-1 corrective resolutions (2026-07-13, EXSUPER-1 closing cleanup).** This document's own SA-WHIFF-A count was never updated past the wave-S2 trigger-fire's 3 members (Ken SA1 Shoryureppa, Dudley SA1 Rocket Uppercut, Akuma SA2 Messatsu Gou Shoryuu) even as later waves added members — corrected here. **Elena SA1** (supers wave S4, `corpus-elena-sa1.yaml`'s own header) joined as a 4th member (A=16 vs oracle 17, uniform -1 on all three legs, BLOCK adv=-30 oracle-exact — shape A, adv-exact). **Alex SA2 Boomerang Raid** (this same cleanup's Part-A P-1 corrective, `corpus-alex-sa2.yaml`) is now a confirmed 5th member: A=13 vs oracle 14, uniform -1 on all three legs, no numeric adv field to test coupling (places in shape A by absence of observed coupling, same posture as Dudley SA1). **Census, final: 5 members — Ken SA1 Shoryureppa, Dudley SA1 Rocket Uppercut, Akuma SA2 Messatsu Gou Shoryuu, Elena SA1, Alex SA2 Boomerang Raid** (all shape A, adv-exact/no-coupling-observable; shape B stays at its 1-member count, Chun-Li SA1 Kikoshou, below threshold). **Part-A ledger-walk resolutions (this cleanup):** an isolated single-entry offline declared-credit ledger walk (mirroring the Q2/D2 method above) was run on Alex SA2 (all 3 legs) and Ibuki SA2 (WHIFF leg): both give ledger total == oracle exactly (14 and 15 respectively, NOT the displayed 13/14) — the SAME D2 signature already confirmed on Ken SA1/Akuma SA2, now with 2 more members' worth of corroborating evidence for the `fd_reset_move()` tick-ordering race. Both are now shipped `xfail-at-oracle` (the `corpus-akuma-sa2.yaml` idiom: oracle value asserted via `from-qjson`, measured value recorded in the xfail note) rather than the plain-PASS assert `corpus-alex-sa2.yaml` previously shipped — house rule (wrong values never ship) required the correction regardless of this being the SAME mechanism already flagged as an ENGINE-candidate. **Ibuki SA2 is NOT a SA-WHIFF-A member** despite sharing the identical D2 mechanism: SA-WHIFF-A's own defining test requires a uniform magnitude reproduced on EVERY leg including WHIFF (`:974`'s own test), and Ibuki SA2's divergence is WHIFF-only (BLOCK/HIT both measure A=15==oracle exactly) — it fails the uniformity prerequisite the same way Yun SA1's own non-uniform A sighting did (`:968`), so it is cited to SA-WHIFF-A/D2 as its MECHANISM but stays outside the named shape's own member count. **Remy SA2 Supreme Rising Rage Flash is a DIFFERENT disposition entirely, NOT SA-WHIFF-A and not a census addition**: its own ledger walk (both contact legs) gives 10, matching NEITHER the displayed 15 NOR the oracle 16 — a hitstop-entangled shape the pure charset.c accumulator model cannot reproduce (see `corpus-remy-sa2.yaml`'s own corrected A DISPOSITION), OMITTED per the ledger-outcome disposition's third bucket, not xfailed. **Flagged for re-audit, NOT corrected this cycle (out of Part-A's named 3-corpus scope): `corpus-ryu-sa2.yaml`'s own A=12 plain-PASS assert** (both BLOCK and WHIFF legs, vs arcade/oracle 13) is asserted under the identical §13.11 "path-independence confirms declared truth" reasoning that Remy SA2's own retracted A DISPOSITION used — and that reasoning is now known to be insufficient (the D2 race is itself path-independent, so path-independence alone cannot discriminate a genuine declared-credit truth from a race artifact). Ryu SA2 was NOT re-walked this cycle (out of the 3 named P-1 corpora); this is a scope-risk flag only, not a finding — a future ledger walk on Ryu SA2 would be needed to settle whether it is a 6th SA-WHIFF-A/D2 member, a Remy-SA2-style ledger-neither case, or a genuine §13.11 declared-truth assert.
 
@@ -1674,7 +1707,7 @@ further members hiding inside item 18(b)) is exactly this shape.
 that function (`pls00.c:1160-1170`) clears `guard_flag` to 0 iff the
 CURRENT chart cell's `cg_type` is guard-capable ({0xFF, 64, 2, 3, 7}) —
 i.e. the move's own animation data says "the opponent can guard from
-here." `hitcheck.c:250/315/458` confirm the semantic (`guard_flag == 3`
+here." `hitcheck.c:251/316/459` confirm the semantic (`guard_flag == 3`
 blocks the guard path). So while r1==4, `guard_flag == 0` is Capcom's
 own data-driven "effectively neutral" marker — exactly what the arcade
 table's "recovery ends" encodes.
@@ -1796,7 +1829,7 @@ per-entry disposition.
 **Diagnosis (via `[CMX]` opcode log).** Cross-referencing
 `/tmp/cm-trace.log` opcode dispatches against HSB FINAL ranges
 identified `comm_hjmp` (cell-data opcode `code=47`,
-[`charset.c:1030-1046`](../src/sf33rd/Source/Game/engine/charset.c))
+[`charset.c:1238-1254`](../src/sf33rd/Source/Game/engine/charset.c))
 as the post-active discriminator: it fires exactly once per HSB
 block at the frame immediately after the last `cg_ja.atix > 0`
 frame. The post-`comm_hjmp`-to-`r1=0` window equals arcade R
@@ -1973,7 +2006,7 @@ but useless for players. Arcade convention is "KD" (knockdown).
 Implementation:
 
 1. New `bool kd` field added to `FdLatched`
-   ([`frame_data_overlay.c:160`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)).
+   ([`frame_data_overlay.c:426`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)).
 2. New helper `fd_is_knockdown_at_atk_idle()`
    ([`frame_data_overlay.c:296-300`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c))
    reads the LAST raw[] cell's `def_r1`. The `attacker_already_idle`
@@ -2118,7 +2151,7 @@ grep "^# F=" /tmp/3sx-frame-trace.log | grep -E "MOVE_START|FINAL"
 ```
 
 `move_start_F` / `atk_idle_F` are overlay-frame counters
-([`frame_data_overlay.c:179`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)),
+([`frame_data_overlay.c:1497`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)),
 not GT. Mapping to GT via the per-move MOVE_START annotation gives:
 
 | Move | move_start_GT | arcade S+A+R | arcade-actionable GT | trace cut GT |
@@ -2782,7 +2815,7 @@ analysis here.
 F=1256 r1: 0→4 fires MOVE_START (cgix=0 cghi=1 sw_new=0x0020). The
 overlay opens move tracking; `fd_engine_active_count[atk]` cleared
 to 0 at
-[`frame_data_overlay.c:569`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c).
+[`frame_data_overlay.c:1625`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c).
 
 **First UOH** runs F=1257-1295 (cgix 4→8→12 startup, 20→24→28→32
 active with hitstop F=1272-1280, recovery F=1292-1295). cghi
@@ -2790,7 +2823,7 @@ sequence 229→230→231→232→126→127. Engine accumulator at
 [`charset.c:414-457`](../src/sf33rd/Source/Game/engine/charset.c)
 sums to 11 (walked below in §13.7.4). Cgix-reset at F=1294
 (40→0 cghi=234) sets `g_cur.cgix_reset_frame = 1294`
-([`frame_data_overlay.c:692`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)).
+([`frame_data_overlay.c:1944`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)).
 F=1297-1298 cgix=8 cghi=1: §13.5.1 cghi1_first_frame=1297,
 cghi1_count=1 then 2. **Predicate's `≥3` gate hasn't fired yet.**
 
@@ -2824,7 +2857,7 @@ which is **22** (uncapped — u8 still has headroom). Numeric line:
 S=16 A=22 R=5 T=43.
 
 **Root cause.** `fd_engine_active_count[atk]` is reset only on the
-r1: 0→!=0 MOVE_START edge ([`frame_data_overlay.c:569`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c))
+r1: 0→!=0 MOVE_START edge ([`frame_data_overlay.c:1625`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c))
 and incremented unconditionally per char_move call when `cg_ja.atix
 != 0 || cg_ja.caix != 0` ([`charset.c:421-457`](../src/sf33rd/Source/Game/engine/charset.c)).
 Same-r1=4-window retriggered moves bypass the reset.
@@ -3461,7 +3494,7 @@ that's outside §13.7's scope.
    commit `a386e057`, the "second option" shape below.** Verified at
    [`frame_data_overlay.c:114-122`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)
    (new `engine_a_at_atk_idle` field on `FdMove`),
-   [`frame_data_overlay.c:858-868`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)
+   [`frame_data_overlay.c:2314-2315`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)
    (snapshot taken on the first tick `attacker_idle >= 0`, before any
    deferred-finalize ticks let a fresh move's cells inflate the live
    counter), and
@@ -3647,7 +3680,7 @@ in `a386e057` as of 2026-07-07** — see the status-snapshot table's
   catch-hitbox detection in `fd_snap_player` (§13.6).
 - `src/sf33rd/Source/Game/ui/frame_data_overlay.c:325-348` —
   §13.3 no-active-signal guard.
-- `src/sf33rd/Source/Game/ui/frame_data_overlay.c:386-402` —
+- `src/sf33rd/Source/Game/ui/frame_data_overlay.c:989-997` —
   §13.5.2 multi-hit recovery override (last_active_pf_idx based).
 - `src/sf33rd/Source/Game/ui/frame_data_overlay.c:621-631` —
   §13.6 throw-event detection (partner r1: 0→2/3 = HIT).
@@ -3665,9 +3698,9 @@ in `a386e057` as of 2026-07-07** — see the status-snapshot table's
   `set_jugde_area` extends `fd_engine_hitbox_active` capture to caix.
 - `src/sf33rd/Source/Game/ui/frame_trace.c:28-29` — `jcaix`
   (cg_ja.caix) and `cgcan` (cg_cancel) columns added.
-- `src/sf33rd/Source/Game/ui/frame_data_overlay.c:160` — `bool kd`
+- `src/sf33rd/Source/Game/ui/frame_data_overlay.c:426` — `bool kd`
   added to `FdLatched` for §13.6 KD advantage display.
-- `src/sf33rd/Source/Game/ui/frame_data_overlay.c:296-300` —
+- `src/sf33rd/Source/Game/ui/frame_data_overlay.c:862-871` —
   `fd_is_knockdown_at_atk_idle()` helper (§13.6).
 - `src/sf33rd/Source/Game/ui/frame_data_overlay.c:482-484` —
   KD set in fd_finalize HIT branch (§13.6).
@@ -3780,7 +3813,7 @@ in `a386e057` as of 2026-07-07** — see the status-snapshot table's
     [`pls01.c:476`](../src/sf33rd/Source/Game/engine/pls01.c). The
     earlier "falsified by `paring_counter[0]==0`" reasoning was
     wrong — `paring_counter[]` is a bonus-mode score multiplier
-    (`hitcheck.c:710`), not a normal-play parry flag. Whether any
+    (`hitcheck.c:714`), not a normal-play parry flag. Whether any
     given instance is genuinely a *post-parry* counter (vs a normal
     forward-walking attack) is **not testable from existing trace
     data**; would need to instrument `set_paring_status` capture in
@@ -3797,9 +3830,9 @@ in `a386e057` as of 2026-07-07** — see the status-snapshot table's
     finalized WHIFF (S=6 A=5 R=8) instead of BLOCK/HIT on every dummy/
     distance/timing variant tried in the harness (`q-crlk-block`,
     `q-crlk-hit`, both formerly xfail). Root cause: `dm_stop =
-    att.hs_you` (hitcheck.c:1343 via `dm_status_copy`, called on hit
-    :544 and guard :603); `hs_you` is a **signed s8** per-move data
-    field (`include/structs.h:115`) loaded verbatim from the attack
+    att.hs_you` (hitcheck.c:1592 via `dm_status_copy`, called on hit
+    :545 and guard :605); `hs_you` is a **signed s8** per-move data
+    field (`include/structs.h:119`) loaded verbatim from the attack
     table (`charset.c:2835`) — its sign selects the hitstop *style*,
     not the event kind: positive freezes the defender, negative lets
     `char_move()` keep advancing during the stop
@@ -3822,7 +3855,7 @@ in `a386e057` as of 2026-07-07** — see the status-snapshot table's
     they are unaffected. A positive `dm_stop` edge also can never
     coincide with `dn->r1 == 0` (which would misread as PARRY) because
     both positive-edge writers force `routine_no[1] = 1` on the same
-    engine tick before the overlay samples (`hitcheck.c:539`/`:596`,
+    engine tick before the overlay samples (`hitcheck.c:540`/`:598`,
     `plpat18.c:36`). One pre-existing blind spot, unchanged by this fix:
     a player-vs-player
     **trade** abs-merges both combatants' `dm_stop` into `hit_stop` and
@@ -3976,7 +4009,7 @@ in `a386e057` as of 2026-07-07** — see the status-snapshot table's
     (`h-roundhouse-whiff` R=28). Classified from same-binary
     `[CM]`/`[CMX]` traces plus two temporary, since-reverted
     fprintf-only probes (`[HPX]` at `hit_pattern_extdat_check` entry,
-    `hitcheck.c:723`; `[JUP]` in `jumping_union_process`'s landing
+    `hitcheck.c:727`; `[JUP]` in `jumping_union_process`'s landing
     branch, `pls01.c:767`), scratch 3-entry corpus, Debug host build at
     `3da7fc25`:
 
@@ -4404,8 +4437,8 @@ line range; do not trust the doc citation alone):**
 | §13.5.2 multi-hit recovery override | [`frame_data_overlay.c:386-402`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | `last_active_pf_idx`-based recovery_pf computation |
 | §13.3 no-active-signal guard | [`frame_data_overlay.c:325-348`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | Whole-move STARTUP when no active signal + no event |
 | §13.6 catch-hitbox snap | [`frame_data_overlay.c:206-212`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | `cg_ja.caix > 0` extends `h_att_set` |
-| §13.6 throw-event detection | [`frame_data_overlay.c:621-631`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | Partner `r1: 0 → 2/3` fires HIT outcome |
-| §13.6 KD field | [`frame_data_overlay.c:160`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | `bool kd` in `FdLatched` |
+| §13.6 throw-event detection | [`frame_data_overlay.c:1740-1741`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | Partner `r1: 0 → 2/3` fires HIT outcome |
+| §13.6 KD field | [`frame_data_overlay.c:426`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | `bool kd` in `FdLatched` |
 | §13.6 KD helper | [`frame_data_overlay.c:296-300`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | `fd_is_knockdown_at_atk_idle()` |
 | §13.6 KD set in finalize | [`frame_data_overlay.c:482-484`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | HIT branch only |
 | §13.6 KD draw | [`frame_data_overlay.c:920-948`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | Renders "KD" in `FD_COL_THROW` |
@@ -4737,7 +4770,7 @@ baseline's own `move_start_F=1 atk_idle_F=20 def_idle_F=22`) confirms
 the snapshot fires and finalize reads it — engine_a stays a clean 4,
 matching arcade exactly. The second Jab's own MOVE_START is silently
 never annotated (`g_cur.active` is still true at the top of the F=20
-tick, per the `!g_cur.active` gate at `frame_data_overlay.c:827` — a
+tick, per the `!g_cur.active` gate at `frame_data_overlay.c:1577` — a
 distinct, minor swallowed-MOVE_START side effect, not scope-relevant
 here) — cosmetic only; it doesn't feed back into the first move's
 numbers.
@@ -5512,7 +5545,7 @@ falsified before the shipped chart-cut kill-reason gate).**
    declared form above, not a separate fix.)
 4. *athok-at-edge gate (the original design draft)* — falsified:
    `att_hit_ok` is a consumable hit permission
-   (`hitcheck.c:1564/1567`), cleared at contact and held at 0 by
+   (`hitcheck.c:1814/1817`), cleared at contact and held at 0 by
    `kotp_13000`'s own consumption handler for the tama's remaining
    life — never set at the atix→0 edge on any CONNECT leg, so this gate
    would never fire on 6 of the 9 rows.
@@ -5612,7 +5645,7 @@ below.
   tick, the engine advances `cg_ix` a second time within the same
   `Game_timer` tick, either (a1) jumping directly past one or more
   declared-active cells without ever entering them, or (a2) via
-  `hit_pattern_extdat_check` case `0x41` (`hitcheck.c:743-752`) parking
+  `hit_pattern_extdat_check` case `0x41` (`hitcheck.c:752-765`) parking
   `cg_ix` past a declared cell without calling `char_move` at all. In
   both shapes the skipped cell's declared credit never enters
   `fd_engine_active_count` — there is no accumulator subtraction to
@@ -6921,7 +6954,7 @@ contact-A specific, recorded here as sibling LAYER-1-adjacent proofs).**
   (`corpus-urien.yaml`, `corpus-sean.yaml`) — the isolated-run value is
   arcade-exact for both (urien-vkd adv=-16; sean-ryuubi R=15/adv=-3), the
   bundled suite reads a bled value because the dummy's idle-breathing
-  cell phase (`charset.c:2982` hurtbox pulse) drifts with run position;
+  cell phase (`charset.c:2976` hurtbox pulse) drifts with run position;
   golden stays pinned to the canonical full-corpus (bled) value. One
   companion row, `urien-vkd-lk-hit`'s A/R clause, is CAPTURE-GATED (no
   arcade anchor resolves pinned-literal A=4/R=32 vs isolated A=5/R=31)
@@ -7137,7 +7170,8 @@ asserting the oracle, with the true mechanism documented — the honest floor.
 
 **§13.16 addendum (HONEST FLOOR, dated 2026-07-14, user decision —
 opus-substitute / WANTS FABLE RE-REVIEW).** As of the drive-to-zero closing
-pass the overlay is **frame-exact on 1,296 of 1,349 legs** (1,290 at the
+pass the overlay is **frame-exact on 1,296<!-- canon:pass --> of
+1,349<!-- canon:total --> legs** (1,290 at the
 2026-07-14 floor + 4 from the 2026-07-17 lever-V remy-sa1 resolution + 2 from
 the 2026-07-17 lever-W yang landing-cut re-anchor) and within ~1 frame on the
 remaining 53, with **every one of the 53 deviations diagnosed and terminally
@@ -7167,7 +7201,7 @@ partition into seven terminal classes, none of which admits a suite-safe fix:
 | **CONVENTION/RULED** | 6 | genuinely ambiguous mapping between two hardware-real quantities (yang startup 5-vs-7; yun-zesshou A 15-vs-16), user-ruled, both readings defensible |
 | **REACHABILITY-GAP** | 4 | the clean-whiff baseline is harness-unproducible (urien-chariot connects even at DIST_MAX; sean-sa1 Hadou-Burst projectile has no reachable whiff) |
 | **ENGINE-MODEL-LIMITATION** | 2 | urien-sa2 ×2 — re-adjudicated 2026-07-17 (digest finding #1): the earlier "ORACLE-TABLE-INCONSISTENCY / S+R=92>T=91 over-budget" label is REFUTED (the 91 is the engine meter window, not an oracle quantity; the arcade 94-frame post-flash busy window makes oracle S=1+R=91 jointly satisfiable). Terminal because the engine's single-slot proj-split model (`R = meter_len − proj_s`) cannot place S and R independently AND the engine meter window is 3 frames short of arcade's 94 at the window OPEN (sa_stop-vs-frz definitional gap; re-anchor path CLOSED 2026-07-18 — the oracle conventions sit on the engine's window and a re-anchor regresses 20+ passing S legs; see the Q6 closure above). S now displays oracle 1 (lever V, display-only); residual is A (travel-dependent, no flat canonical value) + the open 91-vs-94 window. The genuine cross-character oracle-table convention split is `twelve-sa1` (classified under CAPABILITY-GATED-remaining; `proj_spawn_raw=3` post-append consume, `proj-split/fit.md §1`) |
-| **Total** | **53** | all characterized known-limitations; zero UNCLASSIFIED |
+| **Total** | **53**<!-- canon:xfail --> | all characterized known-limitations; zero UNCLASSIFIED |
 
 No row remains UNCLASSIFIED. The engine is LAYER-1 arcade-faithful; the
 residual 53 are the diagnosed floor, held honestly rather than papered over.
@@ -8194,15 +8228,15 @@ this overlay's work:
 | File | Role |
 | --- | --- |
 | `src/sf33rd/Source/Game/ui/frame_data_overlay.{c,h}` | Overlay state machine, classification, render. Emits MOVE_START / FINAL trace annotations. |
-| `src/sf33rd/Source/Game/ui/frame_data_overlay.c:128-141` | Multi-segment recovery cut state in `FdMove` (`prev_cgix`, `cgix_reset_frame`, `cghi1_first_frame`, `cghi1_first_raw_slot`, `cghi1_count`) — §13.5.1. |
-| `src/sf33rd/Source/Game/ui/frame_data_overlay.c:160` | `bool kd` field in `FdLatched` for §13.6 KD advantage display. |
+| `src/sf33rd/Source/Game/ui/frame_data_overlay.c:168-172` | Multi-segment recovery cut state in `FdMove` (`prev_cgix`, `cgix_reset_frame`, `cghi1_first_frame`, `cghi1_first_raw_slot`, `cghi1_count`) — §13.5.1. |
+| `src/sf33rd/Source/Game/ui/frame_data_overlay.c:426` | `bool kd` field in `FdLatched` for §13.6 KD advantage display. |
 | `src/sf33rd/Source/Game/ui/frame_data_overlay.c:206-212` | `fd_snap_player` extends `h_att_set` with `cg_ja.caix > 0` for catch hitboxes (§13.6). |
 | `src/sf33rd/Source/Game/ui/frame_data_overlay.c:296-300` | `fd_is_knockdown_at_atk_idle()` — last raw[] cell `def_r1 ∈ {2,3}` test (§13.6 KD). |
 | `src/sf33rd/Source/Game/ui/frame_data_overlay.c:325-348` | §13.3 no-active-signal guard — when `engine_a==0` AND no event AND `h_att` never fires, mark whole move STARTUP. |
 | `src/sf33rd/Source/Game/ui/frame_data_overlay.c:386-402` | §13.5.2 multi-hit recovery override — `last_active_pf_idx`-based recovery_pf. |
 | `src/sf33rd/Source/Game/ui/frame_data_overlay.c:482-484` | KD set in `fd_finalize` HIT branch (§13.6). |
 | `src/sf33rd/Source/Game/ui/frame_data_overlay.c:559-591` | MOVE_START scan + clearing of `fd_engine_active_count` / `fd_prev_active_cgix` on `r1: 0 → !=0` edge. |
-| `src/sf33rd/Source/Game/ui/frame_data_overlay.c:621-631` | §13.6 throw-event detection — partner `r1: 0 → 2/3` fires HIT outcome. |
+| `src/sf33rd/Source/Game/ui/frame_data_overlay.c:1740-1741` | §13.6 throw-event detection — partner `r1: 0 → 2/3` fires HIT outcome. |
 | `src/sf33rd/Source/Game/ui/frame_data_overlay.c:825-896` | §13.5.1 multi-segment recovery cut predicate (gate `r1==4 || r1==2`). Houses §13.6.1 partner-release short-circuit at lines 842-856. |
 | `src/sf33rd/Source/Game/ui/frame_data_overlay.c:793-827` | §14 live §8.3 mirror with scattered-active skip for multi-hit moves. |
 | `src/sf33rd/Source/Game/ui/frame_data_overlay.c:920-948` | Draw path renders "KD" in `FD_COL_THROW` when `g_latched.kd` true (§13.6). |
@@ -8233,7 +8267,7 @@ this overlay's work:
 | --- | --- |
 | `src/sf33rd/Source/Game/engine/plpdm.c:309-352` | `Damage_04000()` — defender ground-block state machine. |
 | `src/bin2obj/etc.c:3` | `_guard_pause_table[2][4]` — blockstun pause durations by attack level. |
-| `src/sf33rd/Source/Game/engine/charset.c:237-244` | `char_move_wca()` — defender's guard-release entry point. |
+| `src/sf33rd/Source/Game/engine/charset.c:262-268` | `char_move_wca()` — defender's guard-release entry point. |
 | `src/sf33rd/Source/Game/engine/pls01.c:610-619` | `check_stand_up()` — sets `r2 = 7` on transition out of blockstun. |
 
 ### Reference data + traces

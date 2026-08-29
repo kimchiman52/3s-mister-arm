@@ -951,7 +951,7 @@ allowlist entry defeats the whole tool.
    crosses a round (re)initialization — full stack:
    `Game2_1 → Player_control → plcnt_init → init_app_10000 → pli_0000 →
    setup_base_and_other_data → make_texcash_work(6) →
-   mlt_obj_trans_init (mtrans.c:2228) → ppgSetupTexChunkSeqs
+   mlt_obj_trans_init (mtrans.c:2318) → ppgSetupTexChunkSeqs
    (PPGFile.c:1014) adrs=NULL`, immediately after a
    `[ramcnt-skip] Get_ramcnt_address key=-1 (returning 0)` guard line
    (one of the 2026-04-29 brick-prevention guards converting the
@@ -1015,8 +1015,8 @@ allowlist entry defeats the whole tool.
    per real frame on both peers.
 9. **Wall-clock-driven subsystems — the LDREQ/AFS/ramcnt cluster.**
    Measured 2026-08-24 (task #60). `AFS_Read` is a genuine OS async read
-   (`SDL_ReadAsyncIO`, `port/io/afs.c:366`) whose completion is delivered
-   by `AFS_RunServer` draining `SDL_GetAsyncIOResult` (`afs.c:304-313`).
+   (`SDL_ReadAsyncIO`, `port/io/afs.c:434`) whose completion is delivered
+   by `AFS_RunServer` draining `SDL_GetAsyncIOResult` (`afs.c:313-318`).
    Load completion is therefore a **wall-clock** event, and the whole
    cluster it drives is nondeterministic *without any rollback at all*:
    `q_ldreq`, `rckey_work`, `rckey_mmobj`, `texgrplds`, `char_init_data`,
@@ -1091,9 +1091,9 @@ allowlist entry defeats the whole tool.
    (`G_No[1] == 2`) while the slow side is still in character select
    (`G_No[1] == 1`). Every row marked saved is inside the desync
    checksum. `pl_load` is the exact expression `Exit_6th`
-   (`screen/sel_pl.c:1702`) gates the saved `Exit_No`/`Exit_Timer` on,
+   (`screen/sel_pl.c:1701-1702`) gates the saved `Exit_No`/`Exit_Timer` on,
    and `ldreq_clear` is the expression `Game2_0`/`Game2_2`
-   (`game.c:472`, `:615`) call `fatal_error("Load queue failed to drain
+   (`game.c:473`, `:616`) call `fatal_error("Load queue failed to drain
    in time")` on. **No rollback occurs anywhere in these runs.**
 
    At 150 ms the loader columns still diverge (105 rows) but the saved
@@ -1130,7 +1130,7 @@ side, in the `plt_req` entry of the disposition block at the top of
 `src/sf33rd/Source/Game/io/gd3rd.c`. The short version:
 
 - **It is a phase lead, not a value divergence.** `plt_req[id]` is written
-  only by `Push_LDREQ_Queue_Player` (`io/gd3rd.c:384`), which sets it to
+  only by `Push_LDREQ_Queue_Player` (`io/gd3rd.c:378`, write at `:386`), which sets it to
   the character whose requests it enqueues in the same call. Every call
   site reachable in `MODE_NETWORK` passes `My_char[id]`, which is saved
   (`game_state.c:232/972`). Measured: `plt_req1` goes `0 -> 11` at frame

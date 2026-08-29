@@ -39,6 +39,51 @@
 #define REPLAY_SIZE_V1 0
 #define REPLAY_SIZE REPLAY_SIZE_V1
 
+/* === Layout claims above, made mechanical ===
+ *
+ * The two clamp loops in deserialize_settings / deserialize_sysdir iterate
+ * over the dimensions of the SAVED struct (`extra_option.contents`,
+ * `SystemDir::contents`) but subscript a DIFFERENT array with the same
+ * indices — the per-item ceiling tables Ex_Menu_Max_Data / Dir_Menu_Max_Data.
+ * Those loops are the validation barrier for an attacker-controlled file, so
+ * if a ceiling table is ever smaller than the struct it bounds, the code that
+ * exists to make a hostile save safe becomes an out-of-bounds read on that
+ * hostile save. The two arrays are declared in different translation units
+ * from the struct, nothing relates them, and the comments at the loops assert
+ * they are "the same table" in prose only. */
+_Static_assert(SDL_arraysize(Ex_Menu_Max_Data) ==
+                   SDL_arraysize(((_EXTRA_OPTION*)0)->contents),
+               "Ex_Menu_Max_Data page count must match _EXTRA_OPTION::contents — "
+               "deserialize_settings() bounds the loop by contents and indexes "
+               "Ex_Menu_Max_Data with it");
+_Static_assert(SDL_arraysize(Ex_Menu_Max_Data[0]) ==
+                   SDL_arraysize(((_EXTRA_OPTION*)0)->contents[0]),
+               "Ex_Menu_Max_Data item count must match _EXTRA_OPTION::contents — "
+               "deserialize_settings() bounds the loop by contents and indexes "
+               "Ex_Menu_Max_Data with it");
+_Static_assert(SDL_arraysize(Dir_Menu_Max_Data) ==
+                   SDL_arraysize(((SystemDir*)0)->contents),
+               "Dir_Menu_Max_Data page count must match SystemDir::contents — "
+               "deserialize_sysdir() bounds the loop by contents and indexes "
+               "Dir_Menu_Max_Data with it");
+_Static_assert(SDL_arraysize(Dir_Menu_Max_Data[0]) ==
+                   SDL_arraysize(((SystemDir*)0)->contents[0]),
+               "Dir_Menu_Max_Data item count must match SystemDir::contents — "
+               "deserialize_sysdir() bounds the loop by contents and indexes "
+               "Dir_Menu_Max_Data with it");
+
+/* The on-disk sizes are the gate read_file_if_exists() accepts a file by, so
+ * they are a property of what serialize_* actually writes, not free constants.
+ * SYSDIR_SIZE_V1 is fully derivable; pin it rather than restate 71. */
+_Static_assert(SYSDIR_SIZE_V1 == 1 + sizeof(((SystemDir*)0)->contents),
+               "SYSDIR_SIZE_V1 must equal the version byte plus SystemDir::contents");
+/* "V2 (upstream #371) appends the 1-byte Language field after Screen_Size;
+ * a V1 (367-byte) file still loads" — the whole multi-format load path is
+ * built on V2 being exactly one byte longer than V1. */
+_Static_assert(SETTINGS_SIZE_V2 == SETTINGS_SIZE_V1 + 1,
+               "SETTINGS_SIZE_V2 must be exactly one byte longer than V1 — V2 "
+               "appends only the Language byte");
+
 #define ROOT_DIR "saves"
 #define PATH_LEN_MAX 128
 
@@ -149,7 +194,7 @@ static bool deserialize_settings(SDL_IOStream* io) {
             // Shot[] is a raw button-ID index consumed unchecked by
             // Convert_Data[Pad_Infor[PL_id].Shot[n]] (sys_sub.c ~:123-151).
             // Convert_Data has 12 entries (sys_sub.c:68) and the menu UI's own
-            // increment/decrement wraps at 11 (menu.c ~:1895-1904, `max = 11`
+            // increment/decrement wraps at 11 (menu.c ~:1904-1917, `max = 11`
             // for all Shot slots), so 0..11 is the authoritative range.
             if (pad_info->Shot[j] > 11) {
                 pad_info->Shot[j] = 11;
@@ -161,9 +206,9 @@ static bool deserialize_settings(SDL_IOStream* io) {
     }
 
     SDL_ReadU8(io, &dst->Difficulty);
-    // Difficulty indexes Level_18_Data[9][17] (sys_sub.c:808) and Training's
-    // Control_Time scaling (sys_sub.c:833). The menu's own Game Option screen
-    // clamps it to Game_Option_Index_Data[0] == 7 (menu.c:1754), so 0..7 is
+    // Difficulty indexes Level_18_Data[9][17] (sys_sub.c:811) and Training's
+    // Control_Time scaling (sys_sub.c:836). The menu's own Game Option screen
+    // clamps it to Game_Option_Index_Data[0] == 7 (menu.c:1766), so 0..7 is
     // the authoritative range.
     if (dst->Difficulty > 7) {
         dst->Difficulty = 7;
@@ -172,9 +217,9 @@ static bool deserialize_settings(SDL_IOStream* io) {
     SDL_ReadU8(io, &dst->Battle_Number[0]);
     SDL_ReadU8(io, &dst->Battle_Number[1]);
     SDL_ReadU8(io, &dst->Damage_Level);
-    // Damage_Level indexes Com_Vital_Unit_Data[20][4][12] (pls02.c:829); its
+    // Damage_Level indexes Com_Vital_Unit_Data[20][4][12] (pls02.c:833); its
     // second dimension is 4, matching the menu's own clamp
-    // (Game_Option_Index_Data[4] == 3, menu.c:1754), so 0..3 is authoritative.
+    // (Game_Option_Index_Data[4] == 3, menu.c:1766), so 0..3 is authoritative.
     if (dst->Damage_Level > 3) {
         dst->Damage_Level = 3;
     }
@@ -216,7 +261,7 @@ static bool deserialize_settings(SDL_IOStream* io) {
     SDL_ReadU8(io, &dst->SE_Level);
     // BGM_Level/SE_Level are not array indices, but every consumer divides by
     // the fixed 15 (sound3rd.c ~:283/377/617) that the default/reset value
-    // also uses (sound3rd.c:156-157, menu.c:2387-2388), so clamp to 0..15 to
+    // also uses (sound3rd.c:156-157, menu.c:2414-2415), so clamp to 0..15 to
     // keep them in the range the volume math was designed for.
     if (dst->BGM_Level > 15) {
         dst->BGM_Level = 15;
@@ -232,7 +277,7 @@ static bool deserialize_settings(SDL_IOStream* io) {
     // Ex_Letter_Data[page][char][extra_option.contents[page][item]].
     // Ex_Letter_Data is [4][7][17] (ex_data.c), and Ex_Menu_Max_Data[4][8]
     // (ex_data.c) is the same per-item upper-bound table the menu UI itself
-    // clamps against (menu.c:1253 reads Ex_Page_Data for the page's item
+    // clamps against (menu.c:1260 reads Ex_Page_Data for the page's item
     // count; the per-item value ceiling is Ex_Menu_Max_Data), so it is the
     // authoritative bound here too.
     for (int page = 0; page < SDL_arraysize(dst->extra_option.contents); page++) {
@@ -429,7 +474,7 @@ s32 SaveMove() {
     // SAVE_FILE_REPLAY has no real serialize/deserialize handler yet
     // (file_info[SAVE_FILE_REPLAY] points at serialize_stub/deserialize_stub,
     // which both call fatal_error() and abort). Three live menu paths still
-    // call SaveInit(SAVE_FILE_REPLAY, ...) (menu.c:1423, 3497, 5277). Rather
+    // call SaveInit(SAVE_FILE_REPLAY, ...) (menu.c:1435, 3532, 5279). Rather
     // than crash on every one of them, make REPLAY a graceful no-op here:
     // complete immediately without touching storage. This is a deliberate
     // deviation from upstream (which has a real replay save/load

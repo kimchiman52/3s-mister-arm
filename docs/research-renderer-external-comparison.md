@@ -262,7 +262,7 @@ the FPS overlay.
   `sdl_game_renderer.c:1528-1530`, emitted in perf JSON at `sdl_app.c:5939-5940` (key
   `"index4"`).
 - Asset-side evidence that 4bpp textures *are* created by the engine:
-  - `src/sf33rd/AcrSDK/ps2/flps2vram.c:100` — `format = SCE_GS_PSMT4`.
+  - `src/sf33rd/AcrSDK/ps2/flps2vram.c:97` — `format = SCE_GS_PSMT4`.
   - `flps2vram.c:1032-1036` — size formula `(dw * dh) >> 1` confirms 4-bit packing.
   - `flps2etc.c:500` — both PSMT4 and PSMT8 require palettes.
   - `src/sf33rd/Source/PS2/mc/knjsub.c:1080` — creates a PSMT4 font texture (debug/UI).
@@ -386,7 +386,7 @@ it can be any value 0..255.
 **Convention search:**
 No grep hits for `ckey`, `colorkey`, `transparent` (in palette sense), `trans_index`, or
 `alpha_index` in `src/sf33rd/` or the renderer. `get_my_trans_mode()` in
-`src/sf33rd/Source/Game/rendering/texcash.c:353` returns a transparency *render state* (blend
+`src/sf33rd/Source/Game/rendering/texcash.c:438` returns a transparency *render state* (blend
 mode), not an index convention.
 
 **No palette-alpha histogram exists** — no existing telemetry counter reports α distribution.

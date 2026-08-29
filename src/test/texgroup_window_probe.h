@@ -4,19 +4,19 @@
 /* Task #64 measurement instrument — NOT a fix, NOT a guard.
  *
  * Two open items were left undemonstrated by the case-2 reclaim added in
- * 9f9beda1 (see the block comment at texgroup.c:243-296):
+ * 9f9beda1 (see the block comment at texgroup.c:261-369):
  *
  *   F3  purge_texture_group() frees the block that char_init_data[]'s 25
- *       raw pointers (texgroup.c:404-406) and parabora_own_table[]
- *       (texgroup.c:414) point into, and clears only texgrplds[].ok.
+ *       raw pointers (texgroup.c:421-427) and parabora_own_table[]
+ *       (texgroup.c:488) point into, and clears only texgrplds[].ok.
  *       Nothing re-publishes those pointers until case 4 runs, and only
  *       for bsd->ix1st == 1. Question: can a consumer read them inside
  *       the free -> refill window?
  *
  *   F4  getObjectHeight() returns 0 when texgrplds[i].ok == 0
- *       (mtrans.c:366-368) into wk->reserv_add_y, which is checksummed
+ *       (mtrans.c:369-375) into wk->reserv_add_y, which is checksummed
  *       rollback state (game_state.c:654). Question: can the ok == 0
- *       window overlap check_tsukamare_keizoku_check (plpcu.c:245)?
+ *       window overlap check_tsukamare_keizoku_check (plpcu.c:236)?
  *
  * This header declares the observation points. Everything compiles to
  * nothing unless ENABLE_PERF_TELEMETRY is on, and even when on the
@@ -63,7 +63,8 @@ void TGWP_ReadPara(s16 cid, const char* who);
 
 /* --- F4: getObjectHeight ok == 0 census --- */
 
-/* Bracket the plpcu.c:245 call so the census can attribute an ok == 0
+/* Bracket the check_tsukamare_keizoku_check body (plpcu.c:236) so the
+ * census can attribute an ok == 0
  * return to the checksummed-state caller specifically. */
 void TGWP_TsukamareEnter(void);
 void TGWP_TsukamareExit(void);
