@@ -89,7 +89,7 @@ prior doc claims.
    `paring_counter[]` is a **bonus-mode score multiplier**, not a
    normal-play parry flag — it's only written under
    `Bonus_Game_Flag == 0 && spmv_ng_flag & 0x80` at
-   [`hitcheck.c:710`](../src/sf33rd/Source/Game/engine/hitcheck.c).
+   [`hitcheck.c:714`](../src/sf33rd/Source/Game/engine/hitcheck.c).
    Its value tells you nothing about whether parries happened in
    normal training. Likewise the earlier "`pat_status` 20/22/24/26
    are parry stances per `pls01.c:251`" claim is wrong — that line
@@ -3813,7 +3813,7 @@ in `a386e057` as of 2026-07-07** — see the status-snapshot table's
     [`pls01.c:476`](../src/sf33rd/Source/Game/engine/pls01.c). The
     earlier "falsified by `paring_counter[0]==0`" reasoning was
     wrong — `paring_counter[]` is a bonus-mode score multiplier
-    (`hitcheck.c:710`), not a normal-play parry flag. Whether any
+    (`hitcheck.c:714`), not a normal-play parry flag. Whether any
     given instance is genuinely a *post-parry* counter (vs a normal
     forward-walking attack) is **not testable from existing trace
     data**; would need to instrument `set_paring_status` capture in
@@ -3830,9 +3830,9 @@ in `a386e057` as of 2026-07-07** — see the status-snapshot table's
     finalized WHIFF (S=6 A=5 R=8) instead of BLOCK/HIT on every dummy/
     distance/timing variant tried in the harness (`q-crlk-block`,
     `q-crlk-hit`, both formerly xfail). Root cause: `dm_stop =
-    att.hs_you` (hitcheck.c:1343 via `dm_status_copy`, called on hit
-    :544 and guard :603); `hs_you` is a **signed s8** per-move data
-    field (`include/structs.h:115`) loaded verbatim from the attack
+    att.hs_you` (hitcheck.c:1592 via `dm_status_copy`, called on hit
+    :545 and guard :605); `hs_you` is a **signed s8** per-move data
+    field (`include/structs.h:119`) loaded verbatim from the attack
     table (`charset.c:2835`) — its sign selects the hitstop *style*,
     not the event kind: positive freezes the defender, negative lets
     `char_move()` keep advancing during the stop
@@ -4009,7 +4009,7 @@ in `a386e057` as of 2026-07-07** — see the status-snapshot table's
     (`h-roundhouse-whiff` R=28). Classified from same-binary
     `[CM]`/`[CMX]` traces plus two temporary, since-reverted
     fprintf-only probes (`[HPX]` at `hit_pattern_extdat_check` entry,
-    `hitcheck.c:723`; `[JUP]` in `jumping_union_process`'s landing
+    `hitcheck.c:727`; `[JUP]` in `jumping_union_process`'s landing
     branch, `pls01.c:767`), scratch 3-entry corpus, Debug host build at
     `3da7fc25`:
 
@@ -5545,7 +5545,7 @@ falsified before the shipped chart-cut kill-reason gate).**
    declared form above, not a separate fix.)
 4. *athok-at-edge gate (the original design draft)* — falsified:
    `att_hit_ok` is a consumable hit permission
-   (`hitcheck.c:1564/1567`), cleared at contact and held at 0 by
+   (`hitcheck.c:1814/1817`), cleared at contact and held at 0 by
    `kotp_13000`'s own consumption handler for the tama's remaining
    life — never set at the atix→0 edge on any CONNECT leg, so this gate
    would never fire on 6 of the 9 rows.

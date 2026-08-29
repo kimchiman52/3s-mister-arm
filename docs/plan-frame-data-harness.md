@@ -781,7 +781,7 @@ re-located by content (several files had moved on since).
 - [x] `frame_data_overlay_tick` (`frame_data_overlay.c`) — added an
       early-out (with the same state reset the `!Is_Training_Mode` branch
       already does) when `Disp_Frame_Data == 0`, mirroring the draw-side
-      check (`sc_sub.c:2441`). The engine accumulator hooks in
+      check (`sc_sub.c:2458`). The engine accumulator hooks in
       `charset.c`'s `char_move()` (`fd_engine_hitbox_active`,
       `fd_engine_active_count`, `fd_prev_active_cgix*`) are deliberately
       **not** gated on `Disp_Frame_Data` — they already run unconditionally

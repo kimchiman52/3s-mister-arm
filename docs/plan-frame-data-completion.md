@@ -977,7 +977,7 @@ identical `motion 2qcf HK` attempts, `--test-p1-super-art 2
   model than a super's flat `store -= 1` (`plmain.c:677`; `plmain.c:726` is
 the opposite-sign `store -= -1` increment in `sag_union_1`) in the
   `sag_union_0`/`sag_union_1` handlers reached via
-  `sag_union_jump_table`, `plmain.c:1137`). The exact mechanical reason
+  `sag_union_cps3_jump_table`, `plmain.c:1045`). The exact mechanical reason
   SA3 (nominally a single-segment/one-shot super in real 3rd Strike)
   granted **3** activations rather than 1 off `--test-p1-super-full`
   was not traced further (`sag_union_jump_table` dispatch by SA
