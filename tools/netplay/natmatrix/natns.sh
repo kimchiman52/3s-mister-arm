@@ -232,21 +232,29 @@ netem() { # netem <A|B|both> <delay_ms> <jitter_ms> <loss_pct>
 # rendezvous-server.js:719 is a bare socket.send with NO retransmit, so when it is
 # lost the host learns the peer endpoint only from the reply to its OWN next
 # REGISTER -- a full register-interval later (direct_p2p.c:2543).
+#
+# The drop is installed at the RECEIVING side's NAT ingress (mangle PREROUTING on
+# its WAN interface), NOT in the server's OUTPUT chain. That distinction matters:
+# a local OUTPUT DROP returns EPERM to the sender, so node's socket.send would
+# raise and the server would behave differently from reality. Dropping in transit
+# is what actually happens on the internet -- the server's send succeeds and the
+# datagram simply never arrives.
 deliverloss() { # deliverloss <pct 0-100> <A|B|both>
     local pct="$1" who="${2:-A}"
-    ipns "$SRV" iptables -F OUTPUT 2>/dev/null || true
+    ipns "$NA" iptables -t mangle -F PREROUTING 2>/dev/null || true
+    ipns "$NB" iptables -t mangle -F PREROUTING 2>/dev/null || true
     [ "$pct" = "0" ] && return 0
     local prob
     prob=$(awk -v p="$pct" 'BEGIN{printf "%.6f", p/100.0}')
-    _drop_to() {
-        ipns "$SRV" iptables -A OUTPUT -p udp -d "$1" \
+    _drop_at() { # _drop_at <ns> <wan-if>
+        ipns "$1" iptables -t mangle -A PREROUTING -i "$2" -p udp -s "$SRV_IP" \
             -m string --algo bm --hex-string '|335358520202|' --from 28 --to 34 \
             -m statistic --mode random --probability "$prob" -j DROP
     }
     case "$who" in
-      A) _drop_to "$EXT_A" ;;
-      B) _drop_to "$EXT_B" ;;
-      both) _drop_to "$EXT_A"; _drop_to "$EXT_B" ;;
+      A) _drop_at "$NA" nAo ;;
+      B) _drop_at "$NB" nBo ;;
+      both) _drop_at "$NA" nAo; _drop_at "$NB" nBo ;;
       *) echo "natns.sh deliverloss: who must be A|B|both" >&2; return 2 ;;
     esac
 }
