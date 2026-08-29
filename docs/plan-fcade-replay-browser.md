@@ -229,12 +229,12 @@ defined go/no-go (§6, Step B3).
 
 ### 2.4 Upstream STATCHECK harness (@ `03c5d7a6`)
 
-- CMake: `option(THREESX_STATCHECK …)` (upstream:CMakeLists.txt:22);
+- CMake: `option(THREESX_STATCHECK …)` (upstream CMakeLists.txt line 22);
   defines `STATCHECK` (:75), swaps input driver defines
   `CRS_INPUT_DRIVER_SDL` → `CRS_INPUT_DRIVER_STATCHECK` (:85-86),
   suppresses `CHECKSUM` in Release when statcheck is on (:73). Sources
   are picked up by `file(GLOB_RECURSE GAME_SRC … src/*.c)` (:41) —
-  same glob pattern as the fork (CMakeLists.txt:93), so newly added
+  same glob pattern as the fork (CMakeLists.txt:108), so newly added
   `src/**/*.c` files need no CMake source-list edits in either repo.
 - `upstream:src/test/ram_archive.{c,h}` — SCRD reader: magic check,
   LE u16 entry count, LE u32 offset/size table, zero-run decode
@@ -242,7 +242,7 @@ defined go/no-go (§6, Step B3).
   `RAM_FRAME_SIZE` 524288 (:8). Frames are exposed as `SDL_IOStream`s.
 - `upstream:src/test/replay_game.{c,h}` — scans SCRD frames for the
   game-start signature `G_No[1]==2 && G_No[2]==0 && G_No[3]==0`
-  (replay_game.c:36), then reads characters (`MY_CHAR_OFFSET`), SAs,
+  (upstream replay_game.c line 36), then reads characters (`MY_CHAR_OFFSET`), SAs,
   `NEW_CHALLENGER_OFFSET`, `PLAYER_COLOR_OFFSET` (:39-49) and maps
   arcade→3SX character ids (`CHAR_ARCADE_TO_3SX`, :10-15).
 - `upstream:src/test/test_runner.c` — phase machine
@@ -383,7 +383,7 @@ defined go/no-go (§6, Step B3).
   used for PSA SHA-256, src/utils/sha256.c:17-29). No `libmbedtls`
   (TLS layer) is built or linked.
 - **zlib IS already linked** (`find_package(ZLIB REQUIRED)`
-  CMakeLists.txt:374, `ZLIB::ZLIB` :423; in-tree consumer
+  CMakeLists.txt:435, `ZLIB::ZLIB` :484; in-tree consumer
   src/sf33rd/Source/Compress/zlibApp.c:9) — the −12 savestate inflate
   needs nothing new.
 - TCP client via SDL3_net exists (matchmaking `NET_CreateClient`,
@@ -475,7 +475,7 @@ defined go/no-go (§6, Step B3).
   MISTER_PASSWORD=1; lock/busy preflight described there). RBF is a
   separate wrapper deploy — not touched by this plan.
 - `file(GLOB_RECURSE GAME_SRC CONFIGURE_DEPENDS src/*.c)`
-  (CMakeLists.txt:93) — new C files under `src/` are auto-picked-up.
+  (CMakeLists.txt:108) — new C files under `src/` are auto-picked-up.
 
 ---
 
@@ -610,7 +610,7 @@ collide (`ReplayGame_Destroy` exists in both trees, §2.5), inject via
 `p1sw_buff` (fork style, SWK-layout words per §2.3) instead of an
 input driver, add a `--ram-archive` arg, and gate with a new
 `THREESX_STATCHECK` CMake option mirroring
-upstream:CMakeLists.txt:22/73/75. Add `message(FATAL_ERROR)` if both
+upstream CMakeLists.txt lines 22, 73 and 75. Add `message(FATAL_ERROR)` if both
 Debug config and THREESX_STATCHECK are selected.
 
 **Headless caveat (verified):** the fork's `--headless` flag is parsed
@@ -618,7 +618,7 @@ but consumed by *nothing* — grep over `src/` hits only the
 configuration field (src/configuration.h:89) and the arg definition
 (src/args.c:220), zero readers — and the fork's main loop is real-time
 frame-paced (`target_frame_time_ns = 1e9/TARGET_FPS`,
-src/port/sdl/sdl_app.c:90). Upstream's statcheck loop is by contrast
+src/port/sdl/sdl_app.c:89). Upstream's statcheck loop is by contrast
 uncapped and render-free (sdl_headless_app.c:59-72). A STATCHECK build
 that runs windowed at 1× real time would (a) take the full match
 duration per archive and (b) be killed by `tools/statcheck_runner.py`'s
@@ -1222,7 +1222,7 @@ corpus.
 
 **What NOT to do:** no UI/browser yet; no netplay interaction —
 refuse to start if `Netplay_GetSessionState() != NETPLAY_SESSION_IDLE`
-(src/main.c:612 shows the session branch that would conflict); don't
+(src/main.c:687 shows the session branch that would conflict); don't
 touch the DEBUG runner; don't implement fast-forward/seek.
 
 **If it fails:**
@@ -1233,7 +1233,7 @@ touch the DEBUG runner; don't implement fast-forward/seek.
 - Playback diverges where statcheck passed: compare frame-pacing
   paths (statcheck ran headless through the same `game_step_0`;
   differences point at pause/vsync-coupled logic — check
-  `Game_pause` interactions at src/main.c:591).
+  `Game_pause` interactions at src/main.c:666).
 
 ---
 
@@ -1755,7 +1755,7 @@ without engine-menu surgery.
   cannot seek backward without savestates; would require our own
   periodic engine snapshots — future work).
 - Recording *our own* matches to 3SR/Fightcade format (the native
-  `Get_Replay` recorder exists, sys_sub.c:1239 — separate feature).
+  `Get_Replay` recorder exists, sys_sub.c:1248 — separate feature).
 - Uploading/sharing replays; FightcadeVids integration (the API has
   video URL ops — xBiggs api :174-192 — unrelated to engine playback).
 - OSD/FPGA (RBF) changes — explicitly deferred out of F4; no Quartus
