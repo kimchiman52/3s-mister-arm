@@ -400,6 +400,38 @@ def offset_to_line(starts, off):
     return lo + 1
 
 
+# Extensions strip_comments_for_ext knows a decommenter for. A strict
+# subset of CODE_CORPUS_EXTS -- e.g. .json/.xml/.sv have no entry here
+# because no decommenter below handles them, so they stay "don't know,
+# don't filter" rather than silently passing every line through as code.
+DECOMMENTABLE_EXTS = {
+    ".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".py", ".sh", ".bash",
+    ".mk", ".mak", ".cmake", ".tcl", ".cfg", ".ini", ".yml", ".yaml",
+    ".toml", ".conf", ".rules", ".service",
+}
+
+
+def strip_comments_for_ext(text, ext):
+    """Dispatch to the right decommenter for `ext`. Caller must check
+    `ext in DECOMMENTABLE_EXTS` first -- an unrecognized extension falls
+    through to returning `text` unchanged, which looks like "no comments
+    found" rather than "don't know".
+
+    Shared by code_tokens() (the whole-repo identifier corpus) and
+    Repo.code_only_lines() (per-file, line-indexed) so the two never
+    disagree about what counts as code in a given file.
+    """
+    if ext in (".c", ".h", ".cpp", ".hpp", ".cc", ".hh"):
+        return strip_c_comments(text)[0]
+    if ext == ".py":
+        return strip_hash_comments(text, True)[0]
+    if ext in (".sh", ".bash", ".mk", ".mak", ".cmake", ".tcl", ".cfg",
+               ".ini", ".yml", ".yaml", ".toml", ".conf", ".rules",
+               ".service"):
+        return strip_hash_comments(text, False)[0]
+    return text
+
+
 # ---------------------------------------------------------------------------
 # Repo model
 # ---------------------------------------------------------------------------
@@ -417,6 +449,7 @@ class Repo:
                 self.by_suffix["/".join(parts[k:])].append(p)
         self._text_cache = {}
         self._code_tokens = None
+        self._code_only_lines_cache = {}
 
     def _tracked(self):
         out = subprocess.run(
@@ -438,6 +471,29 @@ class Repo:
     def lines(self, relpath):
         t = self.read(relpath)
         return t.split("\n") if t is not None else None
+
+    def code_only_lines(self, relpath):
+        """Lines of relpath with comment bytes blanked out, same indexing
+        as lines(). A regex search against these can only match real code,
+        never a comment/prose mention of the same token -- see anchor
+        selection in check_path_cites.handle(), which is why this exists:
+        a popular identifier is discussed in many comments but
+        defined/used in only a few real code lines, and a citation is
+        (measured exception aside) about the latter.
+
+        Returns None when this tool has no decommenter for the extension
+        -- callers must treat None as "don't know, don't filter", not as
+        "no comments found".
+        """
+        if relpath not in self._code_only_lines_cache:
+            ext = os.path.splitext(relpath)[1]
+            t = self.read(relpath)
+            if t is None or ext not in DECOMMENTABLE_EXTS:
+                result = None
+            else:
+                result = strip_comments_for_ext(t, ext).split("\n")
+            self._code_only_lines_cache[relpath] = result
+        return self._code_only_lines_cache[relpath]
 
     def resolve(self, cited):
         """Resolve a cited path. Returns (relpath|None, how).
@@ -489,12 +545,8 @@ class Repo:
             t = self.read(p)
             if t is None or "\0" in t[:4096]:
                 continue
-            if ext in (".c", ".h", ".cpp", ".hpp", ".cc", ".hh"):
-                t, _ = strip_c_comments(t)
-            elif ext in (".py",):
-                t, _ = strip_hash_comments(t, True)
-            elif ext in (".sh", ".bash", ".mk", ".mak", ".cmake", ".tcl", ".cfg", ".ini", ".yml", ".yaml", ".toml", ".conf", ".rules", ".service"):
-                t, _ = strip_hash_comments(t, False)
+            if ext in DECOMMENTABLE_EXTS:
+                t = strip_comments_for_ext(t, ext)
             for m in RE_WORD.finditer(t):
                 toks.add(m.group(0))
         self._code_tokens = toks
@@ -1004,12 +1056,32 @@ def check_path_cites(repo, unit, findings, seen_paths, history, dclass,
 
         # No anchor on the cited line. Only claim drift if we can EXHIBIT the
         # anchor somewhere else in the same file. Otherwise stay silent.
+        # code_lines mirrors flines 1:1 with comment bytes blanked out (or
+        # is None if this extension has no decommenter -- see
+        # code_only_lines). Used below to prefer a hit that is real code
+        # over one that only appears inside a comment/prose mention: a
+        # popular identifier gets discussed in many comments but
+        # defined/used in only a handful of real lines, and a citation is,
+        # with rare exception, about the latter. Picking the numerically
+        # NEAREST hit without this preference is what let `--fix` collapse
+        # several distinct citations onto one heavily-commented line (e.g.
+        # direct_p2p.c's algorithm-description blocks, which restate
+        # `race_budget_ms` / `STUN_PUNCH_CONFIRM_MS` a dozen times each).
+        code_lines = repo.code_only_lines(target)
         best = None
         for a in anchors:
-            hits = [i + 1 for i, ln in enumerate(flines)
-                    if re.search(r"\b%s\b" % re.escape(a), ln)]
+            pattern = re.compile(r"\b%s\b" % re.escape(a))
+            hits = [i + 1 for i, ln in enumerate(flines) if pattern.search(ln)]
             if not hits or len(hits) > ANCHOR_MAX_HITS:
                 continue
+            if code_lines is not None:
+                code_hits = [h for h in hits if pattern.search(code_lines[h - 1])]
+                # A symbol that ONLY ever appears in comments (a concept
+                # discussed but not (yet) named in code) has no code hit to
+                # prefer -- fall back to the full set rather than going
+                # anchor-less, same as before this change.
+                if code_hits:
+                    hits = code_hits
             hits.sort(key=lambda h: abs(h - lo))
             if best is None or len(hits) < len(best[1]):
                 best = (a, hits)

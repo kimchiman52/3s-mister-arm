@@ -180,6 +180,107 @@ def check_fix_refuses_range_citations():
     return failures
 
 
+def check_fix_anchors_to_definition_not_mention():
+    """Regression for task #89's third proven `--fix` defect (#84 fixed the
+    other two: corrupted ranges, and inventing repairs for already-correct
+    citations).
+
+    Observed bug: the anchor-hit search did not distinguish a comment/prose
+    MENTION of a symbol from its actual CODE definition/usage. It just took
+    every line containing the token and picked whichever was numerically
+    nearest to the citation's stale line number. A symbol discussed in a
+    long algorithm-description comment block is mentioned many times close
+    together, so a citation whose true target had drifted far away could
+    get "fixed" onto a nearby comment line instead of its real definition.
+    Observed in the wild: `--fix` wanted to collapse 5 distinct citations
+    onto `direct_p2p.c:1719` and 2 onto `direct_p2p.c:1472` -- both inside
+    prose, not definitions.
+
+    This reproduces the exact mechanism against the REAL, unmodified
+    src/netplay/direct_p2p.c (copied into a throwaway detached git
+    worktree so --fix's in-place edit never touches a tracked file):
+
+    - `RACE_PUNCH_SETTLE_MS` is mentioned in 6 comment lines (970, 1255,
+      1431, 1472, 1687, 1706) and appears in real code at only 4 (1227's
+      #define, 1236-1237's _Static_assert, 1493's cast). A citation
+      drifted to :1460 is numerically nearest to the comment mention at
+      :1472 (distance 12) and farther from every real code line (nearest
+      code line 1493 is distance 33) -- exactly the shape that fooled the
+      old anchor search.
+    - `race_budget_expired` is mentioned in 3 comment lines (1230, 1466,
+      1689) and used in real code at 5 (1006, 1238, 1671, 1700, 1869). A
+      citation drifted to :1469 is nearest to the comment mention at
+      :1466 (distance 3), not to any real code line (nearest is 1238,
+      distance 231).
+
+    Confirmed by hand before the fix landed: running the pre-fix checker's
+    `--fix` on this exact fixture rewrote both citations onto those two
+    comment lines (:1472 and :1466). The fixed behaviour resolves each to
+    a real code line instead (:1493 and :1238 respectively) -- two
+    DIFFERENT lines, proving this is not just a different popular line
+    the citations now collapse onto.
+    """
+    wt_parent = tempfile.mkdtemp(prefix="doccite-anchor-test-")
+    wt_dir = os.path.join(wt_parent, "wt")
+    failures = []
+    try:
+        subprocess.run(
+            ["git", "worktree", "add", "--detach", wt_dir, "HEAD"],
+            cwd=REPO_ROOT, capture_output=True, text=True, check=True)
+
+        fixture_rel = "tools/doc-citations/testdata/fix-anchor-mention-regression.md"
+        fixture_path = os.path.join(wt_dir, fixture_rel)
+        content = (
+            "# Fixture: --fix must anchor to a definition, not a comment "
+            "mention\n\n"
+            "NOT A REAL DOCUMENT. Reproduces task #89's third proven "
+            "`--fix` defect against the real, unmodified "
+            "`src/netplay/direct_p2p.c`: the anchor-hit search did not "
+            "distinguish a comment/prose MENTION of a symbol from its "
+            "actual CODE definition/usage, so a citation whose true "
+            "target had drifted far away could get \"fixed\" onto a "
+            "nearer comment line instead.\n\n"
+            "Case A: `RACE_PUNCH_SETTLE_MS` is the one-tail settle "
+            "budget granted on a confirmed leg (direct_p2p.c:1460).\n\n"
+            "Case B: `race_budget_expired` reports whether the race "
+            "clock ran out (direct_p2p.c:1469).\n"
+        )
+        with open(fixture_path, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        subprocess.run(["git", "add", fixture_rel], cwd=wt_dir, check=True,
+                       capture_output=True)
+
+        proc = subprocess.run(
+            [sys.executable, CHECKER, "--root", wt_dir, "--fix",
+             "--include-testdata", fixture_rel],
+            cwd=wt_dir, capture_output=True, text=True)
+        if proc.returncode not in (0, 1):
+            sys.stderr.write("checker (--fix) failed (rc=%d):\n%s\n"
+                             % (proc.returncode, proc.stderr))
+            raise SystemExit(2)
+
+        with open(fixture_path, encoding="utf-8") as fh:
+            fixed = fh.read()
+
+        if "direct_p2p.c:1472" in fixed or "direct_p2p.c:1466" in fixed:
+            failures.append(
+                "ANCHORED TO A COMMENT MENTION: --fix must not collapse "
+                "either citation onto the comment lines (:1472, :1466); "
+                "file now reads: %r" % fixed)
+        if "direct_p2p.c:1493" not in fixed:
+            failures.append(
+                "--fix did not repair RACE_PUNCH_SETTLE_MS onto its real "
+                "code line (:1493): %r" % fixed)
+        if "direct_p2p.c:1238" not in fixed:
+            failures.append(
+                "--fix did not repair race_budget_expired onto its real "
+                "code line (:1238): %r" % fixed)
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", wt_dir],
+                       cwd=REPO_ROOT, capture_output=True)
+    return failures
+
+
 def main():
     failures = []
 
@@ -209,6 +310,7 @@ def main():
                                 [(f["code"], f["message"]) for f in hit]))
 
     failures.extend(check_fix_refuses_range_citations())
+    failures.extend(check_fix_anchors_to_definition_not_mention())
 
     good = run(GOOD)
     for f in good:
