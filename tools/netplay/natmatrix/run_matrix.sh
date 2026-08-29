@@ -83,7 +83,7 @@ stop_servers() {
     STUN_PID=""; RDV_PID=""
     sleep 0.3
 }
-kill_probes() { sudo -n pkill -f "$PROBE" 2>/dev/null; }
+kill_probes() { sudo -n pkill -x p2p_probe 2>/dev/null; }
 cleanup_all() { stop_servers; "$NATNS" down >/dev/null 2>&1; }
 trap cleanup_all EXIT
 
@@ -125,27 +125,32 @@ for B in $TYPES; do
         stop_servers
         ns s8-srv python3 "$HERE/rig/stun_mock.py" \
             --bind "${SRV_IP}:19302" --bind "${SRV_IP2}:19302" --bind "${SRV_IP}:19303" \
-            > "$WORK/stun.log" 2>&1 &
+            > "$WORK/stun_${A}_${B}_${rep}.log" 2>&1 &
         STUN_PID=$!
         ns s8-srv "$NODE" "$REPO/tools/rendezvous-server/rendezvous-server.js" 3478 \
-            > "$WORK/rdv.log" 2>&1 &
+            > "$WORK/rdv_${A}_${B}_${rep}.log" 2>&1 &
         RDV_PID=$!
         sleep 1
 
         CODEF="$WORK/code_${A}_${B}_${rep}.txt"
         rm -f "$CODEF"
-        rm -rf "$WORK/hA" "$WORK/hB"; mkdir -p "$WORK/hA" "$WORK/hB"
+        sudo -n rm -rf "$WORK/hA" "$WORK/hB"; mkdir -p "$WORK/hA" "$WORK/hB"
 
+        # Per-cell/rep filenames: the stderr traces are the ONLY record of what the
+        # cascade actually did (which endpoint each side punched, whether a leg
+        # retargeted, why it gave up). Overwriting them per rep would discard the
+        # evidence needed to explain any cell that fails.
+        TAG="${A}_${B}_${rep}"
         ns s8-hA env HOME="$WORK/hA" XDG_DATA_HOME="$WORK/hA" \
             "$PROBE" --role host --port 7000 --stun "$STUN_SPEC" --signal "$SIGNAL" \
             --code-file "$CODEF" --timeout-ms 45000 \
-            > "$WORK/host.json" 2> "$WORK/host.err" &
+            > "$WORK/host_$TAG.json" 2> "$WORK/host_$TAG.err" &
         HPID=$!
 
         ns s8-hB env HOME="$WORK/hB" XDG_DATA_HOME="$WORK/hB" \
             "$PROBE" --role join --port 7000 --stun "$STUN_SPEC" --signal "$SIGNAL" \
             --code-file "$CODEF" --timeout-ms 45000 \
-            > "$WORK/join.json" 2> "$WORK/join.err"
+            > "$WORK/join_$TAG.json" 2> "$WORK/join_$TAG.err"
         JRC=$?
 
         # The HOST has no wall-clock budget by design -- it waits in HOST_WAITING
@@ -160,8 +165,8 @@ for B in $TYPES; do
         fi
         kill_probes
 
-        HJSON=$(tail -1 "$WORK/host.json" 2>/dev/null)
-        JJSON=$(tail -1 "$WORK/join.json" 2>/dev/null)
+        HJSON=$(tail -1 "$WORK/host_$TAG.json" 2>/dev/null)
+        JJSON=$(tail -1 "$WORK/join_$TAG.json" 2>/dev/null)
 
         # A cell is only scored if the JOINER actually ran. The joiner is the side
         # that carries the race budget and therefore the side that can conclude.

@@ -78,7 +78,7 @@ run_pair() {
     local tag="$1"
     local codef="$WORK/code_$tag.txt"
     rm -f "$codef"
-    rm -rf "$WORK/hA" "$WORK/hB"; mkdir -p "$WORK/hA" "$WORK/hB"
+    sudo -n rm -rf "$WORK/hA" "$WORK/hB"; mkdir -p "$WORK/hA" "$WORK/hB"
 
     ns s8-hA env HOME="$WORK/hA" XDG_DATA_HOME="$WORK/hA" \
         "$PROBE" --role host --port 7000 --stun "$STUN_SPEC" --signal "$SIGNAL" \
@@ -93,20 +93,37 @@ run_pair() {
     for _ in $(seq 1 30); do kill -0 "$hpid" 2>/dev/null || break; sleep 0.1; done
     kill -0 "$hpid" 2>/dev/null && kill "$hpid" 2>/dev/null
     wait "$hpid" 2>/dev/null
-    sudo -n pkill -f "$PROBE" 2>/dev/null
+    sudo -n pkill -x p2p_probe 2>/dev/null
     JJSON=$(tail -1 "$WORK/join_$tag.json" 2>/dev/null)
     HJSON=$(tail -1 "$WORK/host_$tag.json" 2>/dev/null)
 }
 
 FAILS=0
+UNVERIFIED=0
+# Paths for check D. Overridable so the compile can run inside a container that
+# sees the tree at a different mount point.
+GUARD_SRC="${S8_GUARD_SRC:-$HERE/probe/p2p_probe.c}"
+GUARD_INC_SRC="${S8_GUARD_INC_SRC:-$REPO/src}"
+GUARD_INC_PORT="${S8_GUARD_INC_PORT:-$REPO/src/port}"
+GUARD_INC_PSA="${S8_GUARD_INC_PSA:-$HERE/probe/psa_shim}"
+GUARD_INC_SDL="${S8_GUARD_INC_SDL:-/out/include}"
 say() { echo "$@"; }
 expect() { # expect <desc> <condition-result 0/1>
     if [ "$2" = 0 ]; then say "  PASS  $1"; else say "  FAIL  $1"; FAILS=$((FAILS+1)); fi
 }
 
 # ---------------------------------------------------------------- A
-say "== A. POSITIVE CONTROL: port-restricted x port-restricted must CONNECT =="
-"$NATNS" up port-restricted port-restricted >/dev/null 2>&1
+#
+# The control is fullcone x port-restricted, NOT port-restricted x
+# port-restricted. The latter was the original choice and it FAILS -- measured,
+# reproducibly, on correctly-classified NATs (see the matrix). Keeping a control
+# that the shipped cascade cannot actually satisfy would mean the harness could
+# never go green, and would hide the difference between "the rig is broken" and
+# "this pairing genuinely does not traverse". fullcone x port-restricted is the
+# strongest pairing that is measured to connect, so it is the honest control.
+say "== A. POSITIVE CONTROL: fullcone x port-restricted must CONNECT =="
+CONTROL_A=fullcone; CONTROL_B=port-restricted
+"$NATNS" up "$CONTROL_A" "$CONTROL_B" >/dev/null 2>&1
 start_servers
 run_pair A
 say "  joiner: $JJSON"
@@ -154,7 +171,7 @@ stop_servers; "$NATNS" down >/dev/null 2>&1
 # ---------------------------------------------------------------- C
 say ""
 say "== C. SABOTAGE: the cell that PASSED in A must flip when the peer path dies =="
-"$NATNS" up port-restricted port-restricted >/dev/null 2>&1
+"$NATNS" up "$CONTROL_A" "$CONTROL_B" >/dev/null 2>&1
 # Blackhole ONLY peer<->peer traffic on the WAN bridge. Server traffic is
 # untouched, so STUN and rendezvous still work -- exactly isolating the punch.
 sudo -n ip netns exec s8-wan iptables -I FORWARD -s 203.0.113.10 -d 203.0.113.20 -j DROP 2>/dev/null
@@ -175,12 +192,22 @@ stop_servers; "$NATNS" down >/dev/null 2>&1
 # ---------------------------------------------------------------- D
 say ""
 say "== D. BUILD GUARD: probe must not compile without NETPLAY_TEST_HOOKS =="
-if cc -fsyntax-only "$HERE/probe/p2p_probe.c" \
-     -I "$REPO/src" -I "$REPO/src/port" -I "$HERE/probe/psa_shim" \
-     -I /out/include -DENABLE_NETPLAY >"$WORK/guard.log" 2>&1; then
-    expect "compile without NETPLAY_TEST_HOOKS fails" 1
+# The rig host may have no compiler (the toolchain lives in a build container),
+# so allow S8_CC to supply one, e.g.
+#   S8_CC="docker run --rm -v /home/sb.guest/s8repo:/repo -v /out:/out s8build:latest cc"
+# If no compiler is reachable this reports COULD-NOT-VERIFY, never a silent pass:
+# an unverifiable guard is an open question, not a green check.
+CC_CMD="${S8_CC:-cc}"
+if ! command -v ${CC_CMD%% *} >/dev/null 2>&1; then
+    say "  COULD NOT VERIFY -- no compiler available (tried '${CC_CMD%% *}')."
+    say "  Set S8_CC to a working compiler command to check the guard here."
+    UNVERIFIED=$((${UNVERIFIED:-0}+1))
 else
-    if grep -q "NETPLAY_TEST_HOOKS" "$WORK/guard.log"; then
+    if $CC_CMD -fsyntax-only "$GUARD_SRC" \
+         -I "$GUARD_INC_SRC" -I "$GUARD_INC_PORT" -I "$GUARD_INC_PSA" \
+         -I "$GUARD_INC_SDL" -DENABLE_NETPLAY >"$WORK/guard.log" 2>&1; then
+        expect "compile without NETPLAY_TEST_HOOKS fails" 1
+    elif grep -q "NETPLAY_TEST_HOOKS" "$WORK/guard.log"; then
         expect "compile without NETPLAY_TEST_HOOKS fails with the #error" 0
     else
         say "  (compile failed, but not on the guard: $(head -2 "$WORK/guard.log"))"
@@ -189,6 +216,7 @@ else
 fi
 
 say ""
+[ "${UNVERIFIED:-0}" -gt 0 ] && say "NONVACUITY: ${UNVERIFIED} check(s) COULD NOT BE VERIFIED here (see above)."
 if [ "$FAILS" = 0 ]; then
     say "NONVACUITY: PASS -- harness connects where it should, fails where it should,"
     say "            and the failures are attributable to the punch, not the rig."
