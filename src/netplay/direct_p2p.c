@@ -1103,7 +1103,7 @@ void DirectP2P_TestHook_SetPunchOracle(DirectP2P_PunchOracle_fn fn) {
  * reaches NET_SUCCESS (stun.c:781-798). The only endpoint the race ever
  * RE-arms is slot 1, and slot 1's endpoint comes from a DELIVER, whose IP
  * string is produced by inet_ntop(AF_INET, ...) in
- * Rendezvous_ParseDeliverEx (rendezvous.c:251-254) — i.e. ALWAYS a
+ * Rendezvous_ParseDeliverEx (rendezvous.c:250-252) — i.e. ALWAYS a
  * well-formed dotted quad that always resolves. So the wire physically
  * cannot deliver an endpoint that reaches the validate/memset decision and
  * fails there. The seam supplies what the wire cannot.

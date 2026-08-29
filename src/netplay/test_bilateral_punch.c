@@ -1040,10 +1040,10 @@ cleanup_fail:
  * round-trip would require either adding Config_SetBool or rewriting
  * config.ini and reinitializing — both beyond Step 6's scope. Instead,
  * we verify (a) the default value is reachable through Config_GetBool
- * (returns false, matching the documented kill-switch default at
- * config.c:422 — "off until user opts out"), and (b) the API does not
- * crash on a bogus key. The actual DISABLE_BILATERAL gate path in
- * join_thread_fn is exercised by Step 7 manual smoke testing.
+ * (returns false, matching the CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL
+ * default at config.c:103 — "off until user opts out"), and (b) the API
+ * does not crash on a bogus key. The actual DISABLE_BILATERAL gate path
+ * in join_thread_fn is exercised by Step 7 manual smoke testing.
  */
 static int test_kill_switch_round_trip(void) {
     fprintf(stderr, "[test_bilateral_punch] test 5: kill-switch config gate\n");
@@ -2118,8 +2118,8 @@ static int test_rendezvous_cookie_codec(void) {
  * These assertions used to live in the S5 relay codec test, purely
  * because a RELAY_GRANT happened to be the frame lying around to build
  * them on. The relay is gone; the property is not. The fixtures here are
- * a DELIVER and a CHALLENGE — the only two server->client frame types
- * this client still understands (rendezvous.h:212-213).
+ * a DELIVER and a CHALLENGE — REND_FRAME_DELIVER and REND_FRAME_CHALLENGE
+ * (rendezvous.h:207-208), the only two server->client frames left.
  *
  * THE REGRESSION THIS EXISTS TO CATCH. sdl_net_adapter.c's straggler
  * drop used to test `Rendezvous_FrameType(...) != 0`, which returns 0
@@ -2449,7 +2449,7 @@ static int send_log_count(void) {
 /* Records every packet direct_p2p.c pushes through RENDEZVOUS_SEND and
  * then performs the real send, so the machine under test keeps running
  * against the mock server. Both roles route here: the host's rend_q
- * drain AND its main-thread CHALLENGE echo (direct_p2p.c:1812), and the
+ * drain AND its main-thread CHALLENGE echo (direct_p2p.c:3803), and the
  * joiner's inline signaling loop sends. */
 static bool recording_rendezvous_send(NET_DatagramSocket* sock, NET_Address* target,
                                       uint16_t target_port, const uint8_t* pkt,
@@ -2516,7 +2516,7 @@ static void mock_server_stop(MockServerCtx* ctx, SDL_Thread* tid,
 
 /* --- host-side STUN seam that hands the test a live handle ------------- */
 
-/* direct_p2p.c:746 calls STUN_DISCOVER(&s_work.stun, ...) — the mock is
+/* direct_p2p.c:2750 calls STUN_DISCOVER(&s_work.stun, ...) — the mock is
  * therefore handed a pointer to the orchestrator's own StunResult. Test
  * 13 keeps it so it can move stun.public_port AFTER the room code (and
  * with it advertised_port) has been latched, which is the only way to
@@ -2891,7 +2891,7 @@ done:
  * would have produced (a CHALLENGE is proof the server is alive).
  *
  * Cost note: CONNECT_HOST_ADVISORY_MS is a compile-time 30 s
- * (connect_fail.h:252), so this used to spend ~31 s of real wall clock.
+ * (connect_fail.h:226), so this used to spend ~31 s of real wall clock.
  * DirectP2P_TestHook_SetHostAdvisoryScale scales the elapsed CLOCK
  * rather than the threshold, so the classifier still runs against the
  * shipped 30 s constant — the test is fast without testing a
@@ -3048,8 +3048,8 @@ done:
  * one RTT to bind instead of waiting out the 500 ms resend cadence.
  * Pinned by timing the first cookied REGISTER.
  * Part B — the same mock, never accepting: budget expiry must classify
- * COOKIE_REJECTED (direct_p2p.c:4829), only reachable when
- * ev_challenge_any was set at runtime.
+ * CONNECT_FAIL_COOKIE_REJECTED (connect_fail.c:136), only reachable
+ * when the race's challenge_any evidence was set (direct_p2p.c:3201).
  * (The inline answer itself lives in the race's CHALLENGE arm.)
  */
 
@@ -4639,7 +4639,7 @@ static int test_natpmp_pcp(void) {
  *       off. DirectP2P_BeginHost is the entry into
  *       try_portmap/upnp_worker_fn, and upnp_worker_fn's ONLY brake is
  *       Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP)
- *       (src/netplay/direct_p2p.c:4528). So: every DirectP2P_BeginHost
+ *       (src/netplay/direct_p2p.c:1956). So: every DirectP2P_BeginHost
  *       call site must have a disable-UPnP site within the preceding
  *       UPNP_SETUP_WINDOW_LINES lines. (Widest real gap today is 15
  *       lines; the window is 25, loose enough to survive a comment being
@@ -6764,8 +6764,8 @@ static int test_race_budget_wrap_safety(void) {
  *   $ sed -n '1313,1318p' src/netplay/direct_p2p.c | md5
  *   d1f6c2bdeb1ee0d52b98b3fffc9fc17c
  *
- * The guard was never the defect. M-2's fix is the two lines below it —
- * direct_p2p.c:1319-1338 — and it is TWO changes, not one:
+ * The guard was never the defect. M-2's fix is the code just below it —
+ * direct_p2p.c:1291-1304 — and it is TWO changes, not one:
  *
  *   (i)  VALIDATE, THEN memset. The new StunPunchLeg is built on the
  *        STACK and Stun_PunchBegin is allowed to fail BEFORE the
@@ -6780,10 +6780,10 @@ static int test_race_budget_wrap_safety(void) {
  *        pointer to a ref'd address: a permanent leak, one per re-arm.
  *
  * Test 27 counts occurrences of the log line "S6 race: punching
- * candidate" (test_bilateral_punch.c:8901). Neither (i) nor (ii) changes
- * that count, which is why restoring the pre-fix ordering AND deleting the
- * race_finish_punch call leaves test 27 — and the whole suite — GREEN.
- * Test 30 covers (i), test 31 covers (ii).
+ * candidate" into s_sb6_arm_lines (test_bilateral_punch.c:6236). Neither
+ * (i) nor (ii) changes that count, which is why restoring the pre-fix
+ * ordering AND deleting the race_finish_punch call leaves test 27 — and
+ * the whole suite — GREEN. Test 30 covers (i), test 31 covers (ii).
  */
 
 /* --- a punch sink: counts punches, never echoes, timestamps both ends -- */
@@ -6839,9 +6839,9 @@ static int SDLCALL hc_sink_thread(void* arg) {
  * UNSOLICITED to the address that REGISTER came from, one every
  * `gap_ms`. Unsolicited is not a cheat: direct_p2p.c sets
  * signal_active = false the moment the first DELIVER_PEER lands
- * (direct_p2p.c:1810), so no further REGISTER is ever sent — but the
- * DELIVER branch of the shared receive path (direct_p2p.c:1686) is NOT
- * gated on signal_active, so every later DELIVER is still parsed and
+ * (direct_p2p.c:1639), so no further REGISTER is ever sent — but the
+ * REND_FRAME_DELIVER branch of the receive path (direct_p2p.c:1595) is
+ * NOT gated on signal_active, so every later DELIVER is still parsed and
  * still re-arms slot 1. That asymmetry is the production behaviour under
  * test.
  */
@@ -6941,7 +6941,7 @@ static int SDLCALL hc_server_thread(void* arg) {
  * WHY THE ARM-FAIL SEAM. race_arm_punch's only failure mode past its
  * up-front ip/port guard is Stun_PunchBegin, which fails on an
  * unresolvable host (stun.c:781-798) — and slot 1's IP always comes from
- * inet_ntop in Rendezvous_ParseDeliverEx (rendezvous.c:251-254), so the
+ * inet_ntop in Rendezvous_ParseDeliverEx (rendezvous.c:250-252), so the
  * wire can only ever deliver a resolvable dotted quad. The seam swaps the
  * hostname STRING handed to the real Stun_PunchBegin for a 144-character
  * DNS label; the failure is produced by the real NET_ResolveHostname path.
