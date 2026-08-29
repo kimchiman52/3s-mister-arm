@@ -29,10 +29,6 @@ const char* ConnectFail_Code(ConnectFailCode code) {
     case CONNECT_FAIL_CODE_VERSION_NEWER:   return "P2P_FAIL_CODE_VERSION_NEWER";
     case CONNECT_FAIL_INTERNAL:             return "P2P_FAIL_INTERNAL";
     case CONNECT_FAIL_BALANCE_UNAVAILABLE:  return "P2P_FAIL_BALANCE_UNAVAILABLE";
-    case CONNECT_FAIL_RELAY_UNAVAILABLE:    return "P2P_FAIL_RELAY_UNAVAILABLE";
-    case CONNECT_FAIL_RELAY_REFUSED:        return "P2P_FAIL_RELAY_REFUSED";
-    case CONNECT_FAIL_RELAY_PIN_TIMEOUT:    return "P2P_FAIL_RELAY_PIN_TIMEOUT";
-    case CONNECT_FAIL_RELAY_NOT_PAIRED:     return "P2P_FAIL_RELAY_NOT_PAIRED";
     }
     return "P2P_FAIL_UNKNOWN";
 }
@@ -55,12 +51,18 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
     case CONNECT_FAIL_HOST_OFFLINE:
         return "Host not found. Code stale or host offline.";
     case CONNECT_FAIL_NAT_BLOCKED:
-        return "Host found, but NAT blocked the link.";
+        /* TERMINAL — there is no relay rung after this one any more.
+         * The remedy names the HOST because the joiner never runs a
+         * port-mapping attempt (try_portmap has one call site, inside
+         * host_thread_fn), so "enable UPnP" aimed at the reader of this
+         * string would be false advice. */
+        return "NAT blocked. Host should forward a port.";
     case CONNECT_FAIL_SYMMETRIC_BOTH:
-        /* S5: reachable only when the relay rung is switched OFF. With
-         * the relay enabled this diagnosis leads to an ATTEMPT, and a
-         * relay that then fails reports its own cause. */
-        return "Both networks too strict (needs relay).";
+        /* TERMINAL, and the one fact measured about OUR OWN side:
+         * StunResult.port_disagreement means our router handed out
+         * different external ports to different STUN servers. The
+         * actionable remedy is still the host's. */
+        return "Your NAT reassigns ports. Host must forward.";
     case CONNECT_FAIL_HAIRPIN:
         return "Same network as host. Router lacks loopback.";
     case CONNECT_FAIL_PUNCH_AUTH:
@@ -91,20 +93,6 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
          * ArcadeBalance_GetReason() text through set_status instead;
          * this is the generic fallback. */
         return "Netplay needs the arcade ROM.";
-    /* S5 relay rung. Each string names the thing to do next, because
-     * these are the LAST rung — there is no further fallback. */
-    case CONNECT_FAIL_RELAY_UNAVAILABLE:
-        return "No relay available. Try again later.";
-    case CONNECT_FAIL_RELAY_REFUSED:
-        return "Relay is full. Try again shortly.";
-    case CONNECT_FAIL_RELAY_PIN_TIMEOUT:
-        return "Relay unreachable (firewall?).";
-    /* S6-review L-1: NOT_PAIRED is not "the relay is full" — the server
-     * never saw the OTHER side of this room. Naming the opponent is what
-     * makes this actionable; naming the pool would send the user to wait
-     * for capacity that was never the problem. */
-    case CONNECT_FAIL_RELAY_NOT_PAIRED:
-        return "Opponent not in this room yet.";
     }
     return "Connection failed.";
 }
@@ -174,7 +162,9 @@ ConnectFailCode ConnectFail_ClassifyJoin(const ConnectJoinEvidence* ev) {
         }
         /* We learned the host's live endpoint and still couldn't punch:
          * the NAT pair is the blocker. Our own port_disagreement (S2)
-         * upgrades the diagnosis to the symmetric/relay-needed class. */
+         * upgrades the diagnosis to the symmetric-both class, whose user
+         * string names OUR port reassignment explicitly. Both arms are
+         * TERMINAL — the relay rung that used to follow them is gone. */
         return ev->port_disagreement ? CONNECT_FAIL_SYMMETRIC_BOTH
                                      : CONNECT_FAIL_NAT_BLOCKED;
     }

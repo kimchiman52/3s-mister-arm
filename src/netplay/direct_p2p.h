@@ -351,14 +351,13 @@ bool DirectP2P_TestHook_IpIsNonPublic(const char* ip);
  * still runs against the shipped constant. 1 (or less) disables. */
 void DirectP2P_TestHook_SetHostAdvisoryScale(int scale);
 
-/* S5 relay rung seam. The rung's whole client-side contract is "call the
- * EXISTING do_handoff with the RELAY endpoint", so the assertion that
- * matters is on do_handoff's own arguments — not on internal state a
- * rung could set correctly while never reaching the handoff. `out_count`
- * separates "no handoff at all" from "a handoff to 0.0.0.0:0". Any
- * pointer may be NULL. */
+/* Handoff observation seam. The assertion that matters is on
+ * do_handoff's own arguments — not on internal state a rung could set
+ * correctly while never reaching the handoff. `out_count` separates
+ * "no handoff at all" from "a handoff to 0.0.0.0:0". Any pointer may be
+ * NULL. */
 void DirectP2P_TestHook_LastHandoff(char* out_ip, int ip_cap, uint16_t* out_port,
-                                    int* out_player, bool* out_relay, int* out_count);
+                                    int* out_player, int* out_count);
 void DirectP2P_TestHook_ResetHandoff(void);
 
 void DirectP2P_TestHook_PunchGateReset(void);
@@ -375,9 +374,8 @@ void DirectP2P_TestHook_PunchGateLimits(int* src_max_bad, uint32_t* mute_ms,
  * Every other seam here drives the race through BeginJoin / the host
  * worker, and those own process-wide state (s_work, the state machine,
  * the worker threads), so at most ONE of them can be live in a process.
- * The S6 split-brain defect is by construction a TWO-peer property — one
- * side commits to the relay while the other commits to a punch — so it
- * cannot be reproduced through that door at all.
+ * A property that needs TWO concurrent peers cannot be reproduced
+ * through that door at all.
  *
  * p2p_race itself takes everything it needs by argument (its own socket,
  * its own endpoints, its own budgets) and touches no per-session global,
@@ -396,19 +394,25 @@ typedef struct DirectP2PRaceProbeCfg {
     uint16_t            my_public_port;
     bool                signal_leg;
     int                 signal_budget_ms;
-    bool                relay_leg;
-    int                 relay_budget_ms;
     int                 punch_leg_ms;
     int                 race_budget_ms;
 } DirectP2PRaceProbeCfg;
 
 /* Mirrors the internal RaceOutcome enum; kept as explicit values so the
- * harness never has to see the private type. */
+ * harness never has to see the private type.
+ *
+ * DP2P_RACE_PROBE_RELAYED held 1 until the relay rung was removed. The
+ * remaining members were RENUMBERED into the gap rather than left with a
+ * hole: nothing depends on the ordinals — no wire format, no persisted
+ * state, no config, and every use in this tree (direct_p2p.c's switch,
+ * test_bilateral_punch.c's comparisons and its name table) is symbolic.
+ * The one place the internal RaceOutcome was printed as an integer now
+ * prints a NAME instead, so no log line changes meaning across the
+ * renumber. */
 typedef enum DirectP2PRaceProbeOutcome {
     DP2P_RACE_PROBE_PUNCHED = 0,
-    DP2P_RACE_PROBE_RELAYED = 1,
-    DP2P_RACE_PROBE_CANCELLED = 2,
-    DP2P_RACE_PROBE_EXHAUSTED = 3,
+    DP2P_RACE_PROBE_CANCELLED = 1,
+    DP2P_RACE_PROBE_EXHAUSTED = 2,
 } DirectP2PRaceProbeOutcome;
 
 typedef struct DirectP2PRaceProbeOut {
@@ -416,11 +420,6 @@ typedef struct DirectP2PRaceProbeOut {
     char     peer_ip[64];
     uint16_t peer_port;
     uint32_t t_race_ms;
-    bool     relay_ran;
-    /* ConnectFailCode as an int so the harness can assert on the relay
-     * leg's OWN disposition (S6-review L-1 split NOT_PAIRED out of
-     * RELAY_REFUSED, and only the leg's verdict shows which fired). */
-    int      relay_fail;
 } DirectP2PRaceProbeOut;
 
 void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* cfg,
@@ -433,15 +432,6 @@ void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* cfg,
  * that has confirmed and still owes its peer the confirmation tail. */
 bool DirectP2P_TestHook_RaceBudgetExpired(uint32_t now, uint32_t t0,
                                           int budget_ms, bool tail_outstanding);
-
-/* Second-review H-A: the two constants that place the relay-vs-punch
- * decision in time, exposed so the split-brain sweep can DERIVE its search
- * range from them instead of hard-coding a range chosen where the fix
- * happened to work. The direction matters: a test range computed from a
- * production constant follows the production code; a production margin
- * sized against a test constant is the H-B defect and is forbidden. */
-uint32_t DirectP2P_TestHook_RaceRelayArmMs(void);
-uint32_t DirectP2P_TestHook_RaceRelayGraceMs(void);
 #endif /* NETPLAY_TEST_HOOKS */
 
 #else /* !ENABLE_NETPLAY */

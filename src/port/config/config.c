@@ -118,24 +118,12 @@ static const ConfigEntry default_entries[] = {
      * mapping so drift never happens, which beats detecting it. Still
      * only 0.067 pkt/s toward the STUN server; floor clamp is 5000. */
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_STUN_KEEPALIVE_MS, .type = CFG_INT, .value.i = 15000 },
-    /* S5 relay (docs/plan-netplay-connection.md §7). ON by default — it
-     * is the only path that works for a symmetric x symmetric pair, and
-     * it only ever runs after both hole-punch phases have already
-     * failed, so an enabled relay costs a connectable pair nothing.
-     * FORCE_RELAY is a test override and must stay false in shipped
-     * config: forcing the relay throws away the direct path's latency.
-     * 4000 ms covers a REQ->GRANT round trip and a PIN->ACK round trip
-     * to a European VPS many times over. */
-    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY, .type = CFG_BOOL, .value.b = false },
-    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY, .type = CFG_BOOL, .value.b = false },
-    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_RELAY_BUDGET_MS, .type = CFG_INT, .value.i = 4000 },
     /* S6 candidate racing (docs/plan-netplay-connection.md §8). 8000 ms
      * bounds the whole post-STUN cascade now that its legs overlap:
      * a room-code punch leg and a DELIVER punch leg (each
-     * BILATERAL_PUNCH_MS long), the rendezvous leg (SIGNAL_BUDGET_MS)
-     * and, from RACE_RELAY_ARM_MS onward, the relay leg
-     * (RELAY_BUDGET_MS) all fit inside it. Before S6 the same work cost
-     * the SUM: 2500 + 8000 + 5000 + 4000 = 19500 ms. */
+     * BILATERAL_PUNCH_MS long) and the rendezvous leg (SIGNAL_BUDGET_MS)
+     * all fit inside it. Before S6 the same work cost the SUM:
+     * 2500 + 8000 + 5000 = 15500 ms. */
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, .type = CFG_INT, .value.i = 8000 },
     { .key = CFG_KEY_NETPLAY_INPUT_PREDICTION_WINDOW, .type = CFG_INT, .value.i = 8 },
     { .key = CFG_KEY_NETPLAY_DIAG_ENABLE, .type = CFG_BOOL, .value.b = true },

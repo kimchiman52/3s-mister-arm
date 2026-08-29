@@ -103,7 +103,7 @@ provably non-public (CGNAT gate, §3.6; review M3).
 | **UPnP mapped** | direct punch to mapped port succeeds | succeeds (joiner's own mapping opens on first send) | succeeds — mapped port accepts any source |
 | **Full/restricted cone, no UPnP** | direct punch succeeds | succeeds | joiner's source port differs per destination → host's echo goes to the STUN-observed (wrong) port; **bilateral fallback required**, host-side learns true port from first inbound (host_tick_receive captures source, direct_p2p.c:1763-1782) |
 | **Port-restricted, no UPnP** | succeeds | succeeds (simultaneous send opens both) | fails direct; bilateral gives the host the joiner's fresh mapping via DELIVER — works iff joiner's NAT maps the rendezvous-learned port for the host too (usually not, for true symmetric) |
-| **Symmetric, no UPnP** | host's advertised STUN port is per-destination-wrong; joiner's punch lands on a dead mapping. Bilateral: server learns the host's port *toward the server*, still wrong toward the joiner → punching fails; **carried by the S5 relay (§7)** | same | punching **cannot** work here by construction; **carried by the S5 relay (§7)** — this was the one cell with no path at all before S5 |
+| **Symmetric, no UPnP** | host's advertised STUN port is per-destination-wrong; joiner's punch lands on a dead mapping. Bilateral: server learns the host's port *toward the server*, still wrong toward the joiner → punching fails; **TERMINAL** (`FAILED_SYMMETRIC`/`FAILED_BILATERAL`) | same | punching **cannot** work here by construction; **TERMINAL** — the one cell with no path at all. An S5 relay briefly closed this cell (§7) but was removed before shipping; S7's UPnP/NAT-PMP/PCP (§9) is the primary mitigation for the population that would otherwise land here |
 | **CGNAT (any inner type)** | pre-S1: silently broken when UPnP "succeeded" (wrong ip/port pair, §3.3.5); post-S1: behaves as the corresponding no-UPnP row | ↑ | ↑ |
 
 Hairpin (both peers behind one router) is a special row: works only
@@ -241,9 +241,10 @@ post-S2 tree.
   now confirms to the symmetric side's real mapping, which that NAT
   accepts because it is the very mapping the symmetric side is punching
   from. (host full/restricted-cone × joiner symmetric, and the mirrored
-  symmetric × full/restricted-cone; port-restricted × symmetric still
-  needs S5 — the port-restricted filter drops the symmetric side's
-  off-port punches before the retarget can trigger.) Regression:
+  symmetric × full/restricted-cone; port-restricted × symmetric remains
+  terminal — the port-restricted filter drops the symmetric side's
+  off-port punches before the retarget can trigger, and no relay leg
+  exists to carry it, S5 having been removed; §7.) Regression:
   test_stun_mock.c `run_punch_retarget_test` (fails on the pre-S2
   tree — zero confirmations reach the translated port).
   - *Attribution correction (adversarial review, L-2/L-6)*: the
@@ -387,8 +388,8 @@ overlay status line. Detection evidence, as implemented:
 | 2 | STUN blocked | sends succeeded, zero responses from all servers | `P2P_FAIL_STUN_ALLDOWN` | "No STUN reply (UDP blocked or net down)." (hedged, review L-4: also covers ISP-down-LAN-up) |
 | 3 | rendezvous server down | ZERO DELIVER frames for the whole signaling budget — the server answers EVERY REGISTER with a DELIVER (real or 0.0.0.0:0 sentinel; rendezvous-server.js handleRegister), so silence = server/path down. Requires the `Rendezvous_ParseDeliverEx` tri-state split (MALFORMED vs EMPTY vs PEER). Review L-3 honesty note: four live-server silent-drop cases (per-IP rate limit, per-IP live-key quota, paired-table-full, third-party drop) also land here — documented in connect_fail.h; a distinguishable NACK needs a wire change | `P2P_FAIL_RENDEZVOUS_DOWN` | "Matchmaking server unreachable." |
 | 4 | host offline / code stale | DELIVERs arrived but ALL were the zero-sentinel — a DELIVER carrying the joiner's OWN public IP counts as a sentinel too (review HIGH-1: it is the server echoing the joiner's attempt-1 registration back after the S2 fresh-socket retry re-REGISTERed a never-hosted key; a legitimate same-IP host is impossible because the hairpin bypass fails same-IP codes before the joiner ever REGISTERs) | `P2P_FAIL_HOST_OFFLINE` | "Host not found. Code stale or host offline." |
-| 5 | host online, NAT-blocked | real-endpoint DELIVER arrived, bilateral punch timed out | `P2P_FAIL_NAT_BLOCKED` | "Host found, but NAT blocked the link." |
-| 6 | symmetric-both / needs relay | as (5) + `StunResult.port_disagreement` (S2) | `P2P_FAIL_SYMMETRIC_BOTH` | "Both networks too strict (needs relay)." |
+| 5 | host online, NAT-blocked | real-endpoint DELIVER arrived, bilateral punch timed out | `P2P_FAIL_NAT_BLOCKED` | "NAT blocked. Host should forward a port." |
+| 6 | symmetric-both (terminal) | as (5) + `StunResult.port_disagreement` (S2) | `P2P_FAIL_SYMMETRIC_BOTH` | "Your NAT reassigns ports. Host must forward." |
 | 7 | hairpin / no NAT loopback | peer public IP == our public IP | `P2P_FAIL_HAIRPIN` | "Same network as host. Router lacks loopback." |
 | 8 | host router blocks hosting | host advisory: no UPnP AND no inbound AND no DELIVER after 30 s (with UPnP: same silence logs `P2P_FAIL_RENDEZVOUS_DOWN` advisory, direct joins still work) | `P2P_FAIL_HOST_UNMAPPABLE` | "Router may be blocking hosting." |
 | 9 | peer rejected (version) | MIST handshake reject (R-1), now routed through the same latch/report path | `P2P_FAIL_PEER_REJECTED` | MIST reason text |
@@ -695,8 +696,11 @@ worth doing on the harness itself and not only on the code under test.
 - The room code still contains the host's public IP, by necessity.
 - The MIST handshake (netplay.c R-1 path) remains the backstop for a
   peer that gets past the punch gate.
-- ~~Symmetric×symmetric pairs still cannot connect at all — that is S5.~~
-  **Closed by S5** (§7): the relay rung now carries that cell.
+- Symmetric×symmetric pairs still cannot connect at all — that remains
+  terminal (`FAILED_BILATERAL`/`FAILED_SYMMETRIC`). An S5 relay briefly
+  closed this cell but was removed before shipping (§7); S7's
+  UPnP/NAT-PMP/PCP (§9) is the primary mitigation for the population
+  that would otherwise land here.
 
 ### 6.8 S4 adversarial review — as-built fixes
 
@@ -866,7 +870,8 @@ what stops a v2 payload landing in a v3 slot.
   able to permanently exclude anyone, so a sufficiently patient attacker
   is slowed by ~150×, not stopped.
 - §6.7 still applies unchanged: the code contains the host IP by
-  necessity, and symmetric×symmetric is still S5.
+  necessity, and symmetric×symmetric remains a terminal failure (S5,
+  which briefly carried it, was removed; §7).
 
 **Remaining findings.**
 
@@ -909,481 +914,78 @@ what stops a v2 payload landing in a v3 slot.
 - **MEDIUM-2** — integration coverage for the S4c client cookie
   handshake, on both roles; lands in a sibling commit.
 
-## 7. S5 — Custom '3SXR' relay for symmetric-NAT pairs (IMPLEMENTED)
+## 7. S5 — Custom '3SXR' relay for symmetric-NAT pairs (REMOVED)
 
-Symmetric×symmetric is the one cell of the §2 matrix that cannot
-connect at all: neither side can predict the other's per-destination
-port, so no amount of punching works and the flow dead-ends at
-`FAILED_BILATERAL`. A relay is the only fix. Landed as its own commit
-series on top of S4; citations refer to the post-S5 tree.
+Built, reviewed, and then removed before shipping — **it was never
+deployed**. Verified against the live host on 2026-08-29, read-only:
+`/opt/rendezvous-server/rendezvous-server.js` on 46.62.244.55 is 12 743
+bytes (this tree's copy was 82 815), contains **zero** case-insensitive
+occurrences of "relay", and declares `const VERSION = 1`,
+`REGISTER_LEN = 28`, `SESSION_TTL_MS = 60 * 1000`. Its md5
+(`56e96ca14d5652745636658438363ac6`) matches the blob at commit
+`3f020a54` — the FIRST rendezvous-server commit in this history. The
+running process (`node /opt/rendezvous-server/rendezvous-server.js
+3478`, up since 2026-07-28) serves that file. So the deployed server
+predates not only S5 but also S4c (no cookie) and S1's TTL/`MAX_SESSIONS`
+work, and removing the relay from this tree is a pure source cleanup with
+no live-infrastructure impact.
 
-### 7.1 Why a custom relay and not coturn
+> **Separate live defect, NOT caused by this removal.** That same
+> evidence means the deployed server speaks **v1** while this tree's
+> client speaks **v2** (`REND_VERSION 2`, `rendezvous.c:28`, 36-byte
+> REGISTER). The deployed v1 `onMessage` drops any datagram whose
+> version byte is not 1, so **no build on this branch can complete
+> rendezvous signalling against the live server at all** — every attempt
+> ends in the silence that `ConnectFail_ClassifyJoin` classifies as
+> `P2P_FAIL_RENDEZVOUS_DOWN`. Deploying the current
+> `tools/rendezvous-server/rendezvous-server.js` is what fixes this; it
+> is tracked separately from S5.
 
-`do_handoff` (direct_p2p.c) transfers a **bare** `NET_DatagramSocket`
-into netplay.c via `Netplay_SetStunSocket`, after which GekkoNet owns
-plain send/recv on it through `sdl_net_adapter.c`. A TURN allocation
-interposes Allocate / CreatePermission / ChannelData framing on **every
-packet**, plus refresh timers — on a 60 Hz rollback game's hot path,
-through an adapter that does nothing but copy bytes. GekkoNet does not
-speak any of it. A relay that forwards **raw datagrams** keeps the
-socket bare, so the relayed socket is behaviourally identical to a
-punched one and neither GekkoNet nor the MIST handshake changed a line.
-Secondary reason: coturn would add a scanner-recognisable public
-service to a VPS that also runs unrelated infrastructure.
+Kept here as a decision record only; no relay code
+exists in the tree. §7.1–§7.7's protocol tables, port-pool policy,
+client-rung mechanics, taxonomy, tests and residuals are gone with it —
+do not cite them; any surviving cross-reference to a `§7.x` subsection
+elsewhere in this document is stale.
 
-That identity claim was **verified, not assumed**:
+Why it existed: symmetric×symmetric is the one cell of the §2 matrix
+that cannot connect at all — neither side can predict the other's
+per-destination port, so no amount of punching works and the flow
+dead-ends at `FAILED_BILATERAL`. A relay was the only fix for that cell,
+and it was built as a custom '3SXR' wire extension (not coturn/TURN) so
+the relayed socket stayed behaviourally identical to a punched one and
+neither GekkoNet nor the MIST handshake needed to change.
 
-| link | evidence |
-|---|---|
-| `do_handoff` never pins a peer at the socket layer | it calls only `Netplay_SetParams(player, ip)` / `Netplay_SetRemotePort(port)` / `Netplay_SetStunSocket(sock)` — no `connect()` |
-| outbound goes to exactly one endpoint | netplay.c stringifies `"remote_ip:remote_port"` for GekkoNet (`configure_gekko`); `sdl_net_adapter.c` `send_data` resolves that string ONCE into `cached_remote`/`cached_port` |
-| inbound is source-agnostic | `receive_data` accepts datagrams from any source and labels each with the datagram's OWN source string |
-| so the addresses match | the relay forwards **from** the endpoint we send **to**, so the address GekkoNet sees is the one it expects |
-| MIST handshake unaffected | `netplay.c`'s `MistRunnerIo` sends to `remote_ip:remote_port` and replies to `io->last->addr/port` — the same shape |
+Why it went:
+- Symmetric NAT is a minority of the NAT-pair matrix (§2), and S7's
+  UPnP + NAT-PMP/PCP (§9) already covers a large share of the population
+  that would otherwise need it — real port forwarding, no server, no
+  bandwidth, no geography, and it was landed and is unaffected by this
+  removal.
+- There was exactly one relay, and it added structurally worse latency
+  by construction — its own on-screen copy said so explicitly: "the VPS
+  is in Europe, so two US players on the relay see noticeably worse ping
+  than a direct link." Measured 2026-08-29 from the US dev machine:
+  `ping -c 5 46.62.244.55` gave **114.6 ms avg RTT** (min 112.1 / max
+  117.5), and `traceroute` lands on `core32.hel1.hetzner.com` via
+  Telia's `hls-*` (Helsinki) hops — i.e. Finland. A US–US pair falling
+  through to it therefore pays ~229 ms end-to-end, **about 14 frames at
+  60 fps**, against an `input_prediction_window` default of **8**
+  (`src/port/config/config.c:128`). The relay could not have been
+  covered by rollback prediction; it would have been visible as constant
+  delay. For a parry-timing rollback game that is a different game, not
+  a degraded one.
+- Most importantly, the relay is what made S6 (§8) race TWO transports
+  (punch vs. relay), which created a split-brain failure mode — one peer
+  committing to the punch, the other to the relay, with no GekkoNet
+  remote-address relearn path to recover. That cost two adversarial
+  review rounds to close (S6 review H-3/H-4/H-7, then a second review's
+  H-A/H-B/H-C after the first round's fix turned out to have relocated
+  the defect rather than closed it — §8.9). Removing the relay deletes
+  the whole class: with only punch candidates in the race, there is
+  nothing to disagree about, since every candidate targets the same
+  peer.
 
-One guard was needed to make the claim airtight: a `RELAY_PIN_ACK`
-still in flight when `do_handoff` transfers the socket would land in
-`receive_data`. Its first byte is `0x33`, and `0x33 & 7 == 3`, so it
-would be miscounted as an `InputAck` in the diag counters and then
-handed to GekkoNet as a packet of type 51 — outside the 1..7
-`PacketType` range (`third_party/GekkoNet/build/include/net.h:28-36`).
-`receive_data` now drops every '3SXR' frame, mirroring the existing
-`Stun_IsBindingResponse` straggler drop. The test is **exact, not
-heuristic**: a GekkoNet type byte is 1..7 by construction and can never
-be `0x33`, so this can only ever catch our own control traffic.
-
-The drop is on the **magic alone** (`Rendezvous_HasMagic`), and that
-correction is review LOW-1. It used to test
-`Rendezvous_FrameType(...) != 0`, and `Rendezvous_FrameType` returns 0
-for **any** version ≠ 2 — so a non-v2 '3SXR' frame would have passed
-through the guard with `data[0] == 0x33` and been miscounted as an
-`InputAck`, which is precisely the bug the guard exists to close.
-Unreachable today (this build only ever emits v2), but the word "every"
-above is now true rather than aspirational.
-
-### 7.2 Protocol
-
-Four new types on the existing '3SXR' wire, same UDP port, same process,
-same systemd unit. **The wire VERSION stays 2** — a client that never
-sends a `RELAY_REQ` is indistinguishable from a pre-S5 one, so this is a
-pure extension and no row of the §6.5 interlock matrix moves.
-
-| type | dir | len | layout |
-|---|---|---|---|
-| 5 `RELAY_REQ` | client → main port | 36 | byte-identical to `REGISTER` apart from the type byte |
-| 6 `RELAY_GRANT` | server → client | 36 | magic(4) ver(1) type(1) slot(1) status(1) key(16) port_be(2) rsv(2) token(8) |
-| 7 `RELAY_PIN` | client → relay port | 20 | magic(4) ver(1) type(1) slot(1) rsv(1) token(8) rsv2(4) |
-| 8 `RELAY_PIN_ACK` | relay port → client | 12 | magic(4) ver(1) type(1) slot(1) peer_pinned(1) rsv(4) |
-
-`RELAY_REQ` is byte-identical to `REGISTER` in the fields the S4c
-return-routability gate reads (key at `[8..24)`, cookie at `[28..36)`,
-length 36) **on purpose**: it rides the same gate rather than needing a
-second one. The client builds it *through* `Rendezvous_BuildRegister`
-and retypes byte 5, so the two can never drift apart.
-
-`RELAY_GRANT` carries **no relay IP**. The client uses the address the
-GRANT arrived at — which is the address it was already talking to.
-36-for-36 makes the amplification factor exactly **1.0**; `PIN_ACK` is
-12-for-20, an attenuator. Neither can make this server a reflector.
-
-Refusals reuse the GRANT frame: `status` is `GRANTED` (0),
-`POOL_EXHAUSTED` (1) or `NOT_PAIRED` (2), with port and token zeroed and
-`slot = 0xFF`. An explicit refusal exists because a client that cannot
-tell "refused" from "server gone" is exactly the reporting defect §6.5
-documents.
-
-**Token.**
-
-| property | value |
-|---|---|
-| formula | `HMAC-SHA256(secret, "relay:<hexKey>:<side>:<slot>")[0..7]` |
-| secret | the **same** 32-byte `cookieSecret` S4c already draws at process start — one secret, not a second scheme |
-| domain separation | the literal `"relay:"` prefix, so a cookie can never be replayed as a token or vice versa |
-| slot | `floor(Date.now() / RELAY_TOKEN_ROTATE_MS)`, 60 s |
-| accepted | current **and** previous slot ⇒ 60–120 s. **That pair of slots IS the expiry** |
-| side | `0` = slot A (host), `1` = slot B (joiner), and it is **inside the HMAC** — a token cannot be moved across sides |
-| compare | `crypto.timingSafeEqual` |
-
-**Admission — no open reflector.** `handleRelayReq` runs after the S4c
-gate, so the source has already proven return routability. Then: the key
-must exist; the source must **be** one of that session's two registered
-slots (which is what identifies *which* side is asking, and is
-unsatisfiable without having completed normal pairing); and the session
-must be **paired**. Unknown key and non-slot source get **silence** —
-answering would confirm to a scanner which keys exist. An unpaired
-session gets a `NOT_PAIRED` refusal, because that requester is provably
-a participant.
-
-**Pin source binding (review HIGH-1, fixed as-built).** A token is a
-capability for `(hexKey, side, slot)` and **nothing else** — it says who
-told you, not who is holding you. `RELAY_PIN` originally recorded
-`rinfo.address/port` verbatim, so a party legitimately holding a side-0
-token (trivially arranged: create your own session with two of your own
-sockets) could present it from a **spoofed source**; the relay pinned
-side 0 to an arbitrary victim and then forwarded everything the attacker
-sent as side 1 to that victim at up to `RELAY_BYTES_PER_SEC`.
-Reproduced: 200×1200 B offered → **54 datagrams / 64800 B** delivered to
-the victim, plus an unsolicited `PIN_ACK`. 1:1, so source-laundering and
-VPS-uplink burn rather than classic amplification — an off-path-drivable
-reflector all the same. The relay now requires the pin source to be at
-the **registered slot IP** for that side (live `sessionMap` entry first,
-with a snapshot taken at grant time as the fallback for a relay that has
-outlived its session). An off-path attacker cannot put a victim's IP in
-a slot: that requires answering a `CHALLENGE` delivered to the victim.
-
-**The match is IP-only and must stay that way.** A symmetric NAT hands
-out a *different* mapping toward the relay port than toward the
-rendezvous port — which is precisely the case this whole stage exists
-for. Requiring the port to match would break S5 for exactly the users it
-was built for. Both halves are asserted:
-`testRelayPinSourceBoundToSlotIp` fails if a non-slot IP can pin **and**
-fails if the slot IP from a different port cannot. Neutralising the fix
-into the port-matching version reproduces the second failure verbatim.
-Running the check **before** the HMAC is also review MEDIUM-3's cheap
-path: an unknown source now costs a Map lookup and a string compare
-instead of up to two HMAC-SHA256 plus a `timingSafeEqual`.
-
-**Pinning.** The relay pins the first token-bearing source on each side.
-The same endpoint re-pinning is idempotent and re-ACKed — that is how a
-client learns its peer arrived, via the `peer_pinned` flag, with no
-extra frame. A valid token from a **different** endpoint for an
-already-pinned side is refused: holding a token cannot hijack a live
-side. Everything that is not a valid `RELAY_PIN` is forwarded verbatim
-or dropped, never interpreted — a `'3SXR'`-magic application payload is
-forwarded like any other bytes (asserted by `relayGrantAndForward`).
-
-### 7.3 Port pool, bandwidth, reclaim
-
-| policy | value | rationale |
-|---|---|---|
-| port pool | UDP **34000–34099**, one port per relayed **session** | the port IS the session identifier, which is what keeps the forward path a bare "send these bytes to the other pinned endpoint" with no header of our own |
-| bind failure | port blocklisted for `RELAY_PORT_BLOCK_MS` (5 min), scan **retries for the same request** | see below — nothing is granted for a port that is not listening, and the blocklist is not permanent |
-| capacity | 100 concurrent relayed sessions; at cap → `POOL_EXHAUSTED` | |
-| bandwidth | **64 KiB/s per session**, token bucket, one-second burst | ~**7.8×** headroom over a real match; bounds what one session can cost the box |
-| over budget | **drop the datagram**, and still refresh liveness | never teardown: rollback netcode absorbs loss, a mid-match teardown is unrecoverable |
-| idle reclaim | 30 s with no pin and no forwarded datagram, on the existing 5 s sweep | 100 ports is small enough that holding dead entries for the 10-minute `SESSION_TTL_MS` would exhaust the pool |
-| session release | frees its relay **only if that relay is already idle** | see below — `sweepRelays` owns relay lifetime exclusively |
-
-**The bandwidth headroom is ~7.8×, not ~12×** (review MEDIUM-5). The old
-figure compared the wrong quantities: `relayBandwidthAllow` is **one**
-bucket per session charged for **both** directions, and the ~5 kB/s
-input was an estimate. Shipped telemetry says **~4.2 kB/s per
-direction** (`kbps_tx=4.2` in the heartbeat sample at
-docs/netplay-diagnostics.md:32, from `net_stats.kb_sent` at
-src/netplay/netplay.c:1372-1373) → ~8.4 kB/s against 65536 B/s =
-**~7.8×**. Still ample — a relayed match uses about an eighth of its
-budget — but the number should be the measured one.
-
-**The relay ports are rate-limited too** (review MEDIUM-3, fixed
-as-built). They had **no** limiter of any kind while the main port has
-three layers, and every PIN-shaped datagram cost up to **two**
-HMAC-SHA256 (`relayTokenValid` iterates the current and previous slot)
-plus a `timingSafeEqual`, unmetered, from any source that found the port
-— across 100 discoverable open UDP ports. Two mechanisms, in order:
-the HIGH-1 source check runs **before** the HMAC, so a scanner costs a
-Map lookup and a string compare rather than a hash; and what survives it
-draws on a `RELAY_PIN_RATE_PER_SEC` (40/s) token bucket **per relay**.
-Per relay, not per source, on purpose: a per-source bucket is keyed on
-an attacker-chosen, spoofable value and is its own unbounded allocator —
-the exact mistake the main port already had to unlearn
-(`MAX_RATE_ENTRIES`). Sizing: the client pins at `RELAY_PIN_RESEND_MS`
-= 150 ms per side, ~13.3/s across both, so 40/s is ~3× the real peak;
-worst case for the box is 100 × 40 × 2 = 8000 HMAC-SHA256/s over
-~40-byte inputs. Over budget drops, never tears down.
-
-**Bind failure: the blocklist is time-boxed and the grant waits for the
-socket** (review MEDIUM-1 + MEDIUM-2, fixed as-built). Two coupled
-defects on the same path.
-
-*MEDIUM-1* — `relayPortBlocked` was a `Set` and therefore **monotonic**.
-Its only `clear()` lived inside the `_resetRelays` **test hook**: zero
-production clear sites. Any transient bind failure — including the
-plausible release→re-allocate `EADDRINUSE`, since libuv defers the real
-close past `socket.close()` — removed that port for the lifetime of the
-process, so over a long-lived systemd unit the pool ratcheted toward
-zero and everyone eventually got `POOL_EXHAUSTED`. It also fired on
-**any** `socket.on('error')`, not just bind errors, so a runtime error
-on a perfectly good port threw that port away too. It is now a `Map` of
-expiry timestamps re-tried after `RELAY_PORT_BLOCK_MS`, written only for
-a pre-`listening` `EADDRINUSE` / `EACCES`.
-
-*MEDIUM-2* — the documented recovery ("the client's next `RELAY_REQ`
-resend, 300 ms cadence, then draws a different port") **does not exist
-in the shipped client**: `direct_p2p.c` breaks its phase-1 loop the
-instant `granted` is set, and phase 2 only ever sends `RELAY_PIN`. A
-bind failure therefore handed out a `GRANT` for a port that would never
-listen, the client burned its whole pin budget against it, and the rung
-reported `RELAY_PIN_TIMEOUT` → *"Relay unreachable (firewall?)"* —
-pointing the user at their own router for a server-side bind failure,
-exactly the misreporting class §6.5 exists to prevent. `relayAllocate`
-is now callback-based: nothing is granted until the socket's
-`listening` event fires, and a bind failure re-enters the port scan for
-the waiting request (the failed port is blocklisted, so the retry
-necessarily draws a different one; the finite pool bounds the chain at
-`POOL_EXHAUSTED`). The old round-trip argument for granting early bought
-nothing — bind resolves on the next event-loop turn, far inside the same
-round trip it was reasoning about. Fixed server-side on purpose: the
-client keeps its single-request/single-answer shape and did not change.
-`testRelayBindFailureStillGrantsAWorkingPort` occupies the first pool
-port for real and asserts the client gets one grant, for a different
-port, that answers a `PIN` and carries bytes.
-
-**"Drop, never teardown" is now actually true** (review HIGH-2, fixed
-as-built). `relay.lastActivity` was refreshed *after* the budget check,
-so the `dropCap` path returned first and a dropped datagram did not
-count as life. A session persistently over `RELAY_BYTES_PER_SEC` for
-`RELAY_IDLE_MS` was therefore reclaimed by `sweepRelays` as "idle" while
-carrying constant traffic — a mid-match teardown by the exact mechanism
-the drop policy exists to avoid. Reproduced. The refresh now happens
-before the budget check, for any datagram between two pinned endpoints:
-a datagram is evidence of life whether or not we choose to carry it. It
-stays *below* the "peer has not pinned yet" check on purpose, so a
-half-open relay still ages out on `RELAY_IDLE_MS` — which is what the
-idle-reclaim row says, and what stops a single client parking a pool
-port indefinitely now that the session TTL no longer bounds relay
-lifetime.
-
-**Relay lifetime is the relay's own clock, and only its own clock**
-(review CRITICAL-1, fixed as-built). `releaseSession` used to call
-`relayRelease` unconditionally, which killed **every relayed match at
-exactly `SESSION_TTL_MS`**. Nothing refreshes a session's `lastTouch`
-during a relayed match: only `handleRegister` / `handlePoll` /
-`handleRelayReq` touch it, and after the handoff neither client ever
-speaks to the main rendezvous port again (the joiner returns
-`DIRECT_P2P_HANDOFF` and its worker ends; the host raises
-`s_bilateral_handoff_pending` and its punch worker returns, the
-rendezvous worker having already exited). So `lastTouch` froze at the
-last `RELAY_REQ` — at *setup* — and ten minutes into gameplay the 5 s
-sweep closed the relay socket and returned the port to the pool. Both
-clients hold NAT mappings only toward that relay endpoint, so both went
-instantly silent, mid-match, unrecoverably. Reproduced against the real
-module: at the boundary the relay's own `lastActivity` was **2 ms** old,
-so the idle reclaim would never have fired; this was purely the session
-TTL. `releaseSession` now skips `relayRelease` while
-`now - lastActivity < RELAY_IDLE_MS`, so the pool costs at most 30 s of
-one port and the correct clock — the one that forwarded traffic
-refreshes ~120 times a second — is the only one that can end a match.
-The irony worth not repeating: the idle-reclaim rationale directly above
-reasons about `SESSION_TTL_MS` and still missed the reverse coupling.
-Check **both** directions of a lifetime dependency.
-
-**Deployment**: the firewall must allow inbound UDP on the pool range in
-addition to the rendezvous port. `start()` logs the range at boot.
-
-### 7.4 The client rung
-
-Position in the cascade: the **last** rung, after the bilateral punch
-fails, on **both** roles.
-
-- **Joiner** — `join_attempt`, the `!bilateral_punched` arm. Runs inline
-  on the join worker, the socket's sole actor, like the signaling loop
-  above it. `signal_addr` is now kept ref'd past the bilateral punch (the
-  rung needs it); every exit from that point Unrefs exactly once.
-- **Host** — `host_bilateral_punch_thread_fn`, the `!punched` arm. **Not
-  Tick**: that thread already owns the socket exclusively for the whole
-  `FALLBACK_BILATERAL_PUNCH` phase (§Decision 3), and the rung blocks for
-  up to its budget while `DirectP2P_Tick` must never block. It rebuilds
-  the signal endpoint and the advertised-tuple session key locally (the
-  rendezvous worker has exited by then) and reads the S4c cookie through
-  the existing seqlock.
-
-**`do_handoff` is reused verbatim.** Both success paths write the relay
-endpoint into `s_work.peer_ip` / `peer_public_port` exactly where the
-punch-success path writes the peer endpoint — the joiner returns
-`HANDOFF`, the host raises `s_bilateral_handoff_pending` — so Tick's
-existing main-thread handoff carries it with **no new plumbing at all**.
-The only difference is which endpoint was written.
-
-**Not gated on `port_disagreement`.** That S2 flag is a hint, not a
-diagnosis (a symmetric NAT that happens to hand two STUN servers the
-same port never raises it), and a relay works for any pair that can
-reach the server. Gating on it would strand exactly the users the rung
-exists for.
-
-> **Superseded by S6 (review finding L-1).** This section used to end
-> "A pair that *can* punch never reaches this code, so an enabled relay
-> costs a connectable pair nothing." That was true of the S5 **serial**
-> cascade, where the rung only ran after the punch had spent its whole
-> window. It is **not** true after S6: the relay leg now RACES the punch
-> legs, so a pair that punches slowly does reach this code and does spend
-> a pool port. §8.4 rules 2 and 2b bound how much: the relay may not arm
-> until every live punch candidate has had a window of its own, and even
-> once it is ready to hand off it waits `RACE_RELAY_GRACE_MS` for a punch
-> to land. What survives of the original promise is the measurable part —
-> a pair that punches inside those windows still costs the pool nothing
-> (test 20A asserts zero `RELAY_REQ`s) — and the honest residual is in
-> §8.10.
-
-**Relay address provenance.** Taken from the `PIN_ACK`'s **own source
-address**, not from `signal_addr`. `signal_addr` may have come from a
-hostname, and netplay.c re-resolves `remote_ip` later — a round-robin
-answer would then point at a box that never pinned us, and the relay
-would drop everything as unpinned traffic.
-
-**Pin-then-handoff.** We hand off once our OWN pin is acked, and keep
-pinning until the ACK reports the peer pinned too (or the budget ends).
-Requiring `peer_pinned` as a hard precondition would deadlock the
-symmetric case *both* sides are in — each waiting for the other. Handing
-off early is safe: the relay drops our frames until the peer pins,
-GekkoNet retransmits `SyncRequest` every 200 ms, and the S3
-`CONNECT_TIMEOUT_CONNECTING_MS` deadline reports honestly if the peer
-never arrives.
-
-**Config.**
-
-| key | default | purpose |
-|---|---|---|
-| `netplay-direct-p2p-disable-relay` | `false` | kill switch, mirrors `disable-bilateral` |
-| `netplay-direct-p2p-force-relay` | `false` | **test override, `NETPLAY_TEST_HOOKS` builds only** (review LOW-2): no-ops both hole punches and skips the bad-token / kill-switch / LAN / hairpin bypasses (joiner) and the LAN DELIVER bypass (host), so the relay path can be exercised on demand without arranging two symmetric NATs. A shipping build ignores the key and logs once — it was a user-settable knob that disabled **all** direct connectivity, same-LAN included, and routed every match through a European VPS; there is no player-facing reason to set it and several ways to set it by accident. The key stays registered in every build so a config file carrying it still parses. |
-| `netplay-direct-p2p-relay-budget-ms` | `4000` | whole-rung wall clock, clamped [500, 20000]; half to REQ→GRANT, the rest (≥ 500 ms) to PIN→ACK |
-
-### 7.5 Taxonomy and what the user sees
-
-`CONNECT_FAIL_SYMMETRIC_BOTH` keeps its meaning ("needs relay") but is
-**no longer a dead end** — it now leads to an ATTEMPT, and is reported
-only when the rung is switched off by configuration. Three new causes for
-the rung's own failures, kept separate because they send the reader to
-three different places:
-
-| # | cause | machine code | user string | evidence |
-|---|---|---|---|---|
-| 11 | no relay available | `P2P_FAIL_RELAY_UNAVAILABLE` | "No relay available. Try again later." | `RELAY_REQ` never answered (relay off server-side, older server, or we are no longer a registered slot) |
-| 12 | relay allocation refused | `P2P_FAIL_RELAY_REFUSED` | "Relay is full. Try again shortly." | a GRANT carrying an explicit refusal; transient and retryable, unlike a NAT verdict |
-| 13 | relay pinning timed out | `P2P_FAIL_RELAY_PIN_TIMEOUT` | "Relay unreachable (firewall?)." | granted a port, then no `PIN_ACK`: the relay port RANGE is unreachable from here — the rendezvous port demonstrably worked |
-
-A rung that RAN and failed reports **its own** cause rather than the NAT
-verdict. The NAT diagnosis stays true but stops being actionable once the
-last rung has been tried, and sending a user to their router because the
-relay pool was full would be a lie. The NAT evidence survives in the
-report line's `portdis=` field. The host's M1 retry cap applies the same
-preference via `s_work.relay_fail_code`.
-
-**On screen** (S3 status line, overlay line 3):
-
-- `"Connecting via relay..."` while the rung runs;
-- `"Connected via relay (higher ping)."` at handoff.
-
-Honest by design: the VPS is in Europe, so two US players on the relay
-see noticeably worse ping than a direct link, and they should know which
-one they got.
-
-**In the log**, both report lines gained:
-
-- `via_relay=0|1` — which rung won. Named apart from the `relay=` **stage
-  timing** in the same line so a grep cannot confuse them.
-- `relay_fail=<code>` — distinguishes "the rung never ran" (`P2P_OK`)
-  from "it ran and failed like this", which the top-level code alone
-  cannot say once the host's M1 retry loop has folded several attempts
-  into one terminal verdict.
-- a `relay=` entry in the `t_ms` stage block.
-
-Without these, a relayed session's structurally worse ping would make
-every field latency complaint unattributable.
-
-### 7.6 Tests
-
-**Server** — `tools/rendezvous-server/__test_protocol.js`, six new cases
-following the file's per-test `runTest` structure (`EXPECTED_TESTS`
-26 → **32**; the reset hook now also clears relays so a leak cannot
-poison a later test). Each is **proven red by neutralising the code under
-test**, not by assertion:
-
-| neutralisation | red |
-|---|---|
-| `RELAY_REQ` dispatch arm removed (true pre-S5 server) | all 6 |
-| non-slot admission gate removed | `relayRequiresPairedSession` (2) |
-| forward `send` removed | `relayGrantAndForward` (recv timeout) |
-| PIN token check removed | `relayPinTokenRequired` (7) |
-| bandwidth cap removed | `relayBandwidthCap` (2) |
-| pool-size cap removed | `relayPoolExhaustion` (4) |
-| idle reclaim removed | `relayIdleReclaim` (3) |
-
-The adversarial review added **six more** (`EXPECTED_TESTS` 32 → **38**),
-each proven red the same way — and two of them by neutralising the fix
-into the *plausible wrong* fix rather than into the pre-fix code, which
-is the stronger proof:
-
-| test | neutralisation | red |
-|---|---|---|
-| `relaySurvivesSessionTtl` (CRITICAL-1) | the skip-active-relay guard removed (true pre-fix) | 4, including both end-to-end forwarding assertions |
-| `relayPinSourceBoundToSlotIp` (HIGH-1) | source gate removed (true pre-fix) | 6, incl. *"reached the victim ZERO times (actual=54)"* |
-| " | **the wrong fix**: require the port to match too | 4, incl. *"the slot IP from a DIFFERENT PORT pinned side 0 (symmetric NAT must still work)"*, plus 3 in `relayBandwidthCap` |
-| `relayBandwidthCap` +3rd act (HIGH-2) | the original `lastActivity` ordering restored | 2 |
-| `relayPortBlocklistExpires` (MEDIUM-1) | monotonic blocklist | 2, incl. *"an EXPIRED block returns the port to the pool (actual=34001 expected=34000)"* |
-| " | blocklist on **any** socket error | 1 |
-| `relayBindFailureStillGrantsAWorkingPort` (MEDIUM-2) | the synchronous grant restored | 4, incl. *"the grant names a port that is NOT the unbindable one (got 34000)"* and *"the granted port answered a PIN"* — i.e. the `RELAY_PIN_TIMEOUT` misreport itself |
-| `relayPinRateCap` (MEDIUM-3) | the pin bucket removed | 2 |
-| `keyBudgetCoversTheRelayRung` (MEDIUM-4) | `KEY_RATE_LIMIT_PER_WINDOW` back to 10 | 3, incl. *"every one of the 8 RELAY_REQs ... was answered (actual=7 expected=8)"* |
-
-`relayBindFailureStillGrantsAWorkingPort` occupies pool port 34000 with
-a real socket, so the bind failure it recovers from is a real libuv
-`EADDRINUSE`, not a mock.
-
-**Client** — `test_bilateral_punch.c` **test 16**, driving the REAL
-`BeginJoin` through the whole cascade against a mock server that also
-speaks the relay extension: 16A grant+ack → HANDOFF, 16B silent →
-`RELAY_UNAVAILABLE`, 16C refused → `RELAY_REFUSED`, 16D granted-then-
-silent → `RELAY_PIN_TIMEOUT`. The load-bearing assertion is on
-**`do_handoff`'s own arguments** (`DirectP2P_TestHook_LastHandoff`), not
-on internal state — a rung that populated `s_work` correctly but never
-reached the handoff would pass an `s_work` assertion and cannot pass this
-one. Both punches are failed through the **force-relay override**, which
-simultaneously exercises that shipped knob and proves it really no-ops
-them (`s_mock_punch_calls == 0`). Five neutralisations, five reds:
-
-| neutralisation | red |
-|---|---|
-| `relay_enabled()` → false (pre-S5 client) | 16A/B/C/D; B/C/D show the exact pre-S5 dead end, `code=P2P_FAIL_NAT_BLOCKED` |
-| `relay_forced()` → false | `16A-punches-skipped` |
-| relay endpoint writeback removed | 16A: *"do_handoff got 198.51.100.7:6000, expected the relay endpoint 127.0.0.1:58184"* — i.e. it handed off to the unreachable peer, the precise bug the rung exists to prevent |
-| `set_fail(rc)` → `set_fail(NAT_BLOCKED)` | 16B/C/D on both the status string and `code=` |
-| `via_relay=` dropped from the report lines | 16A on the OK line, 16B/C/D on `via_relay=0` |
-
-Test 17 (relay codec vs literal bytes) gained a `Rendezvous_HasMagic`
-block for review LOW-1, red under the old version-gated semantics on
-`17-magic-wrong-version-still-dropped` — the exact frame that used to
-slip past the straggler drop.
-
-**Where the review's two "unshippable" verdicts landed.** The reviewer
-passed the core correctness question — the relayed socket really is
-behaviourally identical to a punched one, verified link by link, and no
-relay frame can reach GekkoNet's deserializer — and the two teardown
-defects it found (CRITICAL-1, HIGH-2) are both now regression-tested
-against the *behaviour a player experiences*, not against internal
-state: "bytes still cross after ten minutes" and "a session over budget
-is not reclaimed as idle".
-
-### 7.7 Residuals, stated rather than hidden
-
-- **The S2 fresh-socket retry can strand the rung.** The joiner's
-  automatic retry binds a fresh local port, so its attempt-2 REGISTER
-  arrives from a new source endpoint while attempt-1's slot B is still
-  inside `SLOT_STALE_MS` (30 s) — the server files it as a third party
-  and drops it. That joiner is then not a registered slot, so its
-  `RELAY_REQ` is (correctly) met with silence and classified
-  `RELAY_UNAVAILABLE`. Attempt 1's relay rung is the one that matters,
-  and it is unaffected. Pre-existing S2 × slot-policy interaction, not
-  introduced here; fixing it belongs with the slot policy.
-- **Latency is worse, by construction.** Two US players relayed through a
-  European VPS pay the detour. That is the trade for connecting at all,
-  and §7.5 makes sure they can see it.
-- **The relay trusts the pin, not the payload.** Once both sides are
-  pinned the relay forwards raw bytes without inspection — which is the
-  entire point, and means an **on-path** attacker who can spoof a pinned
-  source endpoint can inject into the stream. That is the same exposure a
-  punched UDP link already has; peer authentication remains S4a's punch
-  token and the MIST handshake. This residual is **on-path only**, and
-  said so imprecisely enough before review HIGH-1 that it read as
-  covering the off-path case too. It never did: the off-path
-  *establishment* attack — spoofing the PIN itself to aim the relay at a
-  third party — was a real defect, and is fixed above by binding the pin
-  source to the registered slot IP. What remains is strictly injection
-  into an already-established stream by someone already on its path.
-- **`RELAY_PIN_ACK` is not session-key-authenticated.** The ephemeral
-  relay port is the session identifier and the ACK steers nothing —
-  forging one (having guessed the port) only makes a client hand off a
-  few hundred ms early, a state GekkoNet's retransmit and the S3
-  CONNECTING deadline already cover.
+The symmetric×symmetric cell this closed is terminal again (§2, §6.7).
 
 ## 8. S6 — Joiner candidate racing (IMPLEMENTED)
 
@@ -1406,6 +1008,12 @@ join that ended in failure cost the **sum** of every budget:
 **39 000 ms** before the user is told anything. The host was serial too —
 bilateral punch 5 000 then relay 4 000 = 9 000 ms.
 
+(Historical baseline: the relay rung existed at commit `9eadde33` and
+was part of what these sums measured. It was removed before shipping —
+§7 — so the current serial-equivalent sum, were S6 not racing the legs,
+would be 15 500 ms/attempt (2 500 + 8 000 + 5 000) and 5 000 ms on the
+host. §8.5/§8.6 describe the current, relay-free race bound.)
+
 Worse than the arithmetic: the bilateral punch could not **start** until
 the direct punch had burned its entire window, even though the DELIVER
 carrying its endpoint had typically arrived hundreds of milliseconds in.
@@ -1425,7 +1033,7 @@ candidates tried **concurrently** rather than in sequence.
 
 ### 8.3 As built: one interleaved loop, no new threads
 
-`p2p_race()` (direct_p2p.c) drives up to four legs from a single loop on
+`p2p_race()` (direct_p2p.c) drives up to three legs from a single loop on
 **the same worker thread that already owned the socket exclusively** —
 the join worker, or the host's bilateral-punch worker during
 `FALLBACK_BILATERAL_PUNCH` (§Decision 3, unchanged and still
@@ -1438,7 +1046,10 @@ one reader/writer, exactly as before.
 | `punch[0]` | both | the endpoint we already hold — the joiner's room-code endpoint, or the host's DELIVER-supplied joiner endpoint |
 | `punch[1]` | joiner | the endpoint a DELIVER teaches us mid-race. This is the old "bilateral" punch, except it now starts **the instant the DELIVER parses** |
 | `signal` | joiner | the REGISTER / CHALLENGE / DELIVER conversation. The host is already paired by the time it punches and its rendezvous worker has exited, so it has no signal leg |
-| `relay` | both | the S5 `RELAY_REQ → GRANT → PIN → ACK` rung |
+
+A fourth leg, `relay` (the S5 `RELAY_REQ → GRANT → PIN → ACK` rung), used
+to race alongside these three. It was removed with S5 (§7); `p2p_race()`
+now only ever drives the two punch candidates and the signal leg.
 
 The blocking `Stun_HolePunch` was split into a non-blocking stepper —
 `Stun_PunchBegin` / `Pump` / `Offer` / `Settled` / `End` (stun.h,
@@ -1450,155 +1061,37 @@ tail are unchanged, and its existing regression tests
 (`run_punch_retarget_test`, `run_punch_token_reject_test`) now cover the
 stepper too.
 
-### 8.4 The four ordering rules, and why each is load-bearing
+### 8.4 The relay-arbitration rules (REMOVED with S5)
 
-1. **A confirmed punch always beats the relay.** Checked first in every
-   iteration; the first confirm tears the relay leg down. A relayed
-   session detours through a European VPS (§7.5), so silently preferring
-   it over a working direct link would be a latency regression disguised
-   as a connectivity win.
+As shipped, this section documented four ordering rules that arbitrated
+the punch legs (`punch[0]`, `punch[1]`) against the fourth, since-removed
+`relay` leg: (1) a confirmed punch always beat the relay, with a
+`RACE_RELAY_GRACE_MS` grace window added after two adversarial review
+rounds to close a split-brain failure mode (S6 review H-3, then a second
+review's H-A/H-B after the first fix turned out to relocate the defect
+rather than close it); (2) the relay leg did not arm until
+`RACE_RELAY_ARM_MS`, with a further per-candidate deferral
+(`RACE_PUNCH_MIN_WINDOW_MS`, S6 review H-4) so a slow-to-arm relay never
+stole a candidate that had not had its own punch window; (3) the relay
+leg needed a real DELIVER before arming; (4) a `NOT_PAIRED` refusal from
+the relay was transient, not terminal, because racing could ask before
+the peer's own REGISTER had landed server-side.
 
-   **1b — and the relay's own handoff waits `RACE_RELAY_GRACE_MS`
-   (600 ms) PAST THE END OF THE PUNCH (S6 review H-3; re-anchored and
-   re-sized by the second review's H-A and H-B).** Rule 1 as originally
-   shipped was a purely LOCAL decision: the relay leg pinned, the race
-   ended on the spot, and nothing asked what the *other* peer had
-   decided. Two peers confirm their punches about one one-way delay
-   apart, so a start skew of a few tens of milliseconds was enough for
-   one side to relay while the other punched. GekkoNet resolves inbound
-   packets by source address and `netplay.c` registers the remote
-   **once** at configure time with no relearn path, so that pair then
-   sits in `CONNECTING` for the whole 15 s
-   `CONNECT_TIMEOUT_CONNECTING_MS` and fails with no recovery.
+All four rules, `RACE_RELAY_ARM_MS`, `RACE_RELAY_GRACE_MS`, and the
+per-candidate relay-deferral machinery are gone with S5 (§7). Removing
+the relay leg removes the whole split-brain failure class these rules
+existed to manage: with only `punch[0]` and `punch[1]` in the race, both
+candidates target the *same* peer via different candidate endpoints, so
+there is no second transport to disagree about, and no arbitration rule
+is needed. Whichever punch candidate confirms first hands off; that is
+the entire ordering rule now.
 
-   **The first fix moved the band; it did not close it.** Held from the
-   instant the relay became *ready*, the grace is still a LOCAL timer,
-   and a local timer cannot resolve a disagreement about timing — a peer
-   starting late enough always confirms after we have committed. The
-   second review reproduced that on shipped defaults, and the residual
-   sat ~200 ms above the top of the range the suite ever looked at
-   (sweep upper bound 2 750, pinned point 2 450). Measured on the
-   two-peer rig, three configurations:
-
-   | `RACE_RELAY_GRACE_MS` | one-way delay | band CENTRE (= arm + grace) | measured divergence band | span |
-   |---|---|---|---|---|
-   | 0 | 150 ms | 2 500 ms | 2 350 – 2 600 / 2 625 / 2 625 ms (3 runs) | 250–275 ms |
-   | 600 (as shipped) | 150 ms | 3 100 ms | 2 950 – 3 250 ms | 300 ms |
-   | 600 | 300 ms | 3 100 ms | 2 800 – 3 300 ms (10 points) | 500 ms |
-   | 600 | 400 ms | 3 100 ms | 2 700 – 3 350 ms (14 points) | 650 ms |
-   | 1 200 | 300 ms | 3 700 ms | 3 450 – 3 800 ms | 350 ms |
-
-   Two things are visible and neither was in the record before. The band
-   **CENTRE tracks `RACE_RELAY_ARM_MS + RACE_RELAY_GRACE_MS` exactly** —
-   the grace translates the defect, it does not shrink it. And the band
-   **WIDTH grows with the one-way delay**, roughly 2× it: it is one round
-   trip, not "a 150 ms window equal to the injected one-way delay", which
-   is what this section claimed and what the 600 ms was sized against.
-   The claimed 4× headroom was therefore about 2×. That is the second
-   review's H-B; the corrected derivation is below.
-
-   **The suite reported success throughout.** The owd 300 and owd 400
-   runs above both exit **0** and both print
-   *"test 24 OK — two real peers converged on the same rung"* while the
-   sweep beside them lists 10 and 14 split-brain skews. A pinned point of
-   2 450 ms and a sweep ceiling of 2 750 ms cannot see a band that moves.
-
-   **What closes it.** The grace is now held from the LATER of "the
-   relay became ready" and "the last punch candidate stopped sending",
-   and a candidate that has stopped sending is kept on the RECEIVE path
-   until the relay commits instead of being torn down. The decision
-   stops being "how long since MY relay was ready" and becomes "is the
-   punch provably over on BOTH sides" — a quantity the two peers
-   genuinely share, because each punches for `punch_leg_ms` from its own
-   start and each listens until it commits. A confirmation on either
-   side resets `sent_any` in `Stun_PunchOffer` and resumes that side's
-   confirmation tail, which is what confirms the other side in turn.
-   Both halves are load-bearing and each has its own probe point in
-   test 24: without the re-anchor the band stays at the relay-commit
-   instant, and without the listen-past-send rule it simply moves to the
-   punch-send-end instant.
-
-   **Sizing, corrected (H-B), and the exact condition it buys.** With
-   start skew *s* and one-way delay *d*, the late peer's punch reaches us
-   at *s + d* and our answering tail reaches it at *s + 2d*; convergence
-   therefore needs the grace to cover **one round trip (2*d*), not one
-   one-way delay**. Stated as a condition:
-
-   > the two peers converge at **every** start skew exactly when
-   > `RACE_RELAY_GRACE_MS >= 2 * one-way delay`, i.e. when the grace
-   > covers the pair's round-trip time. Where it does not, the residual
-   > band is `2d - grace` wide and sits just past the punch send end.
-
-   That is a *prediction*, so it was tested in both directions on the
-   post-fix tree rather than only where it passes:
-
-   | one-way delay | RTT | grace | predicted | measured |
-   |---|---|---|---|---|
-   | 150 ms | 300 ms | 600 | closed | **0 splits** / 97 races, skew 1 800–6 600 |
-   | 250 ms | 500 ms | 600 | closed | **0 splits** / 34 races, skew 2 600–5 900 |
-   | 400 ms | 800 ms | 600 | **reopens**, 200 ms wide, just past the punch send end | **splits at skew 5 200 and 5 300** — 200 ms, exactly there |
-   | 400 ms | 800 ms | 1 200 | closed again (grace now covers the RTT) | **0 splits** — skew 5 200 and 5 300, which split at grace 600, both converge PUNCHED |
-
-   **This is what separates the new anchor from the old one, and it is
-   the same experiment run against both.** Take the grace as the lever
-   and watch what it does:
-
-   | | shipped H-3 anchor (relay-ready) | this anchor (punch send end) |
-   |---|---|---|
-   | grace 0 → 600 → 1 200 | band **MOVES**: centres 2 500 → 3 100 → 3 700 ms, never absent | — |
-   | grace 600, owd 50 / 150 / 250 | band present at every delay | **absent** |
-   | grace 600, owd 400 | present | present, 200 ms, at the predicted skew |
-   | grace 600 → 1 200 at owd 400 | band moves, still present | band **CLOSES** |
-
-   Under the shipped fix no value of the grace removed the band — that is
-   the second review's H-A, and it is why "a locally-timed decision
-   cannot resolve a disagreement about timing" was the right diagnosis.
-   Under the new anchor the band is a **bounded function of the grace**:
-   absent whenever the grace covers the round trip, and the very same
-   lever that only relocated the defect before now removes it. What
-   remains is a stated coverage limit with a formula and a knob, not an
-   unbounded defect.
-
-   600 ms therefore covers every pair up to a **600 ms RTT**. A real
-   transatlantic RTT is 70–180 ms; a pair above 600 ms RTT is not
-   playable at three-frame rollback regardless. The number is sized
-   against a network quantity, with the derivation written next to it in
-   `direct_p2p.c`, and **not** against `SB6_OWD_MS` or any other harness
-   constant — sizing a production margin against a test literal is what
-   produced H-B in the first place.
-
-   Bounded three ways: by the grace, by the punch send window that now
-   anchors it, and by the race budget, which commits the relay rather
-   than losing it. The cost is stated in §8.10.
-2. **The relay leg does not arm until `RACE_RELAY_ARM_MS` (2 500 ms)...**
-   Naive racing would have every pair request a pool port from the
-   100-port range. 2 500 ms is *exactly* the window the pre-S6 direct
-   punch had entirely to itself, so nothing that the pre-S6 code would
-   have connected at that stage is diverted to a relay.
-
-   **2b — ...and not until every LIVE CANDIDATE has had
-   `RACE_PUNCH_MIN_WINDOW_MS` (2 500 ms) of its own (S6 review, H-4).**
-   The original rule measured its delay from RACE START, which makes the
-   justification above true of `punch[0]` — armed at `t0` — and false of
-   the DELIVER candidate, which is armed at DELIVER time *D* and pre-S6
-   got its own full `BILATERAL_PUNCH_MS`. With *D* = 1 200 ms it got
-   ~1.3 s instead of 2.5 s, so a US-US pair needing ~2 s from DELIVER was
-   diverted onto a European relay it did not need — a direct link
-   replaced by a transatlantic one for people who connect fine today. The
-   deferral is **capped** at `race_budget − relay_budget` (4 000 ms on
-   the defaults) so the relay always keeps its own budget: a relay that
-   arms too late to finish is worse than one that arms slightly early.
-3. **The relay leg also needs a real DELIVER (joiner).** Without one we
-   are provably not paired server-side and `handleRelayReq` refuses an
-   unpaired session, so arming would spend the budget to be told
-   something we already know. The host is paired by construction.
-4. **A `NOT_PAIRED` refusal is transient, not terminal.** Serially the
-   rung ran after the signalling phase had definitely completed, so a
-   refusal could only mean a durable condition. Racing can now ask while
-   the peer's own REGISTER is still in flight, and treating that first
-   answer as final would **invent** a failure for exactly the symmetric
-   pairs the relay exists to carry. Only `POOL_EXHAUSTED` ends the leg
-   early.
+The detailed defect history this section used to carry (the H-3 split
+brain, its measured divergence bands, the H-A/H-B re-anchor, the H-4
+per-candidate deferral) is retained as-is in §8.8/§8.9's test inventory
+and defects-found record below, which was **not** reconciled against
+this removal — see the report accompanying this change for what was and
+was not verified there.
 
 ### 8.5 Measured, not estimated
 
@@ -1613,16 +1106,25 @@ parts of the cascade:
 | **A** rendezvous black hole (no DELIVER ever arrives) | 21 326 ms total, **10 663 ms/attempt** | 16 222 ms total, **8 111 ms/attempt** | −24% |
 | **B** full cascade (DELIVER arrives, relay silent — every leg runs) | 19 354 ms total, **9 677 ms/attempt** | 10 228 ms total, **5 114 ms/attempt** | **−47%** |
 
+(Historical: both trees in this comparison, and scenario B specifically,
+included the S5 relay leg — it has since been removed, §7. The 5 114
+ms/attempt post-S6 figure is therefore not reproducible on the current
+tree; a re-measurement with only `punch[0]`, `punch[1]` and `signal`
+racing has not been done.)
+
 Scenario A is bounded by the 8 000 ms signalling budget on both trees —
 racing cannot shorten a leg that is the longest thing running. Scenario B
 is where seriality actually cost: pre-S6 the bilateral punch and the
 relay rung could only begin after the direct punch had expired.
 
 The **arithmetic** worst case — a DELIVER arriving just before the
-signalling budget expires, so all four phases run at full length — is
-19 500 ms/attempt pre-S6 against a `RACE_BUDGET_MS`-bounded 8 000 ms
-post-S6. That case is stated from the code, **not** measured: neither
-probe scenario reproduces a late DELIVER.
+signalling budget expires, so every phase runs at full length — was
+19 500 ms/attempt pre-S6 (including the now-removed relay rung) against
+a `RACE_BUDGET_MS`-bounded 8 000 ms post-S6. With the relay rung removed,
+the current relay-free serial-equivalent is 15 500 ms/attempt (§8.1) —
+still bounded to 8 000 ms by the race. That case is stated from the
+code, **not** measured: neither probe scenario reproduces a late
+DELIVER.
 
 Sanity check on the mid-race overlap, measured directly: with a DELIVER
 arriving at once and only the DELIVER endpoint answering, the handoff
@@ -1657,8 +1159,8 @@ attempts. Verified headroom against the callers:
 
 The per-leg keys keep their meaning and now bound their own legs *inside*
 the race: `signal-budget-ms` the rendezvous leg, `bilateral-punch-ms`
-each punch leg's lifetime, `relay-budget-ms` the relay leg. None became a
-dead key.
+each punch leg's lifetime. (`relay-budget-ms` bounded the relay leg;
+that key was removed along with S5, §7.)
 
 ### 8.7 Behaviour changes worth calling out
 
@@ -1678,12 +1180,12 @@ dead key.
   run. Now the setup happens before the race, and a failure only drops
   the fallback *legs* — the punch leg still runs and can still win. The
   failure is reported only if nothing connects.
-- **The report line's stage timings now OVERLAP.** `punch=`, `signal=`,
-  `bilateral=` and `relay=` are leg **lifetimes**, so they no longer sum
-  to the elapsed time. A new `race=` field carries the wall clock of the
-  whole post-STUN cascade and is the number to compare across builds. Both
-  the OK and FAIL lines carry it. The OK line also gained `relay_fail=`,
-  which §7.5 always specified but the code never emitted there (§8.9).
+- **The report line's stage timings now OVERLAP.** `punch=`, `signal=`
+  and `bilateral=` are leg **lifetimes**, so they no longer sum to the
+  elapsed time. A new `race=` field carries the wall clock of the whole
+  post-STUN cascade and is the number to compare across builds. Both the
+  OK and FAIL lines carry it. (The `relay=` and `relay_fail=` fields this
+  bullet used to describe were removed with S5, §7.)
 - **The `DirectP2P_TestHook_SetStunHolePunch` seam is gone**, replaced by
   `DirectP2P_TestHook_SetPunchOracle` (direct_p2p.h). With no blocking
   punch left to substitute, the seam moved to the decision the tests were
@@ -1741,7 +1243,7 @@ lines with the per-test banners attributes every one of them:
 | **26** | **1** | one real leg against the echo peer; confirms |
 | 27 | **0** | arms exactly one real leg and punches it, but the target is a **bound, silent sink** — `sink_sock` at `test_bilateral_punch.c:8560` — with `seed_port = 0` at `test_bilateral_punch.c:8567` — nothing ever answers, the race ends EXHAUSTED, and `27-no-punch-from-a-silent-sink` asserts precisely that |
 | 28 | **0** | **runs no race at all**: it calls `DirectP2P_TestHook_RaceBudgetExpired` as a pure function and compares `STUN_PUNCH_CONFIRM_MS` against the literal 600 (`test_bilateral_punch.c:8695`). No socket, no thread, no stepper |
-| 29 | **0** | **relay-only**: `seed_port = 0` (`test_bilateral_punch.c:8805`, "no punch leg at all") and `signal_leg = false` (`test_bilateral_punch.c:8805`), so no candidate is ever armed and the only leg is the relay |
+| 29 **(REMOVED — relay-only test, deleted with S5, §7)** | **0** | **relay-only**: `seed_port = 0` (`test_bilateral_punch.c:8805`, "no punch leg at all") and `signal_leg = false` (`test_bilateral_punch.c:8805`), so no candidate is ever armed and the only leg is the relay |
 
 So the sentence that matters is narrower than "23-29": **tests 23, 24,
 25 and 26** are what drive a real 17-byte punch to a real loopback peer
@@ -1777,13 +1279,32 @@ Four `NETPLAY_TEST_HOOKS`-only seams make that possible:
   therefore always a resolvable dotted quad (`rendezvous.c:251-254`). The
   wire cannot produce the case M-2 half (i) is about; the seam can, and the
   failure it produces is the real `NET_ResolveHostname` one.
-- **`DirectP2P_TestHook_RaceRelayArmMs` / `..._RaceRelayGraceMs`** expose the
-  two production constants that place the relay-vs-punch decision in time,
-  so test 24's probe points and its sweep range are DERIVED from them
-  instead of hard-coded. The direction is deliberate and one-way: a test may
+- **`DirectP2P_TestHook_RaceRelayArmMs` / `..._RaceRelayGraceMs`** exposed the
+  two production constants that placed the relay-vs-punch decision in time,
+  so test 24's probe points and its sweep range were DERIVED from them
+  instead of hard-coded. **Both hooks, both constants and test 24 are gone
+  with S5 (§7)**; the principle they illustrate stands and still governs the
+  surviving tests. The direction is deliberate and one-way: a test may
   derive its search space from a production constant; a production margin may
   never be sized against a test constant. Sizing the grace against
   `SB6_OWD_MS` is precisely what the second review's H-B found.
+
+> **Reading this table after the S5 removal (§7).** It is a HISTORICAL
+> record of the S6 review gates — proof that each gate could go red — and
+> the quoted red text is preserved verbatim, so it still names relay
+> symbols and constants that no longer exist. Nine test functions were
+> deleted with the relay rung: `test_race_punch_beats_relay` (20B),
+> `test_race_not_paired_is_transient` (21),
+> `test_race_punch_beats_inflight_relay` (20C), `test_race_split_brain`
+> (24), `test_race_relay_defers_per_candidate` (25),
+> `test_race_punch_drops_relay_leg` (26),
+> `test_relay_not_paired_named_separately` (29), `test_relay_rung` and
+> `test_relay_codec`. Every row below keyed to 20B, 20C, 21, 24, 25, 26 or
+> 29 — including the second-review H-A/N13/N14 rows and the N10 knock-ons
+> in the 19+18 row — describes a test that is **no longer in the tree**.
+> The harness went from 37 test functions to 28. The rows that remain live
+> are 19, 23, 27, 28, 30, 31 and the `--test-stun-mock` row; those are the
+> punch-race and confirmation-tail gates, and they still run.
 
 | test | neutralisation | observed red (harness exit 1) |
 |---|---|---|
@@ -1799,8 +1320,8 @@ Four `NETPLAY_TEST_HOOKS`-only seams make that possible:
 | **27** `test_race_duplicate_candidate_guard` (the duplicate-endpoint guard — **not** M-2; see 30/31) | **N5**: the duplicate-endpoint guard deleted | *"test27: 5 candidates were armed against 5 identical DELIVERs, expected exactly 1 — race_arm_punch's duplicate-endpoint guard must reject an endpoint already being punched"* |
 | **28** `test_race_budget_wrap_safety` (M-1) | **N6**: `race_budget_expired` restored to `now >= t0 + budget` | *"28-wrap-first-iteration: expected false: DirectP2P_TestHook_RaceBudgetExpired(t0, t0, budget, false)"* |
 | **28** (M-3) | **N7**: `STUN_PUNCH_CONFIRM_MS` 600 → 0 | *"test28: STUN_PUNCH_CONFIRM_MS is 0, expected the shipped literal 600"* |
-| **29** `test_relay_not_paired_named_separately` (L-1) | **N8**: `NOT_PAIRED` collapsed back into `CONNECT_FAIL_RELAY_REFUSED` | *"test29: relay_fail=P2P_FAIL_RELAY_REFUSED after 4 NOT_PAIRED refusal(s), expected P2P_FAIL_RELAY_NOT_PAIRED"* |
-| **29** (arm delay) | **N9**: `RACE_RELAY_ARM_MS` → 0 | *"test29: the relay leg armed at t+2 ms with no punch candidate in the race; it must not arm before RACE_RELAY_ARM_MS (2500 ms)"* |
+| **29** `test_relay_not_paired_named_separately` (L-1) **(REMOVED, §7)** | **N8**: `NOT_PAIRED` collapsed back into `CONNECT_FAIL_RELAY_REFUSED` | *"test29: relay_fail=P2P_FAIL_RELAY_REFUSED after 4 NOT_PAIRED refusal(s), expected P2P_FAIL_RELAY_NOT_PAIRED"* |
+| **29** (arm delay) **(REMOVED, §7)** | **N9**: `RACE_RELAY_ARM_MS` → 0 | *"test29: the relay leg armed at t+2 ms with no punch candidate in the race; it must not arm before RACE_RELAY_ARM_MS (2500 ms)"* |
 | `run_punch_leg_offer_test` — **`--test-stun-mock`, not this harness** | the stepper's source-IP gate removed — the `NET_GetAddressString` compare at `stun.c:859` and its `return false` at `stun.c:860` | `--test-bilateral-punch` stays at exit **0** with zero harness FAILs: every leg it punches is loopback-to-loopback, so the source IP always matches and the gate is never the thing that rejects. The 4 reds are all in **`--test-stun-mock`** (exit **1**), from `test_stun_mock.c:739`, driven at `:1377`, in this order: *"a valid payload from the WRONG source IP was consumed"*, *"a valid payload from the WRONG source IP confirmed the leg"*, *"a wrong-token punch CONFIRMED the leg (S4a fail-closed broken)"*, *"leg settled BEFORE the confirmation tail elapsed"* — the last two are knock-ons: the leg is already confirmed (and its `confirm_ms` already stamped) by the stranger's datagram |
 | **30** `test_race_failed_rearm_keeps_live_candidate` (M-2 half i) | **N11**: `race_arm_punch` restored to memset-then-validate, the `race_finish_punch` call kept | *"test30: endpoint B stopped being punched 482 ms after it started (10 datagrams), expected at least 2000 ms — a re-arm that FAILS must leave the live candidate armed. race_arm_punch memset the slot BEFORE letting Stun_PunchBegin fail"*. Exit **1**, 1 failure; test 27 and test 31 stay green |
 | **31** `test_race_rearm_releases_address_ref` (M-2 half ii) | **N12**: the `race_finish_punch(c, now);` call deleted from `race_arm_punch`, ordering kept | *"test31: +93 live allocations survived a race that re-armed slot 1 31 time(s), bound is 12. Each un-released NET_Address is 3 live allocations, so this is ~31 leaked address(es)"*. Exit **1**, 1 failure; test 27 and test 30 stay green |
@@ -2043,6 +1564,19 @@ the neutralisation record.
   margins may never derive from test constants.
 
 ### 8.10 Residuals, stated rather than hidden
+
+> **Closed by the S5 removal (§7), not by any fix.** Every residual below
+> that is about the relay leg — the split-brain band and its
+> `2*owd - RACE_RELAY_GRACE_MS` width, the ~2.5 s extra wait before a
+> relayed handoff, the "relayed where the pre-S6 code would have punched"
+> regression, the relay-vs-punch upgrade idea, and **(L-4)** the grace
+> being suppressed for a slow relay — is **moot**: there is no relay leg,
+> no `RACE_RELAY_GRACE_MS` and no `RACE_RELAY_ARM_MS` in the tree. They
+> are kept as the record of what the two-transport race cost, which is a
+> large part of why the relay went. The residuals that remain OPEN are the
+> ones that are not about the relay: the 8 s signalling leg, the S2
+> auto-retry doubling, and the unmeasured field distribution of start
+> skew.
 
 - **Scenario A is still 8 s/attempt**, because the 8 000 ms signalling
   budget is the longest single leg and racing cannot shorten it. Cutting
@@ -2680,9 +2214,9 @@ runs on Linux.
 - **Never exercised against real NAT-PMP or PCP hardware.** Every
   gateway this code has met is the mock in test 18. The mock is a
   second implementation written from the same RFC text by the same
-  hand, which is exactly the blind spot §7.6 calls out for the relay
-  codec — the codec half is pinned to literal RFC bytes for that
-  reason, but the *client* half (does a real Airport/pfSense/OpenWrt
+  hand — the same blind spot the since-removed S5 relay codec's tests
+  called out (§7): the codec half is pinned to literal RFC bytes for
+  that reason, but the *client* half (does a real Airport/pfSense/OpenWrt
   box actually answer this?) is unproven until someone hosts behind one.
 - **The worst case is 11.25 s**, if unlikely: a router that answers
   neither SSDP nor 5351 costs `UPNP_PROBE_BUDGET_MS` (6 s) +
@@ -2771,10 +2305,12 @@ runs on Linux.
 Reproduce the matrix (§2) deterministically on Linux: network
 namespaces + nftables masquerade variants (full-cone via `fullconenat`
 or nft `masquerade persistent`, symmetric via random port masquerade),
-one namespace per peer + one for the rendezvous/relay server; drive
+one namespace per peer + one for the rendezvous server; drive
 two headless builds with `--test-*`-style CLI entry points
 (pattern: src/args.c test flags block) and assert each cell's
-expected outcome. This is the regression net for S2–S7.
+expected outcome. This is the regression net for S2–S4 and S6–S7 (S5,
+the relay, was removed before shipping — §7 — and is not part of this
+harness's scope).
 
 ---
 
@@ -2786,7 +2322,7 @@ expected outcome. This is the regression net for S2–S7.
 | S2 punch / STUN mechanics | **implemented** (see §4; includes the unplanned STUN port-byteswap fix) |
 | S3 no-hangs + failure taxonomy | **implemented** (see §5) |
 | S4 security | **implemented + adversarially reviewed** (see §6; S4a punch auth, S4b room code — now v3, S4c rendezvous return-routability — the last two are breaking wire/format changes, authorized. Review fixes as-built in §6.8) |
-| S5 relay for symmetric-NAT pairs | **implemented + adversarially reviewed** (see §7; custom '3SXR' relay on the existing port, NOT coturn. Closes the one §2 matrix cell that could not connect at all. Pure wire EXTENSION — protocol version stays 2. Review fixes as-built in §7.2/§7.3: CRITICAL-1 session-TTL teardown, HIGH-1 pin source binding, HIGH-2 over-budget liveness, MEDIUM-1..5, LOW-1..2) |
-| S6 joiner candidate racing | **implemented + adversarially reviewed** (see §8; one interleaved race on the existing worker thread — no new threads, no new locks. Full-cascade worst case measured 9 677 -> 5 114 ms per attempt. Review fixes as-built in §8.4 rules 1b/2b, §8.5, §8.8 and §8.9: H-1 the confirmation-tail budget exemption, H-2 real-wire punch legs in the suite, H-3 the split brain — measured 150 ms band — H-4 per-candidate punch windows, H-7 ordering-rule-1 tear-down coverage, M-1..M-4, L-1) |
+| S5 relay for symmetric-NAT pairs | **REMOVED before shipping** (see §7; built and adversarially reviewed as a custom '3SXR' relay, NOT coturn, closing the one §2 matrix cell that could not connect at all — but removed to delete the S6 split-brain failure class it caused. Never deployed to the live rendezvous server. The cell it closed is terminal again) |
+| S6 joiner candidate racing | **implemented + adversarially reviewed** (see §8; one interleaved race on the existing worker thread — no new threads, no new locks — over the punch legs and the rendezvous signal leg. A fourth, relay leg used to race alongside these and was removed with S5, §7, which also retired the H-3/H-4/H-7 relay-arbitration findings below (§8.4). Full-cascade worst case measured 9 677 -> 5 114 ms per attempt, though that specific measurement predates the relay's removal (§8.5). Review fixes as-built: H-1 the confirmation-tail budget exemption (survives removal, §8.5/§8.9), H-2 real-wire punch legs in the suite, M-1..M-4, L-1) |
 | S7 NAT-PMP / PCP | **implemented + adversarially reviewed** (see §9; hand-rolled RFC 6887 PCP client with RFC 6886 NAT-PMP downgrade, NO new library, as a third backend behind `UpnpMapping`. RFC 6886 §3.1's ~127 s retransmit ladder is deliberately truncated to 250/500/1000 ms per PHASE under an absolute ceiling — §9.3, and the PCP ladder's four §8.1.1 deviations are disclosed in §9.3.1. Review fixes as-built: H-5 the PCP Mapping Nonce is persisted so renewals and deletes are not NOT_AUTHORIZED'd (§9.4.1) and a mapping that cannot be renewed is dropped instead of advertised forever (§9.4.2); H-6 per-phase retransmit budgets plus §3.1's "do not overload it" rule, measured 700 ms gateway no-mapping → mapping (§9.3.2); H-7 five vacuous neutralisations replaced by tests 23a-23d with an inline patch-to-red table (§9.6); M-5.1 §3.6 epoch reboot detection implemented, M-5.2 lease-scaled renewal retry, M-5.3 §8.3 short error responses, M-5.4 the CGNAT gate fails closed on an absent external address, M-5.5 lost mappings stop being advertised. Residuals in §9.7, chiefly: gateway discovery is Linux-only, the client has never met real NAT-PMP/PCP hardware, and a gateway slower than ~1 s per request is still out of budget) |
 | S8 netns verification harness | planned above |

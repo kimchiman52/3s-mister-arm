@@ -274,19 +274,18 @@ static GekkoNetResult** receive_data(int* length) {
             dgram = NULL;
             continue;
         }
-        // S5 (docs/plan-netplay-connection.md §7): the same class of
-        // straggler, from the relay rung. A RELAY_PIN_ACK still in
-        // flight when do_handoff transfers the socket would otherwise
-        // land here. Its first byte is 0x33 ('3'), and 0x33 & 7 == 3, so
-        // it would be miscounted as an InputAck in the diag counters and
-        // then handed to GekkoNet as a packet of type 51 — outside the
-        // 1..7 PacketType range (third_party/GekkoNet/build/include/
-        // net.h:28-36). Dropping every '3SXR' frame here is exact rather
-        // than heuristic: a GekkoNet packet's type byte is 1..7 by
-        // construction and can never be 0x33, so this can only ever
-        // catch our own control traffic. This is what makes "a relayed
-        // socket is behaviourally identical to a punched one" true
-        // without depending on GekkoNet's unknown-type handling.
+        // The same class of straggler, from the rendezvous rung: a
+        // DELIVER or CHALLENGE still in flight when do_handoff transfers
+        // the socket would otherwise land here. Its first byte is 0x33
+        // ('3'), and 0x33 & 7 == 3, so it would be miscounted as an
+        // InputAck in the diag counters and then handed to GekkoNet as a
+        // packet of type 51 — outside the 1..7 PacketType range
+        // (third_party/GekkoNet/build/include/net.h:28-36). Dropping
+        // every '3SXR' frame here is exact rather than heuristic: a
+        // GekkoNet packet's type byte is 1..7 by construction and can
+        // never be 0x33, so this can only ever catch our own control
+        // traffic, and it does not depend on GekkoNet's unknown-type
+        // handling.
         //
         // Review LOW-1: the test is the MAGIC ALONE, not
         // Rendezvous_FrameType() != 0. FrameType returns 0 for any

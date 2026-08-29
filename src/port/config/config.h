@@ -89,44 +89,20 @@
 #define CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS "netplay-direct-p2p-register-interval-ms"
 #define CFG_KEY_NETPLAY_DIRECT_P2P_STUN_KEEPALIVE_MS "netplay-direct-p2p-stun-keepalive-ms"
 
-/* S5 relay (docs/plan-netplay-connection.md §7). The relay is the LAST
- * rung of the cascade: it runs after the bilateral punch fails, on both
- * roles, and is the only path that works for a symmetric x symmetric
- * pair.
- *
- * DISABLE_RELAY is the kill switch, mirroring DISABLE_BILATERAL: with it
- * set the rung never runs and a symmetric pair reports
- * P2P_FAIL_SYMMETRIC_BOTH exactly as it did pre-S5.
- *
- * FORCE_RELAY is a TEST override. It makes both hole-punches no-ops and
- * skips the LAN / hairpin / bad-token bypasses that would otherwise
- * short-circuit a same-network test rig, so the relay rung can be
- * exercised on demand without arranging two symmetric NATs. It is not
- * something a player should ever set: it deliberately throws away the
- * direct path, which is always lower latency.
- *
- * Review LOW-2: FORCE_RELAY is therefore honoured ONLY by a build
- * compiled with NETPLAY_TEST_HOOKS (see relay_forced() in
- * src/netplay/direct_p2p.c). The key stays registered in every build so
- * a config file carrying it still parses; a shipping build ignores it
- * and logs once. Setting it used to disable ALL direct connectivity,
- * same-LAN included, and route every match through a European VPS.
- *
- * RELAY_BUDGET_MS is the whole rung's wall clock, split between the
- * RELAY_REQ->RELAY_GRANT phase and the RELAY_PIN->ACK phase. Clamped
- * [500, 20000]; it is spent only after the punch phases have already
- * failed, so it extends the worst case rather than the common one. */
-#define CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_RELAY "netplay-direct-p2p-disable-relay"
-#define CFG_KEY_NETPLAY_DIRECT_P2P_FORCE_RELAY "netplay-direct-p2p-force-relay"
-#define CFG_KEY_NETPLAY_DIRECT_P2P_RELAY_BUDGET_MS "netplay-direct-p2p-relay-budget-ms"
+/* NOTE: the three S5 relay keys that used to live here
+ * (netplay-direct-p2p-disable-relay / -force-relay / -relay-budget-ms)
+ * were REMOVED with the relay rung itself. dict_iterator() in config.c
+ * stores every key it reads without checking it against default_entries,
+ * and nothing rejects an unknown key, so a config file still carrying
+ * those three lines parses cleanly — they are simply never read. */
 
 /* S6 candidate racing (docs/plan-netplay-connection.md §8).
  *
  * RACE_BUDGET_MS is the WHOLE post-STUN establishment wall clock on both
- * roles — the punch legs, the rendezvous signaling leg and the relay leg
- * now run CONCURRENTLY inside it instead of one after another, so it
- * replaces the old serial sum (direct punch + signal budget + bilateral
- * punch + relay budget) as the thing that bounds a failing attempt. The
+ * roles — the punch legs and the rendezvous signaling leg run
+ * CONCURRENTLY inside it instead of one after another, so it replaces
+ * the old serial sum (direct punch + signal budget + bilateral punch) as
+ * the thing that bounds a failing attempt. The
  * per-leg keys above still bound their own legs INSIDE this budget.
  * Clamped [2000, 30000]: below ~2 s no leg can complete a round trip to
  * a distant server, and above 30 s the S3 orchestrator deadline is the

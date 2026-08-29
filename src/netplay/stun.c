@@ -753,7 +753,7 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
  *
  * docs/plan-netplay-connection.md §8. Extracted from the body of
  * Stun_HolePunch so the joiner can RACE several candidate endpoints (and
- * the rendezvous / relay legs) on one thread and one socket. The wire
+ * the rendezvous leg) on one thread and one socket. The wire
  * behaviour is unchanged: same 17-byte authenticated payload, same S2
  * adaptive cadence, same source-IP + exact-payload accept criteria with
  * the port deliberately unmatched (S2 symmetric retarget), same ~600 ms

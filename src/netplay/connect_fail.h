@@ -55,18 +55,13 @@
  *                                  | zero-sentinel for the whole budget
  *   host online, NAT-blocked       | a real-endpoint DELIVER arrived,
  *                                  | then the bilateral punch timed out
- *   symmetric-both / needs relay   | as above + StunResult.
- *                                  | port_disagreement (S2 signal).
- *                                  | S5: no longer terminal — the relay
- *                                  | rung now ATTEMPTS a relay first, so
- *                                  | this is reported only when the rung
- *                                  | is switched off by configuration
- *   relay unavailable              | S5: the relay rung ran and the
- *                                  | RELAY_REQ was never answered
- *   relay allocation refused       | S5: a RELAY_GRANT arrived carrying
- *                                  | POOL_EXHAUSTED or NOT_PAIRED
- *   relay pinning timed out        | S5: granted a relay port, then no
- *                                  | RELAY_PIN_ACK inside the budget
+ *   symmetric-both (our NAT        | as above + StunResult.
+ *   reassigns ports)               | port_disagreement (S2 signal).
+ *                                  | TERMINAL: the relay rung that used
+ *                                  | to follow it was removed, so the
+ *                                  | remedy this reports is the HOST
+ *                                  | forwarding a port (see the user
+ *                                  | strings in connect_fail.c)
  *   hairpin / no NAT loopback      | peer public IP == our public IP
  *   host-side router blocks        | host: no UPnP mapping AND no
  *   hosting                        | inbound AND no DELIVER (advisory)
@@ -102,14 +97,23 @@ typedef enum ConnectFailCode {
                                      version trouble, not connectivity         */
     CONNECT_FAIL_HOST_OFFLINE,    /* only zero-sentinel DELIVERs — code stale */
     CONNECT_FAIL_NAT_BLOCKED,     /* real DELIVER, bilateral punch timed out  */
-    /* S5: this cause means "needs relay". It is NO LONGER a dead end —
-     * the relay rung (direct_p2p.c, both roles, after the bilateral
-     * punch fails) now ATTEMPTS the relay before any of this is
-     * surfaced. It is reported only when the relay rung is unavailable
-     * by configuration (kill switch / no signal URL); a relay rung that
-     * RAN and failed reports its own RELAY_* cause below, because
-     * "the relay is what broke" is the actionable fact and blaming the
-     * NAT would send the user to their router for nothing. */
+    /* Both of these are TERMINAL. The S5 relay rung that once followed
+     * them was deleted, so there is no further rung to try and the user
+     * string has to carry the remedy itself.
+     *
+     * The remedy the EVIDENCE supports is the HOST forwarding a port,
+     * not the joiner enabling UPnP: try_portmap() has exactly one call
+     * site, inside host_thread_fn (direct_p2p.c), so the joiner never
+     * attempts UPnP/NAT-PMP at all — and reaching either of these codes
+     * requires a real-endpoint DELIVER, i.e. the host's advertised
+     * endpoint (carrying its port mapping when it has one) was already
+     * tried and failed.
+     *
+     * SYMMETRIC_BOTH is distinguished from NAT_BLOCKED solely by
+     * ConnectJoinEvidence.port_disagreement — our OWN StunResult signal
+     * that our router handed different external ports to different STUN
+     * servers. That is the one thing measured about our own side, hence
+     * "your NAT reassigns ports". */
     CONNECT_FAIL_SYMMETRIC_BOTH,  /* as NAT_BLOCKED + port_disagreement       */
     CONNECT_FAIL_HAIRPIN,         /* peer public IP == ours, no NAT loopback  */
     CONNECT_FAIL_PUNCH_AUTH,      /* S4a: peer punched with a bad/missing token
@@ -150,46 +154,16 @@ typedef enum ConnectFailCode {
                                      connectivity failure: nothing was ever
                                      sent.                                    */
 
-    /* --- S5 relay (docs/plan-netplay-connection.md §7) -----------------
-     * Three DISTINCT failures of the relay rung. They are separate codes
-     * because they send the user and the log reader to three different
-     * places: nothing to relay through, the relay is at capacity, or the
-     * relay was granted and then could not be reached. Collapsing them
-     * would recreate exactly the "one string for many causes" problem S3
-     * existed to fix. */
-    CONNECT_FAIL_RELAY_UNAVAILABLE,  /* the relay rung ran and the server never
-                                        answered the RELAY_REQ at all (relay
-                                        disabled server-side, request dropped,
-                                        or we are no longer a registered slot
-                                        of the session) — nothing to fall back
-                                        to beyond this point                */
-    CONNECT_FAIL_RELAY_REFUSED,      /* a RELAY_GRANT arrived carrying an
-                                        explicit refusal: the port pool is
-                                        exhausted, or the session was not
-                                        paired server-side. Transient and
-                                        retryable, unlike a NAT diagnosis   */
-    CONNECT_FAIL_RELAY_PIN_TIMEOUT,  /* granted a relay port, then no
-                                        RELAY_PIN_ACK inside the budget: the
-                                        relay port range is unreachable from
-                                        this network (firewall) or the relay
-                                        socket is dead. The rendezvous port
-                                        worked, so this is specifically about
-                                        the relay range                     */
-    /* S6-review L-1: a RELAY_GRANT carrying NOT_PAIRED for the WHOLE
-     * GRANT phase. It used to share CONNECT_FAIL_RELAY_REFUSED with
-     * POOL_EXHAUSTED, whose log line reads "the relay port pool is
-     * exhausted" and whose user string is "Relay is full" — so an alpha
-     * tester whose real problem was that the OTHER PLAYER never reached
-     * the rendezvous server was told the server was at capacity. Two
-     * causes, two actions: "wait and retry" vs "your opponent is not in
-     * this room". Collapsing them recreates exactly the one-string-many-
-     * causes problem S3 exists to fix. */
-    CONNECT_FAIL_RELAY_NOT_PAIRED,
-
     /* Append new codes ABOVE this marker and bump the bound in
      * test_bilateral_punch.c test 7f (which sweeps NONE..LAST proving
-     * every code has a distinct machine string). */
-    CONNECT_FAIL_LAST_ = CONNECT_FAIL_RELAY_NOT_PAIRED,
+     * every code has a distinct machine string).
+     *
+     * NOTE: the four CONNECT_FAIL_RELAY_* codes that used to sit here
+     * were deleted with the relay rung. They were the LAST entries, so
+     * their removal renumbered nothing — every surviving code keeps the
+     * numeric value it had, which is what the append-only rule at the
+     * top of this file protects. */
+    CONNECT_FAIL_LAST_ = CONNECT_FAIL_BALANCE_UNAVAILABLE,
 } ConnectFailCode;
 
 /* Stable machine code string, e.g. "P2P_FAIL_STUN_ALLDOWN". Never NULL.
