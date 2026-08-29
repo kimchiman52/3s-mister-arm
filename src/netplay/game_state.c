@@ -1844,6 +1844,59 @@ _Static_assert(SPARSE_OFF_PAYLOAD == SPARSE_HEADER_BYTES,
                "Sparse-save header layout mismatch — update SPARSE_HEADER_BYTES "
                "in game_state.h or the SPARSE_OFF_* offsets in game_state.c.");
 
+/* The offsets above are a hand-written table, but every field they address is
+ * memcpy'd with `sizeof(<the live global>)` in pack_sparse_state /
+ * unpack_sparse_state — so the table is a DERIVATION of those globals' sizes,
+ * not an independent fact. Left as a comment it rots the way the netplay_nav
+ * timeout derivation rotted: growing EFFECT_MAX silently widens `frwque` past
+ * SPARSE_OFF_ACTIVE_MASK and the frwque memcpy scribbles over active_mask
+ * inside the very buffer both peers rewind from. Each offset is therefore
+ * pinned to the previous field's real size rather than restated. */
+_Static_assert(SPARSE_OFF_FRWCTR_MIN == SPARSE_OFF_FRWCTR + sizeof(frwctr),
+               "sparse header: frwctr_min offset must follow sizeof(frwctr)");
+_Static_assert(SPARSE_OFF_HEAD_IX == SPARSE_OFF_FRWCTR_MIN + sizeof(frwctr_min),
+               "sparse header: head_ix offset must follow sizeof(frwctr_min)");
+_Static_assert(SPARSE_OFF_TAIL_IX == SPARSE_OFF_HEAD_IX + sizeof(head_ix),
+               "sparse header: tail_ix offset must follow sizeof(head_ix)");
+_Static_assert(SPARSE_OFF_EXEC_TM == SPARSE_OFF_TAIL_IX + sizeof(tail_ix),
+               "sparse header: exec_tm offset must follow sizeof(tail_ix)");
+_Static_assert(SPARSE_OFF_FRWQUE == SPARSE_OFF_EXEC_TM + sizeof(exec_tm),
+               "sparse header: frwque offset must follow sizeof(exec_tm)");
+_Static_assert(SPARSE_OFF_ACTIVE_MASK == SPARSE_OFF_FRWQUE + sizeof(frwque),
+               "sparse header: active_mask offset must follow sizeof(frwque) — "
+               "raising EFFECT_MAX widens frwque and overruns the mask");
+_Static_assert(SPARSE_OFF_RESERVED == SPARSE_OFF_ACTIVE_COUNT + sizeof(uint16_t),
+               "sparse header: reserved pad must follow the u16 active_count");
+_Static_assert(SPARSE_OFF_PAYLOAD == SPARSE_OFF_RESERVED + 2,
+               "sparse header: payload must follow the 2-byte reserved pad");
+
+/* active_mask is a bitmap with one bit per frw[] slot. Its width is implied by
+ * the offset table (ACTIVE_COUNT - ACTIVE_MASK) and hard-coded as the literal
+ * 16 in pack_sparse_state's SDL_memset and in popcount16_bytes. Tie all three
+ * to EFFECT_MAX so a pool that outgrows 128 slots cannot silently ship a mask
+ * that only describes the first 128. */
+_Static_assert(EFFECT_MAX % 8 == 0,
+               "sparse header: EFFECT_MAX must be a whole number of mask bytes");
+_Static_assert(SPARSE_OFF_ACTIVE_COUNT - SPARSE_OFF_ACTIVE_MASK == EFFECT_MAX / 8,
+               "sparse header: active_mask must be exactly EFFECT_MAX bits wide");
+
+/* load_state_from_event() distinguishes the two wire formats by total length
+ * alone: `len == sizeof(State)` means legacy full-state, anything else is
+ * parsed as sparse. That dispatch is only sound because no legal sparse length
+ * can equal sizeof(State) — the "No-collision proof" written out above
+ * load_state_from_event(). Collision requires an integer N with
+ *   SPARSE_HEADER_BYTES + N * SPARSE_FRW_SLOT_BYTES == sizeof(EffectState),
+ * so proving the remainder non-zero rules it out for EVERY N, not just the
+ * [0, EFFECT_MAX] range the proof enumerates. The prose proof substitutes
+ * EFFECT_MAX=128 and a 32-bit layout by hand; this checks the real sizes on
+ * whatever bitness is being built, which is the part the prose cannot do. */
+_Static_assert(sizeof(EffectState) > SPARSE_HEADER_BYTES,
+               "sparse/full dispatch: EffectState must exceed the sparse header");
+_Static_assert((sizeof(EffectState) - SPARSE_HEADER_BYTES) % SPARSE_FRW_SLOT_BYTES != 0,
+               "sparse/full dispatch collision: a sparse buffer can be exactly "
+               "sizeof(State) bytes long, so load_state_from_event() would parse "
+               "a full-state save as sparse (or vice versa)");
+
 static bool s_sparse_effect_save_enabled = true;
 
 void Netplay_SetSparseEffectSaveEnabled(bool enabled) {

@@ -472,10 +472,10 @@ void mlt_obj_trans_ext(MultiTexture* mt, WORK* wk, s32 base_y) {
                  * frame in which this WORK simply was not drawn would have.
                  *
                  * mlt_obj_matrix() has already run, and it is the only
-                 * njSetMatrix() caller in the tree (mtrans.c:1574), so it
+                 * njSetMatrix() caller in the tree (mtrans.c:1576), so it
                  * leaves the global current matrix loaded.  That is dead
                  * state here: the only readers are appRenewTempPriority
-                 * (mtrans.c:1600, success path only) and bg.c:710/1340/1349/
+                 * (mtrans.c:1601, success path only) and bg.c:710/1340/1349/
                  * 1356, and every one of those bg.c reads is preceded by an
                  * njUnitMatrix() that discards whatever was there
                  * (bg.c:705/1335/1344/1353). */
@@ -866,10 +866,10 @@ void mlt_obj_trans_cp3_ext(MultiTexture* mt, WORK* wk, s32 base_y) {
                  * frame in which this WORK simply was not drawn would have.
                  *
                  * mlt_obj_matrix() has already run, and it is the only
-                 * njSetMatrix() caller in the tree (mtrans.c:1574), so it
+                 * njSetMatrix() caller in the tree (mtrans.c:1576), so it
                  * leaves the global current matrix loaded.  That is dead
                  * state here: the only readers are appRenewTempPriority
-                 * (mtrans.c:1600, success path only) and bg.c:710/1340/1349/
+                 * (mtrans.c:1601, success path only) and bg.c:710/1340/1349/
                  * 1356, and every one of those bg.c reads is preceded by an
                  * njUnitMatrix() that discards whatever was there
                  * (bg.c:705/1335/1344/1353). */
@@ -1272,10 +1272,10 @@ void mlt_obj_trans_rgb_ext(MultiTexture* mt, WORK* wk, s32 base_y) {
                  * frame in which this WORK simply was not drawn would have.
                  *
                  * mlt_obj_matrix() has already run, and it is the only
-                 * njSetMatrix() caller in the tree (mtrans.c:1574), so it
+                 * njSetMatrix() caller in the tree (mtrans.c:1576), so it
                  * leaves the global current matrix loaded.  That is dead
                  * state here: the only readers are appRenewTempPriority
-                 * (mtrans.c:1600, success path only) and bg.c:710/1340/1349/
+                 * (mtrans.c:1601, success path only) and bg.c:710/1340/1349/
                  * 1356, and every one of those bg.c reads is preceded by an
                  * njUnitMatrix() that discards whatever was there
                  * (bg.c:705/1335/1344/1353). */
@@ -2146,8 +2146,8 @@ static s16 check_patcash_ex_trans(PatternCollection* padr, u32 cg) {
  * collection has nothing to give.
  *
  * [task #61]  This replaces get_free_patcash_index() plus the three
- * copy-pasted, unchecked appends that followed it (mtrans.c:452-456,
- * :823-825, :1214-1216 pre-fix):
+ * copy-pasted, unchecked appends that followed it (mtrans.c:458-461,
+ * :829-832, :1220-1223 as of the pre-fix parent ac52abc2):
  *
  *     ix = get_free_patcash_index(mt->cpat);   // returned 0 on exhaustion
  *     cp = &mt->cpat->patt[ix];
@@ -2157,19 +2157,19 @@ static s16 check_patcash_ex_trans(PatternCollection* padr, u32 cg) {
  * Two defects, and they compound:
  *
  *  1. `adr` and `patt` are adjacent members of PatternCollection
- *     (include/structs.h:1516-1520), so `adr[64]` lands exactly on
+ *     (include/structs.h:1514-1518), so `adr[64]` lands exactly on
  *     `&patt[0]`.  What follows is worse than a stuck instance: the
  *     caller's own next three statements (`cp->curr_disp = 1;
  *     cp->time = mt->mltcshtime16; cp->cg.code = cc.code;`) overwrite the
  *     very bytes adr[64] occupies -- curr_disp+time on a 32-bit ABI,
  *     curr_disp+time+cg.code on LP64 -- so the live list is left holding
  *     field data reinterpreted as an address.  texture_cash_update() then
- *     executes `--mts[num].cpat->adr[i]->time` through it (texcash.c:281).
+ *     executes `--mts[num].cpat->adr[i]->time` through it (texcash.c:341).
  *     --test-texcash-bounds SUB_E reproduces the value: adr[64] comes out
  *     as 0xb00000140001 on arm64, i.e. cg.code<<32 | time<<16 | curr_disp.
  *
  *  2. Returning 0 on exhaustion handed the caller a *still-live* patt[0].
- *     The caller then ran SDL_zero(cp->map) over it (mtrans.c:449 pre-fix),
+ *     The caller then ran SDL_zero(cp->map) over it (ac52abc2 :467/:838/:1229),
  *     discarding every x16/x32 slot reference the instance held without
  *     ever decrementing those slots' refcounts -- a permanent slot leak.
  *     SUB_E observes that one deterministically.
@@ -2187,8 +2187,25 @@ static s16 check_patcash_ex_trans(PatternCollection* padr, u32 cg) {
  * time == 0, so it would be handed out again on the next call while kazu
  * kept advancing, and kazu alone would run away.  That cannot happen on the
  * shipped table (ext is `mode & 0x2000`, so indices 3/4/5/7/13/14, with
- * life16 20/20/2/12/2/4 -- texcash.c:663-687), but the collection must not
+ * life16 20/20/2/12/2/4 -- texcash.c:743-768), but the collection must not
  * become corruptible by a future table edit. */
+
+/* The bound below, and the matching sweep at texcash.c:277, are the literal
+ * 0x40 rather than the array's own length. That literal is the ONLY thing
+ * stopping the append from running off adr[] -- and the write-site analysis
+ * above this function turns on adr[64] landing exactly on &patt[0], so an
+ * overrun does not fault, it silently rewrites the first PatternInstance.
+ * Shrinking adr[] without finding both literals would reinstate precisely the
+ * unchecked-append corruption this guard was added to stop. */
+_Static_assert(0x40 == SDL_arraysize(((PatternCollection*)0)->adr),
+               "PatternCollection::adr length changed — update the 0x40 bound in "
+               "patcash_acquire and the 0x40 sweep in texcash.c's "
+               "init_texcash_2nd");
+_Static_assert(SDL_arraysize(((PatternCollection*)0)->adr) ==
+                   SDL_arraysize(((PatternCollection*)0)->patt),
+               "PatternCollection::adr and ::patt must stay parallel — adr holds "
+               "one pointer per patt entry");
+
 PatternInstance* patcash_acquire(PatternCollection* padr) {
     s16 i;
 

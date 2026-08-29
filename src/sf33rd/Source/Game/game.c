@@ -177,13 +177,13 @@ void Game_Task(struct _TASK* task_ptr) {
         }
         /* Age the texture cache once per DRAWN frame, not once per tick.
            texture_cash_update() only ever decays: it ticks every live slot's
-           `time` down and evicts on zero (texcash.c:266). The matching
+           `time` down and evicts on zero (texcash.c:333). The matching
            refresh — `mc[slot].time = mt->mltcshtime16` inside the
            mlt_obj_trans* family — is reached only through
            Mtrans_use_trans_mode(), which returns early when No_Trans is set
            (aboutspr.c:279). So a suppressed frame decays without ever
            re-marking a slot in use. During a netplay rollback resim
-           (netplay.c:1073 sets No_Trans = !render) the same logical frames
+           (netplay.c:1084 sets No_Trans = !render) the same logical frames
            are replayed with drawing off, which would age the cache once per
            replayed frame instead of once per frame of game time and evict
            still-live textures. Gate the aging on the same flag that gates

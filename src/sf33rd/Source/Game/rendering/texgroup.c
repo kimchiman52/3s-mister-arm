@@ -23,6 +23,23 @@
 
 #include <stdlib.h>
 
+/* q_ldreq_texture_group's PS2 fallback populates CharInitData by punning it to
+ * uintptr_t* and writing a hard-coded 25 words:
+ *
+ *     for (i = 0; i < 25; i++) { ((uintptr_t*)dst)[i] = ldchd + ((u32*)ldchd)[i]; }
+ *
+ * The comment above that loop states the coupling outright -- "Because 25 is
+ * the number of members in CharInitData struct, `i` goes to 25 too" -- and
+ * nothing enforced it. The write is a raw pointer pun, so adding a member
+ * leaves the last field uninitialised while every reader treats it as a live
+ * pointer, and removing one runs the loop off the end of the struct. Neither
+ * is a compile error and neither is visible at the write site; the failure
+ * surfaces later as a wild pointer dereference during character load. */
+_Static_assert(sizeof(CharInitData) == 25 * sizeof(uintptr_t),
+               "CharInitData member count changed — q_ldreq_texture_group's PS2 "
+               "fallback punns this struct to uintptr_t* and writes exactly 25 "
+               "words; update that loop bound with it");
+
 typedef struct {
     s16 x;
     s16 y;
@@ -266,9 +283,9 @@ void q_ldreq_texture_group(REQ* curr) {
          * Release through purge_texture_group() rather than a bare
          * Push_ramcnt_key(): purge also clears lds->ok. There are eleven
          * readers of lds->texture_table / lds->trans_table; ten are gated
-         * on ok != 0 with an early return (mtrans.c:179, 278, 367, 416,
-         * 662, 785, 1043, 1179, 1415, 2393). The eleventh is the Akuma
-         * special-case at texgroup.c:371 below, which has NO ok check --
+         * on ok != 0 with an early return (mtrans.c:181, 280, 369, 422,
+         * 691, 814, 1095, 1223, 1482, 2512). The eleventh is the Akuma
+         * special-case at texgroup.c:471 below, which has NO ok check --
          * it is safe only because it hardcodes texgrplds[15] and runs in
          * the case-4 branch for curr->ix == 15, where that is the group
          * just repointed at the new block, so it never observes the freed
@@ -282,7 +299,7 @@ void q_ldreq_texture_group(REQ* curr) {
          * needing two.
          *
          * The nested purge is bounded: purge_texture_group clears ok
-         * before calling Push_ramcnt_key (texgroup.c:562-563), so the
+         * before calling Push_ramcnt_key (texgroup.c:579-580), so the
          * purge_texture_group(group_num) re-entry inside
          * Push_ramcnt_key_original_2 (ramcnt.c:102) sees ok == 0 and does
          * nothing.
@@ -298,7 +315,7 @@ void q_ldreq_texture_group(REQ* curr) {
          * dangling permanently. That cannot happen. Reaching here with
          * ok == 1 requires the case-0 dup-transfer guard above, which is
          * itself inside `if (bsd->ix1st == 1 || bsd->ix1st == 2)`
-         * (texgroup.c:176) -- ix1st == 0 drains at :221-224 and never
+         * (texgroup.c:193) -- ix1st == 0 drains at :221-224 and never
          * sets be = 2. Resolving texgrpdat[]'s num_of_1st through
          * obj_group_table gives: ix1st == 1 covers groups 1..20 and
          * nothing else, ix1st == 2 covers groups 27 and 35 and nothing
@@ -322,8 +339,8 @@ void q_ldreq_texture_group(REQ* curr) {
          * landed in it: set_char_base_data (charid.c) and
          * setup_butt_own_data (pls02.c) are the tree's only readers of
          * those two tables, and both run under Game02/Game09, which are
-         * entered only through Game2_0 (game.c:475-477) or Game2_2
-         * (game.c:618-620) -- each of which fatal_error()s unless
+         * entered only through Game2_0 (game.c:478-480) or Game2_2
+         * (game.c:621-623) -- each of which fatal_error()s unless
          * Check_LDREQ_Clear(), and no Push_LDREQ_Queue_* site executes
          * under Game02. A live reclaim and a live reader are therefore
          * mutually exclusive by that assertion. Residual not observed in
@@ -333,18 +350,18 @@ void q_ldreq_texture_group(REQ* curr) {
          * both measured refills returned the identical address.
          *
          * (2) getObjectHeight RETURNING 0 INTO CHECKSUMMED plw STATE
-         * while ok == 0 (mtrans.c:366-368 -> plpcu.c:248). Unreachable.
+         * while ok == 0 (mtrans.c:369-374 -> plpcu.c:248). Unreachable.
          * Its only caller is check_tsukamare_keizoku_check, which runs
          * under G_No == {2,2,1} or G_No[1] == 9, and for a PLW
          * obj_group_table[wk->wu.cg_number] lands in 1..20. Groups 1..20
          * lose ok only via purge_texture_group, whose three call sites
-         * are this one, texgroup.c:557 (reset_dma_group, attract mode,
+         * are this one, texgroup.c:574 (reset_dma_group, attract mode,
          * group 61 only) and ramcnt.c:102. This one cannot fire during
          * Game02 by the Check_LDREQ_Clear() argument above. ramcnt.c:102
          * needs a key with a nonzero group_num, and the only such free
          * that can execute while G_No == {2,2,1} is the soft reset --
-         * Purge_mmtm_area(6) at game.c:1819, which is followed four
-         * lines later at game.c:1822-1828 by G_No[ix] = 0 inside the
+         * Purge_mmtm_area(6) at game.c:1822, which is followed five
+         * lines later at game.c:1827 by G_No[ix] = 0 inside the
          * same Next_Title_Sub() call, with no Main_Jmp_Tbl dispatch in
          * between (and game.c:164 suppresses that dispatch under
          * nowSoftReset() anyway). Empirically: 2611 executions of

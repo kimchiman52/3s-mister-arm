@@ -41,23 +41,23 @@ const u8 lpt_seldat[4] = { 3, 4, 5, 0 };
  * in netplay/game_state.c) and none of them CAN be. Do not "fix" a
  * select-phase desync by adding them; each was checked individually:
  *
- *   afs_handle    Index into port/io/afs.c's requests[] table (afs.c:346).
- *                 The slot owns an SDL_AsyncIO* (afs.c:355) and a
- *                 monotonically advancing read cursor (afs.c:374); restoring
- *                 the index rewinds neither. AFS_Close zeroes the slot
- *                 (afs.c:288/442/453) and AFS_Open hands out the first free
- *                 one (afs.c:318-331) from a pool the ADX music streamer also
+ *   afs_handle    Index into port/io/afs.c's requests[] table (afs.c:408).
+ *                 The slot owns an SDL_AsyncIO* (afs.c:38, opened at
+ *                 afs.c:417) and a monotonically advancing read cursor
+ *                 (afs.c:442); restoring the index rewinds neither. AFS_Close zeroes the slot
+ *                 (afs.c:297/519/530) and AFS_Open hands out the first free
+ *                 one (afs.c:377-393) from a pool the ADX music streamer also
  *                 draws from (port/sound/adx.c:455), so a restored stale
  *                 handle can alias another file's in-flight read.
  *
  *   q_ldreq       Restoring it rewinds `rno`, replaying steps that already
- *                 ran: Pull_ramcnt_key (texgroup.c:305, color3rd.c:108)
+ *                 ran: Pull_ramcnt_key (texgroup.c:379, color3rd.c:108)
  *                 against an allocator that is NOT rewound, plus fsOpen /
  *                 AFS_Read. That is the double-allocation the dedupe below
  *                 and the reclaim in q_ldreq_texture_group case 2 exist to
  *                 contain. It also rewinds the queue back into a non-empty
  *                 state at the select->battle boundary, where Game2_0 /
- *                 Game2_2 (game.c:472, :615) call fatal_error("Load queue
+ *                 Game2_2 (game.c:479, :622) call fatal_error("Load queue
  *                 failed to drain in time") — a hard process kill.
  *
  *   ldreq_result  Plain u8[294], so physically saveable, but rewinding a
@@ -69,7 +69,7 @@ const u8 lpt_seldat[4] = { 3, 4, 5, 0 };
  *
  *   plt_req       A latch that must agree with the (unsaved) queue:
  *                 q_ldreq_texture_group case 4 publishes into
- *                 char_init_data[plid_data[plt_req[id]]] (texgroup.c:355).
+ *                 char_init_data[plid_data[plt_req[id]]] (texgroup.c:430).
  *                 Rewinding it while the queue still holds the newer
  *                 character's request publishes into the wrong slot.
  *
@@ -90,8 +90,8 @@ const u8 lpt_seldat[4] = { 3, 4, 5, 0 };
  *                 that passes something else -- Push_LDREQ_Queue_Player(
  *                 COM_id, 17) at next_cpu.c:958 -- sits under Game05, entered
  *                 only from the `default:` arm of Game03's Mode_Type switch
- *                 (game.c:817); `case MODE_VERSUS: case MODE_NETWORK:` divert
- *                 at game.c:786-787.
+ *                 (game.c:822); `case MODE_VERSUS: case MODE_NETWORK:` divert
+ *                 at game.c:794-795.
  *
  *                 ORDER. The only in-select reader is Exit_6th
  *                 (sel_pl.c:1701-1706) via Check_PL_Load (sys_sub.c:899) ->
@@ -134,14 +134,14 @@ const u8 lpt_seldat[4] = { 3, 4, 5, 0 };
  * The cluster is all-in or all-out and all-in is impossible, so it is out.
  *
  * The residual is real and is NOT a rollback bug: AFS_Read is a genuine
- * async disk read (afs.c:366), so ldreq_result's completion frame is
+ * async disk read (afs.c:434), so ldreq_result's completion frame is
  * wall-clock, not frame-count. Measured proof — the rollback-determinism
  * harness classifies q_ldreq, rckey_work, rckey_mmobj, texgrplds,
  * char_init_data, requests, afs and asyncio_queue as A1-vs-A2 BASELINE
  * NOISE: they differ between two identical no-rollback runs of one binary
  * on one machine. Two peers cannot agree on them either. Since Exit_6th
- * (sel_pl.c:1701-1722 -> Exit_No, Exit_Timer) and Bonus_Sub's stage wait
- * (game.c:1377-1381 -> G_No, G_Timer) gate SAVED state on ldreq_result, the
+ * (sel_pl.c:1701-1722 -> Exit_No, Exit_Timer) and Game09's stage wait
+ * (game.c:1383-1387 -> G_No, G_Timer) gate SAVED state on ldreq_result, the
  * correct treatment is a barrier that keeps the simulation from observing an
  * in-flight load while a GekkoNet session is running — not a wider save set
  * and not a replay scheme. See the CORRECTION block in
@@ -154,12 +154,13 @@ const u8 lpt_seldat[4] = { 3, 4, 5, 0 };
  * unobservable in an intermediate state, which is a different fix. The
  * paragraphs above remain the reason not to try the save-set route again.
  *
- * One correction to the paragraph above, measured in task #66: Bonus_Sub
- * (game.c:1377-1381) is NOT reachable in MODE_NETWORK. Game09 needs
- * G_No[1] == 9, written only at game.c:998 (inside Game05) and game.c:1582
- * (inside Game11); Game05 is entered only from the `default:` arm of
- * Game03's switch (game.c:817), and `case MODE_VERSUS: case MODE_NETWORK:`
- * (game.c:786-787) divert before it. The netplay-reachable feedback edge is
+ * One correction to the paragraph above, measured in task #66: that stage
+ * wait (game.c:1383-1387, inside Game09 case 1 -- Bonus_Sub itself, at
+ * game.c:1466, is only ever called from Game09's later cases) is NOT
+ * reachable in MODE_NETWORK. Game09 needs G_No[1] == 9, written only at
+ * game.c:1004 (inside Game05) and game.c:1588 (inside Game11); Game05 is entered only from the `default:` arm of
+ * Game03's switch (game.c:822), and `case MODE_VERSUS: case MODE_NETWORK:`
+ * (game.c:794-795) divert before it. The netplay-reachable feedback edge is
  * Exit_6th's alone. */
 s16 plt_req[2];
 u8 ldreq_break;
@@ -180,6 +181,32 @@ const LDREQ_Process_Func ldreq_process[6];
 s8* ldreq_process_name[];
 const LDREQ_TBL ldreq_tbl[294];
 const s16 ldreq_ix[43][2];
+
+/* Push_LDREQ_Queue_Direct takes one `ix` and subscripts BOTH tables with it:
+ * ldreq_tbl[ix] for the request fields, then `ldreq.result = &ldreq_result[ix]`.
+ * Push_LDREQ_Queue's dedup comment says so outright -- "`result` is included
+ * on purpose: it is 1:1 with the ldreq_tbl[] index". Nothing enforced the 1:1,
+ * and the two lengths are written as separate literals a dozen lines apart, so
+ * adding table entries without growing ldreq_result yields an out-of-bounds
+ * write of a pointer into the request queue -- and the dedup then compares
+ * `result` pointers that no longer identify a real slot. */
+_Static_assert(SDL_arraysize(ldreq_result) == SDL_arraysize(ldreq_tbl),
+               "ldreq_result must have one slot per ldreq_tbl entry — "
+               "Push_LDREQ_Queue_Direct indexes both with the same ix, and "
+               "Push_LDREQ_Queue's dedup relies on result being 1:1 with it");
+
+/* q_ldreq's length is open-coded as a bare literal at every one of its scan
+ * loops -- gd3rd.c's four `i < 16` sweeps plus the `i < 15` compaction shift,
+ * which additionally depends on being exactly length-1 so the freed tail slot
+ * is the one it clears. src/test/ldreq_timing_trace.c re-declares the array
+ * with its own `[16]` as well. A tripwire is the honest guard here: nothing
+ * can derive those bounds automatically, so changing the queue length must
+ * stop the build and name the loops that have to change with it. */
+_Static_assert(SDL_arraysize(q_ldreq) == 16,
+               "q_ldreq length changed — update the scan loops in "
+               "Push_LDREQ_Queue/Check_LDREQ_Clear/disp_ldreq_status, the "
+               "length-1 compaction shift in Check_LDREQ_Queue, and the "
+               "duplicate extern in src/test/ldreq_timing_trace.c");
 
 s32 fsOpen(REQ* req) {
     if (req->fnum >= AFS_GetFileCount()) {
@@ -503,9 +530,11 @@ s32 Push_LDREQ_Queue(REQ* ldreq) {
      * At depth >= 3 the head request has already drained (be == 0) by the
      * time the duplicate is issued, so this scan misses it entirely and
      * the reclaim in q_ldreq_texture_group's case 2 (texgroup.c) is what
-     * actually prevents the leak. Production predicts 8 frames ahead
-     * (input_prediction_window, netplay.c:903-905), so depth >= 3 is the
-     * case that matters in the field. The texgroup.c reclaim is therefore
+     * actually prevents the leak. Production predicts 8 frames ahead by
+     * default (input_prediction_window, netplay.c:914-916 -- read from
+     * CFG_KEY_NETPLAY_INPUT_PREDICTION_WINDOW, clamped to 1..32, 8 when
+     * unset or out of range), so depth >= 3 is the case that matters in
+     * the field. The texgroup.c reclaim is therefore
      * load-bearing and must not be removed on the grounds that this dedupe
      * exists. */
     for (i = 0; i < 16; i++) {
@@ -592,7 +621,7 @@ void Ldreq_SetBarrierForced(bool forced) {
  *   EXITING        no run_netplay(), no step_game(). Never pumps under a
  *                  live engine; handle_disconnection() has already run
  *                  Soft_Reset_Sub() -> Init_Load_Request_Queue_1st()
- *                  (sys_sub.c:1060), which wipes the queue.
+ *                  (sys_sub.c:1059), which wipes the queue.
  *
  * So TRANSITIONING and CONNECTING are added and IDLE/EXITING are not.
  *
@@ -619,7 +648,7 @@ void Ldreq_SetBarrierForced(bool forced) {
  * states are also strictly safer to stall than RUNNING: no peer is
  * counting our packets yet, so GekkoNet's 5000 ms DISCONNECT_TIMEOUT is
  * not in play, and CONNECTING's own 15 s deadline (CONNECT_TIMEOUT_
- * CONNECTING_MS, connect_fail.h:257) sees at most one such drain. */
+ * CONNECTING_MS, connect_fail.h:241) sees at most one such drain. */
 bool Ldreq_BarrierActive(void) {
     if (ldreq_barrier_forced) {
         return true;
@@ -708,8 +737,8 @@ static void ldreq_pump_head(void) {
  * q_ldreq[].be through Check_LDREQ_Clear(), afs_handle through
  * Check_LDREQ_Break()/fsCheckCommandExecuting() — advances on the frame
  * an OS async read happens to land. AFS_Read is a real SDL_ReadAsyncIO
- * (port/io/afs.c:366) drained by AFS_RunServer via SDL_GetAsyncIOResult
- * (afs.c:304-313), so the completion frame is WALL CLOCK, not frame
+ * (port/io/afs.c:434) drained by AFS_RunServer via SDL_GetAsyncIOResult
+ * (afs.c:313-319), so the completion frame is WALL CLOCK, not frame
  * count. Two peers with different disks therefore disagree about it,
  * with no rollback involved at all. That divergence is not cosmetic:
  * Exit_6th (screen/sel_pl.c:1701-1722) gates the SAVED Exit_No /
@@ -785,7 +814,7 @@ static void ldreq_pump_head(void) {
  * the peers end up one pump-step apart.
  *
  * It also strictly reduces the risk of the Game2_0/Game2_2
- * fatal_error("Load queue failed to drain in time") (game.c:472, :615):
+ * fatal_error("Load queue failed to drain in time") (game.c:479, :622):
  * on the barrier path the queue is already empty when those run.
  *
  * COST. The frame that issues a load absorbs the whole read instead of
@@ -956,6 +985,19 @@ const LDREQ_Process_Func ldreq_process[6] = { q_ldreq_error,      q_ldreq_textur
                                               q_ldreq_color_data, q_ldreq_color_data,    q_ldreq_color_data };
 
 s8* ldreq_process_name[] = { "EMP", "TEX", "COL", "SCR", "SND", "KNJ" };
+
+/* These two are parallel tables indexed by the same `q_ldreq[].type`:
+ * ldreq_process[type](...) dispatches the handler, ldreq_process_name[type]
+ * labels it on the debug overlay. Only the first is bounded -- the name table
+ * is declared `s8* ldreq_process_name[]`, size inferred from its initialiser
+ * -- so adding a seventh handler without a seventh name is not a compile
+ * error, it is an out-of-bounds read of a char* that the overlay then
+ * dereferences and prints. Asserted here, after both definitions, because the
+ * forward declaration of the name table is an incomplete type. */
+_Static_assert(SDL_arraysize(ldreq_process) == SDL_arraysize(ldreq_process_name),
+               "ldreq_process and ldreq_process_name must stay parallel — both "
+               "are indexed by q_ldreq[].type, but only ldreq_process has a "
+               "declared bound");
 
 const LDREQ_TBL ldreq_tbl[294] = {
     {

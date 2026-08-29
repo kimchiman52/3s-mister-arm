@@ -171,7 +171,7 @@ extern u8 fd_engine_proj_active_count[2];
  *
  * fd_engine_proj_hitok: set to 1 on the RISING EDGE of "cg_ja.atix != 0
  * AND att_hit_ok != 0" — the exact pair hitcheck.c's attack_hit_check()
- * gates the hit-check on (hitcheck.c:1618-1623). Edge-triggered (see
+ * gates the hit-check on (hitcheck.c:1870-1876). Edge-triggered (see
  * fd_engine_proj_hitok_armed below), not level-triggered: a WHIFF tama's
  * att_hit_ok stays 1 for the rest of its flight (hitcheck.c only clears
  * it on a confirmed hit), so re-asserting this every tick the pair holds
