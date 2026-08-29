@@ -61,13 +61,22 @@ def main():
         print()
 
         # Flag any cell whose emulation did not produce the declared NAT type.
+        #
+        # "none" (an un-NATted, publicly routable host) is BEHAVIOURALLY a full
+        # cone: endpoint-independent in both mapping and filtering. The RFC 4787
+        # classifier cannot distinguish the two, and should not -- to a peer they
+        # are the same thing. So that pairing is an accepted equivalence, not a
+        # mis-emulation.
+        EQUIV = {("none", "fullcone")}
         mismatches = []
         for (a, b), rs in cells.items():
             for r in rs:
                 ma, mb = r.get("measA"), r.get("measB")
-                if ma and ma not in (a, "unmeasured") and (a, ma) not in mismatches:
+                if (ma and ma not in (a, "unmeasured")
+                        and (a, ma) not in EQUIV and (a, ma) not in mismatches):
                     mismatches.append((a, ma))
-                if mb and mb not in (b, "unmeasured") and (b, mb) not in mismatches:
+                if (mb and mb not in (b, "unmeasured")
+                        and (b, mb) not in EQUIV and (b, mb) not in mismatches):
                     mismatches.append((b, mb))
 
         head = "| host A \\ joiner B | " + " | ".join(b_types) + " |"

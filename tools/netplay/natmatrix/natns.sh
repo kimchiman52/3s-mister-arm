@@ -36,7 +36,7 @@ ALL_NS=("$HA" "$NA" "$HB" "$NB" "$WAN" "$SRV")
 LAN_A="10.1.0"; LAN_B="10.2.0"
 WAN_NET="203.0.113"
 EXT_A="${WAN_NET}.10"; EXT_B="${WAN_NET}.20"
-SRV_IP="${WAN_NET}.100"; SRV_IP2="${WAN_NET}.101"
+SRV_IP="${WAN_NET}.100"; SRV_IP2="${WAN_NET}.101"; SRV_IP3="${WAN_NET}.102"
 
 # The single UDP port the game binds on each host. Used by the fullcone static map.
 GAME_PORT="${GAME_PORT:-7000}"
@@ -181,6 +181,11 @@ up() {
     # port-dependent mapping/filtering (RFC 4787 needs two distinct server IPs).
     ipns "$SRV" ip addr add "${SRV_IP}/24" dev srv0
     ipns "$SRV" ip addr add "${SRV_IP2}/24" dev srv0
+    # SRV_IP3 is reflection-only: the classifier never sends TO it, so an
+    # address-restricted NAT has no reason to admit it. Without a third address
+    # the filtering test is contaminated by the mapping test and every
+    # address-restricted cell mismeasures as full cone.
+    ipns "$SRV" ip addr add "${SRV_IP3}/24" dev srv0
     ipns "$SRV" ip link set srv0 up
 
     # Return routes for the un-NATted ("none" = open host) case. When a side runs

@@ -17,15 +17,21 @@ port the server observes for each.
     differs when only the address changed-> address-dependent mapping (symmetric)
 
 Filtering behaviour: from a FRESH local port, send to (IP1,P1) only, then have
-the server reflect unsolicited datagrams back to the observed external endpoint
-from all three sockets.
-    (IP2,P1) arrives -> endpoint-independent filtering  -> full cone
+the server reflect unsolicited datagrams back to the observed external endpoint.
+    (IP3,P1) arrives -> endpoint-independent filtering  -> full cone
     (IP1,P2) arrives -> address-dependent filtering     -> address-restricted
     neither arrives  -> address-and-port-dependent      -> port-restricted
 
+IP3 is a THIRD server address that the mapping phase never contacts, and it is
+only ever a reflection SOURCE. Using IP2 here silently mismeasures an
+address-restricted NAT as a full cone: the mapping phase already sent to IP2, so
+an address-restricted NAT is entitled to admit IP2's unsolicited reply, and the
+filtering verdict is contaminated by the earlier probe. Observed on this rig --
+declared addr-restricted measured as fullcone until IP3 was introduced.
+
 Roles:
-    nat_classify.py observer --ip1 A --ip2 B --p1 N --p2 M
-    nat_classify.py prober   --ip1 A --ip2 B --p1 N --p2 M [--json]
+    nat_classify.py observer --ip1 A --ip2 B --ip3 C --p1 N --p2 M
+    nat_classify.py prober   --ip1 A --ip2 B --ip3 C --p1 N --p2 M [--json]
 """
 import argparse, json, socket, sys, time
 
@@ -42,11 +48,12 @@ def _sock(bind_ip, bind_port, timeout=None):
 
 
 def run_observer(a):
-    """Three sockets: (ip1,p1), (ip1,p2), (ip2,p1)."""
+    """Four sockets. (ip3,p1) is reflection-only -- never a probe destination."""
     socks = {
         "11": _sock(a.ip1, a.p1),
         "12": _sock(a.ip1, a.p2),
         "21": _sock(a.ip2, a.p1),
+        "31": _sock(a.ip3, a.p1),
     }
     import selectors
     sel = selectors.DefaultSelector()
@@ -147,7 +154,7 @@ def run_prober(a):
 
     if ext is None:
         res["filtering"] = "unreachable"
-    elif "21" in got:
+    elif "31" in got:
         res["filtering"] = "endpoint-independent"
     elif "12" in got:
         res["filtering"] = "address-dependent"
@@ -177,6 +184,7 @@ def main():
     ap.add_argument("role", choices=["observer", "prober"])
     ap.add_argument("--ip1", default="203.0.113.100")
     ap.add_argument("--ip2", default="203.0.113.101")
+    ap.add_argument("--ip3", default="203.0.113.102")
     ap.add_argument("--p1", type=int, default=19301)
     ap.add_argument("--p2", type=int, default=19302)
     ap.add_argument("--map-port", type=int, default=7100)
