@@ -40,7 +40,7 @@ These are zeroed on entering the training menu and re-derived from `Training->co
 
 1. **Entry from mode select**: `mpp_w.initTrainingData = true`, then `Default_Training_Data(0)` is called from `sel_pl.c:214`. This zeros `Training[0].contents`, sets damage/difficulty from `save_w`, copies to `Training[2]`, and clears the display flags.
 
-2. **Entry from "DEFAULT SETTING" in menus**: `Default_Training_Data(1)` or `Default_Training_Option()` -- always resets regardless of flag. Additionally, Normal Training > Dummy Setting > DEFAULT SETTING (menu.c:5037-5043) directly zeroes `Training[2].contents[0][0][0..3]` without calling `Default_Training_Data`.
+2. **Entry from "DEFAULT SETTING" in menus**: `Default_Training_Data(1)` or `Default_Training_Option()` -- always resets regardless of flag. Additionally, Normal Training > Dummy Setting > DEFAULT SETTING (menu.c:4651-4654) directly zeroes `Training[2].contents[0][0][0..3]` without calling `Default_Training_Data`.
 
 3. **Menu editing**: The menu writes directly into `Training[2].contents` via `Dummy_Move_Sub_LR`.
 
@@ -48,14 +48,14 @@ These are zeroed on entering the training menu and re-derived from `Training->co
 
 ### Exit paths from training mode
 
-All exit paths go through `Yes_No_Cursor_Exit_Training`, which presents a Yes/No dialog. Selecting "Yes" calls `Soft_Reset_Sub()` (in `sys_sub.c:1000`), which fades out, stops sound, and re-launches the game task back to the title/mode-select screen. The two call sites:
+All exit paths go through `Yes_No_Cursor_Exit_Training`, which presents a Yes/No dialog. Selecting "Yes" calls `Soft_Reset_Sub()` (in `sys_sub.c:1034`), which fades out, stops sound, and re-launches the game task back to the title/mode-select screen. The two call sites:
 
-1. **Normal Training exit** (`menu.c:4830`): `Yes_No_Cursor_Exit_Training(task_ptr, 8)` -- triggered from menu item 8 ("EXIT") in Normal Training.
-2. **Parry Training exit** (`menu.c:5344`): `Yes_No_Cursor_Exit_Training(task_ptr, 5)` -- triggered from menu item 5 ("EXIT") in Parry Training.
+1. **Normal Training exit** (`menu.c:4442`): `Yes_No_Cursor_Exit_Training(task_ptr, 8)` -- triggered from menu item 8 ("EXIT") in Normal Training.
+2. **Parry Training exit** (`menu.c:4957`): `Yes_No_Cursor_Exit_Training(task_ptr, 5)` -- triggered from menu item 5 ("EXIT") in Parry Training.
 
 Both ultimately call `Soft_Reset_Sub()` when the user confirms.
 
-Additionally, **Character Change** (`menu.c:5462`) exits training but goes to character select, then re-enters training. `Default_Training_Data(0)` is called again from `sel_pl.c` on re-entry, which would wipe settings -- this is the key place where loading saved config matters.
+Additionally, **Character Change** (`menu.c:5075`) exits training but goes to character select, then re-enters training. `Default_Training_Data(0)` is called again from `sel_pl.c:214` on re-entry, which would wipe settings -- this is the key place where loading saved config matters.
 
 ### Existing config system (reference only)
 
