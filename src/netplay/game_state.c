@@ -2125,17 +2125,38 @@ void GameState_SanitizePlwCopyForHash(PLW* copy) {
     copy->wu.listix = 0;
     copy->wu.timing = 0;
 
-    // Sweep remaining pointer-like values in PLW.
-    // Use fixed uint64_t stride so both 32-bit and 64-bit platforms
-    // scan the same bytes and produce identical checksums.
-    uint64_t* words = (uint64_t*)copy;
-    const size_t count = sizeof(PLW) / sizeof(uint64_t);
-    for (size_t i = 0; i < count; i++) {
-        uint64_t v = words[i];
-        if (v > 0x100000000ULL && (v >> 47) == 0) {
-            words[i] = 0;
-        }
-    }
+    /* NO POINTER-LIKE u64 SWEEP HERE — deleted 2026-08-29 (task #111).
+     *
+     * What used to be here scanned PLW as uint64_t words and zeroed any
+     * word whose value was > 4 GiB with the top 17 bits clear, under a
+     * comment claiming the fixed stride made "both 32-bit and 64-bit
+     * platforms scan the same bytes and produce identical checksums".
+     * Both halves of that claim were false, and the sweep was actively
+     * destroying checksum coverage:
+     *
+     *  - Coverage was never identical: sizeof(PLW) is 1092 on armv7 and
+     *    1304 on 64-bit, so the loop ran 136 vs 163 iterations over
+     *    different bytes at different offsets.
+     *  - The filter itself is architecture-sensitive: on armv7 no single
+     *    pointer can exceed 0x100000000, so it could only ever fire on
+     *    coincidental adjacent-slot pairs, while on 64-bit it fires on
+     *    heap addresses.
+     *  - Every pointer in PLW is already NULLed above by
+     *    sanitize_plw_pointers / sanitize_work_pointers (all 38 pointer
+     *    members / 49 slots), so by the time the sweep ran there was no
+     *    pointer left to catch. Measured on 22,716 real-gameplay PLW
+     *    sanitizations (rollback-determinism fast profile): it zeroed
+     *    241,132 words — 10.6 words / 84.9 bytes per PLW, 6.5% of the
+     *    hashed image — and every single zeroed word was ordinary
+     *    gameplay data: routine_no[], vitality, position_x/y, guard_flag,
+     *    attack_num, current_attack, hit_stop, the cm* command buffers.
+     *    Two peers whose values BOTH landed in the filter range were
+     *    zeroed to the same 0, which is a desync the checksum could not
+     *    see.
+     *
+     * Architecture independence is now provided properly, by hashing the
+     * canonical member image (GameState_EmitPlwCanonical) instead of raw
+     * struct bytes. */
 }
 
 /// Save state in state buffer (ring buffer for desync dump). Always-on
@@ -2158,7 +2179,8 @@ static State* note_state(const State* state, int frame) {
  * copies for binary comparison when a desync is detected.
  *
  * The checksum covers only a whitelist of gameplay-critical fields
- * (PLW after pointer/rendering sanitization, RNG indices, round state,
+ * (PLW as its canonical member image — see GameState_EmitPlwCanonical —
+ * after pointer/rendering sanitization, RNG indices, round state,
  * combat flags, slow-motion, super gauge, stun, PLUS combo_type and
  * remake_power which are our fork-exclusive top-level globals).
  * UI-only fields are saved but excluded from the hash.
@@ -2214,20 +2236,26 @@ uint32_t save_current_state(void* buffer, int frame) {
         // === Focused gameplay checksum ===
         // Hash ONLY gameplay-critical data, not the full 247KB State.
 
-        // --- Sanitized PLW copies ---
+        // --- Sanitized PLW copies + their canonical hash images ---
+        // plw_scratch keeps the sanitized STRUCT (the desync-dump artefact
+        // and the per-field hashes below index into it); plw_canon is the
+        // architecture-independent member image the checksum actually
+        // hashes (task #111).
         static PLW plw_scratch[2];
+        static uint8_t plw_canon[2][PLW_CANON_SIZE];
         for (int p = 0; p < 2; p++) {
             SDL_memcpy(&plw_scratch[p], &dst->gs.plw[p], sizeof(PLW));
             GameState_SanitizePlwCopyForHash(&plw_scratch[p]);
+            GameState_EmitPlwCanonical(&plw_scratch[p], plw_canon[p]);
         }
 
         // --- Build combined hash from PLW + whitelisted globals ---
         const GameState* gs = &dst->gs;
         uint32_t h = djb2_init();
 
-        // PLW (sanitized)
-        h = djb2_update_mem(h, (const uint8_t*)&plw_scratch[0], sizeof(PLW));
-        h = djb2_update_mem(h, (const uint8_t*)&plw_scratch[1], sizeof(PLW));
+        // PLW (sanitized, canonical member image)
+        h = djb2_update_mem(h, plw_canon[0], PLW_CANON_SIZE);
+        h = djb2_update_mem(h, plw_canon[1], PLW_CANON_SIZE);
 
         // RNG indices
         h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix16, sizeof(gs->Random_ix16));
@@ -2307,10 +2335,10 @@ uint32_t save_current_state(void* buffer, int frame) {
         SectionedChecksum sc;
         uint32_t sh;
         sh = djb2_init();
-        sh = djb2_update_mem(sh, (const uint8_t*)&plw_scratch[0], sizeof(PLW));
+        sh = djb2_update_mem(sh, plw_canon[0], PLW_CANON_SIZE);
         sc.plw0 = sh;
         sh = djb2_init();
-        sh = djb2_update_mem(sh, (const uint8_t*)&plw_scratch[1], sizeof(PLW));
+        sh = djb2_update_mem(sh, plw_canon[1], PLW_CANON_SIZE);
         sc.plw1 = sh;
         sc.bg = 0;
         sc.tasks = 0;

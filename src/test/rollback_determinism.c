@@ -117,6 +117,9 @@ static uint32_t rbd_frw_sym_index = 0xFFFFFFFFu;
 static uint32_t rbd_plw_sym_index = 0xFFFFFFFFu;
 static unsigned char* rbd_plw_scratch = NULL;
 
+/* Canonical member image of the sanitized copy — what is actually hashed. */
+static unsigned char* rbd_plw_canon = NULL;
+
 /* === Pointer canonicalization for whole-pointer statics (task #65) ========
  *
  * THE DEFECT THIS FIXES. The driver classifies a symbol as NOISE when its
@@ -304,16 +307,21 @@ static uint32_t rbd_hash_frw_canonical(void) {
     return rbd_hash_fold(h);
 }
 
-/* Hash plw[2] through the production checksum's sanitized view (see
- * rbd_plw_sym_index above). Trailing map-entry padding beyond sizeof(plw)
- * carries no information and is skipped. */
+/* Hash plw[2] through the production checksum's view (see
+ * rbd_plw_sym_index above): sanitize a scratch copy, then hash the
+ * canonical member image the cross-peer checksum hashes, so the harness
+ * and production keep exactly one definition of "gameplay bytes"
+ * (task #111). Pointer slots and padding are not in that image at all,
+ * so they can no longer contribute either process-varying noise or
+ * false confidence. */
 static uint32_t rbd_hash_plw_sanitized(void) {
     uint64_t h = RBD_HASH_SEED;
 
     for (int p = 0; p < 2; p++) {
         memcpy(rbd_plw_scratch, &plw[p], sizeof(PLW));
         GameState_SanitizePlwCopyForHash((PLW*)rbd_plw_scratch);
-        h = rbd_hash64(h, rbd_plw_scratch, sizeof(PLW));
+        GameState_EmitPlwCanonical((const PLW*)rbd_plw_scratch, rbd_plw_canon);
+        h = rbd_hash64(h, rbd_plw_canon, PLW_CANON_SIZE);
     }
 
     return rbd_hash_fold(h);
@@ -881,11 +889,13 @@ static void rbd_init(void) {
     rbd_row = (uint32_t*)SDL_malloc((size_t)rbd_sym_count * sizeof(uint32_t));
     rbd_slot_scratch = (unsigned char*)SDL_malloc(sizeof(frw[0]));
     rbd_plw_scratch = (unsigned char*)SDL_malloc(sizeof(PLW));
+    rbd_plw_canon = (unsigned char*)SDL_malloc(PLW_CANON_SIZE);
 
     const size_t gekko_buf_size = sizeof(State) > SPARSE_CEILING_BYTES ? sizeof(State) : SPARSE_CEILING_BYTES;
     rbd_gekko_buf = (unsigned char*)SDL_malloc(gekko_buf_size);
 
-    if (rbd_row == NULL || rbd_slot_scratch == NULL || rbd_plw_scratch == NULL || rbd_gekko_buf == NULL) {
+    if (rbd_row == NULL || rbd_slot_scratch == NULL || rbd_plw_scratch == NULL || rbd_plw_canon == NULL ||
+        rbd_gekko_buf == NULL) {
         rbd_fail("out of memory allocating capture buffers");
     }
 
