@@ -115,40 +115,39 @@ static void inject_start_press(void) {
  * the exit taxonomy). The counter re-arms while the orchestrator sits in
  * HOST_WAITING, which is unbounded by design.
  *
- * Task #76: this used to be a flat `150 * 60` frames. Two problems with
- * that. First, its comment described the PRE-S6 serial cascade (STUN +
- * punch + signaling + bilateral summed); since S6 those legs race inside
- * one race budget, so the stated derivation no longer matched the code.
- * Second, and the reason it is a product bug: when the orchestrator wedges
- * without publishing a terminal state, the player watches a static
- * "Connecting..." overlay for 150 s. That reads as a hang, not a timeout —
- * they power-cycle long before the attributed failure ever appears. S3
- * built the failure taxonomy precisely so every failure has a fast,
+ * Task #76: this used to be a flat `150 * 60` frames — 150 SECONDS. Two
+ * problems with that. First, its comment derived 150 s from the PRE-S6
+ * SERIAL cascade (STUN + punch + signalling + bilateral, summed); since
+ * S6 those legs race inside ONE race budget, so the stated derivation
+ * had silently stopped being true. Second, and the reason it is a
+ * product bug: when the orchestrator wedges without publishing a
+ * terminal state, the player watches a static "Connecting..." overlay
+ * for two and a half minutes. That reads as a HANG, not a timeout — they
+ * power-cycle long before the attributed failure ever appears. S3 built
+ * the failure taxonomy precisely so every failure has a fast,
  * attributable cause; a 150 s backstop throws that away.
  *
- * A smaller FLAT constant cannot replace it: at the config ceiling
- * (netplay-direct-p2p-race-budget-ms = 30000, stun-timeout-ms = 15000) the
- * joiner's two attempts are legitimately ~91 s and the host's port-map +
- * STUN retry ladder ~120 s. Any constant short enough to be good UX on the
- * shipped defaults would abort a legal maximal config mid-attempt — and,
- * worse, could cut inside the S6/S7 H-1 confirmation tail and resurrect the
- * exact misattribution H-1 was written to fix.
+ * A smaller FLAT constant is not the fix, for two reasons. The shallow
+ * one: at the config ceiling (race-budget-ms 30000, stun-timeout-ms
+ * 15000) the joiner's attempts legitimately total 92.8 s and the host's
+ * port-map + STUN retry ladder 120.2 s, so any constant short enough to
+ * be good UX at the shipped defaults would abort a legal maximal config
+ * mid-attempt — a spurious failure, which is worse than a slow one. The
+ * deep one: a constant is what rotted. Replacing one constant whose
+ * derivation went stale with another constant whose derivation can go
+ * stale fixes today's number and not the failure mode.
  *
- * So the bound is DERIVED: the orchestrator publishes its own worst case
- * from the live clamped budgets (DirectP2P_OrchWorstCaseMs(), which carries
- * the H-1 tail as a term, not a literal) and nav adds a fixed scheduling
- * margin on top. Defaults collapse 150 s to ~31 s; a maximal config still
- * gets everything it is entitled to. */
-#define NAV_FPS 60
-
-/* Scheduling slack over the orchestrator's own worst case: thread spawn
- * and join, the main-thread Tick cadence that drives the host retry
- * ladder (one step per frame), SDL_Delay granularity in the bounded DNS
- * poll, and frame-time jitter. This is a backstop for a WEDGED
- * orchestrator — in every normal failure nav exits via the terminal-state
- * check above long before this fires — so the margin only has to cover
- * scheduling, not another protocol phase. */
-#define NAV_ORCH_TIMEOUT_MARGIN_MS 5000
+ * So the bound is DERIVED, in direct_p2p.c, from the very symbols the
+ * orchestrator's own enforcement sites use — including
+ * RACE_HARD_CAP_MS(), which is shared with the race deadline check, so
+ * nav's deadline can never cut inside a confirmed punch's H-1 tails.
+ * direct_p2p.c carries _Static_asserts that fail the BUILD if a cascade
+ * change pushes the shipped-defaults deadline past what this product
+ * treats as an acceptable wait, or drops the coverage the ceiling
+ * configs need.
+ *
+ * At the shipped defaults that collapses 150 s to 31.8 s; a maximal
+ * config still gets everything it is entitled to. */
 
 /* Pure ms -> frames conversion, exported (netplay_nav.h) so the deadline
  * this file actually enforces is observable without standing up a session
