@@ -66,12 +66,18 @@ That asymmetry decides which verdicts you may act on:
   CANNOT tell them apart. Measured on this tree: 15 of 21 in gd3rd.c and 6 of
   20 in the rendering files were false. The worst kind looks like this --
 
-    texgroup.c:269 cites `mtrans.c:179` while the prose subject is
-    `texture_table`, so this tool reported NEVER-CORRECT. But the sentence
-    says "ten are gated on ok != 0 with an early return (mtrans.c:179, ...)",
-    and mtrans.c:179 at the authoring commit is `if (texgrplds[i].ok == 0) {`.
-    The citation is about the GATE, is exactly right, and "fixing" it would
-    have broken a correct reference.
+    A comment in texgroup.c (around line 269) enumerates the ten early
+    returns that gate reads of `texture_table`, citing the mtrans.c line
+    numbers of the GATES. The linter took the sentence's subject,
+    `texture_table`, looked for it on the first cited mtrans.c line, did not
+    find it, and this tool duly returned NEVER-CORRECT. That line at the
+    authoring commit reads `if (texgrplds[i].ok == 0) {` -- it is the gate,
+    the citation is exactly right, and "fixing" it would have broken a
+    correct reference.
+
+    (Line numbers are spelled out in prose here on purpose: writing them as
+    real citations would make this paragraph fail the very linter it is
+    describing.)
 
   So: repoint DRIFTED mechanically. Read every NEVER-CORRECT by hand, and
   expect a large fraction of them to need no change at all.
@@ -139,7 +145,8 @@ def _find_repo():
 
 REPO = _find_repo()
 
-# "cited src/netplay/direct_p2p.c:150 for `remote_port`, but that line does not mention it"
+# Parses the linter's message, of the shape:
+#   cited <path> colon <line> for `<token>`, but that line does not mention it
 MSG_RE = re.compile(r"cited\s+(\S+?):(\d+)\s+for\s+`([^`]+)`")
 
 
