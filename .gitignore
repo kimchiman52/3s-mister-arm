@@ -19,6 +19,10 @@ __pycache__
 /build-*
 temp
 third_party
+# Task #81: per-invocation source staging for worktree ARM builds. Created
+# under the checkout the build container is bind-mounted from, and removed on
+# exit; tracked here so a killed build cannot dirty `git status`.
+/.build-src
 states
 rom
 dump
