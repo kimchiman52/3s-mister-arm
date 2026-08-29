@@ -440,8 +440,18 @@ void NetplayNav_Tick(void) {
             /* Report the derived deadline: with a config-dependent bound,
              * a bare "the nav deadline" line is unreadable in the field —
              * you cannot tell a wedge from a legitimately long maximal
-             * config without the number that was actually enforced. */
-            char line[192];
+             * config without the number that was actually enforced.
+             *
+             * The buffer must hold the whole line: this is the ONE line that
+             * explains a nav-deadline abandonment, and a truncated tail drops
+             * exactly the three numbers the comment above says are the point.
+             * The literal alone is 227 bytes (clang-20 -Wformat-truncation on
+             * the arm-linux-gnueabihf cross build measured it and, with
+             * -Werror, refused the 192-byte buffer this started with), plus up
+             * to three int conversions. 320 covers the literal and INT_MIN in
+             * all three slots (227 - 6 for the "%d"s + 3 * 11 = 254) with room
+             * to spare. */
+            char line[320];
             snprintf(line, sizeof(line),
                      "[netplay-connect] FAIL code=P2P_FAIL_TIMEOUT_ORCHESTRATOR "
                      "stage=NAV_WAIT_ORCHESTRATOR — orchestrator produced neither a "
