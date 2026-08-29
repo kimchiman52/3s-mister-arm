@@ -2112,7 +2112,7 @@ static int test_rendezvous_cookie_codec(void) {
  *
  *   rendezvous.c:281  Rendezvous_HasMagic   — magic ONLY
  *   rendezvous.c:296  Rendezvous_FrameType  — magic AND version AND type
- *   direct_p2p.c:1714-1716 — the race's one shared receive path routes
+ *   direct_p2p.c:1788-1790 — the race's one shared receive path routes
  *                            with HasMagic ? FrameType : -1
  *   sdl_net_adapter.c:291,298 — the GekkoNet straggler drop
  *
@@ -2450,7 +2450,7 @@ static int send_log_count(void) {
 /* Records every packet direct_p2p.c pushes through RENDEZVOUS_SEND and
  * then performs the real send, so the machine under test keeps running
  * against the mock server. Both roles route here: the host's rend_q
- * drain AND its main-thread CHALLENGE echo (direct_p2p.c:4160), and the
+ * drain AND its main-thread CHALLENGE echo (direct_p2p.c:4256), and the
  * joiner's inline signaling loop sends. */
 static bool recording_rendezvous_send(NET_DatagramSocket* sock, NET_Address* target,
                                       uint16_t target_port, const uint8_t* pkt,
@@ -2517,7 +2517,7 @@ static void mock_server_stop(MockServerCtx* ctx, SDL_Thread* tid,
 
 /* --- host-side STUN seam that hands the test a live handle ------------- */
 
-/* direct_p2p.c:3035 calls STUN_DISCOVER(&s_work.stun, ...) — the mock is
+/* direct_p2p.c:3130 calls STUN_DISCOVER(&s_work.stun, ...) — the mock is
  * therefore handed a pointer to the orchestrator's own StunResult. Test
  * 13 keeps it so it can move stun.public_port AFTER the room code (and
  * with it advertised_port) has been latched, which is the only way to
@@ -2573,7 +2573,7 @@ static bool pred_two_cookied_requests(void) {
  * DIRECT_P2P_HANDOFF is NOT the same observable. On the host's bilateral
  * rung the worker raises s_bilateral_handoff_pending and Tick then does
  * set_state(HANDOFF) IMMEDIATELY BEFORE calling do_handoff
- * (direct_p2p.c:4999-5007), so a state-only wait can return with the
+ * (direct_p2p.c:5141-5149), so a state-only wait can return with the
  * handoff arguments not yet written — and, if the pending flag were ever
  * dropped, would still be satisfied by any other path that publishes the
  * state. Counting do_handoff calls is what pins the host worker ->
@@ -2629,7 +2629,7 @@ static int test_host_cookie_handshake(void) {
         char url[64];
         SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
         Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
-        /* 1000 ms is the code's own floor (direct_p2p.c:2592); the
+        /* 1000 ms is the code's own floor (direct_p2p.c:2666); the
          * seqlock assertion needs one worker cadence to elapse. */
         Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS, "1000");
     }
@@ -2691,7 +2691,7 @@ static int test_host_cookie_handshake(void) {
 
     /* Force the divergence the reviewer's latent bug needs to be visible.
      * advertised_port was latched from the UPnP-or-STUN choice at
-     * direct_p2p.c:1476/1501 and is now frozen in the room code; moving
+     * direct_p2p.c:1550/1501 and is now frozen in the room code; moving
      * the STUN-observed port through the pointer the discover seam handed
      * us leaves the two permanently different. Done BEFORE the first Tick
      * so nothing has been drained yet. */
@@ -2812,9 +2812,9 @@ static int test_host_cookie_handshake(void) {
      *    alone. This is the suite's only wait on a handoff from a HOST
      *    session, and therefore its only coverage of the
      *    s_bilateral_handoff_pending chain: the punch worker raises the
-     *    flag (direct_p2p.c:2923), Tick observes it, joins the worker,
+     *    flag (direct_p2p.c:2997), Tick observes it, joins the worker,
      *    publishes HANDOFF and calls do_handoff
-     *    (direct_p2p.c:4999-5007). A state-only wait is satisfied one
+     *    (direct_p2p.c:5141-5149). A state-only wait is satisfied one
      *    statement earlier, before any handoff argument is written, and
      *    would also be satisfied by any other path that publishes the
      *    state — so both are waited on, state first. */
@@ -2850,7 +2850,7 @@ static int test_host_cookie_handshake(void) {
         }
         /* THE PLAYER NUMBER — the host half of the pair asserted on the
          * join side by 19-handoff-player2. The host is player 1
-         * (direct_p2p.c:4599, and :3953 on the direct-receive rung).
+         * (direct_p2p.c:4695, and :3953 on the direct-receive rung).
          * Nothing else in this suite reads it: with both host sites
          * changed to 2 the endpoint, the timing, the state and the
          * status text are all still exactly right, GekkoNet is handed
@@ -3050,7 +3050,7 @@ done:
  * Pinned by timing the first cookied REGISTER.
  * Part B — the same mock, never accepting: budget expiry must classify
  * CONNECT_FAIL_COOKIE_REJECTED (connect_fail.c:136), only reachable
- * when the race's challenge_any evidence was set (direct_p2p.c:3549).
+ * when the race's challenge_any evidence was set (direct_p2p.c:3645).
  * (The inline answer itself lives in the race's CHALLENGE arm.)
  */
 
@@ -4640,7 +4640,7 @@ static int test_natpmp_pcp(void) {
  *       off. DirectP2P_BeginHost is the entry into
  *       try_portmap/upnp_worker_fn, and upnp_worker_fn's ONLY brake is
  *       Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP)
- *       (src/netplay/direct_p2p.c:2210). So: every DirectP2P_BeginHost
+ *       (src/netplay/direct_p2p.c:2284). So: every DirectP2P_BeginHost
  *       call site must have a disable-UPnP site within the preceding
  *       UPNP_SETUP_WINDOW_LINES lines. (Widest real gap today is 15
  *       lines; the window is 25, loose enough to survive a comment being
@@ -4755,7 +4755,7 @@ static int test_s7_disable_pairing(void) {
             fprintf(stderr,
                     "[test_bilateral_punch] FAIL: 23a-reenable: %s:%d sets "
                     "DISABLE_UPNP back to false. upnp_worker_fn's only brake is that "
-                    "flag (src/netplay/direct_p2p.c:2118); with it clear, the next "
+                    "flag (src/netplay/direct_p2p.c:2192); with it clear, the next "
                     "DirectP2P_BeginHost in this harness aims miniupnpc at the "
                     "developer's REAL router and Upnp_AddMapping installs a 3600 s "
                     "lease on it.\n",
@@ -4773,7 +4773,7 @@ static int test_s7_disable_pairing(void) {
                         "DirectP2P_BeginHost with no disable-UPnP site in the preceding "
                         "%d lines (nearest is line %d). BeginHost runs try_portmap, "
                         "whose UPnP leg is gated ONLY by that flag "
-                        "(src/netplay/direct_p2p.c:2118) — this test would run real "
+                        "(src/netplay/direct_p2p.c:2192) — this test would run real "
                         "SSDP discovery and a real UPNP_AddPortMapping against the "
                         "developer's router.\n",
                         __FILE__, lineno, UPNP_SETUP_WINDOW_LINES, last_disable_line);
@@ -4842,7 +4842,7 @@ static int test_s7_disable_pairing(void) {
 
 /*
  * do_handoff's first argument is the ONLY thing that tells GekkoNet
- * which side we are (direct_p2p.c:3699). It is a LITERAL at every call
+ * which side we are (direct_p2p.c:3795). It is a LITERAL at every call
  * site — nothing downstream can correct a wrong one — and two peers that
  * both hand off as the same number get identical local and remote roles,
  * so the session never starts.
@@ -6122,7 +6122,7 @@ static int test_race_deliver_overlaps_seed(void) {
         /* THE PLAYER NUMBER. do_handoff's first argument is the only
          * thing that decides which side GekkoNet is told it is: 1 ->
          * local player 0 / remote 1, 2 -> local 1 / remote 0
-         * (direct_p2p.c:3091 do_handoff). It is passed as a LITERAL at
+         * (direct_p2p.c:3187 do_handoff). It is passed as a LITERAL at
          * every call site, so nothing downstream can correct a wrong
          * one — two peers that both hand off as the same number give
          * GekkoNet identical local and remote roles and no match can
@@ -6131,7 +6131,7 @@ static int test_race_deliver_overlaps_seed(void) {
          * exactly right when the number is wrong.
          *
          * This is the JOIN side, and join is player 2
-         * (direct_p2p.c:3957). The host half is pinned at runtime in
+         * (direct_p2p.c:4053). The host half is pinned at runtime in
          * test 13 (13-handoff-player1), and all three call sites are
          * pinned at the source in test 33. */
         EXPECT_TRUE("19-handoff-player2", hplayer == 2);
@@ -6758,7 +6758,7 @@ static int test_race_budget_wrap_safety(void) {
 /*
  * H-C. Test 27 above is a real test of a real invariant, but it is
  * credited to the wrong code. The duplicate-endpoint guard it neutralises
- * (direct_p2p.c:1313-1318) is BYTE-IDENTICAL to the pre-fix tree:
+ * (direct_p2p.c:1387-1392) is BYTE-IDENTICAL to the pre-fix tree:
  *
  *   $ git show 26deb2fc:src/netplay/direct_p2p.c | sed -n '1210,1215p' | md5
  *   d1f6c2bdeb1ee0d52b98b3fffc9fc17c
@@ -6766,7 +6766,7 @@ static int test_race_budget_wrap_safety(void) {
  *   d1f6c2bdeb1ee0d52b98b3fffc9fc17c
  *
  * The guard was never the defect. M-2's fix is the code just below it —
- * direct_p2p.c:1397-1410 — and it is TWO changes, not one:
+ * direct_p2p.c:1471-1484 — and it is TWO changes, not one:
  *
  *   (i)  VALIDATE, THEN memset. The new StunPunchLeg is built on the
  *        STACK and Stun_PunchBegin is allowed to fail BEFORE the
@@ -6840,8 +6840,8 @@ static int SDLCALL hc_sink_thread(void* arg) {
  * UNSOLICITED to the address that REGISTER came from, one every
  * `gap_ms`. Unsolicited is not a cheat: direct_p2p.c sets
  * signal_active = false the moment the first DELIVER_PEER lands
- * (direct_p2p.c:1802), so no further REGISTER is ever sent — but the
- * REND_FRAME_DELIVER branch of the receive path (direct_p2p.c:1743) is
+ * (direct_p2p.c:1876), so no further REGISTER is ever sent — but the
+ * REND_FRAME_DELIVER branch of the receive path (direct_p2p.c:1817) is
  * NOT gated on signal_active, so every later DELIVER is still parsed and
  * still re-arms slot 1. That asymmetry is the production behaviour under
  * test.
@@ -6924,7 +6924,7 @@ static int SDLCALL hc_server_thread(void* arg) {
 /*
  * A re-arm that FAILS must leave the candidate that was already there
  * armed and still punching. Pre-fix it was wiped, and because the pump
- * loop skips any candidate with armed == false (direct_p2p.c:1737) the
+ * loop skips any candidate with armed == false (direct_p2p.c:1811) the
  * race then punched NOTHING for the rest of its budget while still
  * reporting a full-length race.
  *
@@ -7654,7 +7654,7 @@ static bool sb6_run_two_peer(int skew_ms, int owd_ms,
 
     /* No signal leg and no signal endpoint: with the relay gone there is
      * nothing in this rig for a rendezvous server to do, and RunRace
-     * treats a NULL signal_ip as "no legs" (direct_p2p.c:2073-2090). The
+     * treats a NULL signal_ip as "no legs" (direct_p2p.c:2147-2164). The
      * seed candidate — the delay line — is the whole race. */
     a.cfg.host_role = true;
     a.cfg.sock = net_a;

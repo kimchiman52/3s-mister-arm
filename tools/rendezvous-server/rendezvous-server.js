@@ -199,25 +199,25 @@ const MAX_RATE_ENTRIES = 2 * MAX_SESSIONS;
 //      "per window" and "per second" are the same number here) ------------
 // What charges this bucket, from the shipped client:
 //   * joiner REGISTER resend inside the punch race — 500 ms
-//     (src/netplay/direct_p2p.c:1356-1357, `(now - signal_last_send) >=
+//     (src/netplay/direct_p2p.c:1430-1431, `(now - signal_last_send) >=
 //     500u`) => 2/s PER JOINER, for signal_budget_ms (8 s default,
-//     direct_p2p.c:2832-2833 / src/port/config/config.c:105).
+//     direct_p2p.c:2906-2907 / src/port/config/config.c:105).
 //   * host re-REGISTER worker — CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_
 //     INTERVAL_MS, default 5000 ms (config.c:111), floor 1000 ms
-//     (direct_p2p.c:2272-2274) => 1/s worst case. This leg must NEVER be
+//     (direct_p2p.c:2346-2348) => 1/s worst case. This leg must NEVER be
 //     starved: losing it is precisely what reclaims a live room. The host
-//     runs NO signalling leg inside the race (direct_p2p.c:2374 sets
+//     runs NO signalling leg inside the race (direct_p2p.c:2448 sets
 //     cfg.signal_leg = false for the host — the DELIVER that started that
 //     thread already proves it is paired).
 //   * one challenge-triggered immediate resend per side per cookie
 //     rotation (COOKIE_ROTATE_MS >= 60 s), since the client answers a
-//     CHALLENGE at once (direct_p2p.c:1391-1394).
+//     CHALLENGE at once (direct_p2p.c:1465-1468).
 //
 // N, the number of simultaneous dialers on ONE key. The session key is
-// derived from the HOST's public endpoint (direct_p2p.c:2809-2811), i.e.
+// derived from the HOST's public endpoint (direct_p2p.c:2883-2885), i.e.
 // the key IS the room code — everyone who pastes that code lands in the
 // same bucket, and each one starts its 2/s leg immediately, without
-// waiting to be accepted (cfg.signal_leg at direct_p2p.c:2851 keys only on
+// waiting to be accepted (cfg.signal_leg at direct_p2p.c:2925 keys only on
 // "have signal URL + have session key", not on pairing). The server's
 // two-slot policy silences dialers 2..N at DISPATCH, but they have already
 // charged this bucket — the gate runs upstream of dispatch. Codes are

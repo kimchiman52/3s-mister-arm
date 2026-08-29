@@ -182,7 +182,7 @@ config default. Capture a screenshot of the router page as evidence.
 
 1. Host (MiSTer #1): OSD -> Direct P2P -> Host.
 2. Observe log: `"UPnP unavailable or refused; falling back to STUN"`
-   (direct_p2p.c:209). The state machine skips the UPnP success path
+   (direct_p2p.c:255). The state machine skips the UPnP success path
    and proceeds to `DIRECT_P2P_STUN_DISCOVER` directly.
 3. Join (MiSTer #2 or host build): enter code.
 4. Same-LAN hairpin rewrite still applies (Smoke A's condition), so
