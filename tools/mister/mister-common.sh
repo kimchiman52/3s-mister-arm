@@ -5,6 +5,10 @@ if [ -n "${__MISTER_COMMON_SH:-}" ]; then
 fi
 __MISTER_COMMON_SH=1
 
+# Directory this file lives in, so sibling data files (runtime-owned-paths.txt)
+# resolve no matter what the caller's cwd is.
+MISTER_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 mister_require_cmd() {
     if ! command -v "$1" >/dev/null 2>&1; then
         echo "missing required command: $1" >&2
@@ -575,6 +579,434 @@ mister_scp_download() {
     fi
 }
 
+# ===========================================================================
+# Runtime deploy -- manifest-scoped, task #93
+# ===========================================================================
+#
+# The deploy used to be `rsync -av --delete` scoped to /media/fat/games/3s-arm/
+# with a fixed `--exclude`/`--filter P` allowlist naming the on-device files
+# that were permitted to survive. Everything else the device held and the
+# package did not was deleted.
+#
+# That policy destroyed real user data twice. 2026-07-25: libminiupnpc.so,
+# replays/ and the user's ROM. 2026-08-29: `training` -- the persisted
+# training-mode settings written by src/port/config/training_config.c:183 --
+# with no device backup, plus balance.status (src/arcade/arcade_balance.c:91).
+# Each time the response was to extend the allowlist. That is the third patch
+# to a list that structurally cannot keep up: it enumerates the runtime files
+# that exist today while the game keeps adding writers, so every new persistent
+# file is destroyed by default until somebody remembers it. At the time of
+# writing the list still omitted `saves/` -- the game's actual save data,
+# `settings` and `sysdir` (src/sf33rd/Source/PS2/mc/savesub.c:42,335,340) --
+# and `states/`, so the next loss was already queued up.
+#
+# The policy is now inverted. The deploy deletes only paths that a previous
+# deploy recorded as its own, in a manifest it writes to the device. Anything
+# unrecognised -- not in the package, not in the previous manifest -- survives
+# by construction, whether or not anyone thought to add it to a list. On a
+# device with no manifest yet, nothing is deleted at all.
+#
+# `--delete` is gone rather than narrowed. Its purpose was to stop stale
+# artifacts (a dropped .so, a renamed script) accumulating, and the manifest
+# diff does exactly that job with the blast radius bounded to paths we shipped.
+# rsync's `--delete` cannot express "delete only what I previously installed";
+# its semantics are "make the destination match the source", which is simply
+# the wrong policy for a directory that is both a package install root and the
+# application's writable home. There is also no `rm -rf` anywhere in this path:
+# stale files are removed with `rm -f <exact path>` and stale directories with
+# `rmdir` (which refuses a non-empty directory), so even a corrupted manifest
+# cannot take out a subtree that still holds runtime data.
+#
+# The preserve list survives as `mister_deploy_preserve_paths`, demoted from a
+# delete-shield to what it now genuinely is: a list of device-owned paths the
+# package must never overwrite. The `--filter 'P ...'` protect rules that
+# accompanied it are gone, because protect rules only ever mattered against
+# `--delete`.
+
+mister_deploy_manifest_name() {
+    printf '%s\n' '.deploy-manifest'
+}
+
+mister_deploy_inventory_path() {
+    printf '%s\n' "${MISTER_RUNTIME_OWNED_PATHS:-${MISTER_COMMON_DIR}/runtime-owned-paths.txt}"
+}
+
+# Device-owned paths a deploy must never overwrite and never delete.
+# Patterns are matched with shell globbing against a path and its prefixes.
+mister_deploy_preserve_paths() {
+    printf '%s\n' \
+        'resources/SF33RD.AFS' \
+        'resources/*.zip' \
+        'config' \
+        'keymap' \
+        'state' \
+        'replays' \
+        'training' \
+        'balance.status' \
+        'saves' \
+        'states' \
+        'logs'
+}
+
+# Top-level names the game persists at runtime, read from the inventory that
+# tools/mister/derive-runtime-paths.sh derives from the source.
+mister_deploy_runtime_owned_names() {
+    local inventory
+    inventory="$(mister_deploy_inventory_path)"
+
+    if [ ! -f "${inventory}" ]; then
+        echo "runtime-owned inventory not found: ${inventory}" >&2
+        return 2
+    fi
+
+    sed -E 's/[[:space:]]*#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//' "${inventory}" |
+        grep -v '^$' || true
+}
+
+mister_deploy_path_is_preserved() {
+    local path="$1"
+    local pattern
+
+    while IFS= read -r pattern; do
+        [ -n "${pattern}" ] || continue
+        # Unquoted on purpose: these are glob patterns ('resources/*.zip').
+        # shellcheck disable=SC2254
+        case "${path}" in
+        ${pattern} | ${pattern}/*) return 0 ;;
+        esac
+    done < <(mister_deploy_preserve_paths)
+
+    return 1
+}
+
+# The rsync argument vector for a runtime deploy. Single definition so the
+# password (expect) path and the key-only path cannot drift apart -- they had,
+# and mister_rsync_deploy_wrapper had drifted from both, which is why the
+# wrapper deploy's list was still missing `training` and `balance.status` after
+# the 2026-08-29 loss was "fixed".
+mister_deploy_rsync_args() {
+    local pattern
+
+    printf '%s\n' -av --omit-dir-times --no-perms --no-owner --no-group
+
+    while IFS= read -r pattern; do
+        [ -n "${pattern}" ] || continue
+        printf '%s\n' "--exclude=${pattern}"
+    done < <(mister_deploy_preserve_paths)
+}
+
+# Manifest of what a package tree installs: one "<type> <relative path>" line
+# per entry, `d` for directories and `f` for everything else, sorted. Preserved
+# paths are omitted, so a package that accidentally contains one can never make
+# it into the set of paths a later deploy considers its own to delete.
+mister_deploy_local_manifest() {
+    local src_dir="${1%/}"
+    local path
+
+    if [ ! -d "${src_dir}" ]; then
+        echo "package directory not found: ${src_dir}" >&2
+        return 2
+    fi
+
+    {
+        while IFS= read -r path; do
+            path="${path#./}"
+            [ -n "${path}" ] || continue
+            mister_deploy_path_is_preserved "${path}" && continue
+            printf 'd %s\n' "${path}"
+        done < <(cd "${src_dir}" && find . -mindepth 1 -type d)
+
+        while IFS= read -r path; do
+            path="${path#./}"
+            [ -n "${path}" ] || continue
+            mister_deploy_path_is_preserved "${path}" && continue
+            printf 'f %s\n' "${path}"
+        done < <(cd "${src_dir}" && find . -mindepth 1 ! -type d)
+    } | LC_ALL=C sort
+}
+
+# A relative path we are willing to name in a remote `rm`/`rmdir`.
+mister_deploy_path_is_sane() {
+    local path="$1"
+
+    [ -n "${path}" ] || return 1
+    case "${path}" in
+    /* | -* | *'..'* | *'*'* | *'?'* | *'$'* | *'`'* | *'"'* | *"'"* | *'
+'*)
+        return 1
+        ;;
+    esac
+
+    return 0
+}
+
+# Plan what a deploy of ${package_dir} may remove, given the manifest the
+# previous deploy left on the device.
+#
+# Emits one line per candidate:
+#   prune <d|f> <path>   safe to remove: a previous deploy installed it and
+#                        this package does not
+#   veto  <reason> <path>  must not be removed; the caller aborts the deploy
+#
+# Nothing that is absent from ${old_manifest} is ever a candidate. That is the
+# whole point: an on-device file this tooling never installed is invisible to
+# the planner and therefore survives, no list membership required.
+mister_deploy_plan_prune() {
+    local package_dir="$1"
+    local old_manifest="$2"
+    local new_paths owned_names package_top
+    local line type path top
+
+    [ -f "${old_manifest}" ] || return 0
+
+    new_paths="$(mister_deploy_local_manifest "${package_dir}" | cut -d' ' -f2-)"
+    owned_names="$(mister_deploy_runtime_owned_names)" || return $?
+    # Top-level names the package itself installs are package-owned; the deploy
+    # is the authority on their contents. Without this, `lib` and `bin` -- which
+    # the inventory lists because the wrapper hardcodes those literals -- would
+    # veto exactly the stale-artifact cleanup the prune exists to do (a dropped
+    # lib/libminiupnpc.so, say).
+    package_top="$(cd "${package_dir%/}" && find . -mindepth 1 -maxdepth 1 | sed 's|^\./||')"
+
+    while IFS= read -r line; do
+        [ -n "${line}" ] || continue
+        type="${line%% *}"
+        path="${line#* }"
+
+        if ! mister_deploy_path_is_sane "${path}"; then
+            printf 'veto unsafe-path %s\n' "${path}"
+            continue
+        fi
+
+        case "${type}" in
+        d | f) ;;
+        *)
+            printf 'veto unknown-type %s\n' "${path}"
+            continue
+            ;;
+        esac
+
+        # Still shipped by this package: not stale, nothing to do.
+        if printf '%s\n' "${new_paths}" | grep -qxF "${path}"; then
+            continue
+        fi
+
+        if mister_deploy_path_is_preserved "${path}"; then
+            printf 'veto preserved %s\n' "${path}"
+            continue
+        fi
+
+        top="${path%%/*}"
+        if printf '%s\n' "${owned_names}" | grep -qxF "${top}" &&
+            ! printf '%s\n' "${package_top}" | grep -qxF "${top}"; then
+            printf 'veto runtime-owned %s\n' "${path}"
+            continue
+        fi
+
+        printf 'prune %s %s\n' "${type}" "${path}"
+    done <"${old_manifest}"
+}
+
+# Remote script that removes a planned prune set. Files go first, then
+# directories deepest-first via `rmdir`, which fails on a non-empty directory
+# and so cannot take runtime data with it.
+mister_deploy_prune_script() {
+    local remote_root="$1"
+    local plan_file="$2"
+    local line type path
+    local -a files=()
+    local -a dirs=()
+
+    while IFS= read -r line; do
+        case "${line}" in
+        'prune '*) ;;
+        *) continue ;;
+        esac
+        line="${line#prune }"
+        type="${line%% *}"
+        path="${line#* }"
+        if [ "${type}" = "d" ]; then
+            dirs+=("${path}")
+        else
+            files+=("${path}")
+        fi
+    done <"${plan_file}"
+
+    printf 'set -e\n'
+    printf 'cd %s\n' "$(mister_shell_quote "${remote_root}")"
+
+    if [ "${#files[@]}" -gt 0 ]; then
+        printf 'rm -f --'
+        for path in "${files[@]}"; do
+            printf ' %s' "$(mister_shell_quote "${path}")"
+        done
+        printf '\n'
+    fi
+
+    if [ "${#dirs[@]}" -gt 0 ]; then
+        # Deepest first so a directory is empty by the time rmdir reaches it.
+        while IFS= read -r path; do
+            [ -n "${path}" ] || continue
+            printf 'rmdir -- %s 2>/dev/null || true\n' "$(mister_shell_quote "${path}")"
+        done < <(printf '%s\n' "${dirs[@]}" | awk '{print gsub(/\//,"/"), $0}' | sort -rn | cut -d' ' -f2-)
+    fi
+
+    printf 'echo __MISTER_PRUNE_DONE__\n'
+}
+
+mister_deploy_fetch_manifest() {
+    local host="$1"
+    local user="$2"
+    local password="$3"
+    local remote_root="$4"
+    local out_file="$5"
+    local manifest_path raw
+
+    manifest_path="${remote_root%/}/$(mister_deploy_manifest_name)"
+    : >"${out_file}"
+
+    raw="$(mister_ssh_exec "${host}" "${user}" "${password}" "$(
+        printf 'echo __MISTER_MANIFEST_BEGIN__\n'
+        printf '[ -f %s ] && cat %s\n' \
+            "$(mister_shell_quote "${manifest_path}")" \
+            "$(mister_shell_quote "${manifest_path}")"
+        printf 'echo __MISTER_MANIFEST_END__\n'
+    )" 2>/dev/null)" || true
+
+    printf '%s\n' "${raw}" |
+        tr -d '\r' |
+        sed -n '/^__MISTER_MANIFEST_BEGIN__$/,/^__MISTER_MANIFEST_END__$/p' |
+        sed '1d;$d' >"${out_file}"
+}
+
+mister_deploy_write_manifest() {
+    local host="$1"
+    local user="$2"
+    local password="$3"
+    local remote_root="$4"
+    local manifest_file="$5"
+    local manifest_path encoded
+
+    manifest_path="${remote_root%/}/$(mister_deploy_manifest_name)"
+    encoded="$(base64 <"${manifest_file}" | tr -d '\n')"
+
+    mister_ssh_exec "${host}" "${user}" "${password}" "$(
+        printf 'set -e\n'
+        printf 'printf %%s %s | base64 -d > %s\n' \
+            "$(mister_shell_quote "${encoded}")" \
+            "$(mister_shell_quote "${manifest_path}.tmp")"
+        printf 'mv %s %s\n' \
+            "$(mister_shell_quote "${manifest_path}.tmp")" \
+            "$(mister_shell_quote "${manifest_path}")"
+        printf 'echo __MISTER_MANIFEST_WRITTEN__\n'
+    )"
+}
+
+# Upload the package, then remove only what a previous deploy owned and this
+# one does not. Shared by `deploy` and by the runtime half of `deploy-wrapper`.
+mister_deploy_runtime_tree() {
+    local src_path="$1"
+    local host="$2"
+    local user="$3"
+    local password="$4"
+    local dst_path="$5"
+
+    local tmp_dir old_manifest new_manifest plan_file prune_script
+    local vetoes prunes rc=0
+
+    mister_require_safe_runtime_root "${dst_path}" || return $?
+
+    tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/mister-deploy.XXXXXX")" || return 1
+    old_manifest="${tmp_dir}/old-manifest"
+    new_manifest="${tmp_dir}/new-manifest"
+    plan_file="${tmp_dir}/plan"
+    prune_script="${tmp_dir}/prune.sh"
+
+    mister_deploy_local_manifest "${src_path}" >"${new_manifest}" || {
+        rm -rf "${tmp_dir}"
+        return 2
+    }
+
+    # rsync creates only the final component of a destination path, so a root
+    # whose parents do not exist yet fails the transfer with a bare
+    # "unexpected end of file". The path has already been through
+    # mister_require_safe_runtime_root above.
+    mister_ssh_exec "${host}" "${user}" "${password}" \
+        "mkdir -p $(mister_shell_quote "${dst_path%/}")" >/dev/null 2>&1 || true
+
+    mister_deploy_fetch_manifest "${host}" "${user}" "${password}" "${dst_path}" "${old_manifest}"
+
+    if [ ! -s "${old_manifest}" ]; then
+        echo "deploy: no previous manifest on the device; nothing is owned, so nothing will be removed."
+        : >"${plan_file}"
+    else
+        mister_deploy_plan_prune "${src_path}" "${old_manifest}" >"${plan_file}" || {
+            echo "deploy: could not plan the prune set; refusing to deploy." >&2
+            rm -rf "${tmp_dir}"
+            return 2
+        }
+    fi
+
+    # Pre-flight: say what would be removed before anything is removed, and
+    # refuse outright if the plan names something unrecognised.
+    vetoes="$(grep '^veto ' "${plan_file}" || true)"
+    prunes="$(grep '^prune ' "${plan_file}" || true)"
+
+    if [ -n "${prunes}" ]; then
+        echo "deploy: stale paths recorded by the previous deploy and absent from this package:"
+        printf '%s\n' "${prunes}" | sed 's/^prune [df] /  - /'
+    else
+        echo "deploy: no stale paths to remove."
+    fi
+
+    if [ -n "${vetoes}" ]; then
+        echo "ERROR: the previous deploy's manifest names paths this deploy must not remove:" >&2
+        printf '%s\n' "${vetoes}" | sed 's/^veto /  - /' >&2
+        echo "       'runtime-owned' means the game persists that path (see" >&2
+        echo "       tools/mister/runtime-owned-paths.txt); a package should never ship it." >&2
+        echo "       'unsafe-path'/'unknown-type' means the manifest is malformed." >&2
+        echo "       Refusing to deploy rather than delete it." >&2
+        echo "       To reset ownership -- after which the deploy installs but removes" >&2
+        echo "       nothing until it has written a manifest of its own -- delete" >&2
+        echo "       ${dst_path%/}/$(mister_deploy_manifest_name) on the device." >&2
+        rm -rf "${tmp_dir}"
+        return 2
+    fi
+
+    if [ "${MISTER_DEPLOY_PLAN_ONLY:-0}" = "1" ]; then
+        echo "deploy: MISTER_DEPLOY_PLAN_ONLY=1, stopping before any transfer."
+        rm -rf "${tmp_dir}"
+        return 0
+    fi
+
+    mister_rsync_runtime_upload "${src_path}" "${host}" "${user}" "${password}" "${dst_path}" || rc=$?
+    if [ "${rc}" -ne 0 ]; then
+        rm -rf "${tmp_dir}"
+        return "${rc}"
+    fi
+
+    if [ -n "${prunes}" ]; then
+        if [ "${MISTER_DEPLOY_NO_PRUNE:-0}" = "1" ]; then
+            echo "deploy: MISTER_DEPLOY_NO_PRUNE=1, leaving the stale paths in place."
+            echo "        The manifest is not updated, so the next deploy re-plans the same removals."
+            rm -rf "${tmp_dir}"
+            return 0
+        fi
+
+        mister_deploy_prune_script "${dst_path}" "${plan_file}" >"${prune_script}"
+        mister_ssh_exec "${host}" "${user}" "${password}" "$(cat "${prune_script}")" || rc=$?
+        if [ "${rc}" -ne 0 ]; then
+            echo "deploy: prune step failed; leaving the previous manifest in place so it can be retried." >&2
+            rm -rf "${tmp_dir}"
+            return "${rc}"
+        fi
+    fi
+
+    mister_deploy_write_manifest "${host}" "${user}" "${password}" "${dst_path}" "${new_manifest}" || rc=$?
+    rm -rf "${tmp_dir}"
+    return "${rc}"
+}
+
 mister_rsync_expect() {
     local src_path="$1"
     local host="$2"
@@ -584,10 +1016,15 @@ mister_rsync_expect() {
 
     local timeout_seconds
     local rsync_shell
+    local rsync_args
     timeout_seconds="$(mister_transfer_timeout)"
     rsync_shell="$(mister_rsync_ssh_password_command)"
+    # Newline-separated and split inside expect, matching how EXPECT_SCP_ARGS
+    # is already handled above, so the Tcl spawn cannot carry a hand-copied
+    # duplicate of the argument list.
+    rsync_args="$(mister_deploy_rsync_args)"
 
-    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_SRC="$src_path" EXPECT_DST="$dst_path" EXPECT_TIMEOUT="$timeout_seconds" EXPECT_RSYNC_SHELL="$rsync_shell" expect <<'EOF'
+    EXPECT_HOST="$host" EXPECT_USER="$user" EXPECT_PASSWORD="$password" EXPECT_SRC="$src_path" EXPECT_DST="$dst_path" EXPECT_TIMEOUT="$timeout_seconds" EXPECT_RSYNC_SHELL="$rsync_shell" EXPECT_RSYNC_ARGS="$rsync_args" expect <<'EOF'
 set timeout $env(EXPECT_TIMEOUT)
 set host $env(EXPECT_HOST)
 set user $env(EXPECT_USER)
@@ -595,7 +1032,8 @@ set pw $env(EXPECT_PASSWORD)
 set src_path $env(EXPECT_SRC)
 set dst_path $env(EXPECT_DST)
 set rsync_shell $env(EXPECT_RSYNC_SHELL)
-spawn rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group --exclude resources/SF33RD.AFS --filter {P resources/SF33RD.AFS} --exclude config --filter {P config} --exclude keymap --filter {P keymap} --exclude state --filter {P state} --exclude replays --filter {P replays} --exclude training --filter {P training} --exclude balance.status --filter {P balance.status} --exclude resources/*.zip --filter {P resources/*.zip} -e $rsync_shell "$src_path" ${user}@${host}:${dst_path}
+set rsync_args [split $env(EXPECT_RSYNC_ARGS) "\n"]
+spawn rsync {*}$rsync_args -e $rsync_shell "$src_path" ${user}@${host}:${dst_path}
 expect {
   -re {[Pp]assword:} { send -- "$pw\r"; exp_continue }
   eof
@@ -603,6 +1041,33 @@ expect {
 set status [lindex [wait] 3]
 exit $status
 EOF
+}
+
+# Transfer only. Deletion is the caller's business (mister_deploy_runtime_tree).
+mister_rsync_runtime_upload() {
+    local src_path="$1"
+    local host="$2"
+    local user="$3"
+    local password="$4"
+    local dst_path="$5"
+    local arg
+    local -a rsync_args
+
+    if [ -n "${password}" ]; then
+        mister_require_cmd expect || return $?
+        mister_rsync_expect "${src_path}" "${host}" "${user}" "${password}" "${dst_path}"
+    else
+        local rsync_shell
+        rsync_shell="$(mister_rsync_ssh_key_only_command)"
+        while IFS= read -r arg; do
+            rsync_args+=("${arg}")
+        done < <(mister_deploy_rsync_args)
+        rsync "${rsync_args[@]}" -e "${rsync_shell}" \
+            "${src_path}" "${user}@${host}:${dst_path}" || {
+            echo "MiSTer key-only rsync deploy failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
+            return 1
+        }
+    fi
 }
 
 mister_rsync_expect_copy() {
@@ -636,43 +1101,7 @@ EOF
 }
 
 mister_rsync_deploy() {
-    local src_path="$1"
-    local host="$2"
-    local user="$3"
-    local password="$4"
-    local dst_path="$5"
-
-    mister_require_safe_runtime_root "${dst_path}" || return $?
-
-    if [ -n "${password}" ]; then
-        mister_require_cmd expect || return $?
-        mister_rsync_expect "${src_path}" "${host}" "${user}" "${password}" "${dst_path}"
-    else
-        local rsync_shell
-        rsync_shell="$(mister_rsync_ssh_key_only_command)"
-        rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group \
-            --exclude 'resources/SF33RD.AFS' \
-            --filter 'P resources/SF33RD.AFS' \
-            --exclude 'config' \
-            --filter 'P config' \
-            --exclude 'keymap' \
-            --filter 'P keymap' \
-            --exclude 'state' \
-            --filter 'P state' \
-            --exclude 'replays' \
-            --filter 'P replays' \
-            --exclude 'training' \
-            --filter 'P training' \
-            --exclude 'balance.status' \
-            --filter 'P balance.status' \
-            --exclude 'resources/*.zip' \
-            --filter 'P resources/*.zip' \
-            -e "${rsync_shell}" \
-            "${src_path}" "${user}@${host}:${dst_path}" || {
-            echo "MiSTer key-only rsync deploy failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
-            return 1
-        }
-    fi
+    mister_deploy_runtime_tree "$@"
 }
 
 mister_rsync_deploy_wrapper() {
@@ -740,7 +1169,13 @@ mister_rsync_deploy_wrapper() {
             mister_rsync_expect_copy "${core_src}" "${host}" "${user}" "${password}" "${dst_path%/}/_Other/"
         fi
         if [ "${deploy_mode}" = "full" ]; then
-            mister_rsync_expect "${runtime_src}" "${host}" "${user}" "${password}" "${dst_path%/}/games/3s-arm/"
+            # Task #93: same manifest-scoped path as `deploy`. This branch used
+            # to call mister_rsync_expect directly, which meant it carried
+            # --delete with an even staler preserve list than the one in
+            # mister_rsync_deploy -- it never gained `training` or
+            # `balance.status` at all, so a wrapper deploy destroyed them even
+            # after the 2026-08-29 fix.
+            mister_deploy_runtime_tree "${runtime_src}" "${host}" "${user}" "${password}" "${dst_path%/}/games/3s-arm/" || return $?
         fi
     else
         local rsync_shell
@@ -762,24 +1197,8 @@ mister_rsync_deploy_wrapper() {
             }
         fi
         if [ "${deploy_mode}" = "full" ]; then
-            rsync -av --delete --omit-dir-times --no-perms --no-owner --no-group \
-                --exclude 'resources/SF33RD.AFS' \
-                --filter 'P resources/SF33RD.AFS' \
-                --exclude 'config' \
-                --filter 'P config' \
-                --exclude 'keymap' \
-                --filter 'P keymap' \
-                --exclude 'state' \
-                --filter 'P state' \
-                --exclude 'replays' \
-                --filter 'P replays' \
-                --exclude 'resources/*.zip' \
-                --filter 'P resources/*.zip' \
-                -e "${rsync_shell}" \
-                "${runtime_src}" "${user}@${host}:${dst_path%/}/games/3s-arm/" || {
-                echo "MiSTer key-only wrapper runtime deploy failed; set MISTER_PASSWORD to use password auth or configure a working SSH key." >&2
-                return 1
-            }
+            # Task #93: see the note on the password branch above.
+            mister_deploy_runtime_tree "${runtime_src}" "${host}" "${user}" "${password}" "${dst_path%/}/games/3s-arm/" || return $?
         fi
     fi
 }
