@@ -14,6 +14,7 @@ const char* ConnectFail_Code(ConnectFailCode code) {
     case CONNECT_FAIL_STUN_ALLDOWN:         return "P2P_FAIL_STUN_ALLDOWN";
     case CONNECT_FAIL_RENDEZVOUS_DOWN:      return "P2P_FAIL_RENDEZVOUS_DOWN";
     case CONNECT_FAIL_COOKIE_REJECTED:      return "P2P_FAIL_COOKIE_REJECTED";
+    case CONNECT_FAIL_RENDEZVOUS_NOPAIR:    return "P2P_FAIL_RENDEZVOUS_NOPAIR";
     case CONNECT_FAIL_HOST_OFFLINE:         return "P2P_FAIL_HOST_OFFLINE";
     case CONNECT_FAIL_NAT_BLOCKED:          return "P2P_FAIL_NAT_BLOCKED";
     case CONNECT_FAIL_SYMMETRIC_BOTH:       return "P2P_FAIL_SYMMETRIC_BOTH";
@@ -47,7 +48,21 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
     case CONNECT_FAIL_RENDEZVOUS_DOWN:
         return "Matchmaking server unreachable.";
     case CONNECT_FAIL_COOKIE_REJECTED:
-        return "Matchmaking auth failed. Update the game.";
+        /* Task #105: this string is now only reached when the server
+         * RE-challenged a cookie we had already echoed, which is a real
+         * refusal. It still does not name "update" as the only remedy:
+         * the cookie is bound to (address, port), so a NAT that reassigns
+         * our source port between datagrams also makes the echo fail
+         * forever, and that user has nothing to update. Both remedies are
+         * named; neither is asserted. */
+        return "Matchmaking refused us. Update, or host must forward.";
+    case CONNECT_FAIL_RENDEZVOUS_NOPAIR:
+        /* Deliberately NOT an auth message and NOT "update the game": the
+         * cookie demonstrably bound. The server took our registration and
+         * we were never paired inside the budget — a lost datagram or a
+         * slot the server was still holding. Retrying is the true remedy
+         * and it is the one the evidence supports. */
+        return "Matchmaking never paired you. Try again.";
     case CONNECT_FAIL_HOST_OFFLINE:
         return "Host not found. Code stale or host offline.";
     case CONNECT_FAIL_NAT_BLOCKED:
@@ -129,11 +144,27 @@ ConnectFailCode ConnectFail_ClassifyJoin(const ConnectJoinEvidence* ev) {
     }
     if (!ev->deliver_any) {
         /* S4c: a CHALLENGE is proof of life — the server answered us.
-         * Challenges without a single DELIVER for the whole budget
-         * means our cookie echo never bound: auth/version trouble,
-         * not a dead server. */
+         *
+         * Task #105 refines what it proves. It used to be read as "our
+         * cookie echo never bound", but a single challenge proves the
+         * opposite of nothing: the server issues a CHALLENGE only when
+         * cookieValid() fails, and the joiner then carries that cookie on
+         * EVERY later REGISTER. So one challenge is the NORMAL opening of
+         * a healthy v2 session, and the honest discriminator is whether we
+         * were challenged AGAIN after echoing:
+         *
+         *   re-challenged  -> the echo really did not verify. Auth or
+         *                     version trouble (or a NAT reassigning our
+         *                     source port, which the cookie is bound to).
+         *   not re-challenged -> the cookie BOUND. Zero DELIVERs then
+         *                     means the pairing never happened: a lost
+         *                     DELIVER, or the server dropping our valid
+         *                     REGISTER for a non-auth reason. Blaming
+         *                     auth here sends the user to "update the
+         *                     game" for a dropped datagram. */
         if (ev->challenge_any) {
-            return CONNECT_FAIL_COOKIE_REJECTED;
+            return ev->cookie_rechallenged ? CONNECT_FAIL_COOKIE_REJECTED
+                                           : CONNECT_FAIL_RENDEZVOUS_NOPAIR;
         }
         /* The v2 server answers EVERY well-formed REGISTER with a
          * CHALLENGE or a DELIVER — total silence for the whole budget

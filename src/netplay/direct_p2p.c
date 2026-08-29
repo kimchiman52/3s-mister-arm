@@ -158,6 +158,8 @@ typedef struct {
     bool ev_deliver_any;         /* joiner: >=1 DELIVER frame (incl. sentinel) */
     bool ev_deliver_real;        /* joiner: >=1 DELIVER with a real endpoint */
     bool ev_challenge_any;       /* S4c joiner: >=1 CHALLENGE frame received */
+    bool ev_cookie_rechallenged; /* #105 joiner: challenged AGAIN after we
+                                    echoed a cookie — the echo never verified */
     int  join_attempts;          /* attempts consumed (S2 auto-retry) */
     /* Stage timings (ms) for the report line — 0 = stage not reached.
      *
@@ -1140,6 +1142,10 @@ typedef struct {
     bool deliver_any;
     bool deliver_real;
     bool challenge_any;
+    /* Task #105: we were challenged again while already holding a cookie,
+     * i.e. our echo did not verify. Distinguishes a real cookie refusal
+     * from the healthy one-challenge opening every v2 session has. */
+    bool cookie_rechallenged;
 
     /* S4c cookie learned mid-race, so the caller can reuse it. */
     bool    have_cookie;
@@ -1724,6 +1730,16 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                  * problem, not a dead server. */
                 if (Rendezvous_ParseChallenge(dgram->buf, dgram->buflen,
                                               cfg->session_key, cookie)) {
+                    /* Task #105: record the RE-challenge before we
+                     * overwrite have_cookie. Being challenged while we
+                     * already hold a cookie is the only on-wire proof that
+                     * the echo failed to verify — without it, the normal
+                     * first challenge of a perfectly healthy session was
+                     * being reported to the user as "Matchmaking auth
+                     * failed. Update the game." */
+                    if (have_cookie) {
+                        out->cookie_rechallenged = true;
+                    }
                     have_cookie = true;
                     out->have_cookie = true;
                     memcpy(out->cookie, cookie, sizeof(cookie));
@@ -3226,6 +3242,7 @@ static void join_reset_attempt_evidence(void) {
     s_work.ev_deliver_any = false;
     s_work.ev_deliver_real = false;
     s_work.ev_challenge_any = false; /* S4c */
+    s_work.ev_cookie_rechallenged = false; /* #105 — per-attempt, see LIFETIME */
     s_work.t_stun_ms = 0;
     s_work.t_punch_ms = 0;
     s_work.t_signal_ms = 0;
@@ -3253,6 +3270,7 @@ void DirectP2P_TestHook_JoinAttemptEvidenceReset(const DirectP2PAttemptEvidence*
         s_work.ev_deliver_any = in->deliver_any;
         s_work.ev_deliver_real = in->deliver_real;
         s_work.ev_challenge_any = in->challenge_any;
+        s_work.ev_cookie_rechallenged = in->cookie_rechallenged; /* #105 */
         s_work.t_race_ms = in->t_race_ms;
         s_work.race_confirm_seen = in->confirm_seen;
         s_work.race_confirm_ms = in->confirm_ms;
@@ -3267,6 +3285,7 @@ void DirectP2P_TestHook_JoinAttemptEvidenceReset(const DirectP2PAttemptEvidence*
         out->deliver_any = s_work.ev_deliver_any;
         out->deliver_real = s_work.ev_deliver_real;
         out->challenge_any = s_work.ev_challenge_any;
+        out->cookie_rechallenged = s_work.ev_cookie_rechallenged; /* #105 */
         out->t_race_ms = s_work.t_race_ms;
         out->confirm_seen = s_work.race_confirm_seen;
         out->confirm_ms = s_work.race_confirm_ms;
@@ -3465,6 +3484,7 @@ static DirectP2PState join_attempt(void) {
     s_work.ev_deliver_any = res.deliver_any;
     s_work.ev_deliver_real = res.deliver_real;
     s_work.ev_challenge_any = res.challenge_any;
+    s_work.ev_cookie_rechallenged = res.cookie_rechallenged; /* #105 */
     s_work.t_punch_ms = res.t_punch_ms;
     s_work.t_bilateral_ms = res.t_bilateral_ms;
     s_work.t_signal_ms = res.t_signal_ms;
@@ -3547,14 +3567,20 @@ static DirectP2PState join_attempt(void) {
         ev.deliver_any = res.deliver_any;
         ev.deliver_real = res.deliver_real;
         ev.challenge_any = res.challenge_any; /* S4c */
+        ev.cookie_rechallenged = res.cookie_rechallenged; /* #105 */
         ev.bilateral_punched = false;
         ev.port_disagreement = s_work.stun.port_disagreement;
         ev.punch_bad_token = s_work.stun.diag_punch_bad_token; /* S4a */
         const ConnectFailCode jc = ConnectFail_ClassifyJoin(&ev);
+        /* #105: rechal is in the line because it is the bit that decides
+         * between COOKIE_REJECTED and RENDEZVOUS_NOPAIR — a triager
+         * reading a tester log must be able to see which branch was
+         * taken, not just the verdict. */
         SDL_Log("[direct_p2p] joiner race exhausted (deliver_any=%d real=%d "
-                "challenge_any=%d portdis=%d) -> %s",
+                "challenge_any=%d rechal=%d portdis=%d) -> %s",
                 (int)res.deliver_any, (int)res.deliver_real,
-                (int)res.challenge_any, (int)s_work.stun.port_disagreement,
+                (int)res.challenge_any, (int)res.cookie_rechallenged,
+                (int)s_work.stun.port_disagreement,
                 ConnectFail_Code(jc));
         set_fail(jc);
         return DIRECT_P2P_FAILED_BILATERAL;

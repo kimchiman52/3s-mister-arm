@@ -103,6 +103,50 @@ const MAX_NEW_KEYS_PER_IP = 4;
 // (which no legitimate joiner can produce — the client-side hairpin
 // bypass fails same-IP joiners before they ever REGISTER) repoints it.
 const SLOT_STALE_MS = 30 * 1000;
+
+// Task #105 — the JOINER's automatic retry must not be locked out.
+//
+// THE BUG THIS CLOSES. The joiner runs JOIN_MAX_ATTEMPTS = 2 attempts
+// (src/netplay/direct_p2p.c), and each attempt re-runs STUN discovery on a
+// FRESHLY BOUND local socket, deliberately: the retry exists to dodge stale
+// per-port NAT/conntrack state, so binding the same port again would defeat
+// its whole purpose. A fresh local port means a fresh PUBLIC port, so
+// attempt 2's REGISTER matches neither slot A (the host) nor slot B (the
+// joiner's own attempt-1 endpoint). Slot B is not STALE either — attempt 1
+// refreshed lastSeenB only moments earlier at its ~500 ms REGISTER cadence.
+// So the whole retry fell through to the third-party drop below and was
+// ignored, with no reply, for the entire connect budget. SLOT_STALE_MS is
+// 30 s; the joiner's whole derived deadline is 31.8 s. The recovery
+// mechanism was therefore inert in exactly the lossy conditions it was
+// built for.
+//
+// THE FIX, AND WHY IT IS NOT A SLOT HIJACK. Reclaim slot B for a REGISTER
+// from the SAME PUBLIC ADDRESS on a new port. This is the exact
+// discriminator already used for the HOST slot in the H1 reclaim above --
+// same IP, new NAT source port, same session key -- applied to the joiner
+// slot, and it deliberately does NOT relax staleness for anyone else:
+//   * A DIFFERENT-IP third party still cannot touch a live slot B. That is
+//     the property __test_protocol.js testStaleJoinerSlotReplaced asserts
+//     ("LIVE slot B not replaced by third party"), and it still holds.
+//   * The claimant must still pass the S4 return-routability gate at its
+//     NEW (address, port). cookieForSlot() is unchanged and still does NOT
+//     take the session key, so this grants NO new power to a spoofed
+//     source: a spoofer never receives the CHALLENGE and so never obtains
+//     a valid cookie for the endpoint it is claiming. What S4 closed --
+//     unproven sources binding, evicting or naming a session -- stays
+//     closed.
+// The residual exposure is a party that (a) knows the room code and (b) is
+// behind the SAME public IP as the joiner (CGNAT). Such a party can already
+// deny the room today by simply REGISTERing into slot B first: the room
+// code is a capability, and this change does not alter that. The cap below
+// bounds the churn rather than carrying a security property.
+//
+// THE CAP. The client needs exactly ONE reclaim per join (attempt 2 of 2),
+// so a small multiple covers repeated user-initiated joins against the same
+// still-live room code within SESSION_TTL_MS without letting a co-located
+// peer flap the slot indefinitely. Once the budget is spent the slot falls
+// back to the pre-existing staleness rule.
+const MAX_JOINER_PORT_RECLAIMS = 8;
 const RATE_SWEEP_INTERVAL_MS = 60 * 1000;
 
 // Per-IP budget for requests that have ALREADY PROVEN return routability
@@ -641,7 +685,7 @@ function handleRegister(socket, buf, rinfo) {
             releaseSession(oldestKey, oldestEntry);
             logWarn(`session table full — evicted oldest unpaired singleton key=${shortKey4(oldestKey)}... to admit ${source.address}:${source.port}`);
         }
-        entry = { endpointA: source, endpointB: null, lastTouch: now, lastSeenA: now, lastSeenB: 0, creatorIp: source.address };
+        entry = { endpointA: source, endpointB: null, lastTouch: now, lastSeenA: now, lastSeenB: 0, creatorIp: source.address, joinerPortReclaims: 0 };
         sessionMap.set(hexKey, entry);
         creatorCounts.set(source.address, created + 1);
     } else if (entry.endpointA && endpointEq(entry.endpointA, source)) {
@@ -690,6 +734,20 @@ function handleRegister(socket, buf, rinfo) {
             entry.endpointB = source;
             entry.lastSeenB = now;
             pairedPeer = entry.endpointA; // notify A that B has now joined
+        } else if (entry.endpointB &&
+                   entry.endpointB.address === source.address &&
+                   (entry.joinerPortReclaims || 0) < MAX_JOINER_PORT_RECLAIMS) {
+            // Task #105: the room's OWN joiner retrying on a fresh source
+            // port. Same public address, port changed, slot B NOT stale
+            // (attempt 1 refreshed it moments ago). Without this the retry
+            // is ignored for the whole connect budget — see the long note
+            // on MAX_JOINER_PORT_RECLAIMS above for why this is not a slot
+            // hijack and why S4 stays closed.
+            entry.joinerPortReclaims = (entry.joinerPortReclaims || 0) + 1;
+            logInfo(`[RECLAIM] joiner port key=${shortKey4(hexKey)}... ${entry.endpointB.address}:${entry.endpointB.port} -> ${source.address}:${source.port} (same-IP retry ${entry.joinerPortReclaims}/${MAX_JOINER_PORT_RECLAIMS})`);
+            entry.endpointB = source;
+            entry.lastSeenB = now;
+            pairedPeer = entry.endpointA; // re-notify A with the new joiner endpoint
         } else if (bStale) {
             // Both slots filled but the joiner slot is stale (abandoned
             // attempt). Replace it — same-IP retry from a new port, or a
@@ -947,6 +1005,7 @@ function start(port) {
         _sessionTtlMs: SESSION_TTL_MS,
         _maxSessions: MAX_SESSIONS,
         _slotStaleMs: SLOT_STALE_MS,
+        _maxJoinerPortReclaims: MAX_JOINER_PORT_RECLAIMS, // #105
         _sweepNow() {
             sweepSessions();
             sweepRates();
