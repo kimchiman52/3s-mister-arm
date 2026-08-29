@@ -254,14 +254,14 @@ Citations-only call graph:
 ```
 NetplayNav_Arm()                              netplay_nav.c:138  (SDL_INIT → main_loop)
 └─ [nav state machine, frames]               netplay_nav.c:166-320
-   ├─ NAV_PRESS_COIN → Start pressed          netplay_nav.c:188-214
-   ├─ NAV_PRESS_TITLE → Start pressed         netplay_nav.c:216-237
+   ├─ NAV_PRESS_COIN → Start pressed          netplay_nav.c:233-259
+   ├─ NAV_PRESS_TITLE → Start pressed         netplay_nav.c:261-282
    │   └─ Entry_01_Sub(PL_id) @entry.c:208-228
    │       └─ Champion = PL_id   (line 213)
-   ├─ NAV_DRIVE_VS → Mode_Select case 3       netplay_nav.c:260-296
+   ├─ NAV_DRIVE_VS → Mode_Select case 3       netplay_nav.c:305-341
    │   └─ menu.c:425-431  Setup_VS_Mode + Mode_Type=MODE_VERSUS
    │       (Setup_VS_Mode @menu.c:482-494 does NOT touch Champion or NC)
-   ├─ apply_network_mode_override             netplay_nav.c:115-136
+   ├─ apply_network_mode_override             netplay_nav.c:175-199
    │   → Mode_Type = MODE_NETWORK
    ├─ NAV_WAIT_ORCHESTRATOR                   netplay_nav.c:298-309
    └─ NAV_START_NETPLAY
@@ -431,7 +431,7 @@ netplay_nav.c:91:    p2sw_buff |= SWK_START;
 
 Only SWK_START. Only during title + menu. Never during char select.
 
-`NAV_DRIVE_VS` case at netplay_nav.c:260-296 DOES force `Menu_Cursor_Y[0] = 1`
+`NAV_DRIVE_VS` case at netplay_nav.c:305-341 DOES force `Menu_Cursor_Y[0] = 1`
 (for the Mode_Select cursor, selecting "Versus" over "Arcade"). That is the
 Mode_Select menu cursor, NOT the character-select cursor
 (`Cursor_X/Y[PL_id]`). Cursor_X/Y for char select are only set via

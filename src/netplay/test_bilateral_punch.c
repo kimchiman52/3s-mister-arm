@@ -55,6 +55,7 @@
 #include "netplay/connect_fail.h"
 #include "netplay/direct_p2p.h"
 #include "netplay/natpmp.h" /* S7, test 18 */
+#include "netplay/netplay_nav.h" /* task #76, test 40 */
 #include "netplay/net_tuning.h"
 #include "netplay/rendezvous.h"
 #include "netplay/room_code.h"
@@ -2111,7 +2112,7 @@ static int test_rendezvous_cookie_codec(void) {
  *
  *   rendezvous.c:281  Rendezvous_HasMagic   — magic ONLY
  *   rendezvous.c:290  Rendezvous_FrameType  — magic AND version AND type
- *   direct_p2p.c:1567-1568 — the race's one shared receive path routes
+ *   direct_p2p.c:1630-1631 — the race's one shared receive path routes
  *                            with HasMagic ? FrameType : -1
  *   sdl_net_adapter.c:291,298 — the GekkoNet straggler drop
  *
@@ -2449,7 +2450,7 @@ static int send_log_count(void) {
 /* Records every packet direct_p2p.c pushes through RENDEZVOUS_SEND and
  * then performs the real send, so the machine under test keeps running
  * against the mock server. Both roles route here: the host's rend_q
- * drain AND its main-thread CHALLENGE echo (direct_p2p.c:3803), and the
+ * drain AND its main-thread CHALLENGE echo (direct_p2p.c:3871), and the
  * joiner's inline signaling loop sends. */
 static bool recording_rendezvous_send(NET_DatagramSocket* sock, NET_Address* target,
                                       uint16_t target_port, const uint8_t* pkt,
@@ -2516,7 +2517,7 @@ static void mock_server_stop(MockServerCtx* ctx, SDL_Thread* tid,
 
 /* --- host-side STUN seam that hands the test a live handle ------------- */
 
-/* direct_p2p.c:2750 calls STUN_DISCOVER(&s_work.stun, ...) — the mock is
+/* direct_p2p.c:2817 calls STUN_DISCOVER(&s_work.stun, ...) — the mock is
  * therefore handed a pointer to the orchestrator's own StunResult. Test
  * 13 keeps it so it can move stun.public_port AFTER the room code (and
  * with it advertised_port) has been latched, which is the only way to
@@ -2572,7 +2573,7 @@ static bool pred_two_cookied_requests(void) {
  * DIRECT_P2P_HANDOFF is NOT the same observable. On the host's bilateral
  * rung the worker raises s_bilateral_handoff_pending and Tick then does
  * set_state(HANDOFF) IMMEDIATELY BEFORE calling do_handoff
- * (direct_p2p.c:4591-4599), so a state-only wait can return with the
+ * (direct_p2p.c:4667-4675), so a state-only wait can return with the
  * handoff arguments not yet written — and, if the pending flag were ever
  * dropped, would still be satisfied by any other path that publishes the
  * state. Counting do_handoff calls is what pins the host worker ->
@@ -2628,7 +2629,7 @@ static int test_host_cookie_handshake(void) {
         char url[64];
         SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
         Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
-        /* 1000 ms is the code's own floor (direct_p2p.c:2891); the
+        /* 1000 ms is the code's own floor (direct_p2p.c:2592); the
          * seqlock assertion needs one worker cadence to elapse. */
         Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS, "1000");
     }
@@ -2813,7 +2814,7 @@ static int test_host_cookie_handshake(void) {
      *    s_bilateral_handoff_pending chain: the punch worker raises the
      *    flag (direct_p2p.c:2658), Tick observes it, joins the worker,
      *    publishes HANDOFF and calls do_handoff
-     *    (direct_p2p.c:4591-4599). A state-only wait is satisfied one
+     *    (direct_p2p.c:4667-4675). A state-only wait is satisfied one
      *    statement earlier, before any handoff argument is written, and
      *    would also be satisfied by any other path that publishes the
      *    state — so both are waited on, state first. */
@@ -3049,7 +3050,7 @@ done:
  * Pinned by timing the first cookied REGISTER.
  * Part B — the same mock, never accepting: budget expiry must classify
  * CONNECT_FAIL_COOKIE_REJECTED (connect_fail.c:136), only reachable
- * when the race's challenge_any evidence was set (direct_p2p.c:3201).
+ * when the race's challenge_any evidence was set (direct_p2p.c:4875).
  * (The inline answer itself lives in the race's CHALLENGE arm.)
  */
 
@@ -4639,7 +4640,7 @@ static int test_natpmp_pcp(void) {
  *       off. DirectP2P_BeginHost is the entry into
  *       try_portmap/upnp_worker_fn, and upnp_worker_fn's ONLY brake is
  *       Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP)
- *       (src/netplay/direct_p2p.c:1956). So: every DirectP2P_BeginHost
+ *       (src/netplay/direct_p2p.c:4077). So: every DirectP2P_BeginHost
  *       call site must have a disable-UPnP site within the preceding
  *       UPNP_SETUP_WINDOW_LINES lines. (Widest real gap today is 15
  *       lines; the window is 25, loose enough to survive a comment being
@@ -4841,7 +4842,7 @@ static int test_s7_disable_pairing(void) {
 
 /*
  * do_handoff's first argument is the ONLY thing that tells GekkoNet
- * which side we are (direct_p2p.c:3342). It is a LITERAL at every call
+ * which side we are (direct_p2p.c:2725). It is a LITERAL at every call
  * site — nothing downstream can correct a wrong one — and two peers that
  * both hand off as the same number get identical local and remote roles,
  * so the session never starts.
@@ -6765,7 +6766,7 @@ static int test_race_budget_wrap_safety(void) {
  *   d1f6c2bdeb1ee0d52b98b3fffc9fc17c
  *
  * The guard was never the defect. M-2's fix is the code just below it —
- * direct_p2p.c:1291-1304 — and it is TWO changes, not one:
+ * direct_p2p.c:1354-1367 — and it is TWO changes, not one:
  *
  *   (i)  VALIDATE, THEN memset. The new StunPunchLeg is built on the
  *        STACK and Stun_PunchBegin is allowed to fail BEFORE the
@@ -6780,7 +6781,7 @@ static int test_race_budget_wrap_safety(void) {
  *        pointer to a ref'd address: a permanent leak, one per re-arm.
  *
  * Test 27 counts occurrences of the log line "S6 race: punching
- * candidate" into s_sb6_arm_lines (test_bilateral_punch.c:6236). Neither
+ * candidate" into s_sb6_arm_lines (test_bilateral_punch.c:6779). Neither
  * (i) nor (ii) changes that count, which is why restoring the pre-fix
  * ordering AND deleting the race_finish_punch call leaves test 27 — and
  * the whole suite — GREEN. Test 30 covers (i), test 31 covers (ii).
@@ -6839,7 +6840,7 @@ static int SDLCALL hc_sink_thread(void* arg) {
  * UNSOLICITED to the address that REGISTER came from, one every
  * `gap_ms`. Unsolicited is not a cheat: direct_p2p.c sets
  * signal_active = false the moment the first DELIVER_PEER lands
- * (direct_p2p.c:1639), so no further REGISTER is ever sent — but the
+ * (direct_p2p.c:1658), so no further REGISTER is ever sent — but the
  * REND_FRAME_DELIVER branch of the receive path (direct_p2p.c:1595) is
  * NOT gated on signal_active, so every later DELIVER is still parsed and
  * still re-arms slot 1. That asymmetry is the production behaviour under
@@ -7653,7 +7654,7 @@ static bool sb6_run_two_peer(int skew_ms, int owd_ms,
 
     /* No signal leg and no signal endpoint: with the relay gone there is
      * nothing in this rig for a rendezvous server to do, and RunRace
-     * treats a NULL signal_ip as "no legs" (direct_p2p.c:1825-1842). The
+     * treats a NULL signal_ip as "no legs" (direct_p2p.c:1887-1904). The
      * seed candidate — the delay line — is the whole race. */
     a.cfg.host_role = true;
     a.cfg.sock = net_a;
@@ -7799,6 +7800,232 @@ done:
     return (rc == 0 && fail_count == fails_before) ? 0 : 1;
 }
 
+/* ======================================================================
+ * Task #76 — the NAV_WAIT_ORCHESTRATOR backstop is DERIVED, not flat
+ * ======================================================================
+ *
+ * The bug: a wedged orchestrator left the player on a static
+ * "Connecting..." overlay for a flat 150 s before any attributed failure
+ * appeared. netplay_nav.c now derives its deadline from
+ * DirectP2P_OrchWorstCaseMs(), which sums the orchestrator's own live
+ * clamped budgets.
+ *
+ * DIVISION OF LABOUR with the _Static_asserts in direct_p2p.c. Those
+ * check the cascade at COMPILE time against fixed configs (shipped
+ * defaults, and both clamp extremes) — they are the tripwire that makes
+ * a future cascade change break the BUILD. They cannot check that the
+ * production path actually CONSUMES the derivation, because a constant
+ * would satisfy a fixed-config assertion just as well. That is this
+ * test's job: it varies the live config and demands the enforced
+ * deadline move with it.
+ *
+ * NEUTRALIZATION. Each assertion names the mutation it exists to catch:
+ *
+ *   [N1] Revert netplay_nav.c to `#define NAV_WAIT_ORCH_TIMEOUT_FRAMES
+ *        (150 * 60)`. Caught by the shipped-defaults ceiling.
+ *   [N2] Replace the derivation with ANY constant (150 s, 60 s, 30 s).
+ *        Caught by the slope check, which pins the increase to exactly
+ *        the JOIN_MAX_ATTEMPTS passes join_thread_fn actually runs. A
+ *        constant has slope 0; a one-attempt bound has half the slope.
+ *   [N3] Size the joiner against the race budget ALONE, letting nav cut
+ *        inside the S6/S7 H-1 confirmation tail and resurrecting the
+ *        misattribution H-1 was written to fix.
+ *   [N4] Make the bound role-blind (drop the ForRole switch, or hand a
+ *        joiner the host term). Caught by the defaults ceiling: the host
+ *        ladder term is ~3x the joiner term and blows it.
+ *   [N5] Charge the race ONE confirmation tail instead of TWO — i.e.
+ *        revert RACE_HARD_CAP_MS to `budget + 1 * STUN_PUNCH_CONFIRM_MS`.
+ *        This is not hypothetical: it is EXACTLY the drift that happened
+ *        while this work sat parked. The one-tail sum was correct when
+ *        written and went stale the moment p2p_race's section 8 granted a
+ *        confirmed leg a second tail. The tail-containment check below is
+ *        sized against BOTH tails precisely so a one-tail regression is
+ *        red rather than merely 600 ms optimistic.
+ *
+ * Direction note (S6/S7 review H-B): every bound below is computed from
+ * PRODUCTION values — the config figures this test itself writes, and
+ * STUN_PUNCH_CONFIRM_MS / CONNECT_TIMEOUT_CONNECTING_MS /
+ * NAV_ORCH_TIMEOUT_MARGIN_MS from their production headers. No
+ * production margin is sized against a constant that lives in this
+ * file. */
+static int test_nav_orch_deadline_is_derived(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 40: task #76 nav orchestrator "
+                    "deadline is derived from the live budgets\n");
+    const int fails_before = fail_count;
+
+    /* The old flat constant, reproduced here ONLY as the thing we must be
+     * strictly under. Nothing in production reads it any more. */
+    const int old_flat_frames = 150 * 60;
+
+    /* The joiner's attempt count. Mirrors JOIN_MAX_ATTEMPTS, which is
+     * private to direct_p2p.c; the slope check below is what proves the
+     * mirror is still accurate, so it cannot drift silently. */
+    const int join_attempts = 2;
+
+    /* A previous test in this process may have left the race-budget test
+     * seam armed; it would mask every config write below. */
+    DirectP2P_TestHook_SetRaceBudgetMs(0);
+
+    /* ---- [N1]/[N4] shipped defaults: joiner deadline is human-scale --- */
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS, "4000");
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, "8000");
+
+    const int join_default_frames =
+        NetplayNav_OrchTimeoutFrames(DirectP2P_OrchWorstCaseMsForRole(ROLE_JOIN));
+
+    /* The UX ceiling is the SAME product policy direct_p2p.c asserts at
+     * compile time, not a number invented here: the longest wait this
+     * product already asks a player to accept is
+     * CONNECT_TIMEOUT_CONNECTING_MS on the post-handoff overlay, so the
+     * pre-handoff cascade gets that once per join attempt plus nav's
+     * scheduling margin, and no more.
+     *
+     * At the shipped defaults the derivation lands at 31 800 ms
+     * (200 startup + 2 x (4000 stun + 100 resolve + 8000 race + 2 x 600
+     * confirmation tail) + 5000 margin), against a 35 000 ms ceiling. */
+    const int ux_ceiling_ms =
+        join_attempts * (int)CONNECT_TIMEOUT_CONNECTING_MS + NAV_ORCH_TIMEOUT_MARGIN_MS;
+    const int ux_ceiling_frames = (int)(((long long)ux_ceiling_ms * NAV_FPS) / 1000);
+    if (join_default_frames > ux_ceiling_frames) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: joiner nav deadline at shipped "
+                "defaults is %d frames (%d ms), expected <= %d frames (%d ms) — the "
+                "player must not sit on a static overlay longer than %u ms per join "
+                "attempt plus nav's margin before the attributed failure appears\n",
+                join_default_frames, (join_default_frames * 1000) / NAV_FPS,
+                ux_ceiling_frames, ux_ceiling_ms,
+                (unsigned)CONNECT_TIMEOUT_CONNECTING_MS);
+        fail_count++;
+    }
+    if (join_default_frames >= old_flat_frames) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: joiner nav deadline is %d "
+                "frames, not under the old flat %d — the deadline is still the "
+                "pre-task-#76 constant\n",
+                join_default_frames, old_flat_frames);
+        fail_count++;
+    }
+
+    /* ---- [N2] slope: the deadline tracks the race budget, N attempts -- */
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, "4000");
+    const int join_lo_ms = DirectP2P_OrchWorstCaseMsForRole(ROLE_JOIN);
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, "9000");
+    const int join_hi_ms = DirectP2P_OrchWorstCaseMsForRole(ROLE_JOIN);
+
+    /* join_thread_fn runs join_attempt() JOIN_MAX_ATTEMPTS times, so a
+     * +5000 ms race budget must move the joiner bound by exactly +10000.
+     * A constant moves it by 0; a one-attempt bound moves it by 5000. */
+    const int expected_delta = join_attempts * (9000 - 4000);
+    if (join_hi_ms - join_lo_ms != expected_delta) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: raising the race budget by "
+                "5000 ms moved the joiner bound by %d ms, expected exactly %d "
+                "(%d attempts x the budget delta). A flat constant moves it by 0.\n",
+                join_hi_ms - join_lo_ms, expected_delta, join_attempts);
+        fail_count++;
+    }
+    /* Same slope must be visible through the nav conversion the state
+     * machine actually enforces, not only through the raw ms. */
+    if (NetplayNav_OrchTimeoutFrames(join_hi_ms) <=
+        NetplayNav_OrchTimeoutFrames(join_lo_ms)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: nav deadline did not increase "
+                "with the race budget (%d vs %d frames) — nav is not consuming the "
+                "derived bound\n",
+                NetplayNav_OrchTimeoutFrames(join_lo_ms),
+                NetplayNav_OrchTimeoutFrames(join_hi_ms));
+        fail_count++;
+    }
+    /* And it must track the STUN budget too — a bound that only watched
+     * the race budget would pass the slope check above while dropping a
+     * whole leg. */
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, "8000");
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS, "2000");
+    const int stun_lo_ms = DirectP2P_OrchWorstCaseMsForRole(ROLE_JOIN);
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS, "6000");
+    const int stun_hi_ms = DirectP2P_OrchWorstCaseMsForRole(ROLE_JOIN);
+    if (stun_hi_ms - stun_lo_ms != join_attempts * (6000 - 2000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: raising the STUN budget by "
+                "4000 ms moved the joiner bound by %d ms, expected exactly %d — the "
+                "STUN leg is not in the sum\n",
+                stun_hi_ms - stun_lo_ms, join_attempts * (6000 - 2000));
+        fail_count++;
+    }
+
+    /* ---- [N3]/[N5] BOTH confirmation tails are inside the bound ------- */
+    /* Run at the STUN clamp floor and the race clamp ceiling so the tails
+     * are the difference between pass and fail rather than being absorbed
+     * by slack.
+     *
+     * The cap is TWO tails, not one. p2p_race section 8: a leg listening
+     * through its RACE_PUNCH_SETTLE_MS window can be CONFIRMED as late as
+     * `budget + one tail` (send_end can itself be the budget), and it then
+     * owes its peer a FULL tail from there. If the nav bound contains only
+     * one tail, the races H-1 rescued get cut off by nav instead and are
+     * misattributed again — the regression moved one layer up rather than
+     * being fixed. */
+    const int stun_floor_ms = 1000;   /* stun_budget_ms() clamp floor      */
+    const int race_ceil_ms  = 30000;  /* race_budget_ms() clamp ceiling    */
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d", stun_floor_ms);
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS, buf);
+    snprintf(buf, sizeof(buf), "%d", race_ceil_ms);
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, buf);
+
+    const int join_tail_ms = DirectP2P_OrchWorstCaseMsForRole(ROLE_JOIN);
+    const int tail_floor_ms =
+        join_attempts * (stun_floor_ms + race_ceil_ms + 2 * (int)STUN_PUNCH_CONFIRM_MS);
+    if (join_tail_ms < tail_floor_ms) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: joiner bound is %d ms, below "
+                "the %d ms needed for %d attempts x (STUN %d + race %d + TWO H-1 "
+                "confirmation tails of %d). The nav deadline can now cut inside a "
+                "confirmed punch's tail — this is the S6/S7 H-1 regression.\n",
+                join_tail_ms, tail_floor_ms, join_attempts, stun_floor_ms,
+                race_ceil_ms, (int)STUN_PUNCH_CONFIRM_MS);
+        fail_count++;
+    }
+
+    /* ---- [N4] the two role bounds are genuinely different ------------- */
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS, "4000");
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS, "8000");
+    const int host_default_ms = DirectP2P_OrchWorstCaseMsForRole(ROLE_HOST);
+    const int join_default_ms = DirectP2P_OrchWorstCaseMsForRole(ROLE_JOIN);
+    if (host_default_ms <= join_default_ms) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: host bound (%d ms) is not "
+                "above the joiner bound (%d ms) at shipped defaults — the role "
+                "switch has been flattened, so the joiner is being charged the "
+                "host's port-map + STUN retry ladder\n",
+                host_default_ms, join_default_ms);
+        fail_count++;
+    }
+    /* And a role-blind caller must be bounded by the LONGER path, never
+     * short: ROLE_NONE is what nav sees if the role has not been
+     * published yet. */
+    if (DirectP2P_OrchWorstCaseMsForRole(ROLE_NONE) < host_default_ms) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test40: ROLE_NONE bound (%d ms) is "
+                "shorter than the host bound (%d ms) — an unpublished role would "
+                "get a deadline too short for the path it may take\n",
+                DirectP2P_OrchWorstCaseMsForRole(ROLE_NONE), host_default_ms);
+        fail_count++;
+    }
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 40 OK — joiner deadline at shipped "
+                "defaults %d frames (%d ms) vs the old flat %d frames (150000 ms); "
+                "tracks race and STUN budgets at %d attempts; contains both %d ms "
+                "confirmation tails\n",
+                join_default_frames, (join_default_frames * 1000) / NAV_FPS,
+                old_flat_frames, join_attempts, (int)STUN_PUNCH_CONFIRM_MS);
+    }
+
+    return (fail_count == fails_before) ? 0 : 1;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -7836,6 +8063,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_s7_review_fixes();       /* S7 review: test 23b */
     rc |= test_s7_natpmp_kill_switch(); /* S7 review: test 23c */
     rc |= test_s7_lost_mapping();       /* S7 review: test 23d */
+    rc |= test_nav_orch_deadline_is_derived(); /* task #76: test 40 */
     rc |= test_host_cookie_rejected(); /* last: ~31 s of wall clock */
 
     if (fail_count > 0 || rc != 0) {

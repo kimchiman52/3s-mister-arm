@@ -112,12 +112,57 @@ static void inject_start_press(void) {
 #define NAV_PRESS_DEBOUNCE_FRAMES 8
 
 /* S3 Part A: NAV_WAIT_ORCHESTRATOR overall deadline (see that case for
- * the exit taxonomy). 150 s at 60 fps — covers the worst-case joiner
- * (2 auto-retry attempts x STUN 15 s + punch 2.5 s + signaling 8 s +
- * bilateral 5 s) and the host's 3x FAILED_STUN retry ladder with
- * margin. The counter re-arms while the orchestrator sits in
- * HOST_WAITING, which is unbounded by design. */
-#define NAV_WAIT_ORCH_TIMEOUT_FRAMES (150 * 60)
+ * the exit taxonomy). The counter re-arms while the orchestrator sits in
+ * HOST_WAITING, which is unbounded by design.
+ *
+ * Task #76: this used to be a flat `150 * 60` frames — 150 SECONDS. Two
+ * problems with that. First, its comment derived 150 s from the PRE-S6
+ * SERIAL cascade (STUN + punch + signalling + bilateral, summed); since
+ * S6 those legs race inside ONE race budget, so the stated derivation
+ * had silently stopped being true. Second, and the reason it is a
+ * product bug: when the orchestrator wedges without publishing a
+ * terminal state, the player watches a static "Connecting..." overlay
+ * for two and a half minutes. That reads as a HANG, not a timeout — they
+ * power-cycle long before the attributed failure ever appears. S3 built
+ * the failure taxonomy precisely so every failure has a fast,
+ * attributable cause; a 150 s backstop throws that away.
+ *
+ * A smaller FLAT constant is not the fix, for two reasons. The shallow
+ * one: at the config ceiling (race-budget-ms 30000, stun-timeout-ms
+ * 15000) the joiner's attempts legitimately total 92.8 s and the host's
+ * port-map + STUN retry ladder 120.2 s, so any constant short enough to
+ * be good UX at the shipped defaults would abort a legal maximal config
+ * mid-attempt — a spurious failure, which is worse than a slow one. The
+ * deep one: a constant is what rotted. Replacing one constant whose
+ * derivation went stale with another constant whose derivation can go
+ * stale fixes today's number and not the failure mode.
+ *
+ * So the bound is DERIVED, in direct_p2p.c, from the very symbols the
+ * orchestrator's own enforcement sites use — including
+ * RACE_HARD_CAP_MS(), which is shared with the race deadline check, so
+ * nav's deadline can never cut inside a confirmed punch's H-1 tails.
+ * direct_p2p.c carries _Static_asserts that fail the BUILD if a cascade
+ * change pushes the shipped-defaults deadline past what this product
+ * treats as an acceptable wait, or drops the coverage the ceiling
+ * configs need.
+ *
+ * At the shipped defaults that collapses 150 s to 31.8 s; a maximal
+ * config still gets everything it is entitled to. */
+
+/* Pure ms -> frames conversion, exported (netplay_nav.h) so the deadline
+ * this file actually enforces is observable without standing up a session
+ * or driving the nav machine. Production composes it with
+ * DirectP2P_OrchWorstCaseMs() one call site below; a checker composes the
+ * same two functions with a pinned role. */
+int NetplayNav_OrchTimeoutFrames(int orch_worst_case_ms) {
+    if (orch_worst_case_ms < 0) orch_worst_case_ms = 0;
+    const long long ms = (long long)orch_worst_case_ms + NAV_ORCH_TIMEOUT_MARGIN_MS;
+    return (int)((ms * NAV_FPS) / 1000);
+}
+
+static int nav_orch_timeout_frames(void) {
+    return NetplayNav_OrchTimeoutFrames(DirectP2P_OrchWorstCaseMs());
+}
 
 static void drive_start_press(void) {
     if (!s_press_injected) {
@@ -296,7 +341,7 @@ void NetplayNav_Tick(void) {
          *
          * Connect_Status fixup: when only P1 has an Interface_Type
          * bound (the common case on desktop/MiSTer single-pad setups),
-         * Menu_Task's header at menu.c:219 sets Connect_Status=0 and
+         * Menu_Task's header at menu.c:201 sets Connect_Status=0 and
          * Mode_Select case 3 then forces Menu_Cursor_Y[0] from 1 to 2
          * (Training) before the Start press latches. Override both
          * Interface_Type slots before Menu_Task reads them this frame
@@ -352,8 +397,8 @@ void NetplayNav_Tick(void) {
          *     re-spawns the worker after backoff, so nav keeps waiting.
          *     Once the retry budget is exhausted FAILED_STUN is as
          *     terminal as any other failure and exit (a) fires; the
-         *     pre-fix unconditional exception made nav wait the full
-         *     150 s and then log a second, contradictory
+         *     pre-fix unconditional exception made nav wait out the full
+         *     orchestrator deadline and then log a second, contradictory
          *     TIMEOUT_ORCHESTRATOR line for an already-reported failure.
          * (b) The orchestrator is IDLE with no remote ip — cancelled or
          *     never started. 5 s debounce covers the deferred-dispatch
@@ -362,8 +407,10 @@ void NetplayNav_Tick(void) {
          *     by design (the host advertises until a joiner arrives),
          *     so the frame counter re-arms while the orchestrator sits
          *     there; every OTHER orchestrator state is internally
-         *     bounded and 150 s comfortably covers the worst-case
-         *     joiner (2 attempts) and host retry ladder. */
+         *     bounded, and nav_orch_timeout_frames() is derived from
+         *     exactly those bounds (task #76) so it covers the worst-case
+         *     joiner (2 attempts) and host retry ladder at whatever the
+         *     budgets are currently configured to, with margin. */
         const DirectP2PState dps = DirectP2P_GetState();
         if (dps == DIRECT_P2P_HOST_WAITING) {
             s_frames_in_state = 0; /* unbounded-by-design; re-arm deadline */
@@ -388,11 +435,21 @@ void NetplayNav_Tick(void) {
             transition_to(NAV_DONE);
             break;
         }
-        if (s_frames_in_state > NAV_WAIT_ORCH_TIMEOUT_FRAMES) {
-            Netplay_LogConnectEvent(
-                "[netplay-connect] FAIL code=P2P_FAIL_TIMEOUT_ORCHESTRATOR "
-                "stage=NAV_WAIT_ORCHESTRATOR — orchestrator produced neither a "
-                "session nor a terminal state within the nav deadline");
+        const int deadline_frames = nav_orch_timeout_frames();
+        if (s_frames_in_state > deadline_frames) {
+            /* Report the derived deadline: with a config-dependent bound,
+             * a bare "the nav deadline" line is unreadable in the field —
+             * you cannot tell a wedge from a legitimately long maximal
+             * config without the number that was actually enforced. */
+            char line[192];
+            snprintf(line, sizeof(line),
+                     "[netplay-connect] FAIL code=P2P_FAIL_TIMEOUT_ORCHESTRATOR "
+                     "stage=NAV_WAIT_ORCHESTRATOR — orchestrator produced neither a "
+                     "session nor a terminal state within the nav deadline "
+                     "(%d ms = orchestrator worst case %d ms + %d ms margin)",
+                     (deadline_frames * 1000) / NAV_FPS,
+                     DirectP2P_OrchWorstCaseMs(), NAV_ORCH_TIMEOUT_MARGIN_MS);
+            Netplay_LogConnectEvent(line);
             transition_to(NAV_DONE);
         }
         break;

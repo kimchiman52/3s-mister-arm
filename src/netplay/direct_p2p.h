@@ -146,13 +146,33 @@ DirectP2PState DirectP2P_GetState(void);
  * to branch the mode-label between HOSTING / CONNECTING. */
 Role DirectP2P_GetRole(void);
 
+/* Task #76: worst-case wall clock (ms) the orchestrator can legitimately
+ * spend before it publishes a terminal state, for the CURRENT role,
+ * derived from the live clamped budgets (STUN timeout, race budget +
+ * H-1 confirmation tail, port-map probe, S2 retry ladders). Returns the
+ * larger of the two role bounds when no role is published yet.
+ *
+ * Exists so netplay_nav's NAV_WAIT_ORCHESTRATOR backstop can be a
+ * function of what the orchestrator is actually configured to do rather
+ * than a flat constant that has to be generous enough for every possible
+ * config at once. Callers add their own scheduling margin. Main thread.
+ *
+ * The ForRole variant is the implementation and takes the role as a
+ * parameter so the bound is checkable without standing up a session —
+ * the two paths differ by an order of magnitude at the shipped defaults,
+ * so a role-blind assertion is satisfied by the host term alone and
+ * cannot detect a regression in the joiner term. */
+int DirectP2P_OrchWorstCaseMsForRole(Role role);
+int DirectP2P_OrchWorstCaseMs(void);
+
 /* S3-review M-3: true while a HOST parked in FAILED_STUN still has S2
  * auto-retries left (Tick will re-spawn the worker after backoff) —
  * i.e. the state is NOT yet terminal. False for a joiner, for any
  * other state, and once the host retry budget is exhausted. netplay_nav
  * consults this so its terminal-failure exit fires the moment
  * FAILED_STUN actually becomes terminal instead of waiting out the
- * 150 s orchestrator deadline. Main-thread only. */
+ * orchestrator deadline (task #76: derived, no longer a flat 150 s).
+ * Main-thread only. */
 bool DirectP2P_HostStunRetryPending(void);
 
 /* Display-form room code (20 visible chars, v3), valid only while
@@ -448,6 +468,8 @@ static inline void DirectP2P_Cancel(void) { }
 static inline void DirectP2P_Tick(void) { }
 static inline DirectP2PState DirectP2P_GetState(void) { return DIRECT_P2P_IDLE; }
 static inline Role DirectP2P_GetRole(void) { return ROLE_NONE; }
+static inline int DirectP2P_OrchWorstCaseMsForRole(Role role) { (void)role; return 0; }
+static inline int DirectP2P_OrchWorstCaseMs(void) { return 0; }
 static inline bool DirectP2P_HostStunRetryPending(void) { return false; }
 static inline const char* DirectP2P_GetHostCode(void) { return ""; }
 static inline const char* DirectP2P_GetStatusText(void) { return ""; }

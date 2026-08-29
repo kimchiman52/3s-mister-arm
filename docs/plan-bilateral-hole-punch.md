@@ -130,7 +130,7 @@ POLL (client -> server), 28 bytes:
 
 ### 3. Host-side active punch loop
 
-**Today** (`src/netplay/direct_p2p.c:516-552`): host is passive — `host_tick_receive` does a non-blocking `NET_ReceiveDatagram` each frame waiting for the joiner's `3SX_PUNCH`, echoes it back, and hands off. Host never sends outbound packets until after the first inbound arrives.
+**Today** (`src/netplay/direct_p2p.c:549-585`): host is passive — `host_tick_receive` does a non-blocking `NET_ReceiveDatagram` each frame waiting for the joiner's `3SX_PUNCH`, echoes it back, and hands off. Host never sends outbound packets until after the first inbound arrives.
 
 **New behavior:**
 

@@ -39,8 +39,15 @@
  * bleeding symbol references. */
 #ifdef ENABLE_NETPLAY
 
+#include "netplay/connect_fail.h"
 #include "netplay/natpmp.h"
 #include "netplay/netplay.h"
+/* Task #76: for NAV_ORCH_TIMEOUT_MARGIN_MS. The orchestrator cascade's
+ * _Static_asserts live HERE — next to the legs, so editing a leg is what
+ * breaks the build — but the ceiling they check is nav's, so nav's margin
+ * has to be readable from here. netplay_nav.h pulls in nothing but
+ * <stdbool.h>, so this is not a dependency cycle. */
+#include "netplay/netplay_nav.h"
 #include "netplay/room_code.h"
 #include "netplay/stun.h"
 #include "netplay/upnp.h"
@@ -270,6 +277,32 @@ static int s_host_stun_retry_count = 0;
 static uint64_t s_host_stun_retry_at_ms = 0;
 #define HOST_STUN_MAX_RETRIES 3
 #define HOST_STUN_RETRY_BACKOFF_MS 5000
+
+/* Pre-NET_Init settle delay both workers take before touching SDL_net
+ * (see host_thread_fn for the segfault rationale). Named for task #76 so
+ * the orchestrator worst case can sum it. */
+#define WORKER_STARTUP_DELAY_MS 200
+
+/* S2 joiner auto-retry: join_thread_fn runs join_attempt() up to this
+ * many times, each with a freshly bound local socket (see the loop in
+ * join_thread_fn for the rationale). Named for task #76 because it is
+ * the MULTIPLIER on the joiner's whole per-attempt cascade — an
+ * anonymous second call could be turned into a third without the
+ * derived nav deadline noticing. */
+#define JOIN_MAX_ATTEMPTS 2
+
+/* Bounded blocking DNS poll (resolve_with_short_poll) that a signalling
+ * leg runs before it can arm. Named for task #76 because the cascade sum
+ * has to account for it: an anonymous `< 100` in the loop body cannot be
+ * summed into a derived deadline without the deadline silently going
+ * stale the moment the loop changes.
+ *
+ * NOT inside #ifdef NETPLAY_TEST_HOOKS: resolve_with_short_poll and the
+ * worst-case derivation are both unconditional, so a production build
+ * (ENABLE_NETPLAY on, NETPLAY_TEST_HOOKS off) needs these too. */
+#define RESOLVE_POLL_ATTEMPTS 100
+#define RESOLVE_POLL_STEP_MS  1
+#define RESOLVE_POLL_MAX_MS   (RESOLVE_POLL_ATTEMPTS * RESOLVE_POLL_STEP_MS)
 
 /* Init guard so DirectP2P_Init is idempotent. */
 static bool s_init_done = false;
@@ -737,11 +770,19 @@ bool DirectP2P_TestHook_IsLanPeer(const char* ip) {
 /* S6: the overall post-STUN race budget. The per-leg keys
  * (SIGNAL_BUDGET_MS, BILATERAL_PUNCH_MS) still bound
  * their own legs INSIDE this. */
+/* Named (task #76) so the compile-time cascade mirror in
+ * DirectP2P_OrchWorstCaseMsForRole's block below evaluates the SAME
+ * symbols this clamp enforces, instead of a hand-copied literal that can
+ * drift away from it. */
+#define RACE_BUDGET_DEFAULT_MS 8000  /* keep in sync with the config.c default */
+#define RACE_BUDGET_MIN_MS     2000  /* below this no leg completes a distant round trip */
+#define RACE_BUDGET_MAX_MS     30000 /* past this the S3 orchestrator deadline is the bound */
+
 static int race_budget_ms(void) {
     int ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_RACE_BUDGET_MS);
-    if (ms <= 0) ms = 8000;     /* keep in sync with the config.c default */
-    if (ms < 2000) ms = 2000;   /* below this no leg completes a distant round trip */
-    if (ms > 30000) ms = 30000; /* past this the S3 orchestrator deadline is the bound */
+    if (ms <= 0) ms = RACE_BUDGET_DEFAULT_MS;
+    if (ms < RACE_BUDGET_MIN_MS) ms = RACE_BUDGET_MIN_MS;
+    if (ms > RACE_BUDGET_MAX_MS) ms = RACE_BUDGET_MAX_MS;
 #ifdef NETPLAY_TEST_HOOKS
     if (s_test_race_budget_ms > 0) ms = s_test_race_budget_ms;
 #endif
@@ -916,11 +957,16 @@ static void rend_q_purge(void) {
  * network where discovery can succeed at all. An uncapped user value
  * would turn a mid-discovery Cancel into an arbitrarily long UI
  * freeze. */
+/* Named for the same reason as the race-budget clamp above (task #76). */
+#define STUN_BUDGET_DEFAULT_MS 4000  /* keep in sync with the config.c default */
+#define STUN_BUDGET_MIN_MS     1000  /* below one RTO the retransmit ladder is meaningless */
+#define STUN_BUDGET_MAX_MS     15000 /* ceiling — bounds DirectP2P_Cancel's worst-case block */
+
 static int stun_budget_ms(void) {
     int ms = Config_GetInt(CFG_KEY_NETPLAY_DIRECT_P2P_STUN_TIMEOUT_MS);
-    if (ms <= 0) ms = 4000;      /* keep in sync with the config.c default */
-    if (ms < 1000) ms = 1000;    /* below one RTO the retransmit ladder is meaningless */
-    if (ms > 15000) ms = 15000;  /* ceiling — bounds DirectP2P_Cancel's worst-case block */
+    if (ms <= 0) ms = STUN_BUDGET_DEFAULT_MS;
+    if (ms < STUN_BUDGET_MIN_MS) ms = STUN_BUDGET_MIN_MS;
+    if (ms > STUN_BUDGET_MAX_MS) ms = STUN_BUDGET_MAX_MS;
     return ms;
 }
 
@@ -1236,6 +1282,23 @@ static const char* arm_punch_target_ip(const char* ip, uint16_t port) {
 _Static_assert(RACE_PUNCH_SETTLE_MS <= STUN_PUNCH_CONFIRM_MS,
                "RACE_PUNCH_SETTLE_MS must fit in the one-tail deadline extension "
                "race_budget_expired() grants, or the race budget truncates it");
+
+/* THE hard bound on one p2p_race, as a function of its configured budget.
+ *
+ * Derived in section 8 of p2p_race: a leg listening through its settle
+ * window can be CONFIRMED as late as `budget + one tail` (because
+ * send_end can itself be the budget, and RACE_PUNCH_SETTLE_MS ==
+ * STUN_PUNCH_CONFIRM_MS), and it then owes its peer a FULL tail from
+ * there. Two tails, never three.
+ *
+ * A MACRO, and the single definition of the cap, because this is exactly
+ * the leg that rotted once already: task #76's first pass summed
+ * `race_budget_ms + 1 * STUN_PUNCH_CONFIRM_MS` into the nav deadline,
+ * which was correct when it was written and became wrong the moment the
+ * second tail landed. Both the enforcement site (section 8) and the
+ * orchestrator worst case now evaluate THIS symbol, so a future change
+ * to the cap moves both together or moves neither. */
+#define RACE_HARD_CAP_MS(budget_ms) ((budget_ms) + 2 * STUN_PUNCH_CONFIRM_MS)
 
 /* One punch candidate. `oracle` is DP2P_PUNCH_REAL for every production
  * leg; the other two values make the leg a pure clock with no wire
@@ -1728,8 +1791,7 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
              * has no confirmed leg by definition.
              */
             if (expired && tail_outstanding &&
-                (int)(now - t0) < cfg->race_budget_ms +
-                                      2 * STUN_PUNCH_CONFIRM_MS) {
+                (int)(now - t0) < RACE_HARD_CAP_MS(cfg->race_budget_ms)) {
                 expired = false;
             }
             if (expired) {
@@ -1752,7 +1814,7 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                      * confirmation as late as budget + one tail, and that
                      * confirmation owes a full tail from there. */
                     SDL_Log(k_msg, STUN_PUNCH_CONFIRM_MS,
-                            cfg->race_budget_ms + 2 * STUN_PUNCH_CONFIRM_MS);
+                            RACE_HARD_CAP_MS(cfg->race_budget_ms));
                 }
             }
         }
@@ -1980,6 +2042,11 @@ static int SDLCALL upnp_worker_fn(void* data) {
  * backends' budgets. */
 #define UPNP_PROBE_BUDGET_MS 6000u
 
+/* try_portmap's OUTER deadline: the two backends run serially inside one
+ * worker, so the ceiling is their sum. Named for task #76 so the host
+ * cascade sums the same symbol the deadline below enforces. */
+#define PORTMAP_PROBE_BUDGET_MS (UPNP_PROBE_BUDGET_MS + NATPMP_PROBE_BUDGET_MS)
+
 /* Attempt a port mapping (UPnP, then NAT-PMP/PCP). Returns true on
  * success (s_upnp_mapping.active is set and s_upnp_mapping.backend says
  * which protocol won). Returns false on user-disabled, no backend
@@ -2036,13 +2103,12 @@ static bool try_portmap(uint16_t internal_port, uint16_t preferred_external) {
         return false;
     }
 
-    const uint64_t deadline_ms =
-        SDL_GetTicks() + UPNP_PROBE_BUDGET_MS + (uint64_t)NATPMP_PROBE_BUDGET_MS;
+    const uint64_t deadline_ms = SDL_GetTicks() + (uint64_t)PORTMAP_PROBE_BUDGET_MS;
     while (SDL_GetThreadState(t) != SDL_THREAD_COMPLETE) {
         if (SDL_GetTicks() >= deadline_ms) {
             SDL_Log("[direct_p2p] WARNING: port-mapping attempt timed out after %u ms; "
                     "falling back to STUN.",
-                    (unsigned)(UPNP_PROBE_BUDGET_MS + NATPMP_PROBE_BUDGET_MS));
+                    (unsigned)PORTMAP_PROBE_BUDGET_MS);
             /* Detach and leak the job struct — the side thread owns it
              * until it exits, at which point the OS reclaims everything.
              * Any mapping it eventually registers (UPnP or NAT-PMP/PCP —
@@ -2422,8 +2488,9 @@ static NET_Address* resolve_with_short_poll(const char* host) {
     NET_Address* addr = NET_ResolveHostname(host);
     if (!addr) return NULL;
     int wait_attempts = 0;
-    while (NET_GetAddressStatus(addr) == NET_WAITING && wait_attempts < 100) {
-        SDL_Delay(1);
+    while (NET_GetAddressStatus(addr) == NET_WAITING &&
+           wait_attempts < RESOLVE_POLL_ATTEMPTS) {
+        SDL_Delay(RESOLVE_POLL_STEP_MS);
         wait_attempts++;
     }
     if (NET_GetAddressStatus(addr) != NET_SUCCESS) {
@@ -2684,7 +2751,7 @@ static int SDLCALL host_thread_fn(void* data) {
      * memcard) races and segfaults inside NET_ResolveHostname on MiSTer
      * (glibc 2.31, ARM). 200ms is empirically enough to get past all
      * the initialize_game() work that follows defer_direct_p2p_handoff. */
-    SDL_Delay(200);
+    SDL_Delay(WORKER_STARTUP_DELAY_MS);
 
     const uint16_t local_port = (uint16_t)s_work.preferred_port;
 
@@ -3233,19 +3300,28 @@ static int SDLCALL join_thread_fn(void* data) {
     (void)data;
 
     /* See host_thread_fn for the rationale on this pre-NET_Init delay. */
-    SDL_Delay(200);
+    SDL_Delay(WORKER_STARTUP_DELAY_MS);
 
     /* Idempotent NET_Init — Stun_Discover assumes we've called it. */
     NET_Init();
 
-    DirectP2PState outcome = join_attempt();
-    if (outcome != DIRECT_P2P_HANDOFF && outcome != DIRECT_P2P_IDLE) {
-        SDL_Log("[direct_p2p] join attempt failed (state %d) — one automatic retry "
-                "with a freshly bound socket", (int)outcome);
-        set_status("Retrying...");
+    /* Task #76: a LOOP over JOIN_MAX_ATTEMPTS rather than an open-coded
+     * second call. Behaviourally identical at JOIN_MAX_ATTEMPTS == 2, but
+     * the attempt count is now a symbol the orchestrator worst case
+     * multiplies by — adding a third attempt here can no longer leave the
+     * nav deadline sized for two. */
+    DirectP2PState outcome = DIRECT_P2P_IDLE;
+    for (int attempt = 1; attempt <= JOIN_MAX_ATTEMPTS; attempt++) {
         outcome = join_attempt();
-        if (outcome != DIRECT_P2P_HANDOFF && outcome != DIRECT_P2P_IDLE) {
-            SDL_Log("[direct_p2p] join retry failed too (state %d) — surfacing", (int)outcome);
+        if (outcome == DIRECT_P2P_HANDOFF || outcome == DIRECT_P2P_IDLE) break;
+        if (attempt < JOIN_MAX_ATTEMPTS) {
+            SDL_Log("[direct_p2p] join attempt %d/%d failed (state %d) — one automatic "
+                    "retry with a freshly bound socket",
+                    attempt, JOIN_MAX_ATTEMPTS, (int)outcome);
+            set_status("Retrying...");
+        } else {
+            SDL_Log("[direct_p2p] join retry failed too (state %d) — surfacing",
+                    (int)outcome);
         }
     }
     set_state(outcome);
@@ -4693,12 +4769,199 @@ bool DirectP2P_HostStunRetryPending(void) {
      * spent (or for a joiner, whose retry ran inside its own worker)
      * FAILED_STUN is TERMINAL: Tick has emitted the attributed FAIL
      * report, and nav must take its exit (a) instead of waiting out the
-     * 150 s deadline and logging a second, contradictory
+     * orchestrator deadline and logging a second, contradictory
      * P2P_FAIL_TIMEOUT_ORCHESTRATOR for the same failure. Main-thread
      * only, like the retry bookkeeping it reads. */
     return get_state() == DIRECT_P2P_FAILED_STUN &&
            s_work.role == ROLE_HOST &&
            s_host_stun_retry_count < HOST_STUN_MAX_RETRIES;
+}
+
+/* ======================================================================
+ * Task #76 — THE ORCHESTRATOR CASCADE, as arithmetic the compiler checks
+ * ======================================================================
+ *
+ * Worst-case wall clock the orchestrator can legitimately spend between
+ * BeginHost/BeginJoin and publishing a terminal state. netplay_nav's
+ * NAV_WAIT_ORCHESTRATOR backstop is this plus a scheduling margin, so
+ * this is the thing that decides how long a stuck join freezes.
+ *
+ * WHY IT IS SHAPED LIKE THIS. The constant it replaced was a flat
+ * `150 * 60` frames whose comment derived 150 s from the PRE-S6 SERIAL
+ * cascade (STUN, then punch, then signalling, then bilateral, summed).
+ * S6 made those legs RACE inside one budget; the constant did not move
+ * and its derivation quietly stopped being true. So the lesson is not
+ * "pick a better number" — 150 s was a plausible number once — it is
+ * that the number must be COMPUTED from the legs the code enforces, and
+ * that the computation must be checked by something that fails loudly.
+ * Hence: macros shared with the enforcement sites, and _Static_asserts.
+ *
+ * THE LEGS. Every term is the enforcement site's own bound, by symbol,
+ * never a copied literal:
+ *
+ *   WORKER_STARTUP_DELAY_MS   host_thread_fn / join_thread_fn pre-NET_Init
+ *                             settle delay (SDL_Delay at both sites).
+ *   JOIN_MAX_ATTEMPTS         the join_thread_fn attempt loop.
+ *   stun_budget_ms()          the STUN_DISCOVER argument at both sites,
+ *                             clamped [STUN_BUDGET_MIN_MS, _MAX_MS].
+ *   RESOLVE_POLL_MAX_MS       resolve_with_short_poll's bounded DNS poll,
+ *                             which join_attempt runs once before the race.
+ *   RACE_HARD_CAP_MS(race_budget_ms())
+ *                             p2p_race's TRUE ceiling — the configured
+ *                             budget plus the TWO confirmation tails
+ *                             section 8 grants a confirmed leg. Shared
+ *                             with the deadline check itself, which is
+ *                             the whole point: the first pass at this
+ *                             task summed ONE tail, was right when
+ *                             written, and went stale the moment the
+ *                             second tail landed.
+ *   PORTMAP_PROBE_BUDGET_MS   try_portmap's outer deadline (UPnP then
+ *                             NAT-PMP/PCP, serially, in one worker).
+ *   HOST_STUN_MAX_RETRIES /
+ *   HOST_STUN_RETRY_BACKOFF_MS  the S2 host FAILED_STUN ladder.
+ *
+ * WHAT IS NOT IN HERE, and why that is correct:
+ *
+ *   - The RELAY. Removed entirely (client and server) — the cascade is
+ *     STUN -> direct punch -> rendezvous signalling -> bilateral punch,
+ *     full stop. There is no relay budget left to count.
+ *   - The per-leg SIGNAL_BUDGET_MS / BILATERAL_PUNCH_MS. Bounded INSIDE
+ *     the race, so RACE_HARD_CAP_MS already contains them. Summing them
+ *     on top would re-create the pre-S6 serial error in a new place.
+ *   - HOST_WAITING. Unbounded BY DESIGN (a host advertises until a joiner
+ *     arrives), so nav re-arms its counter every frame while the
+ *     orchestrator sits there; it is excluded rather than estimated.
+ *   - The host's post-HOST_WAITING race. Bounded, and asserted below to
+ *     be dominated by the ladder term at every legal config, so it never
+ *     needs a term of its own.
+ *   - The host's bilateral RETRY loop (HOST_BILATERAL_MAX_FAILURES).
+ *     Each failure returns to HOST_WAITING, which re-arms nav, so the
+ *     deadline only ever has to cover ONE race — not the loop.
+ *
+ * Thread-safety: reads Config plus DirectP2P_GetRole(), both of which the
+ * existing main-thread callers already touch. Main thread only. */
+
+/* The joiner's per-attempt cascade, and the whole joiner path. Macro
+ * rather than a function so the _Static_asserts below evaluate LITERALLY
+ * the same expression the runtime path evaluates — a second, hand-copied
+ * expression in an assert would just be a comment that happens to
+ * compile. */
+#define ORCH_JOIN_ATTEMPT_MS(stun_ms, race_ms) \
+    ((stun_ms) + RESOLVE_POLL_MAX_MS + RACE_HARD_CAP_MS(race_ms))
+
+#define ORCH_JOIN_WORST_CASE_MS(stun_ms, race_ms) \
+    (WORKER_STARTUP_DELAY_MS +                    \
+     JOIN_MAX_ATTEMPTS * ORCH_JOIN_ATTEMPT_MS(stun_ms, race_ms))
+
+/* The host's ladder: port-map probe then STUN, once per attempt, across
+ * 1 initial attempt + HOST_STUN_MAX_RETRIES retries, with a backoff
+ * between each. */
+#define ORCH_HOST_WORST_CASE_MS(stun_ms, race_ms)                        \
+    (WORKER_STARTUP_DELAY_MS +                                           \
+     (1 + HOST_STUN_MAX_RETRIES) * (PORTMAP_PROBE_BUDGET_MS + (stun_ms)) \
+     + HOST_STUN_MAX_RETRIES * HOST_STUN_RETRY_BACKOFF_MS)
+
+/* ---- the compile-time checks -----------------------------------------
+ *
+ * [A] THE PRODUCT BUG, as a build failure.
+ *
+ * Task #76 is a UX bug: a join that cannot succeed froze for 150 s, which
+ * a player reads as a hang and power-cycles through, so the attributed
+ * failure S3 built the taxonomy for is never seen. The fix is only real
+ * if the SHIPPED-DEFAULTS deadline stays human-scale, and it only stays
+ * that way if growing the cascade past it breaks the build.
+ *
+ * The ceiling is not a taste call. The same overlay already makes the
+ * player wait CONNECT_TIMEOUT_CONNECTING_MS post-handoff (connect_fail.h)
+ * and that is the longest wait this product has ever asked for and
+ * considered acceptable. The joiner runs JOIN_MAX_ATTEMPTS attempts, so
+ * the pre-handoff phase is allowed the same acceptable wait once per
+ * attempt, plus nav's scheduling margin — and no more:
+ *
+ *     JOIN_MAX_ATTEMPTS * CONNECT_TIMEOUT_CONNECTING_MS
+ *         + NAV_ORCH_TIMEOUT_MARGIN_MS
+ *     = 2 * 15000 + 5000 = 35000 ms
+ *
+ * against a shipped-defaults derivation of
+ *
+ *     200 + 2 * (4000 + 100 + (8000 + 2*600)) + 5000 = 31800 ms.
+ *
+ * 3.2 s of headroom, deliberately tight: the next leg added to the joiner
+ * cascade should have to come here and re-argue the number, which is
+ * exactly what did NOT happen when S6 reshaped the cascade under the old
+ * constant. */
+#define NAV_ORCH_UX_CEILING_MS \
+    (JOIN_MAX_ATTEMPTS * (int)CONNECT_TIMEOUT_CONNECTING_MS + NAV_ORCH_TIMEOUT_MARGIN_MS)
+
+_Static_assert(ORCH_JOIN_WORST_CASE_MS(STUN_BUDGET_DEFAULT_MS,
+                                       RACE_BUDGET_DEFAULT_MS) +
+                       NAV_ORCH_TIMEOUT_MARGIN_MS <=
+                   NAV_ORCH_UX_CEILING_MS,
+               "task #76: at SHIPPED DEFAULTS the derived NAV_WAIT_ORCHESTRATOR "
+               "deadline now exceeds what this product considers an acceptable "
+               "wait (JOIN_MAX_ATTEMPTS x CONNECT_TIMEOUT_CONNECTING_MS + nav "
+               "margin). A cascade leg grew. Re-derive the deadline and re-argue "
+               "the ceiling here — do NOT just raise the ceiling.");
+
+/* [B] The joiner bound must contain a WHOLE race including BOTH
+ * confirmation tails, at every legal config. If it does not, nav can cut
+ * inside the tail of a punch that provably reached us — which is exactly
+ * the misattribution the S6/S7 H-1 exemption exists to prevent, resurrected
+ * one layer up. Checked at the clamp extremes, which bound the interior
+ * because every term is monotone in stun and race. */
+_Static_assert(ORCH_JOIN_ATTEMPT_MS(STUN_BUDGET_MIN_MS, RACE_BUDGET_MAX_MS) >=
+                   RACE_HARD_CAP_MS(RACE_BUDGET_MAX_MS),
+               "task #76: the joiner bound no longer contains one full race "
+               "including both H-1 confirmation tails");
+
+/* [C] The host ladder DOMINATES one post-HOST_WAITING race, at every legal
+ * config — the ladder at its shortest still exceeds a race at its longest.
+ * This is what lets the host term omit a post-wait race leg entirely
+ * (nav re-arms in HOST_WAITING, so the host's punch starts from a fresh
+ * deadline and only has to fit one race). If a future change inverts
+ * this, the host bound would silently become too short for the very phase
+ * the deadline is enforced across. */
+_Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MIN_MS, RACE_BUDGET_MIN_MS) >=
+                   RESOLVE_POLL_MAX_MS + RACE_HARD_CAP_MS(RACE_BUDGET_MAX_MS),
+               "task #76: the host STUN ladder no longer dominates a single "
+               "post-HOST_WAITING race; the host bound needs an explicit race term");
+
+/* [D] Both role bounds must still COVER the measured worst-case cascades
+ * this task was sized against, at the CONFIG CEILING — cutting below them
+ * turns a slow-but-successful join into a spurious failure, which is a
+ * worse bug than the one being fixed. Recomputed at current tip:
+ *   joiner ceiling 200 + 2*(15000 + 100 + 30000 + 1200) = 92800 ms
+ *   host   ceiling 200 + 4*(11250 + 15000) + 3*5000     = 120200 ms
+ * These are lower bounds on the derivation, so they fail if a leg is
+ * DROPPED from the sum as well as if the sum is capped. */
+_Static_assert(ORCH_JOIN_WORST_CASE_MS(STUN_BUDGET_MAX_MS, RACE_BUDGET_MAX_MS) >= 92800,
+               "task #76: the joiner bound fell below the measured 92800 ms "
+               "config-ceiling cascade — a legal maximal config would now be "
+               "aborted mid-attempt");
+_Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MAX_MS, RACE_BUDGET_MAX_MS) >= 120200,
+               "task #76: the host bound fell below the measured 120200 ms "
+               "config-ceiling cascade — a legal maximal config would now be "
+               "aborted mid-ladder");
+
+int DirectP2P_OrchWorstCaseMsForRole(Role role) {
+    const int stun = stun_budget_ms();
+    const int race = race_budget_ms();
+
+    const int join_ms = ORCH_JOIN_WORST_CASE_MS(stun, race);
+    const int host_ms = ORCH_HOST_WORST_CASE_MS(stun, race);
+
+    switch (role) {
+    case ROLE_JOIN: return join_ms;
+    case ROLE_HOST: return host_ms;
+    default:        break;
+    }
+    /* ROLE_NONE — role not yet published, or the orchestrator is idle.
+     * Bound by whichever path is longer so the deadline is never short. */
+    return (join_ms > host_ms) ? join_ms : host_ms;
+}
+
+int DirectP2P_OrchWorstCaseMs(void) {
+    return DirectP2P_OrchWorstCaseMsForRole(DirectP2P_GetRole());
 }
 
 const char* DirectP2P_GetHostCode(void) {
