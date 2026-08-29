@@ -129,11 +129,45 @@ if [ "${np_rc}" -ne 0 ] || [ -z "${BIN}" ]; then
     record netplay-harnesses ERROR
     echo "  no test binary; harnesses cannot run"
 else
-    mapfile -t HARNESSES < <(grep -oE '"test-[a-z0-9-]+"' src/args.c \
-        | tr -d '"' | sort -u)
-    if [ "${#HARNESSES[@]}" -eq 0 ]; then
+    # DISCOVERY, not a hardcoded list, so a new harness joins this gate by
+    # existing rather than by somebody remembering to add it here.
+    #
+    # The discriminator is precise on purpose. `grep '"test-[a-z0-9-]+"'` over
+    # args.c looks like it works and does not: it returns 23 flags, because most
+    # `--test-*` options CONFIGURE the interactive test runner (--test-stage
+    # takes an integer, --test-p1-character takes a name, --test-enable launches
+    # the game) rather than being self-contained harnesses. Running those as if
+    # they were harnesses starts the game and hangs the gate -- observed.
+    #
+    # A harness is an OPT_BOOLEAN whose help text says it runs and EXITS. That
+    # is exactly the nine the pre-existing lane-private runner listed by hand.
+    #
+    # NOT mapfile: macOS ships bash 3.2, which has no `mapfile`. It failed
+    # silently, and under `set -u` the next line died on an unbound HARNESSES,
+    # so this gate recorded NO state and the summary still printed GREEN -- the
+    # very defect this runner exists to prevent, reproduced inside it. The
+    # completeness assertion at the bottom is the structural fix for that class;
+    # this loop is the proximate one.
+    HARNESSES=()
+    while IFS= read -r h; do
+        [ -n "${h}" ] && HARNESSES+=("${h}")
+    done < <(python3 - src/args.c <<'DISCOVER'
+import re, sys
+src = open(sys.argv[1]).read()
+pat = re.compile(
+    r'OPT_BOOLEAN\(\s*0\s*,\s*"(test-[a-z0-9-]+)"\s*,\s*[^,]+,\s*((?:"[^"]*"\s*)+)',
+    re.S)
+for m in pat.finditer(src):
+    if "and exit" in m.group(2).replace("\n", " "):
+        print(m.group(1))
+DISCOVER
+)
+    # A discovery rule that silently matches nothing would turn this gate into a
+    # no-op that reports GREEN. Refuse instead.
+    if [ "${#HARNESSES[@]}" -lt 8 ]; then
         record netplay-harnesses ERROR
-        echo "  discovered zero harnesses in src/args.c -- refusing to pass vacuously"
+        echo "  discovered ${#HARNESSES[@]} harnesses in src/args.c (expected >= 8)"
+        echo "  -- refusing to pass vacuously on a discovery rule that broke"
     else
         h_failed=0
         for h in "${HARNESSES[@]}"; do
@@ -221,10 +255,35 @@ echo
 # Summary. Every gate is named, including the ones that did not run.
 # ---------------------------------------------------------------------------
 echo "############ SUMMARY ############"
+
+# COMPLETENESS ASSERTION.
+#
+# Every gate declared in GATES must have recorded a state. Without this, a gate
+# that dies before calling `record` -- a missing shell builtin, an unbound
+# variable under `set -u`, an early `exit` in a helper -- simply vanishes from
+# the summary, and the verdict is computed over the gates that survived. That
+# is not a hypothetical: the harness gate did exactly this on macOS bash 3.2
+# (`mapfile: command not found`) and the run still printed GREEN.
+#
+# A gate that produced no state is a harness error, never a pass.
+for spec in "${GATES[@]}"; do
+    want="${spec%%|*}"
+    found=0
+    for n in "${NAMES[@]:-}"; do
+        [ "${n}" = "${want}" ] && { found=1; break; }
+    done
+    if [ "${found}" -eq 0 ]; then
+        NAMES+=("${want}"); STATES+=("NO RESULT")
+        FAILED=1
+    fi
+done
+
 skipped=""
 for i in "${!NAMES[@]}"; do
     printf '  %-24s %s\n' "${NAMES[$i]}" "${STATES[$i]}"
     [ "${STATES[$i]}" = "NOT RUN" ] && skipped="${skipped} ${NAMES[$i]}"
+    [ "${STATES[$i]}" = "NO RESULT" ] && \
+        echo "      ^ this gate recorded nothing -- it did not run to completion"
 done
 verdict=$([ "${FAILED}" -eq 0 ] && echo GREEN || echo RED)
 if [ -n "${skipped}" ]; then
