@@ -974,8 +974,11 @@ identical `motion 2qcf HK` attempts, `--test-p1-super-art 2
   with `plmain.c:614-626`'s EX-activation code path spending from a
   fractional `gauge.s.h` counter and only decrementing the whole-stock
   `store` when that fraction is insufficient — a materially cheaper cost
-  model than a super's flat `store -= 1` (`plmain.c:677`; `plmain.c:726` is
-the opposite-sign `store -= -1` increment in `sag_union_1`) in the
+  model than a super's flat `store -= 1` (`plmain.c:668`; `plmain.c:717`, then the opposite-sign
+`store -= -1` increment in `sag_union_1`, now reads `store -= 1` too --
+the sign was flipped by upstream commit `ad411df5` "Re-check plmain.c
+(#269)" on 2026-07-15, AFTER this passage was written; the increment
+this paragraph relies on no longer exists in the tree) in the
   `sag_union_0`/`sag_union_1` handlers reached via
   `sag_union_cps3_jump_table`, `plmain.c:1045`). The exact mechanical reason
   SA3 (nominally a single-segment/one-shot super in real 3rd Strike)
