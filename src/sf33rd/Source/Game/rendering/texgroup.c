@@ -285,7 +285,7 @@ void q_ldreq_texture_group(REQ* curr) {
          * readers of lds->texture_table / lds->trans_table; ten are gated
          * on ok != 0 with an early return (mtrans.c:181, 280, 369, 422,
          * 691, 814, 1095, 1223, 1482, 2512). The eleventh is the Akuma
-         * special-case at texgroup.c:454 below, which has NO ok check --
+         * special-case at texgroup.c:471 below, which has NO ok check --
          * it is safe only because it hardcodes texgrplds[15] and runs in
          * the case-4 branch for curr->ix == 15, where that is the group
          * just repointed at the new block, so it never observes the freed
@@ -299,7 +299,7 @@ void q_ldreq_texture_group(REQ* curr) {
          * needing two.
          *
          * The nested purge is bounded: purge_texture_group clears ok
-         * before calling Push_ramcnt_key (texgroup.c:562-563), so the
+         * before calling Push_ramcnt_key (texgroup.c:579-580), so the
          * purge_texture_group(group_num) re-entry inside
          * Push_ramcnt_key_original_2 (ramcnt.c:102) sees ok == 0 and does
          * nothing.
@@ -315,7 +315,7 @@ void q_ldreq_texture_group(REQ* curr) {
          * dangling permanently. That cannot happen. Reaching here with
          * ok == 1 requires the case-0 dup-transfer guard above, which is
          * itself inside `if (bsd->ix1st == 1 || bsd->ix1st == 2)`
-         * (texgroup.c:176) -- ix1st == 0 drains at :221-224 and never
+         * (texgroup.c:193) -- ix1st == 0 drains at :221-224 and never
          * sets be = 2. Resolving texgrpdat[]'s num_of_1st through
          * obj_group_table gives: ix1st == 1 covers groups 1..20 and
          * nothing else, ix1st == 2 covers groups 27 and 35 and nothing
@@ -355,7 +355,7 @@ void q_ldreq_texture_group(REQ* curr) {
          * under G_No == {2,2,1} or G_No[1] == 9, and for a PLW
          * obj_group_table[wk->wu.cg_number] lands in 1..20. Groups 1..20
          * lose ok only via purge_texture_group, whose three call sites
-         * are this one, texgroup.c:557 (reset_dma_group, attract mode,
+         * are this one, texgroup.c:574 (reset_dma_group, attract mode,
          * group 61 only) and ramcnt.c:102. This one cannot fire during
          * Game02 by the Check_LDREQ_Clear() argument above. ramcnt.c:102
          * needs a key with a nonzero group_num, and the only such free

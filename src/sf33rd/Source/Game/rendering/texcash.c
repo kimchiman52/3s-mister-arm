@@ -301,7 +301,7 @@ void texcash_release_instance(MultiTexture* mt, PatternInstance* cp, s16 num, s1
         // would strand every slot the instance holds -- mc[slot].time never
         // decremented, cs.code never set to -1, the slot never returned to
         // tpf by init_texcash_2nd.  That is exactly the shape of the
-        // 2026-04-29 texgroup.c:216 guard that turned an arcade hang into a
+        // 2026-04-29 texgroup.c:233 guard that turned an arcade hang into a
         // leak, so this guard must not skip the release.
         //
         // It resyncs the redundant counters instead.  `cp->map` is the

@@ -51,7 +51,7 @@ const u8 lpt_seldat[4] = { 3, 4, 5, 0 };
  *                 handle can alias another file's in-flight read.
  *
  *   q_ldreq       Restoring it rewinds `rno`, replaying steps that already
- *                 ran: Pull_ramcnt_key (texgroup.c:362, color3rd.c:108)
+ *                 ran: Pull_ramcnt_key (texgroup.c:379, color3rd.c:108)
  *                 against an allocator that is NOT rewound, plus fsOpen /
  *                 AFS_Read. That is the double-allocation the dedupe below
  *                 and the reclaim in q_ldreq_texture_group case 2 exist to
@@ -69,7 +69,7 @@ const u8 lpt_seldat[4] = { 3, 4, 5, 0 };
  *
  *   plt_req       A latch that must agree with the (unsaved) queue:
  *                 q_ldreq_texture_group case 4 publishes into
- *                 char_init_data[plid_data[plt_req[id]]] (texgroup.c:413).
+ *                 char_init_data[plid_data[plt_req[id]]] (texgroup.c:430).
  *                 Rewinding it while the queue still holds the newer
  *                 character's request publishes into the wrong slot.
  *
