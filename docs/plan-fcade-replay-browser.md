@@ -229,7 +229,7 @@ defined go/no-go (§6, Step B3).
 
 ### 2.4 Upstream STATCHECK harness (@ `03c5d7a6`)
 
-- CMake: `option(THREESX_STATCHECK …)` (upstream:CMakeLists.txt:22);
+- CMake: `option(THREESX_STATCHECK …)` (upstream CMakeLists.txt line 22);
   defines `STATCHECK` (:75), swaps input driver defines
   `CRS_INPUT_DRIVER_SDL` → `CRS_INPUT_DRIVER_STATCHECK` (:85-86),
   suppresses `CHECKSUM` in Release when statcheck is on (:73). Sources
@@ -242,7 +242,7 @@ defined go/no-go (§6, Step B3).
   `RAM_FRAME_SIZE` 524288 (:8). Frames are exposed as `SDL_IOStream`s.
 - `upstream:src/test/replay_game.{c,h}` — scans SCRD frames for the
   game-start signature `G_No[1]==2 && G_No[2]==0 && G_No[3]==0`
-  (replay_game.c:36), then reads characters (`MY_CHAR_OFFSET`), SAs,
+  (upstream replay_game.c line 36), then reads characters (`MY_CHAR_OFFSET`), SAs,
   `NEW_CHALLENGER_OFFSET`, `PLAYER_COLOR_OFFSET` (:39-49) and maps
   arcade→3SX character ids (`CHAR_ARCADE_TO_3SX`, :10-15).
 - `upstream:src/test/test_runner.c` — phase machine
@@ -610,7 +610,7 @@ collide (`ReplayGame_Destroy` exists in both trees, §2.5), inject via
 `p1sw_buff` (fork style, SWK-layout words per §2.3) instead of an
 input driver, add a `--ram-archive` arg, and gate with a new
 `THREESX_STATCHECK` CMake option mirroring
-upstream:CMakeLists.txt:22/73/75. Add `message(FATAL_ERROR)` if both
+upstream CMakeLists.txt lines 22, 73 and 75. Add `message(FATAL_ERROR)` if both
 Debug config and THREESX_STATCHECK are selected.
 
 **Headless caveat (verified):** the fork's `--headless` flag is parsed

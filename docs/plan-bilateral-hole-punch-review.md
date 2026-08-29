@@ -134,7 +134,7 @@
 ## Things verified correct
 
 - **File paths and extensions**: `src/netplay/direct_p2p.{c,h}` exist at the cited paths; `src/netplay/stun.{c,h}`, `src/netplay/room_code.{c,h}`, `src/netplay/netplay.{c,h}` all exist. `src/port/config/config.{c,h}` exist. `src/netplay/test_stun_mock.c` and `src/netplay/test_mist_handshake.c` exist. `docs/direct-p2p-smoke-plan.md` exists. `docs/config.md` exists. `docs/STUN-PORT-STATUS.md` exists.
-- **Function signatures**: `host_thread_fn` at `direct_p2p.c:288` (plan cites the range correctly), `join_thread_fn` at `direct_p2p.c:372` (plan says 372-457; actual is 372-458 — off by one, nit), `host_tick_receive` at `direct_p2p.c:516` (plan cites 516-552, verified exactly), `do_handoff(1, …)` at `:550` verified exactly, `do_handoff(2, …)` at `:558` verified exactly.
+- **Function signatures** *(pointers refreshed to the current tree 2026-08-29; each review-time number is kept in its parenthetical, because the finding is about that number)*: `host_thread_fn` at `direct_p2p.c:2678` (was 288; plan cited the range correctly), `join_thread_fn` at `direct_p2p.c:3232` (was 372; plan said 372-457, actual at the time was 372-458 — off by one, nit), `host_tick_receive` at `direct_p2p.c:3821` (was 516; plan cited 516-552, verified exactly), `do_handoff(1, …)` at `direct_p2p.c:3953` (was 550) and `do_handoff(2, …)` at `direct_p2p.c:3961` (was 558), both verified exactly.
 - **Stun API**: `Stun_Discover(StunResult*, uint16_t)`, `Stun_HolePunch(StunResult*, char*, uint16_t*, int, SDL_AtomicInt*)`, `Stun_CloseSocket(StunResult*)` all match plan-assumed signatures (`stun.h:25,28,41`).
 - **Room-code API**: `RoomCode_Encode` / `RoomCode_Decode` / `RoomCode_NormalizeInput` at `room_code.h:96,104,113`; payload is 6 bytes (`ROOM_CODE_RAW_LEN` at `room_code.h:63`). Plan's derivation of the 6-byte payload from both sides is correct. *[No longer true — corrected here because these are file:line references a reader would follow. As of room code v3: `RoomCode_Encode` `room_code.h:195`, `RoomCode_Decode` `:204` (returns `RoomCodeDecodeResult`, not `bool`, and takes a `nonce` out-param), `RoomCode_GenerateNonce` `:215`, `RoomCode_NormalizeInput` `:251`. `ROOM_CODE_RAW_LEN` was deleted; the payload is **10 bytes** — `ip[4] ‖ port_be[2] ‖ nonce_be[4]` (`room_code_pack_payload`, `room_code.c:251`; `REND_KEY_PAYLOAD_LEN 10`, `rendezvous.c:48`). The rest of this section's line numbers were verified against the tree as it stood at review time and have drifted similarly.]*
 - **Netplay API**: `Netplay_SetStunSocket(struct NET_DatagramSocket*)` at `netplay.h:43`, `Netplay_SetParams(int, const char*)` at `:24`, `Netplay_SetSessionTeardownCallback(void (*)(void))` at `:49`, `Netplay_SetRemotePort(unsigned short)` at `:29`. All match plan's assumptions.
@@ -205,7 +205,7 @@ The 16-byte `peer_ip` field with the IPv4-mapped-IPv6-OR-raw-IPv4 alternation is
 
 #### NEW-4 — Cancel semantics: `SDL_DetachThread` + spin-for-IDLE has a write-after-free race
 
-**Claim in plan (pre-revision):** Cancel-semantics changes were not specified; the plan inherited the existing `direct_p2p.c:644` `SDL_DetachThread(s_thread)` and `direct_p2p.c:659-661` spin loop.
+**Claim in plan (pre-revision):** Cancel-semantics changes were not specified; the plan inherited the existing `SDL_DetachThread(s_thread)` at `direct_p2p.c` line 644 and the spin-for-IDLE loop at lines 659-661. *[Those two line numbers are as this review found them and have no live equivalent: S5a removed the detach outright, and `DirectP2P_Cancel` now sets the three cancel atomics and `SDL_WaitThread`s every worker handle — `src/netplay/direct_p2p.c:4182-4203`.]*
 
 **Actual:** Today's `DirectP2P_Cancel` spins up to 500 ms for `get_state() == DIRECT_P2P_IDLE`, then unconditionally tears down `s_work` via `memset` (`direct_p2p.c:674`) and the STUN socket. If the worker is mid-`Stun_HolePunch` post-receive write at `stun.c:445-446` (the 3-punch follow-up after a successful receive) when the 500 ms grace expires, the worker writes freed memory after teardown. The bilateral path's worst-case 11-second worker lifetime makes this race more likely.
 
@@ -334,7 +334,7 @@ A third deep verification pass surfaced 19 additional findings against the post-
 
 #### P-1.B — Host/join label swap on `SDL_DetachThread`; three-thread cleanup model under-specified
 
-**Claim in plan (pre-round-2):** §Step 5 cancel-semantics bullet at `plan-bilateral-hole-punch.md:554` said "Drop `SDL_DetachThread(s_thread)` at `direct_p2p.c:644` (host)". NEW-4 disposition row at `plan-bilateral-hole-punch.md:773` repeated the same label.
+**Claim in plan (pre-round-2):** the §Step 5 cancel-semantics bullet (`docs/plan-bilateral-hole-punch.md:586`; cited as :554 at the time) said "Drop `SDL_DetachThread(s_thread)` at `direct_p2p.c` line 644 (host)". The NEW-4 disposition row (`docs/plan-bilateral-hole-punch.md:907`; cited as :773 at the time) repeated the same label. The `direct_p2p.c` numbers throughout this section are review-time positions — see §NEW-4 for where the code went.
 
 **Actual:** Verified against `src/netplay/direct_p2p.c`:
 - `:603` is `SDL_DetachThread(s_thread)` inside `DirectP2P_BeginHost` (host detach).
