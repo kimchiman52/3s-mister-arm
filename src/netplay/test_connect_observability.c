@@ -684,13 +684,13 @@ static void test3_confirm_not_nat(void) {
      * the harness:
      *
      *   - race_punch_confirmed() returns false the moment a leg is
-     *     finished (direct_p2p.c:1512-1518), and section 2's lifetime
+     *     finished (direct_p2p.c:1559-1565), and section 2's lifetime
      *     sweep `continue`s over any confirmed leg, so a confirmed leg is
      *     never finished by the budget.
      *   - The latest instant a leg can still be confirmed is therefore
      *     send_end + RACE_PUNCH_SETTLE_MS, i.e. at most
      *     budget + STUN_PUNCH_CONFIRM_MS (the two constants are asserted
-     *     equal at direct_p2p.c:1399).
+     *     equal at direct_p2p.c:1446).
      *   - A confirmed leg settles one tail later, and the loop's hard cap
      *     is budget + 2 * STUN_PUNCH_CONFIRM_MS (direct_p2p.c section 8).
      *     Settling therefore always precedes the cap, except at an exact
@@ -1310,11 +1310,21 @@ static void test9_host_ladder_rungs(const char* report_dir) {
     /* 1 initial attempt + shipped_retries retries, all of them real. */
     EXPECT_TRUE(tag, multi.rungs == 1 + shipped_retries);
     EXPECT_TRUE(tag, SDL_GetAtomicInt(&g_obs_ladder_stun_calls) == 1 + shipped_retries);
-    /* #96's evidence field. The re-probe skip in host_thread_fn only
-     * fires for a LIVE mapping, and no mapping is ever live here (the
-     * harness build refuses both SSDP and gateway discovery), so every
-     * rung re-pays the probe. probes == rungs IS the repeated work. */
-    EXPECT_TRUE(tag, multi.portmap_probes == multi.rungs);
+    /* #96's evidence field, and the regression test for #96 itself.
+     *
+     * No mapping is ever live here — the harness build refuses both SSDP
+     * and gateway discovery — so this is exactly the FAILING-probe host
+     * #96 is about. Before #96 the re-probe skip fired only for a LIVE
+     * mapping, so every rung re-paid the probe and this read 4. With the
+     * failure verdict latched for the hosting session it must read 1,
+     * however long the ladder is: the shipped cost of a failing probe is
+     * PORTMAP_PROBE_BUDGET_MS (measured: 8033 ms of miniupnpc 2.2.1 SSDP
+     * plus 3510 ms of silent gateway overruns the 11250 ms outer
+     * deadline), so each extra probe here would be 11.25 s of a real
+     * user's time. Asserting == 1 rather than <= rungs is deliberate:
+     * "fewer than before" is not the property, "once per session" is. */
+    EXPECT_TRUE(tag, multi.portmap_probes == 1);
+    EXPECT_TRUE(tag, multi.rungs > multi.portmap_probes);
     /* The summation is real, not a copy of the last rung. */
     EXPECT_TRUE(tag, multi.stun_total_ms >=
                          (uint32_t)(multi.rungs * OBS_LADDER_STUN_LEG_MS));
@@ -1341,8 +1351,8 @@ static void test9_host_ladder_rungs(const char* report_dir) {
         return;
     }
     EXPECT_TRUE(tag, obs_field_of(multi_line, "host_rungs=") == 1 + shipped_retries);
-    EXPECT_TRUE(tag, obs_field_of(multi_line, "host_portmap_probes=") ==
-                         1 + shipped_retries);
+    /* #96 in the tester report: four rungs, ONE probe. */
+    EXPECT_TRUE(tag, obs_field_of(multi_line, "host_portmap_probes=") == 1);
     EXPECT_TRUE(tag, obs_field_of(multi_line, "t_ms_total upnp=") >= 0);
     EXPECT_TRUE(tag, obs_field_of(multi_line, "backoff=") == (long)multi.backoff_ms);
     /* The line must be COMPLETE — a truncated report line is a silently
@@ -1404,13 +1414,15 @@ static void test9_host_ladder_rungs(const char* report_dir) {
 
     if (fail_count == 0) {
         fprintf(stderr,
-                "[test_connect_observability] PASS: %s: 4-rung host FAIL reports "
-                "host_rungs=4 host_portmap_probes=4 backoff=%ums stun_total=%ums "
-                "(wall %ums); 1-rung reports host_rungs=1 host_portmap_probes=1 "
-                "backoff=0ms stun_total=%ums (wall %ums)\n",
-                tag, (unsigned)multi.backoff_ms, (unsigned)multi.stun_total_ms,
-                (unsigned)multi.wall_ms, (unsigned)single.stun_total_ms,
-                (unsigned)single.wall_ms);
+                "[test_connect_observability] PASS: %s: multi-rung host FAIL reports "
+                "host_rungs=%d host_portmap_probes=%d backoff=%ums stun_total=%ums "
+                "(wall %ums); one-rung reports host_rungs=%d host_portmap_probes=%d "
+                "backoff=%ums stun_total=%ums (wall %ums) — distinguishable, and "
+                "#96 keeps the probe count at 1 across the whole ladder\n",
+                tag, multi.rungs, multi.portmap_probes, (unsigned)multi.backoff_ms,
+                (unsigned)multi.stun_total_ms, (unsigned)multi.wall_ms,
+                single.rungs, single.portmap_probes, (unsigned)single.backoff_ms,
+                (unsigned)single.stun_total_ms, (unsigned)single.wall_ms);
     }
 }
 

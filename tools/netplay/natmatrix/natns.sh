@@ -124,7 +124,7 @@ apply_nat() { # apply_nat <ns> <wif> <ext_ip> <inner_ip> <type>
         #
         # Deliberately NOT keyed to a fixed port: only the HOST binds a chosen port.
         # The JOINER binds local_port 0 and gets an OS-assigned ephemeral port
-        # (src/netplay/direct_p2p.c:3322), so a fixed-port map would silently fail
+        # (src/netplay/direct_p2p.c:3398), so a fixed-port map would silently fail
         # to emulate full cone on the joiner side and would corrupt that column.
         ipns "$ns" iptables -t nat -A POSTROUTING -o "$wif" -j SNAT --to-source "$ext"
         ipns "$ns" iptables -t nat -A PREROUTING  -i "$wif" -p udp \
@@ -231,7 +231,7 @@ netem() { # netem <A|B|both> <delay_ms> <jitter_ms> <loss_pct>
 # This models the real mechanism: the server's unsolicited push to the host at
 # rendezvous-server.js:719 is a bare socket.send with NO retransmit, so when it is
 # lost the host learns the peer endpoint only from the reply to its OWN next
-# REGISTER -- a full register-interval later (direct_p2p.c:2617).
+# REGISTER -- a full register-interval later (direct_p2p.c:2664).
 #
 # The drop is installed at the RECEIVING side's NAT ingress (mangle PREROUTING on
 # its WAN interface), NOT in the server's OUTPUT chain. That distinction matters:

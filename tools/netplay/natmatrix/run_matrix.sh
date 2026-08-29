@@ -3,7 +3,7 @@
 # matrix inside Linux network namespaces, and emit one JSON line per attempt.
 #
 # Cascade under test: STUN -> direct punch -> rendezvous signaling -> bilateral
-# punch (all raced concurrently by p2p_race, src/netplay/direct_p2p.c:1433).
+# punch (all raced concurrently by p2p_race, src/netplay/direct_p2p.c:1480).
 # There is no relay; the S5 relay was removed and is deliberately not modelled.
 #
 # For every cell we record the MEASURED NAT type on each side (rig/nat_classify.py)
@@ -154,7 +154,7 @@ for B in $TYPES; do
         JRC=$?
 
         # The HOST has no wall-clock budget by design -- it waits in HOST_WAITING
-        # as long as the room code is on screen (direct_p2p.c:2590-2596). So on a
+        # as long as the room code is on screen (direct_p2p.c:2637-2643). So on a
         # failing cell the host never terminates on its own. Give it a grace
         # period to land a late handoff, then stop that ONE pid (never pkill).
         for _ in $(seq 1 30); do kill -0 "$HPID" 2>/dev/null || break; sleep 0.1; done
