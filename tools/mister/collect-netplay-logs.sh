@@ -11,15 +11,19 @@
 # to run against a device mid-session without perturbing the thing being
 # diagnosed.
 #
-# !! DEPLOY DEPENDENCY — THE ORDER MATTERS !!
-# On this branch a deploy DELETES the remote logs/ directory. All three
-# rsync preserve lists in tools/mister/mister-common.sh omit it — `grep -n
-# logs tools/mister/mister-common.sh` returns nothing — so the
-# `rsync -av --delete` in mister_rsync_deploy takes logs/ with it, the
-# netplay report included. The fix that adds "logs" to the preserved set is
-# commit f8b29ded on the unmerged branch fix/tools-safety-93-90 (there:
-# mister-common.sh:648); that file belongs to that lane and is deliberately
-# NOT edited from here. Until it merges: COLLECT BEFORE YOU DEPLOY.
+# !! DEPLOY DEPENDENCY — RESOLVED !!
+# This used to warn that a deploy DELETES the remote logs/ directory,
+# because all three rsync preserve lists in tools/mister/mister-common.sh
+# omitted it. That was true when #44 was written and is no longer true:
+# task #103 merged fix/tools-safety-93-90 (f8b29ded), which adds "logs" to
+# the preserved set. `grep -n logs tools/mister/mister-common.sh` now
+# answers mister-common.sh:648 ('logs' in the preserve list) and :1167 (the
+# remote mkdir), so `rsync -av --delete` in mister_rsync_deploy no longer
+# takes the tester's evidence with it.
+#
+# Collecting before you deploy is still the safer order, but it is now a
+# preference rather than the only thing standing between a tester's report
+# and deletion.
 #
 # Usage: tools/mister/collect-netplay-logs.sh [--help] [--host <ip>] ...
 set -euo pipefail

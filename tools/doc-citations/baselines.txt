@@ -18,4 +18,4 @@
 # documentation-hardening effort is about. So they are checked here instead.
 
 0    docs/plan-netplay-connection.md    # cleaned to zero; the reference for what a clean doc looks like
-11   src/netplay                        # cleaned during the relay-removal citation sweep; one of the 11 is the deliberate frozen-md5-transcript citation in the bilateral-punch test
+9    src/netplay                        # was 11. Tightened by the task #103 consolidation, not loosened: merging #82 and #91/#73 repointed two of the accepted 11 (netplay_nav.c's Menu_Task cite and netplay.c's step_game cite) onto targets that now resolve, so the scope genuinely improved and the checker reported the ceiling as slack. Lowered in the same commit that improved it, per the ratchet rule above. The residual 9 are all citations OUT of src/netplay into engine files no merged branch touched (entry.c, meta_col.c, effj7.c, pls03.c, menu.c), one intra-file game_state.c range, plus netplay.c:870's `3sxtra netplay.c:158-391` provenance note -- that one names a DIFFERENT repository and the linter misresolves it to our own netplay.c; it needs an external-paths entry, not a line number.

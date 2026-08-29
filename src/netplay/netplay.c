@@ -170,7 +170,7 @@ static bool   s_netplay_log_truncated = false;
 // development machine while writing this: 461 files / 87 MB in
 // ~/Library/Application Support/CrowdedStreet/3S-ARM/logs/. On a MiSTer
 // that directory lives on the SD card the whole system boots from
-// (Paths_GetPrefPath() -> /media/fat/games/3s-arm/, src/port/paths.c:33),
+// (Paths_GetPrefPath() -> /media/fat/games/3s-arm/, src/port/paths.c:20-33),
 // so unbounded growth is a device-health problem, not just clutter.
 //
 // Keep the newest NETPLAY_LOG_KEEP_FILES, ranked by the UTC-ms stamp the
@@ -548,17 +548,21 @@ static inline uint64_t netplay_utc_ms(void) {
 // PORTMAP / DEADLINE / ABORT lines), and it is hard-bounded so it stays
 // small enough to paste into a chat message.
 //
-// !! DEPLOY DEPENDENCY — READ BEFORE RELYING ON THIS ON A DEVICE !!
-// On this branch a redeploy DELETES the whole logs/ directory, this file
-// included. tools/mister/mister-common.sh keeps three copies of the rsync
-// preserve list and none of them names "logs" — `grep -n logs
-// tools/mister/mister-common.sh` returns nothing here — so the
-// `rsync -av --delete` in mister_rsync_deploy wipes it. The fix that adds
-// "logs" to the preserved set is commit f8b29ded on the unmerged branch
-// fix/tools-safety-93-90 (there: mister-common.sh:648). That file belongs
-// to that lane and is deliberately NOT edited from here. Until it merges,
-// tools/mister/collect-netplay-logs.sh must be run BEFORE updating a
-// tester's build, and its --help says so.
+// !! DEPLOY DEPENDENCY — RESOLVED, BUT KNOW WHY IT WAS HERE !!
+// This warning used to say a redeploy DELETES the whole logs/ directory,
+// this file included, because all three copies of the rsync preserve list
+// in tools/mister/mister-common.sh omitted "logs". That was true when #44
+// was written and it is no longer true: task #103 merged
+// fix/tools-safety-93-90 (f8b29ded), which adds "logs" to the preserved
+// set. `grep -n logs tools/mister/mister-common.sh` now answers
+// mister-common.sh:648 ('logs' in the preserve list) and :1167 (the
+// remote mkdir), so `rsync -av --delete` in mister_rsync_deploy leaves
+// this file alone.
+//
+// Kept rather than deleted because the ordering it teaches is still the
+// safe habit, and because if anyone ever drops "logs" from that list again
+// the evidence this file exists to collect goes silently. If line 648 stops
+// naming 'logs', this warning becomes true again.
 //
 // Every function below is "_locked": the caller holds netplay_log_lock().
 // That is not decoration — the report is written from inside the same
@@ -566,7 +570,7 @@ static inline uint64_t netplay_utc_ms(void) {
 // is what makes it thread-safe for free and what makes it impossible for
 // the two files to disagree about what happened.
 
-// MIST_BUILD_HASH is NOT a global compile definition: CMakeLists.txt:167-170
+// MIST_BUILD_HASH is NOT a global compile definition: CMakeLists.txt:174-177
 // attaches it with set_property(SOURCE ...) to a specific source list. This
 // TU is on that list (see the same block), but the #ifdef stays so that a
 // build system change downgrades the header field to "unknown" instead of
@@ -1343,7 +1347,7 @@ static void configure_gekko() {
 #if ENABLE_PERF_TELEMETRY
     /* Task #69.3 — session-start skew. This is the last moment before the
      * rollback engine exists (gekko_create() below), and the LDREQ barrier
-     * is already ON here: #72 widened Ldreq_BarrierActive() (gd3rd.c:623)
+     * is already ON here: #72 widened Ldreq_BarrierActive() (gd3rd.c:652)
      * from NETPLAY_SESSION_RUNNING-only to also cover TRANSITIONING and
      * CONNECTING, and this line runs while
      * session_state is still TRANSITIONING. If two peers can hold
@@ -1701,10 +1705,10 @@ static void process_session() {
              * the logged barrier= column reads 1 and the rest of the row
              * is the state the barrier inherits rather than one it
              * produced. This is no longer the line the barrier turns on
-             * at: #72 widened Ldreq_BarrierActive() (gd3rd.c:623) to also
+             * at: #72 widened Ldreq_BarrierActive() (gd3rd.c:652) to also
              * cover TRANSITIONING and CONNECTING, so the barrier has been
              * active since session_state first became TRANSITIONING
-             * (netplay.c:1570 / :1612). */
+             * (netplay.c:2072 / :2114). */
             Ldreq_LogSessionProbe("session-running", s_last_advance_frame);
 #endif
             // P-2.1 fix: re-seed last-advance now so the watchdog clock
@@ -2131,7 +2135,7 @@ void Netplay_Run() {
     /* Task #69.3 — the whole session-start window as a timeline, not two
      * point samples. TRANSITIONING and CONNECTING both step the engine
      * with the barrier ON now: #72 widened Ldreq_BarrierActive()
-     * (gd3rd.c:623) from RUNNING-only to also cover TRANSITIONING and
+     * (gd3rd.c:652) from RUNNING-only to also cover TRANSITIONING and
      * CONNECTING, so this whole pre-RUNNING window is barrier-gated, not
      * barrier-free. This probe still times the
      * window end-to-end so any residual skew between the two peers still
