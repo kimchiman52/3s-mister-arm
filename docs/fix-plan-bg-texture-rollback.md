@@ -613,7 +613,7 @@ evidence even more anomalous.
 During a normal match transition, the texture lifecycle is:
 
 1. `setup_vs_mode` (`src/netplay/netplay.c:147`) — called BEFORE the Gekko
-   session starts. Line 197: `System_all_clear_Level_B()` (`sys_sub.c:973`)
+   session starts. Line 197: `System_all_clear_Level_B()` (`sys_sub.c:982`)
    → `Bg_Close()` (`bg.c:226`). This is the pre-session teardown.
 2. Game advances through `G_No[1]` = 12 (menu) → 1 (Game01, character select) →
    2 (Game02, match).
@@ -639,13 +639,13 @@ During a normal match transition, the texture lifecycle is:
    - Loop at bg.c:313-326 over 3 BG layers (`stg=0,1,2`):
      - `ppgSetupCurrentDataList(&ppgBgList[stg])` (bg.c:316).
      - `ppgSetupTexChunk_1st(NULL, loadAdrs, loadSize, (stg*64)+0x84, 32, 0, 0)` (bg.c:317).
-       Inside `_1st` (PPGFile.c:1239):
+       Inside `_1st` (PPGFile.c:1256):
        - `be==1` → hang (PPGFile.c:1248-1250). Safe assumption: be==0 on entry
          because Bg_Close preceded us.
        - Alloc `handle[]` for 32 slots, zero them (PPGFile.c:1270-1273).
        - Set `be = 1` (PPGFile.c:1321). **Handles all zero at this moment.**
      - Inner loop (bg.c:320-325): for each `i` in 0..31, if `tgbix & (1<<31-i)`:
-       - `ppgSetupTexChunk_2nd(NULL, i + ((stg*64)+0x84))` (PPGFile.c:1347).
+       - `ppgSetupTexChunk_2nd(NULL, i + ((stg*64)+0x84))` (PPGFile.c:1364).
        - `ppgSetupTexChunk_3rd(NULL, i + ((stg*64)+0x84), 1)` (PPGFile.c:1379).
        Inside `_3rd`:
        - `hnof = tch->handle + (ixNum - tch->ixNum1st)` (PPGFile.c:1399).
@@ -850,7 +850,7 @@ scrolling/layer-parameters desync that causes the renderer to SAMPLE tile
 indices that were never intended to be loaded for this stage, revealing the
 pre-existing zero-handle state of unused tail slots.
 
-The `bg_prm[8]` field IS in GameState (game_state.h:679, GS_SAVE at
+The `bg_prm[8]` field IS in GameState (game_state.h:692, GS_SAVE at
 game_state.c — let me verify):
 
 Indeed `bg_prm` is saved — grep shows it in `GS_SAVE(bg_prm)` at
@@ -992,7 +992,7 @@ slot via `_3rd`. This is the SAME behavior as a fresh-match load.
   (game.c:452, `System_all_clear_Level_B → Bg_Close`). So the textures are
   already released when this runs normally. The guard is a NO-OP on the
   well-behaved path and a REPAIR on the pathological rollback path.
-- One subtle issue: `System_all_clear_Level_B` (sys_sub.c:973) ALSO calls
+- One subtle issue: `System_all_clear_Level_B` (sys_sub.c:982) ALSO calls
   `effect_work_init()`. The new guard in `Bg_Texture_Load_EX` only re-tears
   BG textures — it does NOT duplicate `effect_work_init`. Since we're paired
   with a `System_all_clear_Level_B` already earlier in Game2_0 anyway, no
@@ -1352,8 +1352,8 @@ future investigation:
 | `bg_work_clear` sets bg_routine=0 | `src/sf33rd/Source/Game/stage/bg_sub.c:1047-1050` |
 | `GameState` struct | `src/netplay/game_state.h:29-717` |
 | `bg_w` in GameState | `src/netplay/game_state.h:533` |
-| `chainex_check` in GameState | `src/netplay/game_state.h:716` |
-| `EXPECTED_GAME_STATE_SIZE` | `src/netplay/game_state.c:56` |
+| `chainex_check` in GameState | `src/netplay/game_state.h:729` |
+| `EXPECTED_GAME_STATE_SIZE` | `src/netplay/game_state.c:127` |
 | `GameState_Save` bg_w | `src/netplay/game_state.c:584` |
 | `GameState_Save` chainex_check extern | `src/netplay/game_state.c:761-766` |
 | `GameState_Load` chainex_check extern | `src/netplay/game_state.c:1450-1454` |

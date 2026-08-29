@@ -363,7 +363,7 @@ The reviewer opened the source at every line the plan cited and confirmed:
   `fbdev_presenter.h:104` — verified.
 - `NativeVideoWriter_WriteFrame` at `native_video_writer.c:76-107` already
   handles both contiguous and row-by-row pitch — verified.
-- `CFG_KEY_COLORKEY_LOOSE_KERNEL_ENABLED` at `config.h:23`,
+- `CFG_KEY_COLORKEY_LOOSE_KERNEL_ENABLED` at `config.h:35`,
   setter decl at `sdl_game_renderer.h:736`,
   startup wiring at `sdl_app.c:9988-9990` — verified, plan's mirror pattern
   is faithful.

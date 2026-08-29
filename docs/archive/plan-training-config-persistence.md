@@ -38,7 +38,7 @@ These are zeroed on entering the training menu and re-derived from `Training->co
 
 ### Training data lifecycle
 
-1. **Entry from mode select**: `mpp_w.initTrainingData = true`, then `Default_Training_Data(0)` is called from `sel_pl.c:186`. This zeros `Training[0].contents`, sets damage/difficulty from `save_w`, copies to `Training[2]`, and clears the display flags.
+1. **Entry from mode select**: `mpp_w.initTrainingData = true`, then `Default_Training_Data(0)` is called from `sel_pl.c:214`. This zeros `Training[0].contents`, sets damage/difficulty from `save_w`, copies to `Training[2]`, and clears the display flags.
 
 2. **Entry from "DEFAULT SETTING" in menus**: `Default_Training_Data(1)` or `Default_Training_Option()` -- always resets regardless of flag. Additionally, Normal Training > Dummy Setting > DEFAULT SETTING (menu.c:5037-5043) directly zeroes `Training[2].contents[0][0][0..3]` without calling `Default_Training_Data`.
 
