@@ -850,7 +850,7 @@ scrolling/layer-parameters desync that causes the renderer to SAMPLE tile
 indices that were never intended to be loaded for this stage, revealing the
 pre-existing zero-handle state of unused tail slots.
 
-The `bg_prm[8]` field IS in GameState (game_state.h:692, GS_SAVE at
+The `bg_prm[8]` field IS in GameState (game_state.h:689, GS_SAVE at
 game_state.c — let me verify):
 
 Indeed `bg_prm` is saved — grep shows it in `GS_SAVE(bg_prm)` at
@@ -1352,8 +1352,8 @@ future investigation:
 | `bg_work_clear` sets bg_routine=0 | `src/sf33rd/Source/Game/stage/bg_sub.c:1047-1050` |
 | `GameState` struct | `src/netplay/game_state.h:29-717` |
 | `bg_w` in GameState | `src/netplay/game_state.h:533` |
-| `chainex_check` in GameState | `src/netplay/game_state.h:729` |
-| `EXPECTED_GAME_STATE_SIZE` | `src/netplay/game_state.c:127` |
+| `chainex_check` in GameState | `src/netplay/game_state.h:726` |
+| `EXPECTED_GAME_STATE_SIZE` | `src/netplay/game_state.c:143` |
 | `GameState_Save` bg_w | `src/netplay/game_state.c:584` |
 | `GameState_Save` chainex_check extern | `src/netplay/game_state.c:761-766` |
 | `GameState_Load` chainex_check extern | `src/netplay/game_state.c:1450-1454` |

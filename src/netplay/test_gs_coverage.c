@@ -85,10 +85,37 @@
  * Verification (not assumed): clang -Xclang -fdump-record-layouts on
  * this exact header, then checking every one of the 24 reported hole
  * ranges against the member offset map. All 24 sit strictly BETWEEN two
- * consecutive members (e.g. 11..11 after hoji_counter@10 before
- * select_timer_state@12; 19237..19239 after ca_check_flag@19236 before
- * spmv_ng_save@19240); none coincides with or falls inside a member. */
-#define GS_COVERAGE_EXPECTED_HOLE_BYTES 57
+ * consecutive members (e.g. 11..11 after hoji_counter@10 before the
+ * then-present select_timer_state@12; 19237..19239 after
+ * ca_check_flag@19236 before spmv_ng_save@19240); none coincides with or
+ * falls inside a member.
+ *
+ * Re-pinned 2026-08-29 (task #109), 57 -> 53 (sizeof(GameState) == 19328,
+ * 611 top-level members), after ONE field was removed: select_timer_state
+ * (SelectTimerState, 12 bytes at offset 12). It was the last user of the
+ * dead src/sf33rd/Source/Game/select_timer.{c,h} module, which upstream
+ * 33dfd75b (#216) had already replaced with effect A5; the member was
+ * saved and loaded as permanent zeros. Removing it also removes the
+ * 11..11 pad byte that preceded it, since u8 Order[148] now starts at
+ * offset 11 -- this is the "FEWER holes" direction, which can only mean
+ * padding stopped existing, never a coverage loss. The remaining -3
+ * comes from downstream realignment (e.g. a new 1-byte hole appears at
+ * 455..455 before u32 Score[2][3], and the old trailing-padding shape
+ * changes); the totals are 19344 - 19328 = 16 = 12 payload + 4 padding,
+ * which reconciles exactly.
+ *
+ * Verification (not assumed, and stronger than the 2026-08-24 pass): a
+ * generated offsetof/sizeof map of ALL 611 top-level members was used to
+ * compute the exact padding-byte set of the struct, and it was compared
+ * with the 53 hole bytes this harness reports. The two sets are
+ * IDENTICAL -- 0 holes outside padding, 0 padding bytes that
+ * round-tripped. Independently, the member-name set of GameState matches
+ * the GS_SAVE and GS_LOAD name sets exactly: 606 of the 611 members go
+ * through GS_SAVE/GS_LOAD, and the other 5 (chainex_check, Color7,
+ * ca_check_flag, spmv_ng_save, effl8_colorram) are copied by the
+ * explicit SDL_memcpy blocks in GameState_Save/GameState_Load, so every
+ * member is written on both paths. */
+#define GS_COVERAGE_EXPECTED_HOLE_BYTES 53
 #endif
 
 static uint32_t rng_state;

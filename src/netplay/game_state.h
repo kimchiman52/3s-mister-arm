@@ -9,7 +9,6 @@
 #include "sf33rd/Source/Game/engine/stun.h"
 #include "sf33rd/Source/Game/engine/vital.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
-#include "sf33rd/Source/Game/select_timer.h"
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "structs.h"
 #include "types.h"
@@ -39,8 +38,6 @@ typedef struct GameState {
     u8 counter_color;
     bool mugen_flag;
     s8 hoji_counter;
-
-    SelectTimerState select_timer_state;
 
     u8 Order[148];
     u8 Order_Timer[148];
@@ -481,7 +478,7 @@ typedef struct GameState {
     s16 Random_ix32_com;
     s16 Random_ix16_ex_com;
     s16 Random_ix32_ex_com;
-    /* Random_ix16_bg — the BG-flash RNG index (workuser.c:511, advanced by
+    /* Random_ix16_bg — the BG-flash RNG index (workuser.c:509, advanced by
      * random_16_bg(), pls02.c:734-743). Saved because every consumer of its
      * return value IS saved: scr_trans() (stage/bg.c:811, 948, 949) writes
      * stage_flash, stage_ftimer, rw_dat[0] and rw3col_ptr, all four of which

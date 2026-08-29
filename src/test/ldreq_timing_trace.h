@@ -25,7 +25,7 @@
  * Each run writes one CSV row per outer frame carrying
  *
  *   (a) the saved simulation state the loader actually feeds —
- *       Exit_No/Exit_Timer (game_state.c:456/1196, :607/1347) and
+ *       Exit_No/Exit_Timer (game_state.c:471/1210, :622/1361) and
  *       G_No/G_Timer, i.e. the values a desync checksum compares; and
  *   (b) the loader's own observable surface — the ldreq_result[] hash,
  *       plt_req[], the head queue slot, and the return values of

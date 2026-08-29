@@ -98,8 +98,8 @@ COLUMNS = ["frame", "G_No0", "G_No1", "G_No2", "G_No3", "G_Timer",
            "pl_load", "ldreq_clear"]
 
 # The subset that is in the rollback save set and therefore inside the
-# desync checksum: Exit_No/Exit_Timer at game_state.c:456/1196 and
-# :607/1347, G_No/G_Timer at :453/:540. Divergence here IS the desync.
+# desync checksum: Exit_No/Exit_Timer at game_state.c:471/1210 and
+# :622/1361, G_No/G_Timer at :468/:555. Divergence here IS the desync.
 SAVED_COLUMNS = ["G_No0", "G_No1", "G_No2", "G_No3", "G_Timer",
                  "Exit_No", "Exit_Timer"]
 

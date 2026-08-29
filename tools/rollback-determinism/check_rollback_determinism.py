@@ -479,7 +479,7 @@ EFFECT_STATE_SAVES = ("frw", "frwque", "frwctr", "frwctr_min",
 # silently blind the feedback detector rather than fail. Raise this when the
 # save set legitimately grows; never lower it to make a run pass.
 #
-# Kept flush with the actual count (608 unique names as of this line) rather
+# Kept flush with the actual count (607 unique names as of this line) rather
 # than left slack: a floor with slack is a floor you can walk under. Flush also
 # gives it a second, stronger meaning — the save set may never SHRINK without a
 # deliberate edit here. Growth still passes untouched, so adding fields needs no
@@ -496,7 +496,19 @@ EFFECT_STATE_SAVES = ("frw", "frwque", "frwctr", "frwctr_min",
 # match. That is the intended workflow, not a workaround — but only ever in a
 # scratch tree or alongside a real save-set change. Never lower it to make an
 # otherwise-failing run go green.
-MIN_GS_SAVE_MACRO_NAMES = 608
+#
+# Lowered 608 -> 607 on 2026-08-29 by task #109, which is exactly the
+# "alongside a real save-set change" case above: GS_SAVE(select_timer_state) /
+# GS_LOAD(select_timer_state) were removed together with the GameState member
+# and the dead src/sf33rd/Source/Game/select_timer.{c,h} module that declared
+# its type. Upstream 33dfd75b (#216) had already moved that countdown into
+# effect A5 and deleted the module; our a752e2ca omnibus squash re-added the
+# module with ZERO call sites, so the field was saved and loaded as permanent
+# zeros on every rollback frame. Exactly one name left the save set, the
+# GS_SAVE/GS_LOAD set-equality guard below still holds (both halves were
+# removed), and the regex itself is unchanged -- so this is a shrink by
+# deliberate edit, not a stale-regex blinding.
+MIN_GS_SAVE_MACRO_NAMES = 607
 
 
 def load_gs_save_names():
