@@ -1135,9 +1135,14 @@ static int relay_budget_ms(void) {
  * peer's confirmation after the early peer's commit. Measured on the
  * two-peer rig (test 24, S6_SPLIT_SWEEP=1):
  *
- *     grace 0    / owd 150  ->  split brain at skew 2350-2625
+ *     grace 0    / owd 150  ->  split brain at skew 2350-2625 (3 runs)
  *     grace 600  / owd 150  ->  split brain at skew 2950-3250
- *     grace 1200 / owd 300  ->  split brain at skew 3400-3600
+ *     grace 600  / owd 300  ->  split brain at skew 2800-3300
+ *     grace 600  / owd 400  ->  split brain at skew 2700-3350
+ *     grace 1200 / owd 300  ->  split brain at skew 3450-3800
+ *
+ * The band CENTRE is RACE_RELAY_ARM_MS + grace every time; the WIDTH
+ * grows with the one-way delay, not with the grace.
  *
  * The window is therefore held from the LATER of "the relay became ready"
  * and "the last punch candidate stopped sending", with the candidates
@@ -1151,7 +1156,32 @@ static int relay_budget_ms(void) {
  * our answering tail needs another to reach it. That is why every
  * measured band above is ~2x the one-way delay wide (275-300 ms at
  * owd 150) rather than the "150 ms window, equal to the injected one-way
- * delay" §8.4 used to claim. 600 ms covers every pair with an RTT up to
+ * delay" §8.4 used to claim. Stated as a condition:
+ *
+ *     the peers converge at EVERY start skew exactly when
+ *         RACE_RELAY_GRACE_MS >= 2 * one-way delay
+ *     and where they do not, the residual band is (2*owd - grace) wide
+ *     and sits just past the punch send end.
+ *
+ * That is a prediction, so it was tested in BOTH directions on this tree
+ * rather than only where it passes:
+ *
+ *     owd  50 (RTT  100)  grace  600  ->  0 splits / 29 races
+ *     owd 150 (RTT  300)  grace  600  ->  0 splits / 97 races
+ *     owd 250 (RTT  500)  grace  600  ->  0 splits / 34 races
+ *     owd 400 (RTT  800)  grace  600  ->  SPLITS at skew 5200 and 5300 --
+ *                                         200 ms = 2*400 - 600, exactly
+ *                                         where the formula puts it
+ *     owd 400 (RTT  800)  grace 1200  ->  0 splits, whole suite green
+ *
+ * The last two lines are the point, and they are the difference between
+ * this anchor and the one it replaced. Under the shipped H-3 anchor,
+ * raising the grace MOVED the band and never removed it (0 / 600 / 1200
+ * put its centre at 2500 / 3100 / 3700 ms). Under this anchor the same
+ * lever CLOSES it. What is left is a stated coverage limit with a formula
+ * and a knob, not an unbounded defect.
+ *
+ * 600 ms covers every pair with an RTT up to
  * 600 ms; a transatlantic RTT is 70-180 ms, and a pair above 600 ms RTT
  * cannot play this game at all. It remains one full STUN_PUNCH_CONFIRM_MS
  * tail, which is the same quantity the punch itself spends making sure
@@ -1300,8 +1330,60 @@ void DirectP2P_TestHook_SetPunchOracle(DirectP2P_PunchOracle_fn fn) {
 }
 #define PUNCH_ORACLE(ip, port) \
     (s_punch_oracle != NULL ? s_punch_oracle((ip), (port)) : DP2P_PUNCH_REAL)
+
+/*
+ * H-C test seam: make Stun_PunchBegin FAIL for one nominated endpoint.
+ *
+ * WHY A SEAM IS NEEDED AT ALL. race_arm_punch has exactly one failure mode
+ * downstream of its up-front ip/port guard: Stun_PunchBegin returning
+ * false, which happens when NET_ResolveHostname fails or the address never
+ * reaches NET_SUCCESS (stun.c:781-798). The only endpoint the race ever
+ * RE-arms is slot 1, and slot 1's endpoint comes from a DELIVER, whose IP
+ * string is produced by inet_ntop(AF_INET, ...) in
+ * Rendezvous_ParseDeliverEx (rendezvous.c:251-254) — i.e. ALWAYS a
+ * well-formed dotted quad that always resolves. So the wire physically
+ * cannot deliver an endpoint that reaches the validate/memset decision and
+ * fails there. The seam supplies what the wire cannot.
+ *
+ * It is deliberately as thin as possible: it swaps ONLY the hostname
+ * STRING handed to Stun_PunchBegin. Stun_PunchBegin itself is the real
+ * one and fails down its real NET_ResolveHostname path; nothing about the
+ * validate-then-memset ordering under test is mocked, short-circuited or
+ * bypassed. `c->ip`/`c->port` still record the endpoint the DELIVER named.
+ */
+static char     s_arm_fail_ip[64] = { 0 };
+static uint16_t s_arm_fail_port = 0;
+
+void DirectP2P_TestHook_SetArmFailEndpoint(const char* peer_ip, uint16_t peer_port) {
+    if (peer_ip == NULL || peer_ip[0] == '\0' || peer_port == 0) {
+        s_arm_fail_ip[0] = '\0';
+        s_arm_fail_port = 0;
+        return;
+    }
+    SDL_strlcpy(s_arm_fail_ip, peer_ip, sizeof(s_arm_fail_ip));
+    s_arm_fail_port = peer_port;
+}
+
+/* A single 144-character DNS label. The DNS limit is 63 bytes per label,
+ * so getaddrinfo rejects this locally without emitting a query — no
+ * network, no resolver, no wildcard-DNS zone can turn it into a success.
+ * Measured on this host: NET_GetAddressStatus() == -1 (NET_FAILURE) after
+ * a single 10 ms poll, repeatably. */
+static const char k_arm_fail_host[] =
+    "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+    "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+
+static const char* arm_punch_target_ip(const char* ip, uint16_t port) {
+    if (s_arm_fail_port != 0 && port == s_arm_fail_port &&
+        strcmp(ip, s_arm_fail_ip) == 0) {
+        return k_arm_fail_host;
+    }
+    return ip;
+}
+#define ARM_PUNCH_TARGET_IP(ip, port) arm_punch_target_ip((ip), (port))
 #else
 #define PUNCH_ORACLE(ip, port) ((void)(ip), (void)(port), DP2P_PUNCH_REAL)
+#define ARM_PUNCH_TARGET_IP(ip, port) ((void)(port), (ip))
 #endif
 
 /* One punch candidate. `oracle` is DP2P_PUNCH_REAL for every production
@@ -1359,7 +1441,8 @@ static bool race_arm_punch(RacePunchCandidate* cands, int n_cands, int slot,
     memset(&leg, 0, sizeof(leg));
     const DirectP2PPunchOracleResult oracle = PUNCH_ORACLE(ip, port);
     if (oracle == DP2P_PUNCH_REAL) {
-        if (!Stun_PunchBegin(&leg, ip, port, cfg->punch_token, now)) {
+        if (!Stun_PunchBegin(&leg, ARM_PUNCH_TARGET_IP(ip, port), port,
+                             cfg->punch_token, now)) {
             return false;
         }
     }
@@ -1555,18 +1638,48 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                 race_punch_confirmed(&cands[i])) {
                 continue;
             }
-            if ((int)(now - cands[i].armed_ms) < cfg->punch_leg_ms) {
+            /*
+             * THE GRACE MUST FIT INSIDE THE BUDGET, or it is not a grace.
+             *
+             * Measured on the rig with the race budget squeezed to 5 200 ms
+             * (`S6_SPLIT_BUDGET_MS=5200`, punch send end 5 000, grace 600):
+             * the budget fires 400 ms into the grace, the early peer
+             * commits the relay while still inside a window it had promised
+             * to spend listening, and the split brain comes back at
+             * skew 5 050 ms. A truncated grace is exactly the local timer
+             * the whole H-A fix exists to remove.
+             *
+             * So the SEND window is capped such that a full grace still
+             * fits before `race_budget_ms`. On the shipped defaults this
+             * never binds for punch[0] (5 000 + 600 = 5 600 against an
+             * 8 000 ms budget); it binds only for a DELIVER candidate armed
+             * later than race_budget - grace - punch_leg = 2 400 ms, which
+             * trades some of that candidate's punch window for a decision
+             * both peers can agree on. The window is never negative.
+             */
+            int send_window_ms = cfg->punch_leg_ms;
+            if (relay_possible) {
+                const int cap = cfg->race_budget_ms - (int)RACE_RELAY_GRACE_MS -
+                                (int)(cands[i].armed_ms - t0);
+                if (cap < send_window_ms) {
+                    send_window_ms = (cap > 0) ? cap : 0;
+                }
+            }
+            if ((int)(now - cands[i].armed_ms) < send_window_ms) {
                 continue;
             }
             if (!cands[i].send_expired) {
                 cands[i].send_expired = true;
                 cands[i].send_end_ms = (now != 0) ? now : 1u;
                 SDL_Log("[direct_p2p] S6 race: candidate %s:%u stopped punching after "
-                        "%d ms", cands[i].ip, (unsigned)cands[i].port, cfg->punch_leg_ms);
+                        "%d ms%s", cands[i].ip, (unsigned)cands[i].port, send_window_ms,
+                        (send_window_ms < cfg->punch_leg_ms)
+                            ? " (capped so the relay grace still fits in the budget)"
+                            : "");
             }
             if (!relay_in_play) {
                 SDL_Log("[direct_p2p] S6 race: candidate %s:%u timed out after %d ms",
-                        cands[i].ip, (unsigned)cands[i].port, cfg->punch_leg_ms);
+                        cands[i].ip, (unsigned)cands[i].port, send_window_ms);
                 race_finish_punch(&cands[i], now);
             }
         }
@@ -1906,7 +2019,14 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                  * iteration, above) hand the race to a punch that
                  * confirms in the meantime. Bounded two ways: the grace
                  * itself, and the race budget, which commits the relay
-                 * rather than losing it. */
+                 * rather than losing it.
+                 *
+                 * L-4: those bounds are OR'd, so budget_done below
+                 * suppresses the grace outright when the relay turns
+                 * ready inside the last RACE_RELAY_GRACE_MS of the
+                 * budget — i.e. exactly when the relay is SLOW. That is
+                 * deliberate (never lose a relay we already hold), but
+                 * it bounds the H-3 guarantee; see plan §8.10. */
                 if (relay_ready_ms == 0) {
                     relay_ready_ms = (now != 0) ? now : 1u;
                     SDL_Log("[direct_p2p] S6 relay ready at %s:%u (slot=%u) — holding "
@@ -3756,7 +3876,7 @@ static void do_handoff(int player, const char* peer_ip, uint16_t peer_port) {
      * remote_port from (player, ip). The STUN socket we hand off below is a
      * plain datagram socket with no connected-peer state, so GekkoNet sends
      * go to whatever remote_ip:remote_port configure_gekko stringifies
-     * (netplay.c:525). For direct-P2P over the internet the real peer
+     * (netplay.c:1484). For direct-P2P over the internet the real peer
      * endpoint is the STUN-translated peer_port from the hole-punch, not
      * SetParams' hardcoded 50000. Override remote_port here so outbound
      * Gekko frames reach the actual punched endpoint instead of oblivion. */

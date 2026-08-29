@@ -268,6 +268,13 @@ typedef bool (*DirectP2P_StunDiscover_fn)(StunResult* result,
                                           int timeout_ms);
 
 void DirectP2P_TestHook_SetPunchOracle(DirectP2P_PunchOracle_fn fn);
+/* H-C: nominate ONE endpoint whose Stun_PunchBegin must fail, by handing
+ * Stun_PunchBegin an unresolvable hostname instead of `peer_ip`. The
+ * failure is produced by the real NET_ResolveHostname path, not faked.
+ * Needed because the only re-armable candidate takes its IP from a
+ * DELIVER, and Rendezvous_ParseDeliverEx can only ever emit a resolvable
+ * dotted quad. Pass NULL/0 to clear. */
+void DirectP2P_TestHook_SetArmFailEndpoint(const char* peer_ip, uint16_t peer_port);
 void DirectP2P_TestHook_SetRendezvousSend(DirectP2P_RendezvousSend_fn fn);
 void DirectP2P_TestHook_SetStunDiscover(DirectP2P_StunDiscover_fn fn);
 bool DirectP2P_TestHook_IsLanPeer(const char* ip);

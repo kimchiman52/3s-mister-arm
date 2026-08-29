@@ -55,6 +55,20 @@ bool Upnp_GetExternalIP(char* out_ip, int ip_buf_size);
 /// Invalidate the cached IGD URLs (forces re-discovery on next call).
 void Upnp_InvalidateCache(void);
 
+#ifdef NETPLAY_TEST_HOOKS
+/// Number of times upnp.c has entered its one and only upnpDiscover()
+/// call — i.e. how many times this process has attempted SSDP discovery
+/// on the local network. In a harness build (NETPLAY_TEST_HOOKS AND
+/// ENABLE_NETPLAY_TESTS) the refusal in upnp_ensure_cached() sits above
+/// that call, so this must stay 0 for the life of the process; a
+/// non-zero reading means the refusal is gone and the test binary is
+/// talking to the developer's real router.
+int Upnp_TestHook_DiscoverAttempts(void);
+
+/// Zero the counter above (per-test isolation).
+void Upnp_TestHook_ResetDiscoverAttempts(void);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

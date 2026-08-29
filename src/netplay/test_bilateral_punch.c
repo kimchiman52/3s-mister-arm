@@ -36,6 +36,8 @@
  */
 
 #include <stdio.h>
+/* H-C test 30 wraps SDL's allocator to weigh a NET_Address ref leak. */
+#include <stdlib.h>
 
 #ifdef ENABLE_NETPLAY_TESTS
 
@@ -56,6 +58,7 @@
 #include "netplay/net_tuning.h"
 #include "netplay/rendezvous.h"
 #include "netplay/room_code.h"
+#include "netplay/upnp.h" /* M-1: Upnp_TestHook_DiscoverAttempts, test 23e */
 #include "port/config/config.h"
 
 #include <SDL3/SDL.h>
@@ -1187,7 +1190,7 @@ cleanup_fail:
  * config.ini and reinitializing — both beyond Step 6's scope. Instead,
  * we verify (a) the default value is reachable through Config_GetBool
  * (returns false, matching the documented kill-switch default at
- * config.c:81 — "off until user opts out"), and (b) the API does not
+ * config.c:422 — "off until user opts out"), and (b) the API does not
  * crash on a bogus key. The actual DISABLE_BILATERAL gate path in
  * join_thread_fn is exercised by Step 7 manual smoke testing.
  */
@@ -2457,7 +2460,7 @@ static int send_log_count(void) {
 /* Records every packet direct_p2p.c pushes through RENDEZVOUS_SEND and
  * then performs the real send, so the machine under test keeps running
  * against the mock server. Both roles route here: the host's rend_q
- * drain AND its main-thread CHALLENGE echo (direct_p2p.c:2558), and the
+ * drain AND its main-thread CHALLENGE echo (direct_p2p.c:1812), and the
  * joiner's inline signaling loop sends. */
 static bool recording_rendezvous_send(NET_DatagramSocket* sock, NET_Address* target,
                                       uint16_t target_port, const uint8_t* pkt,
@@ -2524,7 +2527,7 @@ static void mock_server_stop(MockServerCtx* ctx, SDL_Thread* tid,
 
 /* --- host-side STUN seam that hands the test a live handle ------------- */
 
-/* direct_p2p.c:1407 calls STUN_DISCOVER(&s_work.stun, ...) — the mock is
+/* direct_p2p.c:746 calls STUN_DISCOVER(&s_work.stun, ...) — the mock is
  * therefore handed a pointer to the orchestrator's own StunResult. Test
  * 13 keeps it so it can move stun.public_port AFTER the room code (and
  * with it advertised_port) has been latched, which is the only way to
@@ -2617,7 +2620,7 @@ static int test_host_cookie_handshake(void) {
         char url[64];
         SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
         Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
-        /* 1000 ms is the code's own floor (direct_p2p.c:1225); the
+        /* 1000 ms is the code's own floor (direct_p2p.c:2891); the
          * seqlock assertion needs one worker cadence to elapse. */
         Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS, "1000");
     }
@@ -2835,7 +2838,7 @@ done:
  * would have produced (a CHALLENGE is proof the server is alive).
  *
  * Cost note: CONNECT_HOST_ADVISORY_MS is a compile-time 30 s
- * (connect_fail.h:198), so this used to spend ~31 s of real wall clock.
+ * (connect_fail.h:252), so this used to spend ~31 s of real wall clock.
  * DirectP2P_TestHook_SetHostAdvisoryScale scales the elapsed CLOCK
  * rather than the threshold, so the classifier still runs against the
  * shipped 30 s constant — the test is fast without testing a
@@ -2988,12 +2991,13 @@ done:
 /* --- Test 15: JOINER cookie handshake ---------------------------------- */
 
 /*
- * Part A — the joiner answers a CHALLENGE INLINE in its signaling loop
- * (direct_p2p.c:1836-1846): one RTT to bind instead of waiting out the
- * 500 ms resend cadence. Pinned by timing the first cookied REGISTER.
+ * Part A — the joiner answers a CHALLENGE INLINE in its signaling loop:
+ * one RTT to bind instead of waiting out the 500 ms resend cadence.
+ * Pinned by timing the first cookied REGISTER.
  * Part B — the same mock, never accepting: budget expiry must classify
- * COOKIE_REJECTED, which is only reachable when ev_challenge_any was set
- * at runtime.
+ * COOKIE_REJECTED (direct_p2p.c:4829), only reachable when
+ * ev_challenge_any was set at runtime.
+ * (The inline answer itself lives in the race's CHALLENGE arm.)
  */
 
 static int test_joiner_cookie_handshake(void) {
@@ -5231,10 +5235,10 @@ static int test_natpmp_pcp(void) {
 /* --- 23a: the DISABLE_UPNP / DISABLE_NATPMP pairing, asserted --------- *
  *
  * Method rule: no test may install a mapping on the developer's router.
- * Eleven sites in this file disable UPnP before driving the host state
+ * Thirteen sites in this file disable UPnP before driving the host state
  * machine, and every one of them is hand-paired with a matching
  * disable-natpmp. Hand-maintained and, until now, unasserted: adding a
- * twelfth site and forgetting the pair would silently aim the NAT-PMP
+ * fourteenth site and forgetting the pair would silently aim the NAT-PMP
  * backend at whatever gateway the test machine actually has.
  *
  * A source-level discipline is asserted at the source. __FILE__ is
@@ -5243,12 +5247,78 @@ static int test_natpmp_pcp(void) {
  * nothing would be exactly the vacuous test this whole exercise is
  * about.
  *
- * The rule checked is: every line that sets DISABLE_UPNP to true must be
- * followed, within the next two non-blank lines, by a line setting
- * DISABLE_NATPMP to true. (Two, not one, because a case may then
- * deliberately re-enable NAT-PMP against its own mock on the line after
- * — which is what the CGNAT block does.)
+ * FOUR rules are checked, all by scanning this file's own source:
+ *
+ *   (1) PAIRING. Every line that sets DISABLE_UPNP to true must be
+ *       followed, within the next two non-blank lines, by a line setting
+ *       DISABLE_NATPMP to true. (Two, not one, because a case may then
+ *       deliberately re-enable NAT-PMP against its own mock on the line
+ *       after — which is what the CGNAT block does.)
+ *
+ *   (2) FLOOR. The scan must find at least as many disable-UPnP sites as
+ *       exist today, so a scanner that silently stopped matching — or a
+ *       deletion of a site — is caught. The floors are the MEASURED
+ *       counts (13 disable-UPnP sites, 6 DirectP2P_BeginHost calls, both
+ *       as reported by this test's own scan on 2026-08-25), not a round
+ *       number below them: the previous floor of 11 against 13 real
+ *       sites meant two could be deleted with the suite still green.
+ *       (Do not re-derive these with a plain grep and paste the number
+ *       here — the pattern would match this comment, and the printed
+ *       tally line below is the honest source.)
+ *
+ *   (3) COVERAGE — the rule the reviewer found missing. Rules (1) and
+ *       (2) never said anything about the thing that actually matters:
+ *       that every drive of the host state machine happens with UPnP
+ *       off. DirectP2P_BeginHost is the entry into
+ *       try_portmap/upnp_worker_fn, and upnp_worker_fn's ONLY brake is
+ *       Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP)
+ *       (src/netplay/direct_p2p.c:4528). So: every DirectP2P_BeginHost
+ *       call site must have a disable-UPnP site within the preceding
+ *       UPNP_SETUP_WINDOW_LINES lines. (Widest real gap today is 15
+ *       lines; the window is 25, loose enough to survive a comment being
+ *       added, tight enough that a setup block from an unrelated earlier
+ *       test cannot vouch for a later BeginHost.)
+ *
+ *   (4) NO RE-ENABLE. Setting DISABLE_UPNP back to FALSE anywhere in
+ *       this file is forbidden outright. Rule (3) checks that a site
+ *       exists before each BeginHost; it cannot see a later line undoing
+ *       it. Today there are zero such lines, and that is asserted rather
+ *       than assumed.
+ *
+ * MATCHING IS WHITESPACE-INSENSITIVE. Each source line is squeezed to
+ * its non-whitespace characters before matching, and the keys are built
+ * squeezed to suit. A plain strstr() for one exact spelling — with the
+ * one space after the comma that clang-format happens to emit today —
+ * would miss a reflow or a hand-added space and quietly under-count,
+ * which rule (2) would report as a scanner failure at best and which
+ * rules (1), (3) and (4) would silently skip at worst. The keys are
+ * still whole call expressions, so this is not a loose match: it
+ * discriminates on the full function name, the full config key, and the
+ * literal value.
+ *
+ * NOTE TO EDITORS: do not spell any of the four keys out in full,
+ * contiguously, anywhere in this file — including in a comment like this
+ * one. The scanner reads this file's own source, and a prose mention
+ * would be counted as a site. That is why the keys below are assembled
+ * at runtime from two halves on two separate source lines.
  */
+
+/* Copy src into dst with every space, tab, CR and LF removed. */
+static const char* squeeze_ws(char* dst, size_t dst_size, const char* src) {
+    size_t j = 0;
+    for (const char* p = src; *p != '\0' && j + 1 < dst_size; p++) {
+        if (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
+            continue;
+        dst[j++] = *p;
+    }
+    dst[j] = '\0';
+    return dst;
+}
+
+/* Rule (3)'s window: how many source lines before a DirectP2P_BeginHost
+ * call a disable-UPnP site may sit and still count as covering it. */
+#define UPNP_SETUP_WINDOW_LINES 25
+
 static int test_s7_disable_pairing(void) {
     fprintf(stderr,
             "[test_bilateral_punch] test 23a: DISABLE_UPNP sites pair with "
@@ -5264,30 +5334,41 @@ static int test_s7_disable_pairing(void) {
         return 1;
     }
 
-    /* Built at runtime so this scanner does not match ITSELF. */
+    /* Built at runtime, and SPLIT ACROSS TWO PHYSICAL LINES, so this
+     * scanner does not match ITSELF. Squeezing removes whitespace but
+     * not newlines-between-lines: each half lands on its own source
+     * line, and neither half is a whole key. KEEP THEM SPLIT. */
     char key_upnp[128];
     char key_natpmp[128];
+    char key_upnp_off[128];
+    char key_beginhost[128];
     SDL_snprintf(key_upnp, sizeof(key_upnp), "%s%s", "Config_SetBool(CFG_KEY_NETPLAY_",
-                 "DIRECT_P2P_DISABLE_UPNP, true)");
+                 "DIRECT_P2P_DISABLE_UPNP,true)");
     SDL_snprintf(key_natpmp, sizeof(key_natpmp), "%s%s", "Config_SetBool(CFG_KEY_NETPLAY_",
-                 "DIRECT_P2P_DISABLE_NATPMP, true)");
+                 "DIRECT_P2P_DISABLE_NATPMP,true)");
+    SDL_snprintf(key_upnp_off, sizeof(key_upnp_off), "%s%s", "Config_SetBool(CFG_KEY_NETPLAY_",
+                 "DIRECT_P2P_DISABLE_UPNP,false)");
+    SDL_snprintf(key_beginhost, sizeof(key_beginhost), "%s%s", "DirectP2P_",
+                 "BeginHost(");
 
-    char lines[3][512];
-    memset(lines, 0, sizeof(lines));
     int pending = 0;   /* lines still allowed to satisfy an open UPNP site */
     int upnp_line = 0; /* line number of that site                          */
     int lineno = 0;
     int sites = 0;
     int unpaired = 0;
+    int last_disable_line = 0; /* rule (3): most recent disable-UPnP site  */
+    int hosts = 0;             /* rule (3): DirectP2P_BeginHost call sites */
+    int uncovered = 0;         /* rule (3): ... not covered by one         */
+    int reenables = 0;         /* rule (4)                                 */
     char buf[512];
+    char sq[512];
     while (fgets(buf, sizeof(buf), f) != NULL) {
         lineno++;
+        const char* line = squeeze_ws(sq, sizeof(sq), buf);
         if (pending > 0) {
             /* Blank lines do not consume the window. */
-            const char* p = buf;
-            while (*p == ' ' || *p == '\t') p++;
-            if (*p != '\n' && *p != '\0') {
-                if (strstr(buf, key_natpmp) != NULL) {
+            if (line[0] != '\0') {
+                if (strstr(line, key_natpmp) != NULL) {
                     pending = 0;
                 } else if (--pending == 0) {
                     fprintf(stderr,
@@ -5301,12 +5382,43 @@ static int test_s7_disable_pairing(void) {
                 }
             }
         }
-        if (strstr(buf, key_upnp) != NULL) {
+        /* Rule (4): a re-enable anywhere silently voids rule (3). */
+        if (strstr(line, key_upnp_off) != NULL) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 23a-reenable: %s:%d sets "
+                    "DISABLE_UPNP back to false. upnp_worker_fn's only brake is that "
+                    "flag (src/netplay/direct_p2p.c:2118); with it clear, the next "
+                    "DirectP2P_BeginHost in this harness aims miniupnpc at the "
+                    "developer's REAL router and Upnp_AddMapping installs a 3600 s "
+                    "lease on it.\n",
+                    __FILE__, lineno);
+            fail_count++;
+            reenables++;
+        }
+        /* Rule (3): each BeginHost must be covered by a recent disable. */
+        if (strstr(line, key_beginhost) != NULL) {
+            hosts++;
+            if (last_disable_line == 0 ||
+                lineno - last_disable_line > UPNP_SETUP_WINDOW_LINES) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: 23a-uncovered-host: %s:%d calls "
+                        "DirectP2P_BeginHost with no disable-UPnP site in the preceding "
+                        "%d lines (nearest is line %d). BeginHost runs try_portmap, "
+                        "whose UPnP leg is gated ONLY by that flag "
+                        "(src/netplay/direct_p2p.c:2118) — this test would run real "
+                        "SSDP discovery and a real UPNP_AddPortMapping against the "
+                        "developer's router.\n",
+                        __FILE__, lineno, UPNP_SETUP_WINDOW_LINES, last_disable_line);
+                fail_count++;
+                uncovered++;
+            }
+        }
+        if (strstr(line, key_upnp) != NULL) {
             sites++;
             pending = 2;
             upnp_line = lineno;
+            last_disable_line = lineno;
         }
-        (void)lines;
     }
     if (pending > 0) {
         fprintf(stderr,
@@ -5318,23 +5430,114 @@ static int test_s7_disable_pairing(void) {
     }
     fclose(f);
 
-    /* The scan must have found the sites that exist. A scanner that
-     * matched zero lines would "pass" forever. */
-    if (sites < 11) {
+    /* Rule (2). The scan must have found the sites that exist. A scanner
+     * that matched zero lines would "pass" forever. Both floors are the
+     * measured counts, not round numbers below them: a floor two under
+     * the truth lets two sites be deleted unnoticed. */
+    if (sites < 13) {
         fprintf(stderr,
                 "[test_bilateral_punch] FAIL: 23a-scan: found only %d disable-UPnP "
-                "site(s); at least 11 exist. The scanner is not matching, so its "
-                "verdict means nothing.\n", sites);
+                "site(s); 13 exist. Either the scanner is not matching — in which "
+                "case its verdict means nothing — or a site was deleted and some "
+                "test now drives the host state machine with UPnP live.\n", sites);
+        fail_count++;
+    }
+    if (hosts < 6) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 23a-scan-hosts: found only %d "
+                "DirectP2P_BeginHost call site(s); 6 exist. The coverage rule is not "
+                "matching, so its verdict means nothing.\n", hosts);
         fail_count++;
     }
     fprintf(stderr,
             "[test_bilateral_punch] test 23a: scanned %d disable-UPnP site(s), %d "
-            "unpaired\n", sites, unpaired);
+            "unpaired; %d BeginHost site(s), %d uncovered; %d re-enable(s)\n",
+            sites, unpaired, hosts, uncovered, reenables);
 
     if (fail_count == fails_before) {
         fprintf(stderr,
                 "[test_bilateral_punch] test 23a OK — every disable-UPnP site pairs "
-                "with disable-NAT-PMP\n");
+                "with disable-NAT-PMP, every host drive is covered by one, and "
+                "nothing re-enables UPnP\n");
+        return 0;
+    }
+    return 1;
+}
+
+/* --- 23e: the harness may not run SSDP discovery ---------------------- *
+ *
+ * The companion to 22-addmapping-without-gateway, for the OTHER
+ * port-mapping backend. natpmp.c's discover_gateway() has refused to
+ * consult the real default route from a harness build for a while;
+ * upnp.c had no equivalent, so a single forgotten
+ * Config_SetBool(...DISABLE_UPNP, true) was all that stood between the
+ * suite and upnpDiscover() multicasting M-SEARCH at the developer's
+ * router — with UPNP_AddPortMapping and its one-hour lease two calls
+ * further on. That is not hypothetical; it happened. upnp.c now refuses
+ * (see upnp_ensure_cached()), and this test is what keeps the refusal
+ * honest.
+ *
+ * SAFETY CONSTRAINT — DO NOT "IMPROVE" THIS TEST BY DRIVING
+ * Upnp_AddMapping(). Read this before editing:
+ *
+ *   The value of this test is that it can be proven red, by deleting
+ *   the refusal and re-running. That neutralised run REALLY DOES reach
+ *   the network. Upnp_GetExternalIP() is read-only — at worst it does
+ *   SSDP discovery plus UPNP_GetExternalIPAddress, and installs
+ *   nothing. Upnp_AddMapping() is not: neutralised, it reaches
+ *   UPNP_AddPortMapping() and leaves a real 3600 s mapping on whatever
+ *   router answered. So this test drives ONLY the read-only entry
+ *   point. Every entry point funnels through the same
+ *   upnp_ensure_cached(), so the read-only one proves the refusal for
+ *   all three anyway; there is nothing to gain and a live router
+ *   mapping to lose.
+ *
+ * The assertion is the ATTEMPT COUNTER, not the return value. A test
+ * that only checked the return would pass on a desk with no UPnP router
+ * even with the refusal deleted — vacuous on some machines, meaningful
+ * on others. The counter is incremented immediately before the one
+ * upnpDiscover() call in the tree and so moves the instant the refusal
+ * is gone, on every machine.
+ */
+static int test_upnp_harness_no_discovery(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 23e: a harness build refuses SSDP "
+            "discovery\n");
+    const int fails_before = fail_count;
+
+    /* Cache can never be valid in a guarded build, but reset both so the
+     * reading below is this test's and not some earlier test's. */
+    Upnp_InvalidateCache();
+    Upnp_TestHook_ResetDiscoverAttempts();
+
+    char ext_ip[64];
+    memset(ext_ip, 0, sizeof(ext_ip));
+    const bool got = Upnp_GetExternalIP(ext_ip, (int)sizeof(ext_ip));
+
+    const int attempts = Upnp_TestHook_DiscoverAttempts();
+    if (attempts != 0) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 23e-discover-attempted: the harness "
+                "entered upnpDiscover() %d time(s). A test build just multicast "
+                "M-SEARCH on the developer's LAN; the refusal in "
+                "upnp_ensure_cached() is gone, and Upnp_AddMapping() is now two "
+                "calls from installing a real one-hour port mapping on their "
+                "router.\n", attempts);
+        fail_count++;
+    }
+    if (got) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 23e-external-ip: Upnp_GetExternalIP "
+                "returned true (%s) in a harness build. With discovery refused "
+                "there is no IGD to ask, so the only way to a real answer is a "
+                "real router.\n", ext_ip);
+        fail_count++;
+    }
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 23e OK — 0 discovery attempts, "
+                "Upnp_GetExternalIP declined\n");
         return 0;
     }
     return 1;
@@ -5389,10 +5592,39 @@ static int test_s7_review_fixes(void) {
                     phase, NATPMP_PHASE_BUDGET_MS);
             fail_count++;
         }
-        EXPECT_TRUE("23b-probe-budget-is-three-phases",
-                    NATPMP_PROBE_BUDGET_MS == 3 * NATPMP_PHASE_BUDGET_MS);
-        EXPECT_TRUE("23b-renew-budget-is-two-phases",
-                    NATPMP_RENEW_BUDGET_MS == 2 * NATPMP_PHASE_BUDGET_MS);
+        /* L-1: these two were written as
+         *   NATPMP_PROBE_BUDGET_MS == 3 * NATPMP_PHASE_BUDGET_MS
+         *   NATPMP_RENEW_BUDGET_MS == 2 * NATPMP_PHASE_BUDGET_MS
+         * but natpmp.h:267 and natpmp.h:275 DEFINE those two macros as
+         * exactly those expressions, so each assertion expanded to
+         * (3 * 1750) == 3 * 1750 and could not fail for any edit to any
+         * of the three constants. Unfalsifiable, therefore worthless.
+         *
+         * Pinned by LITERAL instead, the way test 28 pins
+         * STUN_PUNCH_CONFIRM_MS: the numbers below are wall-clock
+         * ceilings a user waits behind a Host Game click, and 23b's
+         * neighbours only check INTERNAL CONSISTENCY (the ladder against
+         * the phase, the phase against natpmp.c's derivation) — all of
+         * which stay satisfied while the absolute totals drift. Changing
+         * these is a deliberate product decision, so make it red. */
+        if (NATPMP_PROBE_BUDGET_MS != 5250) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 23b-probe-budget-literal: "
+                    "NATPMP_PROBE_BUDGET_MS is %d ms, expected the shipped literal "
+                    "5250 (three 1750 ms phases). This is the worst case a user waits "
+                    "for a first-time port-mapping probe.\n",
+                    (int)NATPMP_PROBE_BUDGET_MS);
+            fail_count++;
+        }
+        if (NATPMP_RENEW_BUDGET_MS != 3500) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 23b-renew-budget-literal: "
+                    "NATPMP_RENEW_BUDGET_MS is %d ms, expected the shipped literal "
+                    "3500 (two 1750 ms phases). A renewal budget shorter than a slow "
+                    "gateway needs loses the mapping mid-session.\n",
+                    (int)NATPMP_RENEW_BUDGET_MS);
+            fail_count++;
+        }
     }
 
     /* A behavioural companion to the pin above: against a SILENT gateway
@@ -7871,7 +8103,17 @@ static int test_race_split_brain(void) {
     {
         const int owd = sb6_owd_ms();
         const int commit = sb6_relay_commit_ms();
-        const int punch_end = sb6_punch_leg_ms();
+        /* The punch SEND window is capped so a full grace still fits inside
+         * the race budget (direct_p2p.c, section 2 of p2p_race). Derive the
+         * same way here, or a probe point computed for the default budget
+         * asserts PUNCHED at a skew the production rule has already put past
+         * the punch — which is exactly what a `S6_SPLIT_BUDGET_MS=5200` run
+         * showed at skew 5150. */
+        const int budget = sb6_env_int("S6_SPLIT_BUDGET_MS", SB6_RIG_BUDGET_MS);
+        const int send_cap =
+            budget - (int)DirectP2P_TestHook_RaceRelayGraceMs();
+        int punch_end = sb6_punch_leg_ms();
+        if (send_cap < punch_end) punch_end = (send_cap > 0) ? send_cap : 0;
         const int past = punch_end + (int)DirectP2P_TestHook_RaceRelayGraceMs() +
                          3 * owd;
         const Sb6ProbePoint points[] = {
@@ -8631,6 +8873,592 @@ done:
     return (rc == 0 && fail_count == fails_before) ? 0 : 1;
 }
 
+/* ====================================================================== */
+/* --- Tests 30-31: what M-2's fix ACTUALLY is (review finding H-C) ------ */
+/* ====================================================================== */
+
+/*
+ * H-C. Test 27 above is a real test of a real invariant, but it is
+ * credited to the wrong code. The duplicate-endpoint guard it neutralises
+ * (direct_p2p.c:1313-1318) is BYTE-IDENTICAL to the pre-fix tree:
+ *
+ *   $ git show 26deb2fc:src/netplay/direct_p2p.c | sed -n '1210,1215p' | md5
+ *   d1f6c2bdeb1ee0d52b98b3fffc9fc17c
+ *   $ sed -n '1313,1318p' src/netplay/direct_p2p.c | md5
+ *   d1f6c2bdeb1ee0d52b98b3fffc9fc17c
+ *
+ * The guard was never the defect. M-2's fix is the two lines below it —
+ * direct_p2p.c:1319-1338 — and it is TWO changes, not one:
+ *
+ *   (i)  VALIDATE, THEN memset. The new StunPunchLeg is built on the
+ *        STACK and Stun_PunchBegin is allowed to fail BEFORE the
+ *        candidate slot is touched. The pre-fix order wiped the slot
+ *        first, so a re-arm that failed to resolve destroyed a live,
+ *        punching candidate and the race went quiet for the rest of its
+ *        budget.
+ *   (ii) race_finish_punch(c, now) before the memset. That is what
+ *        releases the NET_Address ref the OUTGOING leg still holds in
+ *        c->leg.target (Stun_PunchEnd -> NET_UnrefAddress,
+ *        stun.c:922-926). memset over a live leg.target loses the only
+ *        pointer to a ref'd address: a permanent leak, one per re-arm.
+ *
+ * Test 27 counts occurrences of the log line "S6 race: punching
+ * candidate" (test_bilateral_punch.c:8901). Neither (i) nor (ii) changes
+ * that count, which is why restoring the pre-fix ordering AND deleting the
+ * race_finish_punch call leaves test 27 — and the whole suite — GREEN.
+ * Test 30 covers (i), test 31 covers (ii).
+ */
+
+/* --- a punch sink: counts punches, never echoes, timestamps both ends -- */
+
+/*
+ * Deliberately NOT PunchEchoCtx. That peer exists to CONFIRM a leg; these
+ * cases need a candidate that is punched and never confirms, so the race
+ * runs its full budget and the punch cadence stays observable to the end.
+ * `last_ms` is the whole point: "for how long was this endpoint still
+ * being punched" is exactly the question (i) asks.
+ */
+typedef struct {
+    int  sock;
+    volatile bool stop;
+    volatile int  punches;
+    volatile uint32_t first_ms;
+    volatile uint32_t last_ms;
+} HcSinkCtx;
+
+static int SDLCALL hc_sink_thread(void* arg) {
+    HcSinkCtx* c = (HcSinkCtx*)arg;
+    for (;;) {
+        if (c->stop) return 0;
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(c->sock, &rfds);
+        struct timeval tv = { 0, 5 * 1000 };
+        if (select(c->sock + 1, &rfds, NULL, NULL, &tv) <= 0) continue;
+
+        uint8_t b[128];
+        struct sockaddr_in src;
+        socklen_t sl = sizeof(src);
+        const int n = (int)recvfrom(c->sock, (char*)b, sizeof(b), 0,
+                                    (struct sockaddr*)&src, &sl);
+        if (n <= 0) continue;
+        if (n != STUN_PUNCH_PAYLOAD_LEN || !Stun_HasPunchPrefix(b, n)) continue;
+        const uint32_t now = SDL_GetTicks();
+        if (c->punches++ == 0) c->first_ms = now;
+        c->last_ms = now;
+    }
+}
+
+/* --- a rendezvous mock that DELIVERs a SEQUENCE of distinct endpoints -- */
+
+/*
+ * Sb6ServerCtx delivers ONE fixed endpoint N times, which is what test 27
+ * needs (duplicates for the guard to reject) and exactly what these cases
+ * cannot use: the duplicate-endpoint guard rejects a repeat before the
+ * validate/memset decision is ever reached. Slot 1 is only ever RE-armed
+ * by a DELIVER carrying a DIFFERENT endpoint, so this mock walks a list.
+ *
+ * The first endpoint answers the first REGISTER; the rest are pushed
+ * UNSOLICITED to the address that REGISTER came from, one every
+ * `gap_ms`. Unsolicited is not a cheat: direct_p2p.c sets
+ * signal_active = false the moment the first DELIVER_PEER lands
+ * (direct_p2p.c:1810), so no further REGISTER is ever sent — but the
+ * DELIVER branch of the shared receive path (direct_p2p.c:1686) is NOT
+ * gated on signal_active, so every later DELIVER is still parsed and
+ * still re-arms slot 1. That asymmetry is the production behaviour under
+ * test.
+ */
+#define HC_MAX_EP 40
+
+typedef struct {
+    int  sock;
+    volatile bool stop;
+    int  life_secs;
+    uint16_t ports[HC_MAX_EP];
+    int  n_ports;
+    int  gap_ms;
+    uint8_t  key[REND_KEY_LEN];
+    volatile int registers;
+    volatile int delivers;
+} HcServerCtx;
+
+static int SDLCALL hc_server_thread(void* arg) {
+    HcServerCtx* c = (HcServerCtx*)arg;
+    const long long start = (long long)time(NULL);
+    const long long life = (c->life_secs > 0) ? (long long)c->life_secs : 30;
+
+    struct sockaddr_in cli;
+    socklen_t cli_len = 0;
+    bool have_cli = false;
+    int sent = 0;
+    uint32_t next_push_ms = 0;
+
+    for (;;) {
+        if (c->stop) return 0;
+        if ((long long)time(NULL) - start > life) return 0;
+
+        /* Push the next endpoint in the sequence when it comes due. */
+        if (have_cli && sent < c->n_ports && SDL_GetTicks() >= next_push_ms) {
+            struct sockaddr_in peer;
+            memset(&peer, 0, sizeof(peer));
+            peer.sin_family = AF_INET;
+            peer.sin_addr.s_addr = htonl(0x7F000001u);
+            uint8_t reply[REND_DELIVER_LEN];
+            const int rl = build_deliver(reply, c->key, &peer, c->ports[sent]);
+            sendto(c->sock, (const char*)reply, rl, 0,
+                   (struct sockaddr*)&cli, cli_len);
+            c->delivers++;
+            sent++;
+            next_push_ms = SDL_GetTicks() + (uint32_t)c->gap_ms;
+        }
+
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(c->sock, &rfds);
+        struct timeval tv = { 0, 5 * 1000 };
+        if (select(c->sock + 1, &rfds, NULL, NULL, &tv) <= 0) continue;
+
+        uint8_t buf[128];
+        struct sockaddr_in src;
+        socklen_t sl = sizeof(src);
+        const int n = (int)recvfrom(c->sock, (char*)buf, sizeof(buf), 0,
+                                    (struct sockaddr*)&src, &sl);
+        if (n < REND_REGISTER_LEN) continue;
+        if (buf[0] != REND_MAGIC_BYTES_0 || buf[1] != REND_MAGIC_BYTES_1 ||
+            buf[2] != REND_MAGIC_BYTES_2 || buf[3] != REND_MAGIC_BYTES_3 ||
+            buf[4] != REND_VERSION) {
+            continue;
+        }
+        if (buf[5] != REND_TYPE_REGISTER && buf[5] != REND_TYPE_POLL) continue;
+        c->registers++;
+        if (!have_cli) {
+            memcpy(c->key, &buf[8], REND_KEY_LEN);
+            cli = src;
+            cli_len = sl;
+            have_cli = true;
+            next_push_ms = SDL_GetTicks(); /* first endpoint goes out at once */
+        }
+    }
+}
+
+/* --- Test 30: half (i), VALIDATE THEN memset --------------------------- */
+
+/*
+ * A re-arm that FAILS must leave the candidate that was already there
+ * armed and still punching. Pre-fix it was wiped, and because the pump
+ * loop skips any candidate with armed == false (direct_p2p.c:1737) the
+ * race then punched NOTHING for the rest of its budget while still
+ * reporting a full-length race.
+ *
+ * The rig delivers three endpoints on one race: A at t+0, B at t+~600
+ * (a normal, successful re-arm of slot 1 — A is replaced), then Z at
+ * t+~1200, whose arm is made to FAIL. With the fix, B is untouched by the
+ * failed arm and keeps being punched until the 4 000 ms budget expires.
+ * Pre-fix, B's slot is wiped at ~1200 ms and the punches stop dead.
+ *
+ * The assertion is on the WIRE: how long B was still receiving punch
+ * datagrams, measured by B's own socket. It observes no internal state and
+ * no log line, so it cannot be satisfied by a candidate that is "armed"
+ * but silent.
+ *
+ * WHY THE ARM-FAIL SEAM. race_arm_punch's only failure mode past its
+ * up-front ip/port guard is Stun_PunchBegin, which fails on an
+ * unresolvable host (stun.c:781-798) — and slot 1's IP always comes from
+ * inet_ntop in Rendezvous_ParseDeliverEx (rendezvous.c:251-254), so the
+ * wire can only ever deliver a resolvable dotted quad. The seam swaps the
+ * hostname STRING handed to the real Stun_PunchBegin for a 144-character
+ * DNS label; the failure is produced by the real NET_ResolveHostname path.
+ * See direct_p2p.c's DirectP2P_TestHook_SetArmFailEndpoint.
+ */
+#define HC30_BUDGET_MS   4000
+#define HC30_GAP_MS       600
+/* B is armed at ~600 ms and, WITH the fix, is punched until the race ends
+ * at ~4000 ms: a span of ~3400 ms. WITHOUT it, B is wiped by the failed
+ * arm at ~1200 ms: a span of ~600 ms, i.e. exactly HC30_GAP_MS. 2000 ms
+ * sits between the two with >1300 ms of margin on either side. */
+#define HC30_MIN_SPAN_MS 2000
+
+static int test_race_failed_rearm_keeps_live_candidate(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 30: a FAILED re-arm leaves the live candidate "
+            "armed and still punching (M-2 half i: validate, then memset)\n");
+    const int fails_before = fail_count;
+    int rc = 0;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+    DirectP2P_TestHook_SetPunchOracle(NULL);
+    DirectP2P_TestHook_SetArmFailEndpoint(NULL, 0);
+
+    unsigned short pa = 0, pb = 0, pz = 0, server_port = 0;
+    HcSinkCtx sink_a, sink_b;
+    memset(&sink_a, 0, sizeof(sink_a));
+    memset(&sink_b, 0, sizeof(sink_b));
+    sink_a.sock = open_udp_on_localhost(&pa);
+    sink_b.sock = open_udp_on_localhost(&pb);
+    const int zsock = open_udp_on_localhost(&pz);       /* reserves the number */
+    const int server_sock = open_udp_on_localhost(&server_port);
+    uint16_t my_port = 0;
+    NET_DatagramSocket* sock = sb6_net_socket(&my_port);
+
+    SDL_Thread* a_tid = NULL;
+    SDL_Thread* b_tid = NULL;
+    SDL_Thread* srv_tid = NULL;
+    HcServerCtx srv;
+    memset(&srv, 0, sizeof(srv));
+
+    if (sink_a.sock < 0 || sink_b.sock < 0 || zsock < 0 || server_sock < 0 ||
+        sock == NULL) {
+        FAIL("test30", "could not bind the rig sockets");
+        rc = 1;
+        goto done;
+    }
+
+    srv.sock = server_sock;
+    srv.life_secs = 30;
+    srv.gap_ms = HC30_GAP_MS;
+    srv.n_ports = 3;
+    srv.ports[0] = (uint16_t)pa;
+    srv.ports[1] = (uint16_t)pb;
+    srv.ports[2] = (uint16_t)pz;   /* this one's arm is made to fail */
+
+    DirectP2P_TestHook_SetArmFailEndpoint("127.0.0.1", (uint16_t)pz);
+
+    a_tid = SDL_CreateThread(hc_sink_thread, "hc_sink_a", &sink_a);
+    b_tid = SDL_CreateThread(hc_sink_thread, "hc_sink_b", &sink_b);
+    srv_tid = SDL_CreateThread(hc_server_thread, "hc_srv29", &srv);
+    if (a_tid == NULL || b_tid == NULL || srv_tid == NULL) {
+        FAIL("test30", "SDL_CreateThread failed");
+        rc = 1;
+        goto done;
+    }
+
+    sb6_log_begin();
+    {
+        DirectP2PRaceProbeCfg cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.host_role = false;
+        cfg.sock = sock;
+        cfg.punch_token = k_sb6_token;
+        cfg.seed_ip = "127.0.0.1";
+        cfg.seed_port = 0;          /* no seed leg: slot 1 is the only candidate */
+        cfg.signal_ip = "127.0.0.1";
+        cfg.signal_port = (uint16_t)server_port;
+        cfg.session_key = k_sb6_key;
+        cfg.my_public_port = my_port;
+        cfg.signal_leg = true;
+        cfg.signal_budget_ms = HC30_BUDGET_MS;
+        cfg.relay_leg = false;
+        cfg.relay_budget_ms = HC30_BUDGET_MS;
+        /* Longer than the whole race, so B can only stop being punched
+         * because the slot was wiped — never because the leg timed out. */
+        cfg.punch_leg_ms = 60000;
+        cfg.race_budget_ms = HC30_BUDGET_MS;
+
+        DirectP2PRaceProbeOut out;
+        DirectP2P_TestHook_RunRace(&cfg, &out);
+        sb6_log_end();
+
+        const int span_b = (sink_b.punches > 0)
+                               ? (int)(sink_b.last_ms - sink_b.first_ms) : -1;
+
+        fprintf(stderr,
+                "[test_bilateral_punch] test 30: delivers=%d arm-lines=%d "
+                "A(punches=%d) B(punches=%d span=%d ms) outcome=%d\n",
+                srv.delivers, s_sb6_arm_lines, sink_a.punches, sink_b.punches,
+                span_b, (int)out.outcome);
+
+        /* --- rig sanity: all three endpoints really were offered ------ */
+        if (srv.delivers < 3) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test30: the mock only sent %d "
+                    "DELIVER(s), needed 3 (A, B, then the one that fails to arm)\n",
+                    srv.delivers);
+            fail_count++;
+            rc = 1;
+        }
+        /* A and B armed; Z did not. If Z HAD armed, the seam is broken and
+         * the rest of this test would be measuring nothing. */
+        if (s_sb6_arm_lines != 2) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test30: %d candidates armed, expected "
+                    "exactly 2 (A and B) — the third endpoint's Stun_PunchBegin was "
+                    "supposed to FAIL, so the arm-fail seam is not working and this "
+                    "test is measuring nothing\n", s_sb6_arm_lines);
+            fail_count++;
+            rc = 1;
+        }
+        if (sink_a.punches <= 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test30: endpoint A was never punched; "
+                    "the rig never got as far as the re-arm under test\n");
+            fail_count++;
+            rc = 1;
+        }
+
+        /* --- the actual invariant ------------------------------------ */
+        if (span_b < HC30_MIN_SPAN_MS) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test30: endpoint B stopped being "
+                    "punched %d ms after it started (%d datagrams), expected at least "
+                    "%d ms — a re-arm that FAILS must leave the live candidate armed. "
+                    "race_arm_punch memset the slot BEFORE letting Stun_PunchBegin "
+                    "fail, so the failed arm destroyed a punching candidate and the "
+                    "race went silent for the rest of its %d ms budget\n",
+                    span_b, sink_b.punches, HC30_MIN_SPAN_MS, HC30_BUDGET_MS);
+            fail_count++;
+            rc = 1;
+        }
+        EXPECT_TRUE("29-silent-sinks-never-confirm",
+                    out.outcome == DP2P_RACE_PROBE_EXHAUSTED);
+        if (rc == 0 && fail_count == fails_before) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] test 30 OK — the failed re-arm left B armed; "
+                    "B was still being punched %d ms after its first datagram\n", span_b);
+        }
+    }
+
+done:
+    DirectP2P_TestHook_SetArmFailEndpoint(NULL, 0);
+    srv.stop = true;
+    sink_a.stop = true;
+    sink_b.stop = true;
+    if (srv_tid != NULL) SDL_WaitThread(srv_tid, NULL);
+    if (a_tid != NULL) SDL_WaitThread(a_tid, NULL);
+    if (b_tid != NULL) SDL_WaitThread(b_tid, NULL);
+    if (sink_a.sock >= 0) close_sock(sink_a.sock);
+    if (sink_b.sock >= 0) close_sock(sink_b.sock);
+    if (zsock >= 0) close_sock(zsock);
+    if (server_sock >= 0) close_sock(server_sock);
+    if (sock != NULL) NET_DestroyDatagramSocket(sock);
+    return (rc == 0 && fail_count == fails_before) ? 0 : 1;
+}
+
+/* --- Test 31: half (ii), the NET_Address ref release ------------------- */
+
+/*
+ * Every successful re-arm of slot 1 hands the slot a fresh NET_Address ref
+ * (Stun_PunchBegin -> NET_ResolveHostname, stun.c:781) and must give the
+ * outgoing one back (race_finish_punch -> Stun_PunchEnd ->
+ * NET_UnrefAddress, stun.c:922-926). memset over a live leg.target loses
+ * the only pointer to it: an unbounded leak on the one path a real joiner
+ * takes whenever the rendezvous revises the host's endpoint.
+ *
+ * HOW THIS IS OBSERVED, and why it is the memory and not a proxy.
+ * SDL_GetNumAllocations() is documented to return "-1 if allocation counts
+ * are disabled" (SDL_stdinc.h:1620-1634) and MEASURED on this build it
+ * returns exactly -1, so it cannot see anything. SDL_SetMemoryFunctions
+ * can: SDL3_net routes its allocations through SDL_malloc, so counting
+ * wrappers see NET_ResolveHostname/NET_UnrefAddress directly. Measured
+ * with a standalone probe against this same SDL3 + SDL3_net:
+ *
+ *   32 x (NET_ResolveHostname + NET_UnrefAddress)  ->  net  +0 live allocs
+ *   32 x  NET_ResolveHostname, no unref            ->  net +96 live allocs
+ *
+ * repeatably, over three rounds each: exactly THREE live allocations per
+ * un-released NET_Address, and exactly zero when the ref is given back.
+ * So the assertion below is on real heap residency, not on a call count.
+ *
+ * The race is run TWICE and only the second is measured, so first-touch
+ * allocations (resolver thread, socket state, log buffers) are already
+ * paid for before the window opens.
+ */
+#define HC31_REARMS      32
+#define HC31_GAP_MS      40
+#define HC31_BUDGET_MS   (HC31_REARMS * HC31_GAP_MS + 900)
+/* Rig sanity: the leak is (arms - 1) x 3 live allocations, so 24 arms is
+ * still a 69-allocation signal. Below that the rig, not the fix, is what
+ * the number would be describing. */
+#define HC31_MIN_ARMS    24
+/* Sized from measurement, not from taste. On the fixed tree this delta was
+ * EXACTLY +0 on five consecutive runs — the SDL_net allocations the race
+ * makes are all matched by frees, so the noise floor here is literally
+ * zero. The signal it has to separate from is 31 re-arms x 3 live
+ * allocations = +93. 12 is four leaked addresses' worth of headroom above
+ * a measured-zero floor and still less than an eighth of the signal, so it
+ * cannot be satisfied by a build that skips the release. */
+#define HC31_MAX_DELTA   12
+
+static SDL_AtomicInt g_hc_live_allocs;
+
+static void* SDLCALL hc_malloc(size_t s) {
+    SDL_AddAtomicInt(&g_hc_live_allocs, 1);
+    return malloc(s);
+}
+static void* SDLCALL hc_calloc(size_t n, size_t s) {
+    SDL_AddAtomicInt(&g_hc_live_allocs, 1);
+    return calloc(n, s);
+}
+static void* SDLCALL hc_realloc(void* p, size_t s) {
+    if (p == NULL) SDL_AddAtomicInt(&g_hc_live_allocs, 1);
+    return realloc(p, s);
+}
+static void SDLCALL hc_free(void* p) {
+    if (p != NULL) SDL_AddAtomicInt(&g_hc_live_allocs, -1);
+    free(p);
+}
+
+/* One race over `n` distinct endpoints. Returns the number of candidates
+ * armed, or -1 if the rig failed to come up. */
+static int hc31_run_one_race(int n, int* out_delivers) {
+    unsigned short server_port = 0;
+    int sinks[HC_MAX_EP];
+    for (int i = 0; i < HC_MAX_EP; i++) sinks[i] = -1;
+    const int server_sock = open_udp_on_localhost(&server_port);
+    uint16_t my_port = 0;
+    NET_DatagramSocket* sock = sb6_net_socket(&my_port);
+    SDL_Thread* srv_tid = NULL;
+    HcServerCtx srv;
+    memset(&srv, 0, sizeof(srv));
+    int armed = -1;
+
+    if (server_sock < 0 || sock == NULL) goto done;
+
+    srv.sock = server_sock;
+    srv.life_secs = 30;
+    srv.gap_ms = HC31_GAP_MS;
+    srv.n_ports = n;
+    /* Real bound sockets, kept open for the whole race: the port numbers
+     * are then guaranteed distinct AND guaranteed not to be re-issued to
+     * anything else mid-race, so every DELIVER really is a NEW endpoint
+     * and really does re-arm slot 1. They are never read; the punches
+     * they collect are irrelevant. */
+    for (int i = 0; i < n; i++) {
+        unsigned short p = 0;
+        sinks[i] = open_udp_on_localhost(&p);
+        if (sinks[i] < 0) goto done;
+        srv.ports[i] = (uint16_t)p;
+    }
+
+    srv_tid = SDL_CreateThread(hc_server_thread, "hc_srv30", &srv);
+    if (srv_tid == NULL) goto done;
+
+    sb6_log_begin();
+    {
+        DirectP2PRaceProbeCfg cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.host_role = false;
+        cfg.sock = sock;
+        cfg.punch_token = k_sb6_token;
+        cfg.seed_ip = "127.0.0.1";
+        cfg.seed_port = 0;
+        cfg.signal_ip = "127.0.0.1";
+        cfg.signal_port = (uint16_t)server_port;
+        cfg.session_key = k_sb6_key;
+        cfg.my_public_port = my_port;
+        cfg.signal_leg = true;
+        cfg.signal_budget_ms = HC31_BUDGET_MS;
+        cfg.relay_leg = false;
+        cfg.relay_budget_ms = HC31_BUDGET_MS;
+        cfg.punch_leg_ms = 60000;
+        cfg.race_budget_ms = HC31_BUDGET_MS;
+
+        DirectP2PRaceProbeOut out;
+        DirectP2P_TestHook_RunRace(&cfg, &out);
+        sb6_log_end();
+        armed = s_sb6_arm_lines;
+    }
+
+done:
+    srv.stop = true;
+    if (srv_tid != NULL) SDL_WaitThread(srv_tid, NULL);
+    if (out_delivers != NULL) *out_delivers = srv.delivers;
+    for (int i = 0; i < HC_MAX_EP; i++) if (sinks[i] >= 0) close_sock(sinks[i]);
+    if (server_sock >= 0) close_sock(server_sock);
+    if (sock != NULL) NET_DestroyDatagramSocket(sock);
+    return armed;
+}
+
+static int test_race_rearm_releases_address_ref(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 31: re-arming a candidate RELEASES the outgoing "
+            "leg's NET_Address ref (M-2 half ii)\n");
+    const int fails_before = fail_count;
+    int rc = 0;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+    DirectP2P_TestHook_SetPunchOracle(NULL);
+    DirectP2P_TestHook_SetArmFailEndpoint(NULL, 0);
+
+    SDL_malloc_func  o_malloc = NULL;
+    SDL_calloc_func  o_calloc = NULL;
+    SDL_realloc_func o_realloc = NULL;
+    SDL_free_func    o_free = NULL;
+    SDL_GetMemoryFunctions(&o_malloc, &o_calloc, &o_realloc, &o_free);
+
+    /* Warm-up race: pays every first-touch allocation before the window. */
+    int warm_delivers = 0;
+    const int warm_armed = hc31_run_one_race(HC31_REARMS, &warm_delivers);
+    if (warm_armed < 0) {
+        FAIL("test31", "the warm-up race could not bring the rig up");
+        rc = 1;
+        goto done;
+    }
+    SDL_Delay(500);
+
+    SDL_SetAtomicInt(&g_hc_live_allocs, 0);
+    if (!SDL_SetMemoryFunctions(hc_malloc, hc_calloc, hc_realloc, hc_free)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test31: SDL_SetMemoryFunctions was "
+                "refused (%s) — the leak cannot be observed\n", SDL_GetError());
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+
+    int delivers = 0;
+    const int armed = hc31_run_one_race(HC31_REARMS, &delivers);
+    /* Let the SDL_net resolver thread finish retiring anything the race
+     * released on its way out before the window is closed. */
+    SDL_Delay(500);
+    const int delta = SDL_GetAtomicInt(&g_hc_live_allocs);
+    SDL_SetMemoryFunctions(o_malloc, o_calloc, o_realloc, o_free);
+
+    fprintf(stderr,
+            "[test_bilateral_punch] test 31: warm-up armed %d, measured race armed %d "
+            "of %d DELIVERs; live-allocation delta across the measured race = %+d "
+            "(a leaked NET_Address is 3)\n",
+            warm_armed, armed, delivers, delta);
+
+    if (armed < 0) {
+        FAIL("test31", "the measured race could not bring the rig up");
+        rc = 1;
+        goto done;
+    }
+    if (armed < HC31_MIN_ARMS) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test31: only %d candidates were armed "
+                "(needed >= %d); with too few re-arms the allocation delta is not "
+                "measuring the release path\n", armed, HC31_MIN_ARMS);
+        fail_count++;
+        rc = 1;
+    }
+    if (delta > HC31_MAX_DELTA) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test31: %+d live allocations survived a "
+                "race that re-armed slot 1 %d time(s), bound is %d. Each un-released "
+                "NET_Address is 3 live allocations, so this is ~%d leaked address(es). "
+                "race_arm_punch must call race_finish_punch(c, now) BEFORE it memsets "
+                "the slot — the memset loses the only pointer to the ref'd address the "
+                "outgoing leg still holds in leg.target\n",
+                delta, armed > 0 ? armed - 1 : 0, HC31_MAX_DELTA, delta / 3);
+        fail_count++;
+        rc = 1;
+    }
+    if (rc == 0 && fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 31 OK — %d re-arms leaked %+d live "
+                "allocations (bound %d)\n", armed - 1, delta, HC31_MAX_DELTA);
+    }
+
+done:
+    DirectP2P_TestHook_SetArmFailEndpoint(NULL, 0);
+    return (rc == 0 && fail_count == fails_before) ? 0 : 1;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -8660,7 +9488,9 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_race_worst_case_timing();      /* S6: ~16 s of wall clock */
     /* S6 adversarial review: real-wire punch legs, two-peer split brain. */
     rc |= test_race_budget_wrap_safety();          /* M-1 / M-3 */
-    rc |= test_race_duplicate_candidate_guard();   /* M-2 */
+    rc |= test_race_duplicate_candidate_guard();   /* M-2: the guard (see H-C) */
+    rc |= test_race_failed_rearm_keeps_live_candidate(); /* H-C: M-2 half i  */
+    rc |= test_race_rearm_releases_address_ref();        /* H-C: M-2 half ii */
     rc |= test_race_confirm_at_budget_edge();      /* H-1 / H-2 */
     rc |= test_race_punch_drops_relay_leg();       /* H-7 */
     rc |= test_race_relay_defers_per_candidate();  /* H-4 */
@@ -8668,6 +9498,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_relay_not_paired_named_separately();/* L-1 */
     rc |= test_natpmp_pcp();  /* S7: test 22 */
     rc |= test_s7_disable_pairing();    /* S7 review: test 23a */
+    rc |= test_upnp_harness_no_discovery(); /* M-1: test 23e */
     rc |= test_s7_review_fixes();       /* S7 review: test 23b */
     rc |= test_s7_natpmp_kill_switch(); /* S7 review: test 23c */
     rc |= test_s7_lost_mapping();       /* S7 review: test 23d */

@@ -36,11 +36,67 @@ static struct IGDdatas s_cached_data;
 static char s_cached_lan_addr[64];
 static bool s_cache_valid = false;
 
+#ifdef NETPLAY_TEST_HOOKS
+/* Counts entries into the SSDP discovery call below — see the accessor's
+ * comment at the bottom of this file. Incremented IMMEDIATELY before
+ * upnpDiscover(), which is the only such call in the tree (verified:
+ * `grep -rn upnpDiscover src/` matches one call site, this one). */
+static int s_test_discover_attempts = 0;
+#endif
+
 /* Discover the IGD and populate the cache. Returns true on success. */
 static bool upnp_ensure_cached(void) {
     if (s_cache_valid)
         return true;
 
+#if defined(NETPLAY_TEST_HOOKS) && defined(ENABLE_NETPLAY_TESTS)
+    /*
+     * A HARNESS BINARY MAY NOT SPEAK SSDP ON THE DEVELOPER'S LAN.
+     *
+     * This is natpmp.c's discover_gateway() guard, applied to the other
+     * port-mapping backend. That guard already refuses to consult the
+     * real default route from a test build; without the same refusal
+     * here the two backends were asymmetric, and the asymmetry favoured
+     * the more dangerous protocol: NAT-PMP at least needs a gateway
+     * address the harness declines to look up, whereas upnpDiscover()
+     * needs nothing at all — it multicasts M-SEARCH to 239.255.255.250
+     * and takes whatever IGD answers. From there Upnp_AddMapping() is
+     * two calls away from UPNP_AddPortMapping() with UPNP_LEASE_DURATION
+     * ("3600"), i.e. a one-hour hole in the developer's real router.
+     * That has actually happened in this project; this guard is why it
+     * cannot happen again.
+     *
+     * Until now the only thing preventing it was a config flag read at
+     * ONE call site — Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP)
+     * in upnp_worker_fn (src/netplay/direct_p2p.c:2494) — which every
+     * test has to remember to set. A test-local convention is not a
+     * safety property. This is: the refusal sits above the ONLY
+     * upnpDiscover() call in the tree, so no entry point
+     * (Upnp_AddMapping, Upnp_RemoveMapping, Upnp_GetExternalIP — all
+     * three reach the network exclusively through this function) can get
+     * past it, whatever a future test forgets.
+     *
+     * This build combination (test hooks AND the harness's own
+     * ENABLE_NETPLAY_TESTS) exists only inside the test binary; neither
+     * host-release, host-debug, nor the MiSTer build defines them, so
+     * production discovery is untouched. Inside the harness there is no
+     * legitimate IGD to find, and the honest failure is "no IGD".
+     *
+     * There is deliberately NO mock-IGD escape hatch of the sort
+     * natpmp.c's Natpmp_TestHook_SetGateway provides. miniupnpc's
+     * transport is HTTP/SOAP against a discovered device description
+     * URL; standing up a mock for it is a much larger surface than a
+     * localhost UDP socket, and no test needs one today.
+     */
+    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                "UPnP: test build — refusing to run SSDP discovery against the "
+                "real LAN");
+    return false;
+#else
+
+#ifdef NETPLAY_TEST_HOOKS
+    s_test_discover_attempts++;
+#endif
     int error = 0;
     struct UPNPDev* devlist = upnpDiscover(UPNP_DISCOVER_TIMEOUT_MS, NULL, NULL, 0, 0, 2, &error);
     if (!devlist) {
@@ -77,6 +133,7 @@ static bool upnp_ensure_cached(void) {
     s_cache_valid = true;
     SDL_Log("UPnP: Found IGD (cached)");
     return true;
+#endif /* NETPLAY_TEST_HOOKS && ENABLE_NETPLAY_TESTS */
 }
 
 bool Upnp_AddMapping(UpnpMapping* out, uint16_t internal_port, uint16_t external_port, const char* protocol) {
@@ -189,6 +246,23 @@ void Upnp_InvalidateCache(void) {
     }
 }
 
+#ifdef NETPLAY_TEST_HOOKS
+/* The direct observation behind the harness-refusal test: "SSDP
+ * discovery was attempted". A test that only checked the RETURN of
+ * Upnp_GetExternalIP() would stay green if the refusal were deleted and
+ * discovery merely found no IGD — which is exactly what happens on a
+ * machine with no UPnP router, and would make the test vacuous on some
+ * developers' desks and not others. The counter cannot be fooled that
+ * way: it moves the instant the call is reached. */
+int Upnp_TestHook_DiscoverAttempts(void) {
+    return s_test_discover_attempts;
+}
+
+void Upnp_TestHook_ResetDiscoverAttempts(void) {
+    s_test_discover_attempts = 0;
+}
+#endif
+
 #else // !HAVE_UPNP — stubs
 
 bool Upnp_AddMapping(UpnpMapping* out, uint16_t internal_port, uint16_t external_port, const char* protocol) {
@@ -210,5 +284,15 @@ bool Upnp_GetExternalIP(char* out_ip, int ip_buf_size) {
 }
 
 void Upnp_InvalidateCache(void) {}
+
+#ifdef NETPLAY_TEST_HOOKS
+/* Same symbols in the no-miniupnpc build so the harness links either
+ * way. Nothing here can ever reach SSDP, so the count is always 0. */
+int Upnp_TestHook_DiscoverAttempts(void) {
+    return 0;
+}
+
+void Upnp_TestHook_ResetDiscoverAttempts(void) {}
+#endif
 
 #endif // HAVE_UPNP

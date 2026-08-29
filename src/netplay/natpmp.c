@@ -405,6 +405,57 @@ NatpmpParse Natpmp_ParsePmpMapResponse(const uint8_t* buf, int len,
  * That is a single-writer invariant, not an absence of one. If a second
  * concurrent mapping is ever introduced, this state has to become
  * per-mapping (or locked) at the same time.
+ *
+ * KNOWN HOLE (review L-3): the first bullet covers a straggler followed
+ * by a RENEWAL. It does NOT cover a straggler followed by a second
+ * PROBE, and that sequence is reachable:
+ *
+ *   - the probe times out and SDL_DetachThread abandons the worker while
+ *     it is still inside Natpmp_AddMapping (direct_p2p.c:2396), and
+ *     try_portmap returns false WITHOUT adopting the result: the
+ *     s_upnp_mapping assignment sits on the joined path only
+ *     (direct_p2p.c:2396), so s_upnp_mapping.active stays false;
+ *   - the FAILED_STUN auto-retry re-spawns host_thread_fn
+ *     (direct_p2p.c:2396);
+ *   - the "reuse the live mapping" shortcut is gated on that same
+ *     s_upnp_mapping.active (direct_p2p.c:2396), so it is SKIPPED;
+ *   - try_portmap runs a second time (direct_p2p.c:2396) and spawns a
+ *     SECOND worker into Natpmp_AddMapping while the straggler may still
+ *     be inside it.
+ *
+ * So s_pcp_nonce / s_pcp_nonce_valid / s_pcp_nonce_port (below) and
+ * s_epoch_reset_pending can be written by two threads at once, with no
+ * lock and no atomics. Concretely, pcp_nonce_acquire's cache check and
+ * its mint-and-persist are not one atomic step:
+ *
+ *   - TORN READ: thread A is at the memcpy that copies s_pcp_nonce into
+ *     its local `out` while thread B is at the memcpy that writes a
+ *     freshly minted nonce into s_pcp_nonce (or while pcp_nonce_forget
+ *     memsets it), so A's request goes out carrying a mix of two nonces.
+ *   - LOST MINT: both threads miss the cache and each mint their own
+ *     nonce; both send a MAP, and only the LAST writer's nonce is left
+ *     persisted. The persisted value then does not match the mapping the
+ *     gateway actually installed.
+ *
+ * WORST CASE, in both shapes: the persisted nonce and the nonce the
+ * router has on file disagree. RFC 6887 §11.3 answers a MAP whose
+ * internal port/protocol/address match an existing dynamic mapping but
+ * whose nonce does not with NOT_AUTHORIZED, and a delete is just a MAP
+ * with lifetime 0 (see the H-5 comment on the delete path below), so the
+ * mapping fails to be created or fails to be torn down and lingers until
+ * its lease expires. That is the PRE-FIX behaviour this state was added
+ * to remove — a lost mapping and a fall-through to STUN. It is NOT
+ * memory unsafety (every access is a fixed-size memcpy over a static
+ * 12-byte array), and it cannot install a mapping for the wrong port:
+ * s_pcp_nonce_port is only ever read in the same expression that gates
+ * on it. Reply matching is unaffected — Natpmp_ParsePcpMapResponse takes
+ * the request's LOCAL nonce copy as a parameter and compares against
+ * that, never against the global.
+ *
+ * NOT BOUNDED IN CODE. Recorded as a residual in
+ * docs/plan-netplay-connection.md §9.7. Bounding it means either joining
+ * the straggler before the second probe or giving this block a mutex;
+ * neither was done here.
  */
 
 /* --- PCP Mapping Nonce, RFC 6887 §11.3 (review H-5) ------------------- */
