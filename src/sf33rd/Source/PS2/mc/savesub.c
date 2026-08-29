@@ -39,6 +39,51 @@
 #define REPLAY_SIZE_V1 0
 #define REPLAY_SIZE REPLAY_SIZE_V1
 
+/* === Layout claims above, made mechanical ===
+ *
+ * The two clamp loops in deserialize_settings / deserialize_sysdir iterate
+ * over the dimensions of the SAVED struct (`extra_option.contents`,
+ * `SystemDir::contents`) but subscript a DIFFERENT array with the same
+ * indices — the per-item ceiling tables Ex_Menu_Max_Data / Dir_Menu_Max_Data.
+ * Those loops are the validation barrier for an attacker-controlled file, so
+ * if a ceiling table is ever smaller than the struct it bounds, the code that
+ * exists to make a hostile save safe becomes an out-of-bounds read on that
+ * hostile save. The two arrays are declared in different translation units
+ * from the struct, nothing relates them, and the comments at the loops assert
+ * they are "the same table" in prose only. */
+_Static_assert(SDL_arraysize(Ex_Menu_Max_Data) ==
+                   SDL_arraysize(((_EXTRA_OPTION*)0)->contents),
+               "Ex_Menu_Max_Data page count must match _EXTRA_OPTION::contents — "
+               "deserialize_settings() bounds the loop by contents and indexes "
+               "Ex_Menu_Max_Data with it");
+_Static_assert(SDL_arraysize(Ex_Menu_Max_Data[0]) ==
+                   SDL_arraysize(((_EXTRA_OPTION*)0)->contents[0]),
+               "Ex_Menu_Max_Data item count must match _EXTRA_OPTION::contents — "
+               "deserialize_settings() bounds the loop by contents and indexes "
+               "Ex_Menu_Max_Data with it");
+_Static_assert(SDL_arraysize(Dir_Menu_Max_Data) ==
+                   SDL_arraysize(((SystemDir*)0)->contents),
+               "Dir_Menu_Max_Data page count must match SystemDir::contents — "
+               "deserialize_sysdir() bounds the loop by contents and indexes "
+               "Dir_Menu_Max_Data with it");
+_Static_assert(SDL_arraysize(Dir_Menu_Max_Data[0]) ==
+                   SDL_arraysize(((SystemDir*)0)->contents[0]),
+               "Dir_Menu_Max_Data item count must match SystemDir::contents — "
+               "deserialize_sysdir() bounds the loop by contents and indexes "
+               "Dir_Menu_Max_Data with it");
+
+/* The on-disk sizes are the gate read_file_if_exists() accepts a file by, so
+ * they are a property of what serialize_* actually writes, not free constants.
+ * SYSDIR_SIZE_V1 is fully derivable; pin it rather than restate 71. */
+_Static_assert(SYSDIR_SIZE_V1 == 1 + sizeof(((SystemDir*)0)->contents),
+               "SYSDIR_SIZE_V1 must equal the version byte plus SystemDir::contents");
+/* "V2 (upstream #371) appends the 1-byte Language field after Screen_Size;
+ * a V1 (367-byte) file still loads" — the whole multi-format load path is
+ * built on V2 being exactly one byte longer than V1. */
+_Static_assert(SETTINGS_SIZE_V2 == SETTINGS_SIZE_V1 + 1,
+               "SETTINGS_SIZE_V2 must be exactly one byte longer than V1 — V2 "
+               "appends only the Language byte");
+
 #define ROOT_DIR "saves"
 #define PATH_LEN_MAX 128
 

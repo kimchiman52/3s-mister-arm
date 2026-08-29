@@ -182,6 +182,32 @@ s8* ldreq_process_name[];
 const LDREQ_TBL ldreq_tbl[294];
 const s16 ldreq_ix[43][2];
 
+/* Push_LDREQ_Queue_Direct takes one `ix` and subscripts BOTH tables with it:
+ * ldreq_tbl[ix] for the request fields, then `ldreq.result = &ldreq_result[ix]`.
+ * Push_LDREQ_Queue's dedup comment says so outright -- "`result` is included
+ * on purpose: it is 1:1 with the ldreq_tbl[] index". Nothing enforced the 1:1,
+ * and the two lengths are written as separate literals a dozen lines apart, so
+ * adding table entries without growing ldreq_result yields an out-of-bounds
+ * write of a pointer into the request queue -- and the dedup then compares
+ * `result` pointers that no longer identify a real slot. */
+_Static_assert(SDL_arraysize(ldreq_result) == SDL_arraysize(ldreq_tbl),
+               "ldreq_result must have one slot per ldreq_tbl entry — "
+               "Push_LDREQ_Queue_Direct indexes both with the same ix, and "
+               "Push_LDREQ_Queue's dedup relies on result being 1:1 with it");
+
+/* q_ldreq's length is open-coded as a bare literal at every one of its scan
+ * loops -- gd3rd.c's four `i < 16` sweeps plus the `i < 15` compaction shift,
+ * which additionally depends on being exactly length-1 so the freed tail slot
+ * is the one it clears. src/test/ldreq_timing_trace.c re-declares the array
+ * with its own `[16]` as well. A tripwire is the honest guard here: nothing
+ * can derive those bounds automatically, so changing the queue length must
+ * stop the build and name the loops that have to change with it. */
+_Static_assert(SDL_arraysize(q_ldreq) == 16,
+               "q_ldreq length changed — update the scan loops in "
+               "Push_LDREQ_Queue/Check_LDREQ_Clear/disp_ldreq_status, the "
+               "length-1 compaction shift in Check_LDREQ_Queue, and the "
+               "duplicate extern in src/test/ldreq_timing_trace.c");
+
 s32 fsOpen(REQ* req) {
     if (req->fnum >= AFS_GetFileCount()) {
         return 0;
