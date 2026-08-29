@@ -175,37 +175,93 @@ const MAX_RATE_ENTRIES = 2 * MAX_SESSIONS;
 // single session. Enforced AFTER cookie validation so spoofed traffic
 // (which never binds anyway) cannot consume a victim key's budget.
 //
-// SIZING, and the history that matters here. This was 10/s originally
-// (S4c); review MEDIUM-4 raised it to 40/s for ONE reason and one only —
-// the S5 relay's RELAY_REQ rode this same gate (it was byte-identical to
-// REGISTER on purpose) at RELAY_REQ_RESEND_MS = 300 per side, i.e.
-// 6.67/s on one key before anything else happened, which had eaten the
-// margin down to ~1x. The relay is now DELETED, client and server, so
-// that 6.67/s no longer exists and a 40/s budget would be a per-key
-// bound four times looser than any traffic can justify. Restored to 10.
+// ---- HISTORY (read this before "cleaning up" the number) ----------------
+// 10/s originally (S4c). Review MEDIUM-4 raised it to 40/s for ONE reason:
+// the S5 relay's RELAY_REQ rode this same gate (byte-identical to REGISTER
+// on purpose) at RELAY_REQ_RESEND_MS = 300 per side, i.e. 6.67/s on one key
+// before anything else happened. The relay is now DELETED, client and
+// server, so that 6.67/s no longer exists and nothing justifies 40. The
+// relay-removal commit then swung it back to 10 — which review HIGH-3
+// showed is a REGRESSION in both directions at once:
+//   * it made the per-key cap EQUAL to RATE_LIMIT_PER_WINDOW, so a single
+//     cookied IP spending its own per-IP budget consumes 100% of any
+//     room's budget (25% back when this was 40). cookieForSlot() below
+//     does NOT mix the session key in, so a cookie earned on your own key
+//     validates against every key — the attacker needs no cooperation from
+//     the room it is silencing, and binds no state doing it.
+//   * it is below the traffic a legitimate MULTI-DIALER room generates
+//     (derivation below), so the room DoSes itself with no attacker
+//     present: the host's liveness REGISTERs get dropped, lastSeenA stops
+//     refreshing, and SLOT_STALE_MS / SESSION_TTL_MS reclaim a room whose
+//     code is still on the host's screen.
 //
-// What actually charges this bucket now, from the shipped client:
-//   * the joiner's REGISTER resend in the punch race — 500 ms
-//     (src/netplay/direct_p2p.c, `(now - signal_last_send) >= 500u`),
-//     i.e. 2/s, and only for signal_budget_ms (8 s default);
-//   * the host's re-REGISTER worker — CFG_KEY_NETPLAY_DIRECT_P2P_
-//     REGISTER_INTERVAL_MS, default 5000 ms (src/port/config/config.c),
-//     floor 1000 ms, i.e. 0.2/s normally and 1/s at the floor. (The host
-//     does NOT run a signalling leg inside the race: direct_p2p.c sets
-//     cfg.signal_leg = false for RACE_ROLE_HOST, because the DELIVER
-//     that started that thread already proves it is paired.)
+// ---- DERIVATION (all figures per KEY_RATE_WINDOW_MS = 1000 ms, so
+//      "per window" and "per second" are the same number here) ------------
+// What charges this bucket, from the shipped client:
+//   * joiner REGISTER resend inside the punch race — 500 ms
+//     (src/netplay/direct_p2p.c:1356-1357, `(now - signal_last_send) >=
+//     500u`) => 2/s PER JOINER, for signal_budget_ms (8 s default,
+//     direct_p2p.c:2832-2833 / src/port/config/config.c:105).
+//   * host re-REGISTER worker — CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_
+//     INTERVAL_MS, default 5000 ms (config.c:111), floor 1000 ms
+//     (direct_p2p.c:2272-2274) => 1/s worst case. This leg must NEVER be
+//     starved: losing it is precisely what reclaims a live room. The host
+//     runs NO signalling leg inside the race (direct_p2p.c:2374 sets
+//     cfg.signal_leg = false for the host — the DELIVER that started that
+//     thread already proves it is paired).
 //   * one challenge-triggered immediate resend per side per cookie
-//     rotation (>= 60 s), since the client answers a CHALLENGE at once.
-// Steady worst case is therefore 3/s (2 + 1 at the floor), ~2.2/s at
-// shipped defaults, with a transient 5/s if both challenge resends land
-// inside the same second. 10/s keeps the ~3-4x margin this constant was
-// designed with. Defensively it costs nothing either way:
-// RATE_LIMIT_PER_WINDOW still caps any single IP at 10/s, so even
-// reaching this bucket's ceiling from many sources buys an attacker
-// 10 x 36 B/s = 360 B/s per key — and the real anti-squatting bounds are
-// the slot policy and MAX_NEW_KEYS_PER_IP, not this.
+//     rotation (COOKIE_ROTATE_MS >= 60 s), since the client answers a
+//     CHALLENGE at once (direct_p2p.c:1391-1394).
+//
+// N, the number of simultaneous dialers on ONE key. The session key is
+// derived from the HOST's public endpoint (direct_p2p.c:2809-2811), i.e.
+// the key IS the room code — everyone who pastes that code lands in the
+// same bucket, and each one starts its 2/s leg immediately, without
+// waiting to be accepted (cfg.signal_leg at direct_p2p.c:2851 keys only on
+// "have signal URL + have session key", not on pairing). The server's
+// two-slot policy silences dialers 2..N at DISPATCH, but they have already
+// charged this bucket — the gate runs upstream of dispatch. Codes are
+// pasted into a group chat and stay live for SESSION_TTL_MS = 10 min, so
+// several people racing for the single free slot is the normal case, not
+// an attack. N = 6 is the design point: more than any 2-player room can
+// consume, enough to cover a code dropped into a small active channel plus
+// the 8 s tails of losing dialers overlapping the next wave, and past it
+// the binding constraint stops being this limiter and becomes the two-slot
+// policy itself.
+//
+//   legit peak  = host 1 + 2 x N = 1 + 2 x 6            = 13/s
+//   per-IP cap  = RATE_LIMIT_PER_WINDOW                 = 10/s
+//
+// Constraint 1 (the ratio question, HIGH-3). The per-key cap MUST be
+// strictly greater than the per-IP cap. At equality the per-key limiter
+// adds ZERO attacker cost over the per-IP limiter — that IP is already
+// admitted at 10/s — while handing that one IP the power to drop every
+// other frame on the key, host liveness included. It stops being a defense
+// and becomes a lockout weapon, which is the same shape as the HIGH-2 bug
+// fixed above. So require per-key >= k x per-IP for an integer k >= 2.
+// Constraint 2 (absorption). One saturating cookied IP must not be able to
+// break a legitimate full room:
+//   per-key - per-IP >= legit peak  =>  per-key >= 13 + 10 = 23
+// The smallest integer k satisfying that is k = 3 (k = 2 gives 20, leaving
+// only 10/s for a room that needs 13):
 const KEY_RATE_WINDOW_MS = 1000;
-const KEY_RATE_LIMIT_PER_WINDOW = 10;
+const KEY_RATE_LIMIT_PER_WINDOW = 30;
+// Resulting margins, stated honestly:
+//   * ratio to the per-IP cap: 3:1 — no single cookied IP can take more
+//     than 1/3 of a room's budget.
+//   * headroom over the legit peak with no attacker: 30/13 = 2.3x.
+//   * headroom with one cookied IP saturating against the room: 20/13 =
+//     1.5x, so a full N = 6 room still pairs while under attack.
+//   * NOT covered with room to spare: the compound worst case where all
+//     seven sides rotate their cookie inside the SAME second (+7 => 20/s)
+//     AND a hostile cookied IP is saturating (+10). That lands at exactly
+//     30 of 30. Without the attacker it is 20 of 30.
+// Egress cost of the raise is nil: at the ceiling one key emits
+// 30 x 32 B = 960 B/s, and the real anti-squatting bounds remain the slot
+// policy and MAX_NEW_KEYS_PER_IP, not this bucket.
+// Guarded by testKeyBudgetCoversMultiJoinerRoom in __test_protocol.js,
+// which drives N joiners on one key and asserts the host's liveness
+// REGISTER still lands — it goes red at 10 and at 40.
 
 // S4c: return-routability cookie. Stateless server side:
 //   cookie = SHA-256(secret || addr:port:slot)[0..7]
@@ -918,6 +974,10 @@ function start(port) {
         _cookieRotateMs: COOKIE_ROTATE_MS,
         _keyRateMap: keyRateMap,
         _keyRateLimit: KEY_RATE_LIMIT_PER_WINDOW,
+        // Exposed so the budget tests can assert the window really is 1 s
+        // rather than ASSUMING "per window == per second" while doing
+        // their arithmetic in requests/second.
+        _keyRateWindowMs: KEY_RATE_WINDOW_MS,
         // --- Review HIGH-2 / MEDIUM-3 hooks ------------------------------
         _preGateMap: preGateMap,
         _preGateLimit: PREGATE_LIMIT_PER_WINDOW,

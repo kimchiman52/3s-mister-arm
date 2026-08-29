@@ -1273,16 +1273,156 @@ async function testKeyBudgetCoversLegitimateSignalling(handle) {
             'key-budget: every answer is a DELIVER, not a re-CHALLENGE');
     }
 
-    // The constant itself, stated so a cadence change trips here rather
-    // than in the field.
+    // The TWO-PEER cadence, stated so a change to either leg trips here
+    // rather than in the field.
     assert(handle._keyRateLimit >= 3 * steadyPerSec,
-        `key-budget: KEY_RATE_LIMIT_PER_WINDOW (${handle._keyRateLimit}) keeps >= 3x margin over the surviving per-key cadence (${steadyPerSec}/s)`);
-    // ...and that it was actually brought back DOWN from the relay-era
-    // 40/s. An oversized per-key cap is a WEAKER bound on a key that an
-    // attacker with several cookie-capable source IPs is hammering, and
-    // there is no longer any legitimate traffic that needs the headroom.
-    assert(handle._keyRateLimit <= 4 * steadyPerSec,
-        `key-budget: ...and is not oversized for it (${handle._keyRateLimit}/s vs a ${steadyPerSec}/s peak) -- the relay rung that justified 40/s is gone`);
+        `key-budget: KEY_RATE_LIMIT_PER_WINDOW (${handle._keyRateLimit}) keeps >= 3x margin over the two-peer per-key cadence (${steadyPerSec}/s)`);
+
+    // This test deliberately states NO upper bound on the constant, and
+    // that omission is review HIGH-3. It used to assert
+    // `_keyRateLimit <= 4 * steadyPerSec` (<= 12), which looks like a
+    // tight sizing guard but is really a hardcoded TWO-PEER model: the
+    // session key IS the room code (derived from the host's public
+    // endpoint, src/netplay/direct_p2p.c:2809-2811), so a room's real
+    // traffic is 1 + 2N for N simultaneous dialers, and every dialer
+    // charges this bucket whether or not the two-slot policy lets it in.
+    // A guard that can only ever see N = 1 cannot distinguish a correctly
+    // sized cap from one that self-DoSes a five-dialer room -- it happily
+    // ratified 10/s, the value that does. Sizing (and the per-IP-vs-per-key
+    // ratio) is asserted by testKeyBudgetCoversMultiJoinerRoom below.
+    handle._resetSessions();
+    handle._resetRate();
+}
+
+async function testKeyBudgetCoversMultiJoinerRoom(handle) {
+    // Review HIGH-3. The failure the two-peer test above structurally
+    // cannot see: N people dialling ONE room code.
+    //
+    // Why they all share a bucket: the session key is derived from the
+    // HOST's public endpoint (src/netplay/direct_p2p.c:2809-2811), so the
+    // key IS the room code. Everyone who pastes that code hashes to the
+    // same key, and each one starts its 500 ms REGISTER resend
+    // (direct_p2p.c:1356-1357 -> 2/s) the moment the code is entered,
+    // without waiting to be accepted (cfg.signal_leg, direct_p2p.c:2851,
+    // keys only on "have signal URL + have session key"). The server's
+    // two-slot policy silences dialers 2..N at DISPATCH -- but the per-key
+    // gate runs UPSTREAM of dispatch (returnRoutabilityGate), so they have
+    // already spent the budget by then.
+    //
+    // What must survive: the host's re-REGISTER liveness leg (floor
+    // 1000 ms, direct_p2p.c:2272-2274 -> 1/s). Its packets are what
+    // refresh entry.lastSeenA; if they are rate-dropped, lastSeenA goes
+    // stale and SLOT_STALE_MS / SESSION_TTL_MS reclaim a room whose code
+    // is still displayed on the host's screen. No attacker required.
+    handle._resetSessions();
+    handle._resetRate();
+
+    // The arithmetic below is in requests-per-second, which is only the
+    // same thing as requests-per-window because the window is 1 s.
+    assertEq(handle._keyRateWindowMs, 1000,
+        'multi-joiner: KEY_RATE_WINDOW_MS is 1 s, so per-window == per-second');
+
+    const N = 6;                       // design point; see the constant's comment
+    const HOST_PER_SEC = 1000 / 1000;  // REGISTER_INTERVAL_MS floor
+    const JOINER_PER_SEC = 1000 / 500; // race signal resend, per joiner
+    const legitPeak = HOST_PER_SEC + N * JOINER_PER_SEC;
+    assertEq(legitPeak, 13, 'multi-joiner: a 6-dialer room peaks at 1 + 2*6 = 13 req/s on one key');
+
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const HOST = { address: '198.51.100.10', port: 5000 };
+    // Distinct source IP per joiner, so the per-IP bucket
+    // (RATE_LIMIT_PER_WINDOW) can never be what this test measures --
+    // no source below sends more than 2 frames.
+    const joiners = [];
+    for (let i = 0; i < N; i++) {
+        joiners.push({ address: `203.0.113.${20 + i}`, port: 6000 + i });
+    }
+    const stub = makeStubSocket();
+
+    // Setup, OUTSIDE the measured second: the host is already registered
+    // and holding slot A -- this is the room whose code is on screen. The
+    // per-key bucket is cleared afterwards so setup traffic does not
+    // charge the second we are about to model.
+    handle._onMessage(regFrom(key, HOST.port, HOST.address, HOST.port), HOST, stub);
+    assert(handle._sessionMap.has(hexKey), 'multi-joiner: host bound slot A (setup)');
+    handle._resetRate();
+    stub.sent.length = 0;
+
+    // The modelled second, in the PESSIMAL arrival order: every dialer's
+    // traffic lands before the host's liveness tick. This is not a
+    // contrived ordering -- the dialers are free-running at 2/s each and
+    // the host ticks once, so the host's packet is last in some second
+    // roughly N/(N+1) of the time.
+    const second = [];
+    for (const j of joiners) { second.push(j); second.push(j); }
+    assertEq(second.length, N * JOINER_PER_SEC,
+        'multi-joiner: the joiner phase is exactly 2 frames per dialer');
+    for (const who of second) {
+        handle._onMessage(regFrom(key, who.port, who.address, who.port), who, stub);
+    }
+
+    // Age the host's slot liveness so the refresh is OBSERVABLE. Without
+    // this, a passing and a failing run both leave lastSeenA at a value
+    // within the same millisecond and the assertion cannot tell them
+    // apart. 5 s is well inside SLOT_STALE_MS (30 s), so this does not
+    // trip the stale-slot reclaim paths.
+    const entry = handle._sessionMap.get(hexKey);
+    assert(entry !== undefined, 'multi-joiner: the room still exists after the dialer wave');
+    const agedTo = entry.lastSeenA - 5000;
+    entry.lastSeenA = agedTo;
+
+    // The host's liveness REGISTER, last in the second.
+    const before = stub.sent.length;
+    handle._onMessage(regFrom(key, HOST.port, HOST.address, HOST.port), HOST, stub);
+    const toHost = stub.sent.slice(before)
+        .filter((s) => s.address === HOST.address && s.port === HOST.port);
+
+    // THE assertion. A rate-dropped REGISTER is answered with nothing at
+    // all, so "the host got a packet in response to its own frame" is
+    // exactly "the host's liveness leg was not starved". The slice()
+    // above matters: the first dialer's REGISTER pairs into slot B and
+    // pushes an unsolicited DELIVER to the host, so counting sends over
+    // the WHOLE second would score a starved host as healthy.
+    assertEq(toHost.length, 1,
+        `multi-joiner: the host's liveness REGISTER was answered after ${second.length} dialer frames on the same key`);
+    assert(entry.lastSeenA > agedTo,
+        'multi-joiner: ...and it refreshed lastSeenA, so SLOT_STALE_MS cannot reclaim a live room');
+
+    // Corroboration: every frame of the modelled second was actually
+    // admitted by the PER-KEY bucket. This is what proves the assertion
+    // above is measuring this limiter and not the slot policy.
+    const bucket = handle._keyRateMap.get(hexKey);
+    assert(bucket !== undefined, 'multi-joiner: the room code has a per-key rate bucket');
+    assertEq(bucket ? bucket.timestamps.length : -1, second.length + 1,
+        `multi-joiner: all ${second.length + 1} frames of the modelled second passed the per-key gate`);
+    // ...and that no single source came anywhere near the per-IP cap, so
+    // RATE_LIMIT_PER_WINDOW is provably not the limiter under test.
+    assert(2 < handle._rateLimit,
+        `multi-joiner: no source sent more than 2 frames, well under the per-IP cap (${handle._rateLimit})`);
+
+    // --- Sizing invariants -------------------------------------------------
+    // These fail loudly if someone re-equalises the two caps or restores
+    // the relay-era 40. See the derivation on KEY_RATE_LIMIT_PER_WINDOW.
+    //
+    // 1. Strictly greater than the per-IP cap. At equality the per-key
+    //    limiter buys ZERO attacker cost over the per-IP one -- that IP is
+    //    already admitted at its full rate -- while handing one cookied IP
+    //    the power to drop every other frame on the key. cookieForSlot()
+    //    does not mix the session key in, so a cookie earned on the
+    //    attacker's own key validates against any room's key.
+    assert(handle._keyRateLimit > handle._rateLimit,
+        `sizing: per-key cap (${handle._keyRateLimit}) is strictly greater than the per-IP cap (${handle._rateLimit}) -- at equality one cookied IP owns 100% of a room's budget`);
+    // 2. Absorption: one saturating cookied IP must not break a full room.
+    assert(handle._keyRateLimit - handle._rateLimit >= legitPeak,
+        `sizing: ${handle._keyRateLimit} - ${handle._rateLimit} = ${handle._keyRateLimit - handle._rateLimit}/s survives one saturating cookied IP and still covers a ${legitPeak}/s room`);
+    // 3. Not oversized. k = 3 is the SMALLEST integer factor satisfying
+    //    (2), so anything above it is relay-era slack with no surviving
+    //    traffic to justify it -- and a looser per-key bound is a weaker
+    //    bound on a key an attacker with many cookie-capable IPs is
+    //    hammering.
+    assert(handle._keyRateLimit <= 3 * handle._rateLimit,
+        `sizing: per-key cap (${handle._keyRateLimit}) is at most 3x the per-IP cap (${3 * handle._rateLimit}) -- k=3 is the smallest factor that satisfies absorption; more is relay-era slack`);
 
     handle._resetSessions();
     handle._resetRate();
@@ -1371,7 +1511,7 @@ async function testSweepHook(handle) {
 // EXPECTED_TESTS is deliberately a literal, NOT TESTS.length: the point is
 // to catch a test vanishing from the registry, and deriving it from the
 // registry would make that undetectable.
-const EXPECTED_TESTS = 28;
+const EXPECTED_TESTS = 29;
 
 let testsRun = 0;
 let testsFailed = 0;
@@ -1457,6 +1597,7 @@ async function main() {
 
         // --- Relay removal: the budget it inflated, and the types it freed ---
         await runTest('keyBudgetCoversLegitimateSignalling', () => testKeyBudgetCoversLegitimateSignalling(handle));
+        await runTest('keyBudgetCoversMultiJoinerRoom', () => testKeyBudgetCoversMultiJoinerRoom(handle));
         await runTest('retiredRelayTypesAreUnknown', () => testRetiredRelayTypesAreUnknown(handle));
 
         await runTest('sweepHook', () => testSweepHook(handle));

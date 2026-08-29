@@ -57,8 +57,8 @@ All from `src/netplay/direct_p2p.c` (current lines); labels from
 
 | Terminal state | Status text | Raised at |
 |---|---|---|
-| `FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:279, 1025; thread-spawn failure paths in Begin* :1872/:1932; joiner: :1097 |
-| `FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:4389, 4402 |
+| `FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:266, 1025; thread-spawn failure paths in Begin* :1872/:1932; joiner: :1097 |
+| `FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:3567, 4402 |
 | `FAILED_SYMMETRIC` | "Could not connect. Try a different network." | joiner bypasses :1152/:1158/:1165 (host side no longer has a terminal gate — same-IP DELIVERs are ignored as stale self-registrations, review H1) |
 | `FAILED_BILATERAL` | "Could not connect. Try a different network." | joiner signaling/punch failures :1189-:1336; host: punch-thread spawn failure :1719, retry-budget exhaustion :2130 (review M1: a single host-side punch failure returns to HOST_WAITING) |
 | `FAILED_HANDSHAKE` | MIST reject reason | R-1 path, :1435 |
@@ -95,7 +95,7 @@ Demonstrated end-to-end against the real server (see §3.4).
 
 Mechanics verified in code; classifications are standard NAT taxonomy.
 "UPnP" means the host's router granted the mapping
-(`try_portmap`, direct_p2p.c:2158-2367) and its external IP is not
+(`try_portmap`, direct_p2p.c:1737-1813) and its external IP is not
 provably non-public (CGNAT gate, §3.6; review M3).
 
 | Host \ Joiner | Full-cone / restricted | Port-restricted | Symmetric |
@@ -144,7 +144,7 @@ bilateral fallback could never pair those hosts.
 Every `netplay-direct-p2p-stun-keepalive-ms` (default 20 000 ms, ≤ 0
 disables) while HOST_WAITING, the main thread re-issues a STUN Binding
 Request on the same socket toward the server that answered discovery
-(`host_stun_keepalive_tick`, direct_p2p.c:3917-3933;
+(`host_stun_keepalive_tick`, direct_p2p.c:3142-3158;
 `Stun_SendKeepalive`, stun.c). The probe refreshes the advertised NAT
 mapping; the response is routed through a new STUN gate in
 `host_tick_receive` (direct_p2p.c:1752-1762) — which also fixes a
@@ -156,7 +156,7 @@ latent pre-S1 bug where a straggler Binding Response from a slower
 last known one, the NAT rebound and the displayed code is already
 dead. We re-encode and **display the NEW code** with status "Network
 changed! Share the NEW code." (`host_handle_stun_rebind`,
-direct_p2p.c:1529-1606), and restart the rendezvous loop under the new
+direct_p2p.c:3211-3251), and restart the rendezvous loop under the new
 session key (cancel+join before mutating the fields it reads).
 Review M2: the rewrite is debounced — a drift commits only when two
 consecutive keepalives report the same new endpoint, so a NAT that
@@ -192,7 +192,7 @@ T+75 s received the host endpoint and the host received the
 unsolicited DELIVER push (pair-able). Output is in the S1 task report.
 
 ### 3.5 UPnP lease renewal
-The 1-hour lease (upnp.c:27) is renewed at half-life (30 min,
+The 1-hour lease (upnp.c:71) is renewed at half-life (30 min,
 `upnp_renew_tick`, direct_p2p.c:2425-2572), retry at 5 min on failure,
 **including mid-session**: `main.c` now ticks the orchestrator from
 the active-session branch (main.c, `DirectP2P_Tick` beside
@@ -315,13 +315,13 @@ post-S2 tree.
   and logged when servers disagree on the mapped port. S3 consumes
   this for failure attribution; no UX in S2 by design.
 - **Auto-retry policy**: (a) joiner — join_thread_fn
-  (direct_p2p.c:1101) wraps the extracted `join_attempt()`
-  (direct_p2p.c:1110) and interposes exactly ONE automatic full retry
+  (direct_p2p.c:124) wraps the extracted `join_attempt()`
+  (direct_p2p.c:124) and interposes exactly ONE automatic full retry
   on any terminal failure before surfacing it; each attempt re-runs
   discovery on local_port 0 with the previous socket closed, so the
   retry binds a FRESH local port (dodges stuck conntrack/NAT state;
   also covers host-still-in-UPnP-probe start-skew). (b) host —
-  Tick's FAILED_STUN case (direct_p2p.c:3180) re-spawns
+  Tick's FAILED_STUN case (direct_p2p.c:2979) re-spawns
   host_thread_fn after a 5 s backoff, ≤3 retries per hosting session,
   instead of parking terminal; composes with (and does not touch) the
   S1 bilateral-failure return-to-HOST_WAITING path.
@@ -467,7 +467,7 @@ Three sub-stages, all landed. As-built below.
 - Punch payload is `"3SX_PUNCH"` + an 8-byte token derived from the
   room-code payload, domain-separated from the session key
   (`Rendezvous_DerivePunchToken`, rendezvous.c). 17 bytes total.
-- `classify_host_datagram` (direct_p2p.c:787) is the single routing
+- `classify_host_datagram` (direct_p2p.c:119) is the single routing
   decision for every inbound datagram on the waiting host's socket:
   '3SXR' frame / STUN Binding Response / **authenticated** punch /
   IGNORE. **Fail closed** — no valid token, no acceptance. The IGNORE
@@ -486,7 +486,7 @@ Three sub-stages, all landed. As-built below.
   is that it is an LCG whose state is recoverable from observed output,
   making txids predictable and Binding-Response forgery possible for an
   off-path attacker. RFC 5389 §6 requires cryptographic randomness.
-- New cause `CONNECT_FAIL_PUNCH_AUTH` (connect_fail.h:115). It outranks
+- New cause `CONNECT_FAIL_PUNCH_AUTH` (connect_fail.h:119). It outranks
   the NAT diagnoses in the classifier: the peer was *reached*, so
   blaming NAT would send users to their router settings for nothing.
 
@@ -590,10 +590,10 @@ bucket cannot see. A legitimate pair peaks around 2.5 pkt/s.
 loop (one RTT to bind, instead of waiting out the 500 ms resend
 cadence). The host receives CHALLENGEs on the **main** thread while
 REGISTER resends are built on the rendezvous **worker** thread, so the
-8-byte cookie crosses via a seqlock (`signal_cookie_publish`, direct_p2p.c:544;
-`signal_cookie_snapshot`, direct_p2p.c:559) and the main thread also
-echoes immediately (`host_handle_challenge`, direct_p2p.c:4300).
-`Rendezvous_ParseChallenge` (rendezvous.c:195) validates magic, version,
+8-byte cookie crosses via a seqlock (`signal_cookie_publish`, direct_p2p.c:546;
+`signal_cookie_snapshot`, direct_p2p.c:546) and the main thread also
+echoes immediately (`host_handle_challenge`, direct_p2p.c:3534).
+`Rendezvous_ParseChallenge` (rendezvous.c:193) validates magic, version,
 type **and** that the frame carries *our* session key (cross-talk +
 forgery gate — the key embeds the S4b nonce), and **zeroes its output on
 every reject**, so a caller that ignores the return value cannot echo
@@ -606,7 +606,7 @@ evict-oldest-unpaired-singleton policy remain load-bearing against a
 real **botnet** whose nodes do receive at their own addresses and
 therefore pass the cookie gate.
 
-**New cause** `CONNECT_FAIL_COOKIE_REJECTED` (connect_fail.h:100,
+**New cause** `CONNECT_FAIL_COOKIE_REJECTED` (connect_fail.h:95,
 `"P2P_FAIL_COOKIE_REJECTED"`, "Matchmaking auth failed. Update the
 game."). A CHALLENGE is proof the server is alive, so
 challenges-with-zero-DELIVERs is an auth/version problem — not the dead
@@ -1139,7 +1139,7 @@ still owing its peer that tail — see §8.9. Worst case per attempt is
 therefore 8 600 ms on the defaults, 17 200 ms for the joiner's two
 attempts. Verified headroom against the callers:
 
-- `CONNECT_TIMEOUT_CONNECTING_MS` (15 000 ms, `connect_fail.h:267`) does
+- `CONNECT_TIMEOUT_CONNECTING_MS` (15 000 ms, `connect_fail.h:241`) does
   **not** bound the race: it is armed on entry to
   `NETPLAY_SESSION_CONNECTING` (`netplay.c:1776-1791`), i.e. *after* the
   handoff, and bounds GekkoNet's sync, not establishment.
@@ -1241,9 +1241,9 @@ lines with the per-test banners attributes every one of them:
 | **24** | **many** | two concurrent real races per probe point, each with a real leg. The second review replaced the single pinned skew with seven DERIVED points plus the 1 000 ms control, so the count scales with the probe list rather than being a fixed 4 |
 | **25** | **1** | one real DELIVER-armed leg against the echo peer; confirms |
 | **26** | **1** | one real leg against the echo peer; confirms |
-| 27 | **0** | arms exactly one real leg and punches it, but the target is a **bound, silent sink** — `sink_sock` at `test_bilateral_punch.c:8560` — with `seed_port = 0` at `test_bilateral_punch.c:8567` — nothing ever answers, the race ends EXHAUSTED, and `27-no-punch-from-a-silent-sink` asserts precisely that |
-| 28 | **0** | **runs no race at all**: it calls `DirectP2P_TestHook_RaceBudgetExpired` as a pure function and compares `STUN_PUNCH_CONFIRM_MS` against the literal 600 (`test_bilateral_punch.c:8695`). No socket, no thread, no stepper |
-| 29 **(REMOVED — relay-only test, deleted with S5, §7)** | **0** | **relay-only**: `seed_port = 0` (`test_bilateral_punch.c:8805`, "no punch leg at all") and `signal_leg = false` (`test_bilateral_punch.c:8805`), so no candidate is ever armed and the only leg is the relay |
+| 27 | **0** | arms exactly one real leg and punches it, but the target is a **bound, silent sink** — `sink_sock` at `test_bilateral_punch.c:6582` — with `seed_port = 0` at `test_bilateral_punch.c:6616` — nothing ever answers, the race ends EXHAUSTED, and `27-no-punch-from-a-silent-sink` asserts precisely that |
+| 28 | **0** | **runs no race at all**: it calls `DirectP2P_TestHook_RaceBudgetExpired` as a pure function and compares `STUN_PUNCH_CONFIRM_MS` against the literal 600 (`test_bilateral_punch.c:6697`). No socket, no thread, no stepper |
+| 29 **(REMOVED — relay-only test, deleted with S5, §7)** | **0** | **relay-only**: it set `seed_port = 0` ("no punch leg at all") and `signal_leg = false`, so no candidate was ever armed and the only leg is the relay |
 
 So the sentence that matters is narrower than "23-29": **tests 23, 24,
 25 and 26** are what drive a real 17-byte punch to a real loopback peer
@@ -1276,7 +1276,7 @@ Four `NETPLAY_TEST_HOOKS`-only seams make that possible:
   failure mode past its up-front `ip`/`port` guard — `Stun_PunchBegin`
   (`stun.c:781-798`) — and the only slot the race ever RE-arms takes its IP
   from `Rendezvous_ParseDeliverEx`, which emits `inet_ntop` output and
-  therefore always a resolvable dotted quad (`rendezvous.c:251-254`). The
+  therefore always a resolvable dotted quad (`rendezvous.c:250-253`). The
   wire cannot produce the case M-2 half (i) is about; the seam can, and the
   failure it produces is the real `NET_ResolveHostname` one.
 - **`DirectP2P_TestHook_RaceRelayArmMs` / `..._RaceRelayGraceMs`** exposed the
@@ -1909,7 +1909,7 @@ at once.
 `UpnpMapping` gained two fields (upnp.h:14-39): `backend`
 (`PortMapBackend` NONE/UPNP/NATPMP/PCP) and `lifetime_s`.
 
-- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:2353),
+- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:1956),
   and every removal site goes through it. `Upnp_RemoveMapping` and
   `Natpmp_RemoveMapping` each additionally **refuse** a mapping they do
   not own. This is not defensive decoration: on a router that speaks
@@ -1925,7 +1925,7 @@ at once.
   existing `preferred_external = s_upnp_mapping.external_port` line
   already did.
 - **The renewal interval now follows the granted lease**
-  (`portmap_renew_interval_ms`, direct_p2p.c:2566). RFC 6886 §3.3: "The
+  (`portmap_renew_interval_ms`, direct_p2p.c:2081). RFC 6886 §3.3: "The
   NAT gateway MAY reduce the lifetime from what the client requested."
   A router granting 120 s against our 3600 s request would have
   silently lost the mapping 28 minutes before a fixed half-hour timer
@@ -2272,14 +2272,14 @@ runs on Linux.
   worker is either joined or detached-and-abandoned, and that a detached
   straggler can never be followed by a renewal. That covers a *renewal*.
   It does not cover a second *probe*, and the second probe is reachable:
-  `SDL_DetachThread` (`direct_p2p.c:2476`) abandons the timed-out
+  `SDL_DetachThread` (`direct_p2p.c:1981`) abandons the timed-out
   worker, and `try_portmap` returns false **without** adopting the
   result — the `s_upnp_mapping` assignment is on the joined path only
-  (`direct_p2p.c:2426`) — so `s_upnp_mapping.active` stays false; the
+  (`direct_p2p.c:2447`) — so `s_upnp_mapping.active` stays false; the
   FAILED_STUN auto-retry re-spawns `host_thread_fn`
-  (`direct_p2p.c:4834`); the "reuse the live mapping" shortcut is gated
-  on that same `s_upnp_mapping` flag (`direct_p2p.c:3196`) and is
-  therefore skipped; and `try_portmap` runs again (`direct_p2p.c:3203`),
+  (`direct_p2p.c:4248`); the "reuse the live mapping" shortcut is gated
+  on that same `s_upnp_mapping` flag (`direct_p2p.c:2557`) and is
+  therefore skipped; and `try_portmap` runs again (`direct_p2p.c:1719`),
   spawning a second worker into `Natpmp_AddMapping` while the straggler
   may still be inside it. `s_pcp_nonce` / `s_pcp_nonce_valid` /
   `s_pcp_nonce_port` (`s_pcp_nonce` is at `natpmp.c:496`) and

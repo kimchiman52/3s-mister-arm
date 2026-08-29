@@ -2103,6 +2103,145 @@ static int test_rendezvous_cookie_codec(void) {
     return 1;
 }
 
+/* --- Test 32: the inbound frame router, magic vs magic+version -------- */
+
+/*
+ * Rendezvous_HasMagic and Rendezvous_FrameType are two DIFFERENT tests
+ * and the difference is load-bearing. Both still ship:
+ *
+ *   rendezvous.c:281  Rendezvous_HasMagic   — magic ONLY
+ *   rendezvous.c:290  Rendezvous_FrameType  — magic AND version AND type
+ *   direct_p2p.c:1372-1373 — the race's one shared receive path routes
+ *                            with HasMagic ? FrameType : -1
+ *   sdl_net_adapter.c:291,298 — the GekkoNet straggler drop
+ *
+ * These assertions used to live in the S5 relay codec test, purely
+ * because a RELAY_GRANT happened to be the frame lying around to build
+ * them on. The relay is gone; the property is not. The fixtures here are
+ * a DELIVER and a CHALLENGE — the only two server->client frame types
+ * this client still understands (rendezvous.h:212-213).
+ *
+ * THE REGRESSION THIS EXISTS TO CATCH. sdl_net_adapter.c's straggler
+ * drop used to test `Rendezvous_FrameType(...) != 0`, which returns 0
+ * for ANY version != REND_VERSION. A non-v2 '3SXR' frame therefore
+ * passed straight THROUGH the guard with data[0] == 0x33, was miscounted
+ * as an InputAck (0x33 & 7 == 3), and reached GekkoNet as a packet of
+ * type 51. The version-INDEPENDENT cases below (32-magic-v3-*) are what
+ * fail if that ever comes back: they are the only assertions in this
+ * tree that distinguish the two functions, and swapping HasMagic for
+ * `FrameType(...) != 0` leaves every other test in the suite green.
+ */
+static int test_rendezvous_frame_router(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 32: '3SXR' frame router — "
+                    "HasMagic (version-independent) vs FrameType\n");
+    const int fails_before = fail_count;
+
+    uint8_t key[REND_KEY_LEN];
+    for (int i = 0; i < REND_KEY_LEN; i++) key[i] = (uint8_t)(0x10u + i);
+
+    struct sockaddr_in peer;
+    memset(&peer, 0, sizeof(peer));
+    peer.sin_family = AF_INET;
+    peer.sin_addr.s_addr = htonl(0xC6336407u); /* 198.51.100.7 */
+
+    uint8_t deliver[REND_DELIVER_LEN];
+    (void)build_deliver(deliver, key, &peer, 6000);
+    uint8_t challenge[REND_CHALLENGE_LEN];
+    uint8_t cookie[REND_COOKIE_LEN];
+    for (int i = 0; i < REND_COOKIE_LEN; i++) cookie[i] = (uint8_t)(0xC0u + i);
+    (void)build_challenge(challenge, key, cookie);
+
+    /* (1) FrameType routes the two shipping server->client types. */
+    EXPECT_TRUE("32-ft-deliver",
+                Rendezvous_FrameType(deliver, (int)sizeof(deliver)) ==
+                    REND_FRAME_DELIVER);
+    EXPECT_TRUE("32-ft-challenge",
+                Rendezvous_FrameType(challenge, (int)sizeof(challenge)) ==
+                    REND_FRAME_CHALLENGE);
+
+    /* (2) FrameType rejects everything that is not a well-formed frame
+     *     of THIS version. */
+    {
+        uint8_t v3[REND_DELIVER_LEN];
+        memcpy(v3, deliver, sizeof(v3));
+        v3[4] = 3;
+        EXPECT_TRUE("32-ft-wrong-version",
+                    Rendezvous_FrameType(v3, (int)sizeof(v3)) == 0);
+        uint8_t nm[REND_DELIVER_LEN];
+        memcpy(nm, deliver, sizeof(nm));
+        nm[1] = 0x00;
+        EXPECT_TRUE("32-ft-wrong-magic",
+                    Rendezvous_FrameType(nm, (int)sizeof(nm)) == 0);
+        EXPECT_TRUE("32-ft-short", Rendezvous_FrameType(deliver, 5) == 0);
+        EXPECT_TRUE("32-ft-null", Rendezvous_FrameType(NULL, 32) == 0);
+    }
+
+    /* (3) HasMagic is the STRAGGLER test and is deliberately WEAKER.
+     *     Every case here is one where the two functions must DISAGREE,
+     *     which is exactly what a `HasMagic -> FrameType(...) != 0`
+     *     substitution destroys. */
+    {
+        EXPECT_TRUE("32-magic-deliver",
+                    Rendezvous_HasMagic(deliver, (int)sizeof(deliver)));
+        EXPECT_TRUE("32-magic-challenge",
+                    Rendezvous_HasMagic(challenge, (int)sizeof(challenge)));
+
+        /* A v3 '3SXR' straggler. HasMagic must still claim it — this is
+         * the packet that otherwise reaches GekkoNet as type 51. */
+        uint8_t v3[REND_DELIVER_LEN];
+        memcpy(v3, deliver, sizeof(v3));
+        v3[4] = 3;
+        EXPECT_TRUE("32-magic-v3-still-ours",
+                    Rendezvous_HasMagic(v3, (int)sizeof(v3)));
+        EXPECT_TRUE("32-magic-v3-invisible-to-frametype",
+                    Rendezvous_FrameType(v3, (int)sizeof(v3)) == 0);
+
+        /* An unknown TYPE on the right version is likewise still ours. */
+        uint8_t t99[REND_DELIVER_LEN];
+        memcpy(t99, deliver, sizeof(t99));
+        t99[5] = 99;
+        EXPECT_TRUE("32-magic-unknown-type-still-ours",
+                    Rendezvous_HasMagic(t99, (int)sizeof(t99)));
+
+        /* A frame too short to carry a type is still ours by magic. */
+        EXPECT_TRUE("32-magic-4-bytes", Rendezvous_HasMagic(deliver, 4));
+        EXPECT_TRUE("32-magic-4-bytes-invisible-to-frametype",
+                    Rendezvous_FrameType(deliver, 4) == 0);
+
+        /* And the negatives: wrong magic, too short for the magic, NULL. */
+        uint8_t nm[REND_DELIVER_LEN];
+        memcpy(nm, deliver, sizeof(nm));
+        nm[1] = 0x00;
+        EXPECT_FALSE("32-magic-wrong-magic",
+                     Rendezvous_HasMagic(nm, (int)sizeof(nm)));
+        EXPECT_FALSE("32-magic-short", Rendezvous_HasMagic(deliver, 3));
+        EXPECT_FALSE("32-magic-null", Rendezvous_HasMagic(NULL, 32));
+    }
+
+    /* (4) EXACTNESS. No GekkoNet packet may look like a '3SXR' frame to
+     *     EITHER function — that is what makes the straggler drop an
+     *     exact test rather than a heuristic. PacketType is 1..7 by
+     *     construction (GekkoNet net.h:28-36) and can never be 0x33. */
+    for (uint8_t t = 1; t <= 7; t++) {
+        uint8_t gek[32];
+        memset(gek, 0x5A, sizeof(gek));
+        gek[0] = t;
+        EXPECT_FALSE("32-magic-gekko-never-matches",
+                     Rendezvous_HasMagic(gek, (int)sizeof(gek)));
+        EXPECT_TRUE("32-ft-gekko-never-matches",
+                    Rendezvous_FrameType(gek, (int)sizeof(gek)) == 0);
+    }
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 32 OK — HasMagic claims a '3SXR' frame of "
+                "ANY version while FrameType routes only v2 DELIVER/CHALLENGE, and no "
+                "GekkoNet packet can be mistaken for either\n");
+        return 0;
+    }
+    return 1;
+}
+
 /* --- Test 12: S4-review HIGH-1b host punch-gate throttle -------------- */
 
 /*
@@ -2426,6 +2565,25 @@ static bool pred_two_cookied_requests(void) {
     return s_pred_ctx != NULL && s_pred_ctx->cookied_requests >= 2;
 }
 
+/*
+ * "A handoff has happened", observed the only way that cannot be faked
+ * by internal state: do_handoff's own call counter.
+ *
+ * DIRECT_P2P_HANDOFF is NOT the same observable. On the host's bilateral
+ * rung the worker raises s_bilateral_handoff_pending and Tick then does
+ * set_state(HANDOFF) IMMEDIATELY BEFORE calling do_handoff
+ * (direct_p2p.c:4340-4348), so a state-only wait can return with the
+ * handoff arguments not yet written — and, if the pending flag were ever
+ * dropped, would still be satisfied by any other path that publishes the
+ * state. Counting do_handoff calls is what pins the host worker ->
+ * s_bilateral_handoff_pending -> main-thread do_handoff chain.
+ */
+static bool pred_any_handoff(void) {
+    int n = 0;
+    DirectP2P_TestHook_LastHandoff(NULL, 0, NULL, NULL, &n);
+    return n > 0;
+}
+
 /* --- Test 13: HOST cookie handshake, end to end ------------------------ */
 
 static int test_host_cookie_handshake(void) {
@@ -2483,6 +2641,7 @@ static int test_host_cookie_handshake(void) {
     DirectP2P_TestHook_SetStunDiscover(capturing_stun_discover);
     DirectP2P_TestHook_SetPunchOracle(mock_punch_oracle);
     DirectP2P_TestHook_SetRendezvousSend(recording_rendezvous_send);
+    DirectP2P_TestHook_ResetHandoff();
 
     /* Kill the UPnP probe. Without this the harness performs a REAL IGD
      * discovery and installs a REAL 1-hour UDP mapping on whatever
@@ -2646,7 +2805,18 @@ static int test_host_cookie_handshake(void) {
 
     /* 6) The mock binds only on the cookie echo, and the pairing then
      *    completes all the way to HANDOFF (DELIVER -> bilateral punch ->
-     *    main-thread handoff). */
+     *    main-thread handoff).
+     *
+     *    The wait is on do_handoff HAVING BEEN CALLED, not on the state
+     *    alone. This is the suite's only wait on a handoff from a HOST
+     *    session, and therefore its only coverage of the
+     *    s_bilateral_handoff_pending chain: the punch worker raises the
+     *    flag (direct_p2p.c:2407), Tick observes it, joins the worker,
+     *    publishes HANDOFF and calls do_handoff
+     *    (direct_p2p.c:4340-4348). A state-only wait is satisfied one
+     *    statement earlier, before any handoff argument is written, and
+     *    would also be satisfied by any other path that publishes the
+     *    state — so both are waited on, state first. */
     if (!tick_until_state(DIRECT_P2P_HANDOFF, 15000)) {
         fprintf(stderr,
                 "[test_bilateral_punch] FAIL: test13: state %d after the cookie bound, "
@@ -2654,6 +2824,39 @@ static int test_host_cookie_handshake(void) {
                 (int)DirectP2P_GetState(), ctx.cookied_requests, ctx.challenges_sent);
         fail_count++;
         rc = 1;
+    } else if (!tick_until(pred_any_handoff, 5000)) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: test13: HOST published HANDOFF but "
+                "do_handoff was never called (cookied=%d challenges=%d) — the "
+                "s_bilateral_handoff_pending chain did not complete\n",
+                ctx.cookied_requests, ctx.challenges_sent);
+        fail_count++;
+        rc = 1;
+    } else {
+        char hip[64] = { 0 };
+        uint16_t hport = 0;
+        int hplayer = 0, hcount = 0;
+        DirectP2P_TestHook_LastHandoff(hip, (int)sizeof(hip), &hport, &hplayer,
+                                       &hcount);
+        /* The peer the mock synthesised is who we were handed. */
+        if (hport != ctx.synth_peer_port || strcmp(hip, "198.51.100.7") != 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test13: do_handoff got %s:%u, expected "
+                    "the synthesised peer 198.51.100.7:%u\n",
+                    hip, (unsigned)hport, (unsigned)ctx.synth_peer_port);
+            fail_count++;
+            rc = 1;
+        }
+        /* THE PLAYER NUMBER — the host half of the pair asserted on the
+         * join side by 19-handoff-player2. The host is player 1
+         * (direct_p2p.c:4348, and :3702 on the direct-receive rung).
+         * Nothing else in this suite reads it: with both host sites
+         * changed to 2 the endpoint, the timing, the state and the
+         * status text are all still exactly right, GekkoNet is handed
+         * identical local and remote roles on both peers, and no match
+         * can start. */
+        EXPECT_TRUE("13-handoff-player1", hplayer == 1);
+        EXPECT_TRUE("13-one-handoff", hcount == 1);
     }
     EXPECT_TRUE("13-uncookied-never-bound", ctx.uncookied_requests >= 1);
 
@@ -4398,10 +4601,10 @@ static int test_natpmp_pcp(void) {
 /* --- 23a: the DISABLE_UPNP / DISABLE_NATPMP pairing, asserted --------- *
  *
  * Method rule: no test may install a mapping on the developer's router.
- * Thirteen sites in this file disable UPnP before driving the host state
+ * Eight sites in this file disable UPnP before driving the host state
  * machine, and every one of them is hand-paired with a matching
  * disable-natpmp. Hand-maintained and, until now, unasserted: adding a
- * fourteenth site and forgetting the pair would silently aim the NAT-PMP
+ * ninth site and forgetting the pair would silently aim the NAT-PMP
  * backend at whatever gateway the test machine actually has.
  *
  * A source-level discipline is asserted at the source. __FILE__ is
@@ -4421,10 +4624,11 @@ static int test_natpmp_pcp(void) {
  *   (2) FLOOR. The scan must find at least as many disable-UPnP sites as
  *       exist today, so a scanner that silently stopped matching — or a
  *       deletion of a site — is caught. The floors are the MEASURED
- *       counts (13 disable-UPnP sites, 6 DirectP2P_BeginHost calls, both
- *       as reported by this test's own scan on 2026-08-25), not a round
- *       number below them: the previous floor of 11 against 13 real
- *       sites meant two could be deleted with the suite still green.
+ *       counts (8 disable-UPnP sites, 5 DirectP2P_BeginHost calls, both
+ *       as reported by this test's own scan after the relay rung was
+ *       removed), not a round number below them: an earlier floor of 11
+ *       against 13 real sites meant two could be deleted with the suite
+ *       still green.
  *       (Do not re-derive these with a plain grep and paste the number
  *       here — the pattern would match this comment, and the printed
  *       tally line below is the honest source.)
@@ -4628,6 +4832,123 @@ static int test_s7_disable_pairing(void) {
                 "[test_bilateral_punch] test 23a OK — every disable-UPnP site pairs "
                 "with disable-NAT-PMP, every host drive is covered by one, and "
                 "nothing re-enables UPnP\n");
+        return 0;
+    }
+    return 1;
+}
+
+/* --- Test 33: every do_handoff call site's player number, at the source */
+
+/*
+ * do_handoff's first argument is the ONLY thing that tells GekkoNet
+ * which side we are (direct_p2p.c:3091). It is a LITERAL at every call
+ * site — nothing downstream can correct a wrong one — and two peers that
+ * both hand off as the same number get identical local and remote roles,
+ * so the session never starts.
+ *
+ * Three call sites ship (direct_p2p.c, as of this test):
+ *
+ *   :3702  host_tick_receive   — the DIRECT rung        -> 1
+ *   :4348  Tick, on s_bilateral_handoff_pending          -> 1
+ *   :3710  join_tick_handoff                             -> 2
+ *
+ * Only two of them have runtime coverage: :4348 via 13-handoff-player1
+ * and :3710 via 19-handoff-player2. NOTHING in this suite reaches
+ * host_tick_receive — a full run logs zero "Host received first inbound"
+ * lines — so :3702 cannot be pinned by an end-to-end assertion without a
+ * rig that does not exist. It is pinned HERE instead, at the source, the
+ * same way test 23a pins the disable-UPnP discipline.
+ *
+ * The shape asserted is the INVARIANT, not a transcript: across all
+ * call sites the multiset of literal player numbers must be exactly
+ * {1, 1, 2}. Changing either host site to 2 (or the join site to 1)
+ * makes it {2,2,2} / {1,1,1} and this goes red. Adding a fourth call
+ * site also goes red, which is correct: a new handoff path is a decision
+ * about player numbering and must be made deliberately.
+ *
+ * MATCHING is whitespace-squeezed, like 23a's, so a reflow cannot make
+ * the scan silently under-count. The definition line
+ * (`static void do_handoff(int player, ...)`) matches neither key.
+ */
+#define HANDOFF_P1_SITES 2
+#define HANDOFF_P2_SITES 1
+
+static int test_handoff_player_number_sites(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 33: every do_handoff call site's literal "
+            "player number\n");
+    const int fails_before = fail_count;
+
+    /* __FILE__ is absolute (CMake compiles with absolute paths), so the
+     * sibling source is found by swapping the basename. */
+    char path[1024];
+    SDL_strlcpy(path, __FILE__, sizeof(path));
+    char* slash = strrchr(path, '/');
+    if (slash == NULL) {
+        FAIL("33-path", "__FILE__ is not an absolute path; cannot locate direct_p2p.c");
+        return 1;
+    }
+    SDL_strlcpy(slash + 1, "direct_p2p.c", sizeof(path) - (size_t)(slash + 1 - path));
+
+    FILE* f = fopen(path, "r");
+    if (f == NULL) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 33-open: cannot read %s to verify the "
+                "do_handoff player numbers\n", path);
+        fail_count++;
+        return 1;
+    }
+
+    /* Built at runtime from two halves on two separate source lines so
+     * this scanner cannot match itself if it is ever pointed at this
+     * file. KEEP THEM SPLIT. */
+    char key_p1[64];
+    char key_p2[64];
+    SDL_strlcpy(key_p1, "do_hand", sizeof(key_p1));
+    SDL_strlcat(key_p1, "off(1,", sizeof(key_p1));
+    SDL_strlcpy(key_p2, "do_hand", sizeof(key_p2));
+    SDL_strlcat(key_p2, "off(2,", sizeof(key_p2));
+
+    int p1 = 0, p2 = 0, first_p1_line = 0, first_p2_line = 0, lineno = 0;
+    char line[4096];
+    char sq[4096];
+    while (fgets(line, (int)sizeof(line), f) != NULL) {
+        lineno++;
+        squeeze_ws(sq, sizeof(sq), line);
+        if (strstr(sq, key_p1) != NULL) {
+            p1++;
+            if (first_p1_line == 0) first_p1_line = lineno;
+        }
+        if (strstr(sq, key_p2) != NULL) {
+            p2++;
+            if (first_p2_line == 0) first_p2_line = lineno;
+        }
+    }
+    fclose(f);
+
+    fprintf(stderr,
+            "[test_bilateral_punch] test 33: %s: %d site(s) hand off as player 1 "
+            "(first at :%d), %d as player 2 (first at :%d)\n",
+            path, p1, first_p1_line, p2, first_p2_line);
+
+    if (p1 != HANDOFF_P1_SITES || p2 != HANDOFF_P2_SITES) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 33-player-numbers: %s has %d do_handoff "
+                "site(s) passing player 1 and %d passing player 2; expected %d and %d. "
+                "The HOST rungs (host_tick_receive and the "
+                "s_bilateral_handoff_pending rung in Tick) must both pass 1 and the "
+                "JOIN rung must pass 2 — if a host site passes 2, both peers come up "
+                "as player 2, GekkoNet gets identical local and remote roles and no "
+                "match can start. A count of 0 means the scan is not matching, in "
+                "which case its verdict means nothing.\n",
+                path, p1, p2, HANDOFF_P1_SITES, HANDOFF_P2_SITES);
+        fail_count++;
+    }
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 33 OK — %d host site(s) hand off as "
+                "player 1, %d join site as player 2\n", p1, p2);
         return 0;
     }
     return 1;
@@ -5797,6 +6118,28 @@ static int test_race_deliver_overlaps_seed(void) {
         EXPECT_TRUE("19-seed-was-armed", s_r19_seed_arms >= 1);
         EXPECT_TRUE("19-deliver-was-armed", s_r19_deliver_arms >= 1);
         EXPECT_TRUE("19-two-candidates", s_mock_punch_calls == 2);
+        /* THE PLAYER NUMBER. do_handoff's first argument is the only
+         * thing that decides which side GekkoNet is told it is: 1 ->
+         * local player 0 / remote 1, 2 -> local 1 / remote 0
+         * (direct_p2p.c:3091 do_handoff). It is passed as a LITERAL at
+         * every call site, so nothing downstream can correct a wrong
+         * one — two peers that both hand off as the same number give
+         * GekkoNet identical local and remote roles and no match can
+         * ever start. It is also invisible to every other assertion in
+         * this suite: endpoint, timing, state and status text are all
+         * exactly right when the number is wrong.
+         *
+         * This is the JOIN side, and join is player 2
+         * (direct_p2p.c:3710). The host half is pinned at runtime in
+         * test 13 (13-handoff-player1), and all three call sites are
+         * pinned at the source in test 33. */
+        EXPECT_TRUE("19-handoff-player2", hplayer == 2);
+        /* Exactly one handoff: a second one would re-enter GekkoNet
+         * setup on a live session. `hcount` is what separates "no
+         * handoff at all" from "a handoff to 0.0.0.0:0", so asserting
+         * it also makes the endpoint and player assertions above
+         * non-vacuous. */
+        EXPECT_TRUE("19-one-handoff", hcount == 1);
         if (rc == 0 && fail_count == fails_before) {
             fprintf(stderr,
                     "[test_bilateral_punch] test 19 OK — DELIVER candidate punched and "
@@ -6989,6 +7332,461 @@ done:
     return (rc == 0 && fail_count == fails_before) ? 0 : 1;
 }
 
+/* --- Test 34: TWO p2p_race instances, concurrently, against each other - */
+
+/*
+ * WHY THIS RIG EXISTS AT ALL.
+ *
+ * Every other seam in this file drives the race through BeginJoin or the
+ * host worker, and those own process-wide state (s_work, s_state, the
+ * worker threads), so exactly ONE race can be live at a time. p2p_race
+ * itself takes everything by argument, and DirectP2P_TestHook_RunRace is
+ * the door to it — so this is the only place in the tree where two races
+ * run CONCURRENTLY, punching each other through a delay line, which is
+ * the only way a two-peer property can be observed at all.
+ *
+ * That rig arrived with the S5 relay (as test 24, the split-brain hunt)
+ * and went out with it. Four of its eight probe points were relay
+ * arbitration — three derived from RACE_RELAY_ARM_MS + RACE_RELAY_GRACE_MS
+ * (the relay-commit instant) and one that asserted a RELAYED outcome —
+ * and those are correctly gone, along with RACE_PUNCH_MIN_WINDOW_MS.
+ * What is restored here are the points that were never about the relay:
+ * the three derived from the PUNCH SEND WINDOW (`punch_leg_ms`), plus the
+ * control point that proves the rig delivers punches at all.
+ *
+ * WHAT IS ASSERTED, AND WHY IT IS NOT THE OLD ASSERTION.
+ *
+ * The old points expected PUNCHED at punch_end-owd, punch_end and
+ * punch_end+owd. That expectation was produced by a rule that the relay
+ * removal deliberately deleted: a candidate used to stay on the RECEIVE
+ * path past its send window whenever a relay leg was still deciding, and
+ * that deferral was scoped to `relay_in_play` — with no relay it never
+ * applied even before the removal. Today section 2 of p2p_race tears a
+ * candidate down at the end of its own `punch_leg_ms` window, full stop
+ * (direct_p2p.c:1322-1340), and its comment states the consequence
+ * outright: "With no relay there is nothing to disagree about: both
+ * peers simply fail."
+ *
+ * So the property asserted at the punch-send-window instants is the one
+ * that survived, and it is the one the whole split-brain hunt was
+ * actually about:
+ *
+ *   CONVERGENCE — at every skew, peer A and peer B reach the SAME
+ *   outcome. One peer PUNCHED while the other is EXHAUSTED is the
+ *   split brain: GekkoNet registers the remote once by source address
+ *   with no relearn path, so that pair hangs for the whole
+ *   CONNECT_TIMEOUT_CONNECTING_MS and fails.
+ *
+ * Convergence alone is trivially satisfiable by a rig that punches
+ * nothing (both EXHAUSTED), so it is anchored at both ends:
+ *
+ *   - the CONTROL skew, comfortably inside the overlap, must converge on
+ *     PUNCHED. If it reds the rig is broken, not the code.
+ *   - the PAST skew, a full punch window plus several delays beyond the
+ *     end, must converge on EXHAUSTED — the direct assertion of the
+ *     "both peers simply fail" claim, and the point that catches a rig
+ *     that is not injecting the delay it says it is.
+ *
+ * Both punch legs are DP2P_PUNCH_REAL (no oracle), so this runs the real
+ * Stun_PunchBegin / Pump / Offer / Settled machine over real loopback
+ * UDP on both sides. `RaceCfg.role` is written by RunRace and read
+ * nowhere inside p2p_race, so HOST on both sides costs nothing.
+ *
+ * WHAT THIS TEST FOUND THE MOMENT IT WAS RESTORED — READ BEFORE
+ * "FIXING" THE TEST.
+ *
+ * It goes RED at skew = punch_leg - owd, and the red is the shipping
+ * code, not the rig:
+ *
+ *   skew= 500 ms -> A=PUNCHED   B=PUNCHED     (control)
+ *   skew=2350 ms -> A=PUNCHED   B=EXHAUSTED   *** SPLIT BRAIN ***
+ *   skew=2500 ms -> A=PUNCHED   B=EXHAUSTED   (boundary; also seen converged)
+ *   skew=2650 ms -> A=EXHAUSTED B=EXHAUSTED
+ *   skew=3450 ms -> A=EXHAUSTED B=EXHAUSTED   (past every punch)
+ *
+ * It is BOUNDARY-LOCKED, not a flake. The band moves with whichever
+ * constant is moved, measured over three configurations:
+ *
+ *   owd=150 punch_leg=2500 -> splits at 2350 and 2500, converged at 2650
+ *   owd=150 punch_leg=1800 -> splits at 1650 and 1800, converged at 1950
+ *   owd=300 punch_leg=2500 -> splits at 2200 and 2500, converged at 2800
+ *
+ * i.e. the divergence band is skew in [punch_leg - owd, punch_leg], one
+ * one-way delay wide, and it closes one owd after the send window ends
+ * because by then the early peer has stopped punching before the late
+ * peer armed and neither side can confirm.
+ *
+ * The early peer B stops SENDING and stops LISTENING at the same instant
+ * (direct_p2p.c:1330-1340). The late peer A arms one owd before that, so
+ * A is confirmed by B's last punches while A's own first punch reaches B
+ * exactly as B tears the leg down — section 2 runs before the shared
+ * receive path in the same loop iteration, so B never sees it. A hands
+ * off to GekkoNet; B reports failure.
+ *
+ * This band did not exist before the relay was removed. The deferral
+ * that closed it — hold a candidate on the RECEIVE path past its send
+ * window — was scoped to `relay_in_play`, and in production a relay leg
+ * was always possible, so it always applied. The removal deleted the
+ * deferral along with the relay, and direct_p2p.c:1327-1329 now asserts
+ * in prose the thing this test measures to be false: "With no relay
+ * there is nothing to disagree about: both peers simply fail."
+ *
+ * The base suite could not see this: its rig always ran with
+ * relay_leg = true, so the only configuration it ever probed was the one
+ * where the deferral applied. The base comment nevertheless names the
+ * exact failure mode in advance, at
+ * 9240aa50:src/netplay/test_bilateral_punch.c:8040-8043 — "PUNCH SEND
+ * END ... The early peer stops sending here. If it also stopped
+ * LISTENING here, the late peer's punch would confirm one-sidedly and
+ * the band would simply have moved to this instant instead."
+ *
+ * The fix belongs in direct_p2p.c section 2 of p2p_race (keep a
+ * send-expired candidate on the receive path for a bounded tail, now
+ * unconditionally rather than only while a relay leg was deciding), NOT
+ * in this file. Do not relax the convergence assertion to make this
+ * green.
+ */
+
+/* One-way delay injected between the two peers, and the rig's punch SEND
+ * window. Both are runtime knobs so the probe points can be pointed
+ * anywhere without a rebuild — the literals below are defaults, not
+ * chosen constants. */
+#define SB6_OWD_DEFAULT_MS      150
+#define SB6_RIG_PUNCH_LEG_MS    2500
+#define SB6_RIG_BUDGET_MS       6000
+/* A control skew comfortably below the end of the punch window: both
+ * sides must punch. */
+#define SB6_SAFE_SKEW_MS        500
+
+static int sb6_env_int(const char* name, int fallback) {
+    const char* v = SDL_getenv(name);
+    if (v == NULL || v[0] == '\0') {
+        return fallback;
+    }
+    return SDL_atoi(v);
+}
+
+static int sb6_owd_ms(void) {
+    const int v = sb6_env_int("S6_SPLIT_OWD_MS", SB6_OWD_DEFAULT_MS);
+    return (v < 0) ? 0 : v;
+}
+
+static int sb6_punch_leg_ms(void) {
+    return sb6_env_int("S6_SPLIT_PUNCH_LEG_MS", SB6_RIG_PUNCH_LEG_MS);
+}
+
+static const char* sb6_outcome_name(DirectP2PRaceProbeOutcome o) {
+    switch (o) {
+    case DP2P_RACE_PROBE_PUNCHED:   return "PUNCHED";
+    case DP2P_RACE_PROBE_CANCELLED: return "CANCELLED";
+    default:                        return "EXHAUSTED";
+    }
+}
+
+/* A store-and-forward pipe between the two peers. Each side's punches
+ * are held for `delay_ms` and then sent out of the OTHER side's socket,
+ * so each peer sees the source endpoint it was told to punch and no
+ * symmetric-NAT retarget is involved — the property under test stays
+ * single. */
+typedef struct {
+    int sock_a;   /* peer A punches here; forwarded to B out of sock_b */
+    int sock_b;   /* peer B punches here; forwarded to A out of sock_a */
+    int delay_ms;
+    volatile bool stop;
+    struct sockaddr_in addr_a;
+    struct sockaddr_in addr_b;
+    bool have_a;
+    bool have_b;
+    volatile int forwarded;
+    volatile int dropped_unknown_peer;
+    struct {
+        uint8_t  buf[64];
+        int      len;
+        uint32_t due;
+        bool     to_b;
+        bool     used;
+    } q[512];
+} DelayLineCtx;
+
+static void sb6_delay_enqueue(DelayLineCtx* c, const uint8_t* b, int n,
+                              bool to_b, uint32_t due) {
+    for (size_t i = 0; i < sizeof(c->q) / sizeof(c->q[0]); i++) {
+        if (c->q[i].used) continue;
+        memcpy(c->q[i].buf, b, (size_t)((n > 64) ? 64 : n));
+        c->q[i].len = (n > 64) ? 64 : n;
+        c->q[i].due = due;
+        c->q[i].to_b = to_b;
+        c->q[i].used = true;
+        return;
+    }
+}
+
+static int SDLCALL sb6_delay_line_thread(void* arg) {
+    DelayLineCtx* c = (DelayLineCtx*)arg;
+    for (;;) {
+        if (c->stop) return 0;
+
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(c->sock_a, &rfds);
+        FD_SET(c->sock_b, &rfds);
+        const int maxfd = (c->sock_a > c->sock_b) ? c->sock_a : c->sock_b;
+        struct timeval tv = { 0, 2 * 1000 };
+        const int sel = select(maxfd + 1, &rfds, NULL, NULL, &tv);
+        const uint32_t now = SDL_GetTicks();
+
+        if (sel > 0 && FD_ISSET(c->sock_a, &rfds)) {
+            uint8_t b[128];
+            struct sockaddr_in src;
+            socklen_t sl = sizeof(src);
+            const int n = (int)recvfrom(c->sock_a, (char*)b, sizeof(b), 0,
+                                        (struct sockaddr*)&src, &sl);
+            if (n > 0) {
+                c->addr_a = src;
+                c->have_a = true;
+                sb6_delay_enqueue(c, b, n, /*to_b*/ true, now + (uint32_t)c->delay_ms);
+            }
+        }
+        if (sel > 0 && FD_ISSET(c->sock_b, &rfds)) {
+            uint8_t b[128];
+            struct sockaddr_in src;
+            socklen_t sl = sizeof(src);
+            const int n = (int)recvfrom(c->sock_b, (char*)b, sizeof(b), 0,
+                                        (struct sockaddr*)&src, &sl);
+            if (n > 0) {
+                c->addr_b = src;
+                c->have_b = true;
+                sb6_delay_enqueue(c, b, n, /*to_b*/ false, now + (uint32_t)c->delay_ms);
+            }
+        }
+
+        for (size_t i = 0; i < sizeof(c->q) / sizeof(c->q[0]); i++) {
+            if (!c->q[i].used) continue;
+            if ((int)(now - c->q[i].due) < 0) continue;
+            if (c->q[i].to_b) {
+                if (c->have_b) {
+                    sendto(c->sock_b, (const char*)c->q[i].buf, c->q[i].len, 0,
+                           (struct sockaddr*)&c->addr_b, sizeof(c->addr_b));
+                    c->forwarded++;
+                } else {
+                    c->dropped_unknown_peer++;
+                }
+            } else {
+                if (c->have_a) {
+                    sendto(c->sock_a, (const char*)c->q[i].buf, c->q[i].len, 0,
+                           (struct sockaddr*)&c->addr_a, sizeof(c->addr_a));
+                    c->forwarded++;
+                } else {
+                    c->dropped_unknown_peer++;
+                }
+            }
+            c->q[i].used = false;
+        }
+    }
+}
+
+typedef struct {
+    DirectP2PRaceProbeCfg cfg;
+    DirectP2PRaceProbeOut out;
+    int start_delay_ms;
+    volatile bool done;
+} Sb6PeerCtx;
+
+static int SDLCALL sb6_peer_thread(void* arg) {
+    Sb6PeerCtx* p = (Sb6PeerCtx*)arg;
+    if (p->start_delay_ms > 0) SDL_Delay((Uint32)p->start_delay_ms);
+    DirectP2P_TestHook_RunRace(&p->cfg, &p->out);
+    p->done = true;
+    return 0;
+}
+
+/* Run ONE two-peer race at a given start skew. Returns false only if the
+ * rig itself could not be stood up. */
+static bool sb6_run_two_peer(int skew_ms, int owd_ms,
+                             DirectP2PRaceProbeOutcome* out_a,
+                             DirectP2PRaceProbeOutcome* out_b) {
+    unsigned short pa = 0, pb = 0;
+    const int sock_a = open_udp_on_localhost(&pa);
+    const int sock_b = open_udp_on_localhost(&pb);
+    uint16_t port_a = 0, port_b = 0;
+    NET_DatagramSocket* net_a = sb6_net_socket(&port_a);
+    NET_DatagramSocket* net_b = sb6_net_socket(&port_b);
+    if (sock_a < 0 || sock_b < 0 || net_a == NULL || net_b == NULL) {
+        if (sock_a >= 0) close_sock(sock_a);
+        if (sock_b >= 0) close_sock(sock_b);
+        if (net_a != NULL) NET_DestroyDatagramSocket(net_a);
+        if (net_b != NULL) NET_DestroyDatagramSocket(net_b);
+        return false;
+    }
+
+    DelayLineCtx* line = (DelayLineCtx*)SDL_calloc(1, sizeof(DelayLineCtx));
+    if (line == NULL) {
+        close_sock(sock_a);
+        close_sock(sock_b);
+        NET_DestroyDatagramSocket(net_a);
+        NET_DestroyDatagramSocket(net_b);
+        return false;
+    }
+    line->sock_a = sock_a;
+    line->sock_b = sock_b;
+    line->delay_ms = owd_ms;
+
+    SDL_Thread* line_tid = SDL_CreateThread(sb6_delay_line_thread, "sb6_line", line);
+
+    Sb6PeerCtx a, b;
+    memset(&a, 0, sizeof(a));
+    memset(&b, 0, sizeof(b));
+    a.start_delay_ms = skew_ms;
+    b.start_delay_ms = 0;
+
+    /* No signal leg and no signal endpoint: with the relay gone there is
+     * nothing in this rig for a rendezvous server to do, and RunRace
+     * treats a NULL signal_ip as "no legs" (direct_p2p.c:1574-1591). The
+     * seed candidate — the delay line — is the whole race. */
+    a.cfg.host_role = true;
+    a.cfg.sock = net_a;
+    a.cfg.punch_token = k_sb6_token;
+    a.cfg.seed_ip = "127.0.0.1";
+    a.cfg.seed_port = (uint16_t)pa;   /* A punches the line's A side */
+    a.cfg.signal_ip = NULL;
+    a.cfg.signal_port = 0;
+    a.cfg.session_key = k_sb6_key;
+    a.cfg.my_public_port = port_a;
+    a.cfg.signal_leg = false;
+    a.cfg.punch_leg_ms = sb6_punch_leg_ms();
+    a.cfg.race_budget_ms = sb6_env_int("S6_SPLIT_BUDGET_MS", SB6_RIG_BUDGET_MS);
+
+    b.cfg = a.cfg;
+    b.cfg.sock = net_b;
+    b.cfg.seed_port = (uint16_t)pb;   /* B punches the line's B side */
+    b.cfg.my_public_port = port_b;
+
+    SDL_Thread* ta = SDL_CreateThread(sb6_peer_thread, "sb6_peer_a", &a);
+    SDL_Thread* tb = SDL_CreateThread(sb6_peer_thread, "sb6_peer_b", &b);
+    if (ta != NULL) SDL_WaitThread(ta, NULL);
+    if (tb != NULL) SDL_WaitThread(tb, NULL);
+
+    line->stop = true;
+    if (line_tid != NULL) SDL_WaitThread(line_tid, NULL);
+
+    *out_a = a.out.outcome;
+    *out_b = b.out.outcome;
+
+    SDL_free(line);
+    close_sock(sock_a);
+    close_sock(sock_b);
+    NET_DestroyDatagramSocket(net_a);
+    NET_DestroyDatagramSocket(net_b);
+    return true;
+}
+
+typedef struct {
+    int  skew_ms;
+    bool expect_punched; /* false => both must EXHAUST */
+    bool pinned;         /* false => convergence only (see below) */
+    const char* why;
+} Sb6ProbePoint;
+
+static int test_race_two_peer_convergence(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 34: two real peers punching each other "
+            "through a %d ms one-way delay must never end on different rungs\n",
+            sb6_owd_ms());
+    const int fails_before = fail_count;
+    int rc = 0;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+    DirectP2P_TestHook_SetPunchOracle(NULL); /* REAL legs on both peers */
+
+    const int owd = sb6_owd_ms();
+    const int punch_end = sb6_punch_leg_ms();
+    /* Comfortably past every punch: the late peer starts a full send
+     * window plus several delays after the early peer's window closed. */
+    const int past = punch_end + 3 * owd + 500;
+
+    const Sb6ProbePoint points[] = {
+        /* The anti-triviality anchor at the PUNCHED end. */
+        { SB6_SAFE_SKEW_MS, true, true,
+          "control: well inside the overlap — both peers must punch" },
+        /* The three points the relay never had anything to do with: the
+         * PUNCH SEND WINDOW instant, probed at -owd, +0 and +owd, which
+         * is where a one-round-trip asymmetry lands. Their outcome is
+         * NOT pinned: exactly at the instant a leg is torn down, whether
+         * the last punch in flight lands before or after the teardown is
+         * a scheduling detail. What must hold either way — and what the
+         * whole two-peer rig exists to observe — is that BOTH peers
+         * reach the SAME answer. */
+        { punch_end - owd, false, false,
+          "one owd BEFORE the punch send window ends" },
+        { punch_end, false, false,
+          "exactly AT the end of the punch send window" },
+        { punch_end + owd, false, false,
+          "one owd AFTER the punch send window ends" },
+        /* The anti-triviality anchor at the EXHAUSTED end. */
+        { past, false, true,
+          "past every punch: both peers must fail (direct_p2p.c:1327-1329)" },
+    };
+
+    for (size_t i = 0; i < sizeof(points) / sizeof(points[0]); i++) {
+        DirectP2PRaceProbeOutcome oa = DP2P_RACE_PROBE_EXHAUSTED;
+        DirectP2PRaceProbeOutcome ob = DP2P_RACE_PROBE_EXHAUSTED;
+        if (!sb6_run_two_peer(points[i].skew_ms, owd, &oa, &ob)) {
+            FAIL("test34", "could not stand up the two-peer rig");
+            rc = 1;
+            goto done;
+        }
+        if (oa != ob) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test34: SPLIT BRAIN at skew=%d ms "
+                    "(%s) — peer A ended %s and peer B ended %s. The two peers are on "
+                    "different rungs; GekkoNet registers the remote once by source "
+                    "address with no relearn path, so this pair hangs for the whole "
+                    "%u ms CONNECT_TIMEOUT_CONNECTING_MS and fails\n",
+                    points[i].skew_ms, points[i].why, sb6_outcome_name(oa),
+                    sb6_outcome_name(ob), (unsigned)CONNECT_TIMEOUT_CONNECTING_MS);
+            fail_count++;
+            rc = 1;
+        }
+        if (points[i].pinned) {
+            const DirectP2PRaceProbeOutcome want = points[i].expect_punched
+                                                       ? DP2P_RACE_PROBE_PUNCHED
+                                                       : DP2P_RACE_PROBE_EXHAUSTED;
+            if (oa != want) {
+                fprintf(stderr,
+                        "[test_bilateral_punch] FAIL: test34: at skew=%d ms (%s) the "
+                        "converged outcome must be %s, not %s%s\n",
+                        points[i].skew_ms, points[i].why, sb6_outcome_name(want),
+                        sb6_outcome_name(oa),
+                        points[i].expect_punched
+                            ? " — the rig is not delivering punches at all, so every "
+                              "convergence verdict above it is vacuous"
+                            : " — this skew is past every punch, so a PUNCHED outcome "
+                              "means the rig is not injecting the delay it claims");
+                fail_count++;
+                rc = 1;
+            }
+        }
+        fprintf(stderr,
+                "[test_bilateral_punch] test34: skew=%4d ms -> A=%-9s B=%-9s (%s)\n",
+                points[i].skew_ms, sb6_outcome_name(oa), sb6_outcome_name(ob),
+                points[i].why);
+    }
+
+    if (rc == 0 && fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 34 OK — two concurrent races converged at "
+                "every probe point around the punch send window (%d ms), punched at "
+                "the control (%d ms) and both failed past it (%d ms), owd=%d ms\n",
+                punch_end, SB6_SAFE_SKEW_MS, past, owd);
+    }
+
+done:
+    DirectP2P_TestHook_RunTeardown();
+    return (rc == 0 && fail_count == fails_before) ? 0 : 1;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -7006,6 +7804,8 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_posthandoff_failure_report();
     rc |= test_host_datagram_gate();
     rc |= test_rendezvous_cookie_codec();
+    rc |= test_rendezvous_frame_router();  /* 32: HasMagic vs FrameType */
+    rc |= test_handoff_player_number_sites(); /* 33: do_handoff player numbers */
     rc |= test_punch_gate_throttle();
     rc |= test_host_cookie_handshake();
     rc |= test_joiner_cookie_handshake();
@@ -7017,6 +7817,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_race_failed_rearm_keeps_live_candidate(); /* H-C: M-2 half i  */
     rc |= test_race_rearm_releases_address_ref();        /* H-C: M-2 half ii */
     rc |= test_race_confirm_at_budget_edge();      /* H-1 / H-2 */
+    rc |= test_race_two_peer_convergence();        /* 34: two peers, concurrently */
     rc |= test_natpmp_pcp();  /* S7: test 22 */
     rc |= test_s7_disable_pairing();    /* S7 review: test 23a */
     rc |= test_upnp_harness_no_discovery(); /* M-1: test 23e */
