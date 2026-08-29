@@ -70,11 +70,20 @@ ns() { sudo -n ip netns exec "$1" "${@:2}"; }
 json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 STUN_PID=""; RDV_PID=""
+# Killing a backgrounded `sudo ip netns exec ...` reaps only the sudo wrapper --
+# the python/node child survives, keeps its UDP port bound, and poisons every
+# later repetition. So also match the child by its FULL unique path. These
+# patterns are lane-private absolute paths; never run an unscoped pkill here,
+# other lanes are building in this VM.
 stop_servers() {
     [ -n "$STUN_PID" ] && kill "$STUN_PID" 2>/dev/null
     [ -n "$RDV_PID" ]  && kill "$RDV_PID"  2>/dev/null
+    sudo -n pkill -f "$HERE/rig/stun_mock.py" 2>/dev/null
+    sudo -n pkill -f "$REPO/tools/rendezvous-server/rendezvous-server.js" 2>/dev/null
     STUN_PID=""; RDV_PID=""
+    sleep 0.3
 }
+kill_probes() { sudo -n pkill -f "$PROBE" 2>/dev/null; }
 cleanup_all() { stop_servers; "$NATNS" down >/dev/null 2>&1; }
 trap cleanup_all EXIT
 
@@ -144,7 +153,12 @@ for B in $TYPES; do
         # failing cell the host never terminates on its own. Give it a grace
         # period to land a late handoff, then stop that ONE pid (never pkill).
         for _ in $(seq 1 30); do kill -0 "$HPID" 2>/dev/null || break; sleep 0.1; done
-        if kill -0 "$HPID" 2>/dev/null; then kill "$HPID" 2>/dev/null; HRC=99; else wait "$HPID"; HRC=$?; fi
+        if kill -0 "$HPID" 2>/dev/null; then
+            kill "$HPID" 2>/dev/null; kill_probes; HRC=99
+        else
+            wait "$HPID"; HRC=$?
+        fi
+        kill_probes
 
         HJSON=$(tail -1 "$WORK/host.json" 2>/dev/null)
         JJSON=$(tail -1 "$WORK/join.json" 2>/dev/null)

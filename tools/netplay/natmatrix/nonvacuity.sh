@@ -62,9 +62,14 @@ start_servers() {
     sleep 1
 }
 stop_servers() {
+    # Killing the backgrounded `sudo ip netns exec` reaps only the wrapper; the
+    # child keeps its UDP port. Match the child by full lane-private path too.
     [ -n "$STUN_PID" ] && kill "$STUN_PID" 2>/dev/null
     [ -n "$RDV_PID" ]  && kill "$RDV_PID"  2>/dev/null
+    sudo -n pkill -f "$HERE/rig/stun_mock.py" 2>/dev/null
+    sudo -n pkill -f "$REPO/tools/rendezvous-server/rendezvous-server.js" 2>/dev/null
     STUN_PID=""; RDV_PID=""
+    sleep 0.3
 }
 trap 'stop_servers; "$NATNS" down >/dev/null 2>&1' EXIT
 
@@ -88,6 +93,7 @@ run_pair() {
     for _ in $(seq 1 30); do kill -0 "$hpid" 2>/dev/null || break; sleep 0.1; done
     kill -0 "$hpid" 2>/dev/null && kill "$hpid" 2>/dev/null
     wait "$hpid" 2>/dev/null
+    sudo -n pkill -f "$PROBE" 2>/dev/null
     JJSON=$(tail -1 "$WORK/join_$tag.json" 2>/dev/null)
     HJSON=$(tail -1 "$WORK/host_$tag.json" 2>/dev/null)
 }

@@ -117,13 +117,18 @@ apply_nat() { # apply_nat <ns> <wif> <ext_ip> <inner_ip> <type>
         ;;
 
       fullcone)
-        # Static 1:1 map on the game port: outbound keeps the port, and ANY inbound
-        # datagram to that port is forwarded in, from any source => EIF.
-        ipns "$ns" iptables -t nat -A POSTROUTING -o "$wif" -p udp \
-             --sport "$GAME_PORT" -j SNAT --to-source "${ext}:${GAME_PORT}"
+        # EIM via port-preserving SNAT, plus a blanket inbound DNAT to the single
+        # host behind this NAT. Every inbound UDP datagram is forwarded in with its
+        # destination port intact, from ANY source => endpoint-independent
+        # filtering.
+        #
+        # Deliberately NOT keyed to a fixed port: only the HOST binds a chosen port.
+        # The JOINER binds local_port 0 and gets an OS-assigned ephemeral port
+        # (src/netplay/direct_p2p.c:3226), so a fixed-port map would silently fail
+        # to emulate full cone on the joiner side and would corrupt that column.
         ipns "$ns" iptables -t nat -A POSTROUTING -o "$wif" -j SNAT --to-source "$ext"
-        ipns "$ns" iptables -t nat -A PREROUTING -i "$wif" -p udp --dport "$GAME_PORT" \
-             -j DNAT --to-destination "${inner}:${GAME_PORT}"
+        ipns "$ns" iptables -t nat -A PREROUTING  -i "$wif" -p udp \
+             -j DNAT --to-destination "$inner"
         ;;
 
       *) echo "natns.sh: unknown NAT type '$type'" >&2; return 2 ;;
