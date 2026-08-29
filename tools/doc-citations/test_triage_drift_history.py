@@ -103,6 +103,23 @@ def main():
                                stdout=subprocess.PIPE, text=True).stdout.strip()
     check("plan table citing the pre-change state", "CORRECT-AT-PARENT", split, sha=split_sha)
 
+    # "The token moved" is not "the statement survived". At e37d6208,
+    # plmain.c:726 was `wk->sa->store -= -1;`; upstream decomp re-check
+    # ad411df5 turned it into `wk->sa->store -= 1;`. Zero occurrences of the
+    # original remain, so a repoint would leave a resolving citation inside a
+    # paragraph reasoning about a sign that no longer exists.
+    print("statements that changed rather than moved:")
+    flip_sha = subprocess.run(["git", "-C", REPO, "rev-parse", "e37d6208"],
+                              stdout=subprocess.PIPE, text=True).stdout.strip()
+    if flip_sha:
+        flip = {"path": "docs/plan-frame-data-completion.md", "line": 977,
+                "message": "cited src/sf33rd/Source/Game/engine/plmain.c:726 for "
+                           "`store`, but that line does not mention it"}
+        check("sign flip under a still-resolving symbol",
+              "DRIFTED-STATEMENT-CHANGED", flip, sha=flip_sha)
+    else:
+        print("  [SKIP] e37d6208 not present in this clone")
+
     # The import guard must be load-bearing. With the threshold raised so that
     # nothing counts as an import, the same citation must be ACCUSED instead of
     # excused -- proving the guard is what is suppressing the accusation.

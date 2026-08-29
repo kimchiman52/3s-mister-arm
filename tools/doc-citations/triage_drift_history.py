@@ -17,7 +17,15 @@ find the commit that wrote it, then reads the cited file *at that commit* and
 asks whether the token was on the cited line back then.
 
 Verdicts:
-  DRIFTED        token was on the cited line at the authoring commit -> code moved.
+  DRIFTED        token was on the cited line at the authoring commit, and that
+                 exact line still exists somewhere -> pure movement, safe to
+                 repoint.
+  DRIFTED-STATEMENT-CHANGED
+                 token was on the cited line at the authoring commit, but that
+                 line no longer exists verbatim anywhere in the file. The code
+                 the passage describes was CHANGED, not merely moved. Repointing
+                 by symbol would leave a citation that resolves inside an
+                 argument that may no longer hold. Read the prose.
   NEVER-CORRECT  the cited file existed at the authoring commit and the token
                  was demonstrably elsewhere in it -> the citation was wrong when
                  written.
@@ -74,7 +82,34 @@ import sys
 from collections import Counter, defaultdict
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+
+
+def _find_repo():
+    """The worktree to replay history against.
+
+    Deriving this as HERE/../.. is right only while the script sits in its own
+    checkout. Run a copy from anywhere else and every `git blame` silently
+    fails, which the classifier reports as INCONCLUSIVE -- a 100% clean-looking
+    run that has actually examined nothing. Ask git instead, and refuse to run
+    at all rather than return a confident sweep of nothing.
+    """
+    guess = os.path.abspath(os.path.join(HERE, "..", ".."))
+    if os.path.exists(os.path.join(guess, ".git")):
+        return guess
+    p = subprocess.run(
+        ["git", "-C", HERE, "rev-parse", "--show-toplevel"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    if p.returncode == 0 and p.stdout.strip():
+        return p.stdout.decode().strip()
+    raise SystemExit(
+        f"triage_drift_history.py: no git worktree at {guess} and `git rev-parse` "
+        f"failed from {HERE}. Refusing to run: without history every finding would "
+        f"be reported INCONCLUSIVE, which reads as a clean result but examines nothing."
+    )
+
+
+REPO = _find_repo()
 
 # "cited src/netplay/direct_p2p.c:150 for `remote_port`, but that line does not mention it"
 MSG_RE = re.compile(r"cited\s+(\S+?):(\d+)\s+for\s+`([^`]+)`")
@@ -152,6 +187,21 @@ def file_at(sha, path):
     return lines
 
 
+_head_cache = {}
+
+
+def read_head(path):
+    """Lines of `path` in the working tree; None if it is not readable."""
+    if path not in _head_cache:
+        full = os.path.join(REPO, path)
+        try:
+            with open(full, errors="replace") as fh:
+                _head_cache[path] = fh.read().split("\n")
+        except OSError:
+            _head_cache[path] = None
+    return _head_cache[path]
+
+
 def token_on(lines, lineno, token):
     if lines is None or lineno < 1 or lineno > len(lines):
         return None
@@ -177,6 +227,25 @@ def classify(finding):
 
     hit = token_on(then, cited_line, token)
     if hit is True:
+        # The citation resolved when written. Whether it is SAFE to repoint is a
+        # further question: "the token moved" is not "the statement survived".
+        #
+        # docs/plan-frame-data-completion.md:977 cited `plmain.c:726` for the
+        # "opposite-sign `store -= -1` increment". At the authoring commit that
+        # line really was `wk->sa->store -= -1;`. Upstream decomp re-check
+        # ad411df5 then made it `wk->sa->store -= 1;` -- the sign the passage
+        # was reasoning about is gone. Repointing by symbol would have produced
+        # a citation that resolves, in a paragraph whose argument no longer
+        # holds: the tidiest possible way to hide a real change.
+        was = then[cited_line - 1].strip()
+        now = read_head(cited_path)
+        if now is not None and was and not any(l.strip() == was for l in now):
+            return (
+                "DRIFTED-STATEMENT-CHANGED",
+                f"`{token}` was on {cited_path}:{cited_line} at {sha[:8]}, but that exact "
+                f"line no longer occurs anywhere in the file -- the statement changed, not "
+                f"just its position. Read the prose before repointing: `{was[:60]}`",
+            )
         return "DRIFTED", f"`{token}` was on {cited_path}:{cited_line} at {sha[:8]}"
     if hit is None:
         return "INCONCLUSIVE", f"{cited_path} had {len(then)} lines at {sha[:8]}"
@@ -247,7 +316,7 @@ def main():
     for v, n in verdicts.most_common():
         print(f"{n:6d}  {v}")
     print()
-    hdr = ["DRIFTED", "NEVER-CORRECT", "CORRECT-AT-PARENT", "UNPROVABLE-PRE-IMPORT", "FILE-ABSENT", "INCONCLUSIVE", "UNCOMMITTED"]
+    hdr = ["DRIFTED", "DRIFTED-STATEMENT-CHANGED", "NEVER-CORRECT", "CORRECT-AT-PARENT", "UNPROVABLE-PRE-IMPORT", "FILE-ABSENT", "INCONCLUSIVE", "UNCOMMITTED"]
     print("doc".ljust(56) + "".join(h[:6].rjust(9) for h in hdr))
     for path, c in sorted(per_file.items(), key=lambda kv: -sum(kv[1].values())):
         print(path.ljust(56) + "".join(str(c[h]).rjust(9) for h in hdr))
