@@ -8,6 +8,43 @@
 
 #include "structs.h"
 
+/* --- MTS hash index invariants ---
+ *
+ * Three separate claims in this cluster are stated as comments and consumed
+ * as bare literals, and all three are only true because the bucket counts are
+ * powers of two:
+ *
+ *   - MtsCacheIndex::bucket_mask is documented as "(bucket_count - 1); either
+ *     0x7FF (2K) or 0xFFF (4K)" and is used to fold a hash into a bucket. A
+ *     mask is only a valid modulo for a power-of-two count; at any other size
+ *     the fold silently stops reaching part of the table and lookups start
+ *     missing entries that are present.
+ *   - mts_hash_bits() answers 11 or 12 from bare literals rather than
+ *     computing log2 of the count.
+ *   - the mask values quoted in the struct comment are themselves derived.
+ *
+ * Pinned here rather than restated, so a retune of either bucket count has to
+ * come past all three. */
+_Static_assert((MTS_HASH_BUCKETS_2K & (MTS_HASH_BUCKETS_2K - 1)) == 0,
+               "MTS_HASH_BUCKETS_2K must be a power of two — bucket_mask folds "
+               "the hash with (count - 1), which is only a modulo for powers of two");
+_Static_assert((MTS_HASH_BUCKETS_4K & (MTS_HASH_BUCKETS_4K - 1)) == 0,
+               "MTS_HASH_BUCKETS_4K must be a power of two — bucket_mask folds "
+               "the hash with (count - 1), which is only a modulo for powers of two");
+_Static_assert(MTS_HASH_BUCKETS_2K == (1u << 11) && MTS_HASH_BUCKETS_4K == (1u << 12),
+               "mts_hash_bits() returns the literals 11 and 12 for these two "
+               "bucket counts; they must stay the counts' actual log2");
+_Static_assert(MTS_HASH_BUCKETS_2K - 1 == 0x7FF && MTS_HASH_BUCKETS_4K - 1 == 0xFFF,
+               "MtsCacheIndex::bucket_mask is documented as 0x7FF / 0xFFF");
+/* bucket_count and bucket_mask are both u16; the larger table must still fit. */
+_Static_assert(MTS_HASH_BUCKETS_4K <= 0xFFFF,
+               "bucket_count is u16 — MTS_HASH_BUCKETS_4K must fit in it");
+/* MTS_HASH_EMPTY is a sentinel stored in the same u16 as a slot index, so it
+ * must not be a value any real slot index can take. */
+_Static_assert(MTS_HASH_EMPTY == 0xFFFF,
+               "MTS_HASH_EMPTY must stay the out-of-range u16 sentinel it is "
+               "compared against throughout this header");
+
 /* --- MTS hash index helpers --- */
 
 static inline u32 mts_hash_key(u32 code, u32 palt) {

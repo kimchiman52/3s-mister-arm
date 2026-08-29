@@ -2189,6 +2189,23 @@ static s16 check_patcash_ex_trans(PatternCollection* padr, u32 cg) {
  * shipped table (ext is `mode & 0x2000`, so indices 3/4/5/7/13/14, with
  * life16 20/20/2/12/2/4 -- texcash.c:743-768), but the collection must not
  * become corruptible by a future table edit. */
+
+/* The bound below, and the matching sweep at texcash.c:277, are the literal
+ * 0x40 rather than the array's own length. That literal is the ONLY thing
+ * stopping the append from running off adr[] -- and the write-site analysis
+ * above this function turns on adr[64] landing exactly on &patt[0], so an
+ * overrun does not fault, it silently rewrites the first PatternInstance.
+ * Shrinking adr[] without finding both literals would reinstate precisely the
+ * unchecked-append corruption this guard was added to stop. */
+_Static_assert(0x40 == SDL_arraysize(((PatternCollection*)0)->adr),
+               "PatternCollection::adr length changed — update the 0x40 bound in "
+               "patcash_acquire and the 0x40 sweep in texcash.c's "
+               "init_texcash_2nd");
+_Static_assert(SDL_arraysize(((PatternCollection*)0)->adr) ==
+                   SDL_arraysize(((PatternCollection*)0)->patt),
+               "PatternCollection::adr and ::patt must stay parallel — adr holds "
+               "one pointer per patt entry");
+
 PatternInstance* patcash_acquire(PatternCollection* padr) {
     s16 i;
 
