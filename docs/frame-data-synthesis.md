@@ -193,7 +193,7 @@ sampled each game frame.
 - Set in `char_move()`:
   [`charset.c:421-425`](../src/sf33rd/Source/Game/engine/charset.c).
 - Reset:
-  [`main.c:547-548`](../src/main.c).
+  [`main.c:622-623`](../src/main.c).
 - Read by the overlay's `h_att_set` derivation in `fd_snap_player()`:
   [`frame_data_overlay.c:197-205`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c).
 
@@ -1707,7 +1707,7 @@ further members hiding inside item 18(b)) is exactly this shape.
 that function (`pls00.c:1160-1170`) clears `guard_flag` to 0 iff the
 CURRENT chart cell's `cg_type` is guard-capable ({0xFF, 64, 2, 3, 7}) —
 i.e. the move's own animation data says "the opponent can guard from
-here." `hitcheck.c:250/315/458` confirm the semantic (`guard_flag == 3`
+here." `hitcheck.c:251/316/459` confirm the semantic (`guard_flag == 3`
 blocks the guard path). So while r1==4, `guard_flag == 0` is Capcom's
 own data-driven "effectively neutral" marker — exactly what the arcade
 table's "recovery ends" encodes.
@@ -2006,7 +2006,7 @@ but useless for players. Arcade convention is "KD" (knockdown).
 Implementation:
 
 1. New `bool kd` field added to `FdLatched`
-   ([`frame_data_overlay.c:160`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)).
+   ([`frame_data_overlay.c:426`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c)).
 2. New helper `fd_is_knockdown_at_atk_idle()`
    ([`frame_data_overlay.c:296-300`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c))
    reads the LAST raw[] cell's `def_r1`. The `attacker_already_idle`
@@ -2815,7 +2815,7 @@ analysis here.
 F=1256 r1: 0→4 fires MOVE_START (cgix=0 cghi=1 sw_new=0x0020). The
 overlay opens move tracking; `fd_engine_active_count[atk]` cleared
 to 0 at
-[`frame_data_overlay.c:569`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c).
+[`frame_data_overlay.c:1625`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c).
 
 **First UOH** runs F=1257-1295 (cgix 4→8→12 startup, 20→24→28→32
 active with hitstop F=1272-1280, recovery F=1292-1295). cghi
@@ -3855,7 +3855,7 @@ in `a386e057` as of 2026-07-07** — see the status-snapshot table's
     they are unaffected. A positive `dm_stop` edge also can never
     coincide with `dn->r1 == 0` (which would misread as PARRY) because
     both positive-edge writers force `routine_no[1] = 1` on the same
-    engine tick before the overlay samples (`hitcheck.c:539`/`:596`,
+    engine tick before the overlay samples (`hitcheck.c:540`/`:598`,
     `plpat18.c:36`). One pre-existing blind spot, unchanged by this fix:
     a player-vs-player
     **trade** abs-merges both combatants' `dm_stop` into `hit_stop` and
@@ -4438,7 +4438,7 @@ line range; do not trust the doc citation alone):**
 | §13.3 no-active-signal guard | [`frame_data_overlay.c:325-348`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | Whole-move STARTUP when no active signal + no event |
 | §13.6 catch-hitbox snap | [`frame_data_overlay.c:206-212`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | `cg_ja.caix > 0` extends `h_att_set` |
 | §13.6 throw-event detection | [`frame_data_overlay.c:621-631`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | Partner `r1: 0 → 2/3` fires HIT outcome |
-| §13.6 KD field | [`frame_data_overlay.c:160`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | `bool kd` in `FdLatched` |
+| §13.6 KD field | [`frame_data_overlay.c:426`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | `bool kd` in `FdLatched` |
 | §13.6 KD helper | [`frame_data_overlay.c:296-300`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | `fd_is_knockdown_at_atk_idle()` |
 | §13.6 KD set in finalize | [`frame_data_overlay.c:482-484`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | HIT branch only |
 | §13.6 KD draw | [`frame_data_overlay.c:920-948`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c) | Renders "KD" in `FD_COL_THROW` |
@@ -4770,7 +4770,7 @@ baseline's own `move_start_F=1 atk_idle_F=20 def_idle_F=22`) confirms
 the snapshot fires and finalize reads it — engine_a stays a clean 4,
 matching arcade exactly. The second Jab's own MOVE_START is silently
 never annotated (`g_cur.active` is still true at the top of the F=20
-tick, per the `!g_cur.active` gate at `frame_data_overlay.c:827` — a
+tick, per the `!g_cur.active` gate at `frame_data_overlay.c:1577` — a
 distinct, minor swallowed-MOVE_START side effect, not scope-relevant
 here) — cosmetic only; it doesn't feed back into the first move's
 numbers.
@@ -6954,7 +6954,7 @@ contact-A specific, recorded here as sibling LAYER-1-adjacent proofs).**
   (`corpus-urien.yaml`, `corpus-sean.yaml`) — the isolated-run value is
   arcade-exact for both (urien-vkd adv=-16; sean-ryuubi R=15/adv=-3), the
   bundled suite reads a bled value because the dummy's idle-breathing
-  cell phase (`charset.c:2982` hurtbox pulse) drifts with run position;
+  cell phase (`charset.c:2976` hurtbox pulse) drifts with run position;
   golden stays pinned to the canonical full-corpus (bled) value. One
   companion row, `urien-vkd-lk-hit`'s A/R clause, is CAPTURE-GATED (no
   arcade anchor resolves pinned-literal A=4/R=32 vs isolated A=5/R=31)
