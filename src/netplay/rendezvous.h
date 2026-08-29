@@ -235,6 +235,21 @@ int Rendezvous_FrameType(const uint8_t* pkt, int len);
 bool Rendezvous_HasMagic(const uint8_t* pkt, int len);
 
 /*
+ * The '3SXR' wire version THIS build speaks — i.e. the exact byte
+ * Rendezvous_FrameType compares pkt[4] against.
+ *
+ * #36: a receive loop that wants to tell "version skew" apart from
+ * "runt" cannot do it from Rendezvous_FrameType's return value alone —
+ * FrameType returns 0 for len < 6, wrong magic AND wrong version alike,
+ * so a 4- or 5-byte magic-matched runt is indistinguishable from a
+ * genuinely version-skewed peer. Discriminating needs the version byte,
+ * and the caller must compare against the SAME constant FrameType uses
+ * or the two can drift apart silently. Hence an accessor rather than a
+ * second copy of the literal at each call site.
+ */
+int Rendezvous_WireVersion(void);
+
+/*
  * Parse a `udp://host:port` configuration URL into its host and port
  * components. Hostname may be a dotted-quad or a DNS name; IPv6
  * literals are rejected (per plan §Decision 2 — IPv6 out of scope).

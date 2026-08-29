@@ -420,6 +420,19 @@ typedef struct DirectP2PRaceProbeOut {
     char     peer_ip[64];
     uint16_t peer_port;
     uint32_t t_race_ms;
+
+    /* #36 attribution evidence, copied verbatim out of the internal
+     * RaceResult. Appended at the END; nothing reads this struct
+     * positionally. test_connect_observability.c asserts on these — the
+     * whole point of #36 is that these counters are what a field log is
+     * triaged from, so they need a test that INDUCES them on a real
+     * socket rather than a unit test of the formatter. */
+    bool     confirm_seen;
+    uint32_t confirm_ms;
+    uint16_t deliver_n;
+    uint16_t challenge_n;
+    uint16_t badver_n;
+    uint32_t deliver_gap_max_ms;
 } DirectP2PRaceProbeOut;
 
 void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* cfg,
@@ -432,6 +445,36 @@ void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* cfg,
  * that has confirmed and still owes its peer the confirmation tail. */
 bool DirectP2P_TestHook_RaceBudgetExpired(uint32_t now, uint32_t t0,
                                           int budget_ms, bool tail_outstanding);
+
+/* #36 (F1) — the per-attempt evidence block of the joiner's s_work, as a
+ * value type. Mirrors the fields join_attempt() clears at the top of
+ * EVERY attempt; it exists so the S2 retry's freshness can be asserted
+ * without standing up a two-attempt join. */
+typedef struct DirectP2PAttemptEvidence {
+    int      fail_code;            /* ConnectFailCode, widened for the ABI */
+    bool     deliver_any;
+    bool     deliver_real;
+    bool     challenge_any;
+    uint32_t t_race_ms;
+    bool     confirm_seen;
+    uint32_t confirm_ms;
+    uint16_t deliver_n;
+    uint16_t challenge_n;
+    uint16_t badver_n;
+    uint32_t deliver_gap_max_ms;
+} DirectP2PAttemptEvidence;
+
+/* Seeds s_work's per-attempt evidence from `in` (NULL = leave as-is),
+ * runs the EXACT reset join_attempt() runs at the top of every attempt,
+ * and reports what survived in `out` (NULL = discard).
+ *
+ * The seam is the reset itself rather than the two-attempt path because
+ * that path is not drivable offline — see the comment on the F1 test in
+ * test_connect_observability.c. It calls the production function, not a
+ * copy, so a field added to the struct and forgotten in the reset still
+ * fails the test. */
+void DirectP2P_TestHook_JoinAttemptEvidenceReset(const DirectP2PAttemptEvidence* in,
+                                                 DirectP2PAttemptEvidence* out);
 #endif /* NETPLAY_TEST_HOOKS */
 
 #else /* !ENABLE_NETPLAY */

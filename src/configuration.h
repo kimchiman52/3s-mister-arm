@@ -215,6 +215,16 @@ typedef struct Configuration {
      * rendezvous wire codec, session-key derivation, LAN-bypass table,
      * and the kill-switch config gate; uses only localhost UDP sockets. */
     bool test_bilateral_punch;
+    /* #36: when true, main() runs the connect-observability proof harness
+     * (src/netplay/test_connect_observability.c) and exits. Honors the CLI
+     * flag --test-connect-observability. Parsed unconditionally; the real
+     * body is only compiled in when ENABLE_NETPLAY=ON &&
+     * ENABLE_NETPLAY_TESTS is defined (otherwise the stub returns 2). It
+     * induces a rendezvous version skew and a silent server on loopback
+     * UDP sockets, drives one race per case, and reads the per-session
+     * netplay log file back off disk to prove the evidence actually
+     * reaches the file a tester sends us. */
+    bool test_connect_observability;
     /* M-3 coverage guard: when true, main() runs the GameState
      * save/load field-coverage harness (randomized load->save round-trip
      * that fails loudly on any struct byte GS_SAVE/GS_LOAD misses) and

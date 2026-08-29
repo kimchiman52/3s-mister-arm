@@ -54,6 +54,16 @@ void Netplay_SetSessionTeardownCallback(void (*cb)(void));
 // failure line + stage timings must survive to disk for field reports.
 // Also tees to SDL_Log. MAIN THREAD ONLY.
 void Netplay_LogConnectEvent(const char* line);
+/* #36 — Arm the connect-log sink. Main thread, before any orchestrator
+ * worker thread is spawned — that is the happens-before that lets worker
+ * threads use Netplay_LogConnectEventMT without a race on the mutex
+ * pointer. Idempotent; safe to call on every host/join attempt. */
+void Netplay_LogSinkInit(void);
+/* #36 — Same as Netplay_LogConnectEvent but callable from ANY thread.
+ * Every cascade diagnostic worth keeping lives on a direct_p2p worker
+ * thread, and those used bare SDL_Log, so they never reached the
+ * per-session file a tester actually sends us. */
+void Netplay_LogConnectEventMT(const char* line);
 void Netplay_SetMatchmakingParams(const char* server_ip, int server_port);
 void Netplay_BeginMatchmaking();
 void Netplay_TickMatchmaking();

@@ -165,6 +165,36 @@ typedef struct {
     uint32_t t_signal_ms;
     uint32_t t_bilateral_ms;
     uint32_t t_race_ms;
+
+    /* #36 attribution evidence, copied out of the race / portmap probe.
+     * Appended at the END on purpose: nothing reads this struct
+     * positionally, so appending cannot shift anything.
+     *
+     * LIFETIME, and read this before adding a seventh field. s_work is
+     * memset-zeroed once per attempt SET (DirectP2P_BeginHost /
+     * BeginJoin / Cancel / Reset — the memsets near the bottom of this
+     * file), NOT once per attempt. The S2 join retry runs join_attempt()
+     * a second time on the SAME struct, so every per-attempt field must
+     * ALSO be cleared by hand in join_attempt()'s reset block or the
+     * retry's report inherits attempt 1's evidence. All six race fields
+     * below are in that block; portmap_* are host-only and the host has
+     * no in-set retry of this shape. */
+    uint8_t  portmap_backend;      /* PortMapBackend; 0 = none */
+    bool     portmap_active;
+    bool     race_confirm_seen;
+    uint32_t race_confirm_ms;
+    uint16_t ev_deliver_n;
+    uint16_t ev_challenge_n;
+    uint16_t ev_badver_n;
+    /* Largest gap between two DELIVERs inside ONE race. The joiner
+     * re-REGISTERs every 500 ms while the signal leg is live (section 5
+     * of p2p_race) and the server pushes one DELIVER per REGISTER, so
+     * ~500 ms is the expected baseline and a much larger value is
+     * DELIVER loss on the path. Do NOT compare this against the 5000 ms
+     * CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS default: that is
+     * the HOST-ADVERTISING loop's cadence (host_rendezvous_thread_fn),
+     * a different loop that this counter never observes. */
+    uint32_t ev_deliver_gap_max_ms;
 } Work;
 
 static SDL_AtomicInt s_state = { DIRECT_P2P_IDLE };
@@ -1077,6 +1107,20 @@ typedef struct {
     uint32_t t_bilateral_ms;  /* punch leg 1 (DELIVER endpoint) alive        */
     uint32_t t_signal_ms;     /* signal leg alive                            */
     uint32_t t_race_ms;       /* the whole race                              */
+
+    /* #36 attribution evidence. */
+    bool     confirm_seen;        /* a punch leg was CONFIRMED at some point */
+    uint32_t confirm_ms;          /* t+ms of the first confirm; 0 if none    */
+    uint16_t deliver_n;           /* well-formed DELIVER frames             */
+    uint16_t challenge_n;         /* CHALLENGE frames answered              */
+    uint16_t badver_n;            /* '3SXR' magic, version byte != ours,
+                                     FROM THE RENDEZVOUS ENDPOINT ONLY     */
+    /* Largest observed inter-DELIVER gap. Baseline ~500 ms — that is the
+     * joiner's in-race REGISTER cadence in section 5 below, and the
+     * server pushes one DELIVER per REGISTER. NOT 5000 ms: that is the
+     * host-advertising loop's interval in host_rendezvous_thread_fn,
+     * which is a different loop on a different thread. */
+    uint32_t deliver_gap_max_ms;
 } RaceResult;
 
 #ifdef NETPLAY_TEST_HOOKS
@@ -1394,6 +1438,37 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
     /* H-1: one line per race when the confirmation-tail exemption fires. */
     bool logged_tail_hold = false;
 
+    /* #36: DELIVER cadence. The rendezvous server pushes ONE unacknowledged
+     * DELIVER per REGISTER (tools/rendezvous-server/rendezvous-server.js
+     * handleRegister), and the cadence that applies HERE is the joiner's
+     * IN-RACE one: section 5 below re-REGISTERs every 500 ms for as long
+     * as the signal leg is live. So the expected baseline for
+     * deliver_gap_max_ms is ~500 ms, and a gap much larger than that is
+     * DELIVER loss on the path, not a slow server.
+     *
+     * The 5000 ms figure that shows up elsewhere in this file is the
+     * HOST-ADVERTISING cadence — CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_
+     * INTERVAL_MS, defaulted in host_rendezvous_thread_fn — and it is a
+     * different loop that never feeds this counter. Comparing against it
+     * would make every healthy race look like 90% DELIVER loss.
+     * 0 = none seen yet. */
+    uint32_t last_deliver_ms = 0;
+    /* #36: one line per race for the version-skew arm below. */
+    bool logged_badver = false;
+    /* #36 (F5): the rendezvous endpoint as a string, resolved ONCE. The
+     * skew arm below compares an inbound datagram's source against it,
+     * so an off-path host cannot fabricate "server skew" evidence. NULL
+     * signal_addr (no signal leg) leaves it empty, which matches
+     * nothing. */
+    char signal_ip_str[64];
+    signal_ip_str[0] = '\0';
+    if (cfg->signal_addr != NULL) {
+        const char* s = NET_GetAddressString(cfg->signal_addr);
+        if (s != NULL) {
+            SDL_strlcpy(signal_ip_str, s, sizeof(signal_ip_str));
+        }
+    }
+
     while (true) {
         const uint32_t now = SDL_GetTicks();
 
@@ -1406,6 +1481,16 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
         {
             for (int i = 0; i < RACE_PUNCH_LEGS; i++) {
                 if (race_punch_confirmed(&cands[i])) {
+                    /* #36: record the confirm BEFORE the settle test, on
+                     * purpose. A confirm that never settles is exactly the
+                     * evidence the race throws away — and it is the one
+                     * piece of evidence that PROVES the peer's datagram
+                     * reached us, i.e. that a subsequent NAT_BLOCKED
+                     * verdict is a misattribution (the H-1 defect). */
+                    if (!out->confirm_seen) {
+                        out->confirm_seen = true;
+                        out->confirm_ms = now - t0;
+                    }
                     if (race_punch_settled(&cands[i], now)) {
                         if (cands[i].oracle == DP2P_PUNCH_REAL) {
                             Stun_PunchEndpoint(&cands[i].leg, out->peer_ip,
@@ -1581,6 +1666,7 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                     out->have_cookie = true;
                     memcpy(out->cookie, cookie, sizeof(cookie));
                     out->challenge_any = true;
+                    if (out->challenge_n < UINT16_MAX) out->challenge_n++; /* #36 */
                     if (signal_active &&
                         Rendezvous_BuildRegister(cfg->my_public_port, cfg->session_key,
                                                  cookie, register_pkt)) {
@@ -1603,6 +1689,21 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                     dgram->buf, dgram->buflen, cfg->session_key, parsed_ip, &parsed_port);
                 if (dr != REND_DELIVER_MALFORMED) {
                     out->deliver_any = true;
+                    /* #36: count them and measure the cadence. The gap is
+                     * only meaningful BETWEEN two DELIVERs, so the first
+                     * one only seeds the clock. `now` is monotonic within
+                     * a race and `last_deliver_ms` is stamped from it, so
+                     * the subtraction cannot underflow. */
+                    if (out->deliver_n < UINT16_MAX) out->deliver_n++;
+                    if (last_deliver_ms != 0) {
+                        const uint32_t gap = now - last_deliver_ms;
+                        if (gap > out->deliver_gap_max_ms) {
+                            out->deliver_gap_max_ms = gap;
+                        }
+                    }
+                    /* 0 is the "unset" sentinel; a DELIVER landing on tick
+                     * 0 of the race would otherwise re-seed forever. */
+                    last_deliver_ms = (now != 0) ? now : 1u;
                 }
                 if (dr == REND_DELIVER_PEER && parsed_ip[0] != '\0' && parsed_port != 0) {
                     /* S3-review HIGH-1 self-DELIVER gate: a DELIVER whose
@@ -1638,6 +1739,67 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                         /* We have what we came for; stop re-REGISTERing. */
                         signal_active = false;
                     }
+                }
+            } else if (ft == 0 && dgram->buflen >= 6 &&
+                       dgram->buf[4] != (uint8_t)Rendezvous_WireVersion() &&
+                       src_port == cfg->signal_port &&
+                       signal_ip_str[0] != '\0' &&
+                       direct_p2p_ip_eq_normalized(src_ip, signal_ip_str)) {
+                /* #36 — PROTOCOL SKEW, previously a silent drop.
+                 *
+                 * SOURCE GATE (F5), and it is not decoration. badver_n is
+                 * LOAD-BEARING: ConnectFail_Attribute turns badver_n > 0
+                 * plus RENDEZVOUS_DOWN into a DEFINITE "version-skew"
+                 * verdict that tells the user to update the game. This
+                 * socket is unconnected and accepts datagrams from
+                 * anywhere, so without the gate any off-path host that
+                 * learns our port could spray four '3SXR' bytes and a
+                 * junk version byte and manufacture that verdict. The
+                 * frame is only counted when it came from the very
+                 * endpoint the signal leg is REGISTERing to — the only
+                 * source whose protocol version we are actually making a
+                 * claim about. Comparison is the same normalizing one the
+                 * self-DELIVER gate above uses, so a formatting
+                 * difference between the resolved address string and the
+                 * datagram's source string cannot cause a false miss.
+                 * Frames from any other source fall through uncounted,
+                 * exactly as they did before #36.
+                 *
+                 * `ft` is computed above as
+                 *   Rendezvous_HasMagic(...) ? Rendezvous_FrameType(...) : -1
+                 * so ft == 0 means the datagram DID carry the '3SXR' magic
+                 * but Rendezvous_FrameType refused it. FrameType returns 0
+                 * for THREE reasons (rendezvous.c:290-300): len < 6, wrong
+                 * magic, and pkt[4] != REND_VERSION. The magic is already
+                 * proven by Rendezvous_HasMagic — but HasMagic only needs
+                 * len >= 4 (rendezvous.c:281-287), so a 4- or 5-byte runt
+                 * reaches here too. Counting a runt as a version skew would
+                 * be an attribution error of exactly the kind this whole
+                 * change exists to prevent, so the version byte is tested
+                 * EXPLICITLY, against the same constant FrameType uses.
+                 * Runts and well-formed v2 frames carrying an unknown type
+                 * byte fall through to the arms below, unchanged.
+                 *
+                 * DIRECTIONALITY, and it is the important part: this counter
+                 * detects a server NEWER than us, and in THAT direction the
+                 * verdict is DEFINITE — ConnectFail_Attribute turns
+                 * (RENDEZVOUS_DOWN && badver_n > 0) into
+                 * CONNECT_ATTRIB_VERSION_SKEW, no hedging, because the
+                 * server demonstrably answered and we demonstrably could
+                 * not parse the answer.
+                 *
+                 * It stays 0 in the #87 case — the deployed April v1 server
+                 * DROPS a version-mismatched frame with no reply at all, so
+                 * a v2 client sees zero frames, not a v1 frame. THAT
+                 * reverse skew is genuinely indistinguishable from an
+                 * unreachable server on the wire, and only that one is
+                 * reported as CONNECT_ATTRIB_AMBIG_VERSION. */
+                if (out->badver_n < UINT16_MAX) out->badver_n++;
+                if (!logged_badver) {
+                    logged_badver = true;
+                    SDL_Log("[direct_p2p] S6 race: '3SXR' frame with an unsupported "
+                            "version byte from %s:%u — protocol skew (we speak v%d)",
+                            src_ip, (unsigned)src_port, Rendezvous_WireVersion());
                 }
             } else if (ft < 0) {
                 /* Not a '3SXR' frame. STUN stragglers from a slower
@@ -1742,17 +1904,24 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                 /* Logged ONCE per race: this is the H-1 rescue happening,
                  * and a field log that shows it is how we know the window
                  * is real on the wire rather than only in the harness. */
-                static const char* k_msg =
-                    "[direct_p2p] S6 race: budget expired with a CONFIRMED punch still "
-                    "in its %d ms tail — holding the race open (hard cap %d ms)";
                 if (!logged_tail_hold) {
                     logged_tail_hold = true;
                     /* The cap printed is the one that actually applies to a
                      * CONFIRMED leg: the settle window can carry a
                      * confirmation as late as budget + one tail, and that
-                     * confirmation owes a full tail from there. */
-                    SDL_Log(k_msg, STUN_PUNCH_CONFIRM_MS,
-                            cfg->race_budget_ms + 2 * STUN_PUNCH_CONFIRM_MS);
+                     * confirmation owes a full tail from there.
+                     *
+                     * #36: through the MT sink (which tees to SDL_Log) so
+                     * the rescue is visible in the tester's FILE, not only
+                     * on a console nobody has. Already once per race. */
+                    char hold_line[256];
+                    SDL_snprintf(hold_line, sizeof(hold_line),
+                                 "[direct_p2p] S6 race: budget expired with a CONFIRMED "
+                                 "punch still in its %d ms tail — holding the race open "
+                                 "(hard cap %d ms)",
+                                 STUN_PUNCH_CONFIRM_MS,
+                                 cfg->race_budget_ms + 2 * STUN_PUNCH_CONFIRM_MS);
+                    Netplay_LogConnectEventMT(hold_line);
                 }
             }
         }
@@ -1788,14 +1957,25 @@ done:;
     static const char* const k_outcome_name[] = {
         "PUNCHED", "CANCELLED", "EXHAUSTED"
     };
-    SDL_Log("[direct_p2p] S6 race done in %u ms: outcome=%s punch=%u bilateral=%u "
-            "signal=%u deliver=any:%d,real:%d",
-            (unsigned)out->t_race_ms,
-            ((int)out->outcome >= 0 &&
-             (size_t)out->outcome < SDL_arraysize(k_outcome_name))
-                ? k_outcome_name[(int)out->outcome] : "?",
-            out->t_punch_ms, out->t_bilateral_ms, out->t_signal_ms,
-            (int)out->deliver_any, (int)out->deliver_real);
+    /* #36: this is THE line a field report is triaged from, and until now
+     * it only reached SDL_Log — i.e. never the per-session file a tester
+     * sends us (netplay.c: only Netplay_LogConnectEvent* writes there).
+     * Route it through the MT sink, which tees to SDL_Log itself, so this
+     * is a re-route and not a second copy. Once per race: bounded. */
+    char line[320];
+    SDL_snprintf(line, sizeof(line),
+                 "[direct_p2p] S6 race done in %u ms: outcome=%s punch=%u bilateral=%u "
+                 "signal=%u deliver=any:%d,real:%d "
+                 "confirm=%d@%ums badver=%u dgap=%u",
+                 (unsigned)out->t_race_ms,
+                 ((int)out->outcome >= 0 &&
+                  (size_t)out->outcome < SDL_arraysize(k_outcome_name))
+                     ? k_outcome_name[(int)out->outcome] : "?",
+                 out->t_punch_ms, out->t_bilateral_ms, out->t_signal_ms,
+                 (int)out->deliver_any, (int)out->deliver_real,
+                 (int)out->confirm_seen, (unsigned)out->confirm_ms,
+                 (unsigned)out->badver_n, (unsigned)out->deliver_gap_max_ms);
+    Netplay_LogConnectEventMT(line);
 }
 
 #ifdef NETPLAY_TEST_HOOKS
@@ -1862,6 +2042,13 @@ void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* pcfg,
     SDL_strlcpy(pout->peer_ip, res.peer_ip, sizeof(pout->peer_ip));
     pout->peer_port = res.peer_port;
     pout->t_race_ms = res.t_race_ms;
+    /* #36 evidence — same fields the production copies carry into s_work. */
+    pout->confirm_seen = res.confirm_seen;
+    pout->confirm_ms = res.confirm_ms;
+    pout->deliver_n = res.deliver_n;
+    pout->challenge_n = res.challenge_n;
+    pout->badver_n = res.badver_n;
+    pout->deliver_gap_max_ms = res.deliver_gap_max_ms;
 }
 
 bool DirectP2P_TestHook_RaceBudgetExpired(uint32_t now, uint32_t t0,
@@ -2633,6 +2820,13 @@ static int SDLCALL host_bilateral_punch_thread_fn(void* data) {
 
     s_work.t_bilateral_ms = res.t_punch_ms; /* the host's only punch leg */
     s_work.t_race_ms = res.t_race_ms;
+    /* #36: carry the attribution evidence out with the timings. */
+    s_work.race_confirm_seen = res.confirm_seen;
+    s_work.race_confirm_ms = res.confirm_ms;
+    s_work.ev_deliver_n = res.deliver_n;
+    s_work.ev_challenge_n = res.challenge_n;
+    s_work.ev_badver_n = res.badver_n;
+    s_work.ev_deliver_gap_max_ms = res.deliver_gap_max_ms;
 
     if (res.outcome == RACE_CANCELLED ||
         SDL_GetAtomicInt(&s_bilateral_punch_cancel) || cancel_requested()) {
@@ -2721,6 +2915,26 @@ static int SDLCALL host_thread_fn(void* data) {
         upnp_ok = try_portmap(local_port, local_port);
     }
     s_work.t_upnp_ms = SDL_GetTicks() - stage_t0;
+    /* #96 / #36 — portmap leg visibility. Recorded at the CALL SITE, not
+     * inside try_portmap: the probe's cost and its verdict are a property
+     * of this stage, and the whole cost is re-paid on every host STUN
+     * retry (the retry re-enters this block). Worker thread => the MT
+     * sink, which tees to SDL_Log. */
+    s_work.portmap_backend = (uint8_t)s_upnp_mapping.backend;
+    s_work.portmap_active = s_upnp_mapping.active;
+    {
+        char pm_line[256];
+        SDL_snprintf(pm_line, sizeof(pm_line),
+                     "[netplay-connect] PORTMAP backend=%s active=%d ms=%u — %s",
+                     portmap_backend_name(s_upnp_mapping.backend),
+                     (int)s_upnp_mapping.active,
+                     (unsigned)s_work.t_upnp_ms,
+                     s_upnp_mapping.active
+                         ? "mapped"
+                         : "probe found no IGD; this whole cost is paid again on "
+                           "every host STUN retry");
+        Netplay_LogConnectEventMT(pm_line);
+    }
     if (cancel_requested()) {
         set_status("Cancelled.");
         set_state(DIRECT_P2P_IDLE);
@@ -2925,10 +3139,18 @@ static int SDLCALL host_thread_fn(void* data) {
  * here; every failure return has already closed the attempt's socket
  * and set the status text; DIRECT_P2P_HANDOFF returns with s_work
  * fully written back. */
-static DirectP2PState join_attempt(void) {
-    /* S3: fresh evidence per attempt — the retry's classification and
-     * report must not inherit the first attempt's DELIVER counters or
-     * the timings of stages the retry never reached. */
+/* S3: fresh evidence per attempt — the retry's classification and report
+ * must not inherit the first attempt's DELIVER counters or the timings
+ * of stages the retry never reached.
+ *
+ * THIS IS THE ONLY PLACE the per-attempt fields are cleared. s_work's
+ * whole-struct memsets run once per attempt SET (BeginHost / BeginJoin /
+ * Cancel / Reset), never between attempt 1 and attempt 2 of the S2
+ * retry, so a field that is written by an attempt and read by
+ * report_connect_outcome MUST be listed here. Factored into its own
+ * function so the NETPLAY_TEST_HOOKS seam below can exercise the real
+ * block rather than a copy of it that could drift. */
+static void join_reset_attempt_evidence(void) {
     s_work.fail_code = CONNECT_FAIL_NONE;
     s_work.ev_deliver_any = false;
     s_work.ev_deliver_real = false;
@@ -2938,6 +3160,55 @@ static DirectP2PState join_attempt(void) {
     s_work.t_signal_ms = 0;
     s_work.t_bilateral_ms = 0;
     s_work.t_race_ms = 0;           /* S6 */
+    /* #36: the attribution evidence is per-attempt for exactly the same
+     * reason. Leaving it stale produces a report line that cannot be
+     * true of a single attempt — e.g. attempt 1 races and exhausts,
+     * attempt 2's STUN never comes back, and the FAIL line then reads
+     * `code=P2P_FAIL_STUN_ALLDOWN ... race_deliver_n=5 confirm=1@7412ms`:
+     * punch evidence that cannot coexist with "UDP is dead". */
+    s_work.race_confirm_seen = false;
+    s_work.race_confirm_ms = 0;
+    s_work.ev_deliver_n = 0;
+    s_work.ev_challenge_n = 0;
+    s_work.ev_badver_n = 0;
+    s_work.ev_deliver_gap_max_ms = 0;
+}
+
+#ifdef NETPLAY_TEST_HOOKS
+void DirectP2P_TestHook_JoinAttemptEvidenceReset(const DirectP2PAttemptEvidence* in,
+                                                 DirectP2PAttemptEvidence* out) {
+    if (in != NULL) {
+        s_work.fail_code = (ConnectFailCode)in->fail_code;
+        s_work.ev_deliver_any = in->deliver_any;
+        s_work.ev_deliver_real = in->deliver_real;
+        s_work.ev_challenge_any = in->challenge_any;
+        s_work.t_race_ms = in->t_race_ms;
+        s_work.race_confirm_seen = in->confirm_seen;
+        s_work.race_confirm_ms = in->confirm_ms;
+        s_work.ev_deliver_n = in->deliver_n;
+        s_work.ev_challenge_n = in->challenge_n;
+        s_work.ev_badver_n = in->badver_n;
+        s_work.ev_deliver_gap_max_ms = in->deliver_gap_max_ms;
+    }
+    join_reset_attempt_evidence();
+    if (out != NULL) {
+        out->fail_code = (int)s_work.fail_code;
+        out->deliver_any = s_work.ev_deliver_any;
+        out->deliver_real = s_work.ev_deliver_real;
+        out->challenge_any = s_work.ev_challenge_any;
+        out->t_race_ms = s_work.t_race_ms;
+        out->confirm_seen = s_work.race_confirm_seen;
+        out->confirm_ms = s_work.race_confirm_ms;
+        out->deliver_n = s_work.ev_deliver_n;
+        out->challenge_n = s_work.ev_challenge_n;
+        out->badver_n = s_work.ev_badver_n;
+        out->deliver_gap_max_ms = s_work.ev_deliver_gap_max_ms;
+    }
+}
+#endif
+
+static DirectP2PState join_attempt(void) {
+    join_reset_attempt_evidence();
     s_work.join_attempts++;
 
     set_state(DIRECT_P2P_STUN_DISCOVER);
@@ -3128,6 +3399,13 @@ static DirectP2PState join_attempt(void) {
     s_work.t_bilateral_ms = res.t_bilateral_ms;
     s_work.t_signal_ms = res.t_signal_ms;
     s_work.t_race_ms = res.t_race_ms;
+    /* #36: carry the attribution evidence out with the timings. */
+    s_work.race_confirm_seen = res.confirm_seen;
+    s_work.race_confirm_ms = res.confirm_ms;
+    s_work.ev_deliver_n = res.deliver_n;
+    s_work.ev_challenge_n = res.challenge_n;
+    s_work.ev_badver_n = res.badver_n;
+    s_work.ev_deliver_gap_max_ms = res.deliver_gap_max_ms;
 
     if (res.outcome == RACE_CANCELLED || cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
@@ -4003,6 +4281,12 @@ void DirectP2P_BeginHost(int preferred_port) {
     if (get_state() != DIRECT_P2P_IDLE) {
         return;
     }
+    /* #36: arm the connect-log mutex on the MAIN thread, before any
+     * worker below can spawn. That ordering is the happens-before that
+     * lets host_thread_fn / the rendezvous + bilateral workers call
+     * Netplay_LogConnectEventMT without racing the mutex pointer itself.
+     * Idempotent. */
+    Netplay_LogSinkInit();
     /* Natural-success exit guard: if a previous worker returned without
      * being detached (5a switched from detach to wait), join its handle
      * before clobbering it. Safe when s_thread is NULL. */
@@ -4071,6 +4355,8 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     DirectP2P_Init();
     if (peer_code == NULL || peer_code[0] == '\0') return;
     if (get_state() != DIRECT_P2P_IDLE) return;
+    /* #36: see DirectP2P_BeginHost — main thread, before join_thread_fn. */
+    Netplay_LogSinkInit();
 
     /* Decode before spawning the thread: user-input errors should
      * surface immediately, not after a STUN round-trip. (S3: safe to
@@ -4379,7 +4665,9 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
      * silently degraded diagnostic, so the buffer keeps real headroom
      * rather than sitting just under. (The relay's `via_relay=` /
      * `relay_fail=` / `relay=` fields were dropped with the rung.) */
-    char line[640];
+    /* #36 widened this from 640: the FAIL branch now carries the portmap
+     * leg, the confirm witness and the four frame counters. */
+    char line[900];
     if (success) {
         SDL_snprintf(line, sizeof(line),
                      "[netplay-connect] OK role=%s attempts=%d "
@@ -4393,12 +4681,30 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
                      s_work.stun.diag_servers_probed,
                      (int)s_work.stun.port_disagreement);
     } else {
+        /* #36: the attribution verdict rides ALONGSIDE the code, never
+         * instead of it. ConnectFail_Attribute is a pure function so the
+         * rules are unit-testable without standing up a race. */
+        const ConnectAttribution attrib =
+            ConnectFail_Attribute(s_work.fail_code, s_work.race_confirm_seen,
+                                  s_work.ev_badver_n);
+        /* F6 — SCOPE IS IN THE FIELD NAME. The four frame counters are
+         * populated ONLY by p2p_race, so they describe the race and
+         * nothing else. The host's own DELIVER arrives on
+         * host_rendezvous_thread_fn, OUTSIDE any race, which is why a
+         * perfectly healthy host FAIL line can read
+         * `deliver=any:1,real:1 ... race_deliver_n=0 race_dgap=0`. With
+         * the bare names a triager reads that pair as "the server never
+         * delivered"; with the race_ prefix the two fields visibly
+         * measure different things. The struct fields keep their names —
+         * this is a log-format decision, not a data-model one. */
         SDL_snprintf(line, sizeof(line),
                      "[netplay-connect] FAIL code=%s state=%d role=%s msg=\"%s\" "
                      "attempts=%d "
                      "t_ms upnp=%u stun=%u race=%u punch=%u signal=%u bilateral=%u "
                      "stun=%d/%d sends_ok=%d dns_all_failed=%d portdis=%d "
-                     "deliver=any:%d,real:%d",
+                     "deliver=any:%d,real:%d "
+                     "portmap=%s/%d confirm=%d@%ums race_deliver_n=%u "
+                     "race_challenge_n=%u race_badver_n=%u race_dgap=%u attrib=%s",
                      ConnectFail_Code(s_work.fail_code),
                      (int)st,
                      s_work.role == ROLE_HOST ? "host"
@@ -4412,7 +4718,30 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
                      s_work.stun.diag_sends_ok,
                      (int)s_work.stun.diag_dns_all_failed,
                      (int)s_work.stun.port_disagreement,
-                     (int)s_work.ev_deliver_any, (int)s_work.ev_deliver_real);
+                     (int)s_work.ev_deliver_any, (int)s_work.ev_deliver_real,
+                     portmap_backend_name((PortMapBackend)s_work.portmap_backend),
+                     (int)s_work.portmap_active,
+                     (int)s_work.race_confirm_seen, (unsigned)s_work.race_confirm_ms,
+                     (unsigned)s_work.ev_deliver_n, (unsigned)s_work.ev_challenge_n,
+                     (unsigned)s_work.ev_badver_n,
+                     (unsigned)s_work.ev_deliver_gap_max_ms,
+                     ConnectFail_AttributionText(attrib));
+        Netplay_LogConnectEvent(line);
+        /* Exactly ONE extra line per failed attempt, and only when the
+         * `code=` field alone would mislead: the evidence contradicts it
+         * (AMBIG_CONFIRM), cannot support it (AMBIG_VERSION), or names a
+         * cause the code does not (VERSION_SKEW — where the note is the
+         * OPPOSITE of a hedge and carries the actual remedy). A
+         * SUPPORTED verdict prints no note, because there is nothing the
+         * code does not already say. */
+        const char* note = ConnectFail_AttributionNote(attrib);
+        if (note[0] != '\0') {
+            char note_line[512];
+            SDL_snprintf(note_line, sizeof(note_line),
+                         "[netplay-connect] NOTE %s", note);
+            Netplay_LogConnectEvent(note_line);
+        }
+        return;
     }
     Netplay_LogConnectEvent(line);
 }
