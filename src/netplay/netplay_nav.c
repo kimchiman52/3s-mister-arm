@@ -341,7 +341,7 @@ void NetplayNav_Tick(void) {
          *
          * Connect_Status fixup: when only P1 has an Interface_Type
          * bound (the common case on desktop/MiSTer single-pad setups),
-         * Menu_Task's header at menu.c:219 sets Connect_Status=0 and
+         * Menu_Task's header at menu.c:201 sets Connect_Status=0 and
          * Mode_Select case 3 then forces Menu_Cursor_Y[0] from 1 to 2
          * (Training) before the Start press latches. Override both
          * Interface_Type slots before Menu_Task reads them this frame
