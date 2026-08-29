@@ -227,7 +227,7 @@ Dependencies:
 - Do not port `menu_save.c`, `menu_replay.c`, `menu_training.c`, or their `_constants.h` headers. Those files are referenced by upstream `menu_network.c:4-6` but are Phase 12 / post-MVP.
 - Do not touch `dir_data.c`, `ex_data.c` (already in our tree; reuse as-is).
 - Do not deploy.
-- Do not remove `Netplay_Menu` from `menu.c:1451` in this step — that swap happens in Step 9.
+- Do not remove `Netplay_Menu` from `menu.c:1339` in this step — that swap happens in Step 9.
 
 **What to do if it fails:**
 - If `menu_input.c` calls `NotoSansJP` font rendering helpers that we've scoped out: stub the branch. Upstream uses it for Japanese-only menu items; our MVP is English-only (Decision #5).
@@ -423,7 +423,7 @@ Dependencies:
 
 ## Step 9 — Port `menu_network.c` and replace our 2-item `Netplay_Menu` — **DONE** (commit `77f22a78`, 2026-04-20)
 
-**What it does:** Copy 3sxtra's `menu_network.c` (1764 LOC) + `menu_network.h` + `menu_network_constants.h` into `src/sf33rd/Source/Game/menu/`. Replace the 2-item `Netplay_Menu` at our `src/sf33rd/Source/Game/menu/menu.c:1451` with a call to `Network_Lobby` dispatched through the MenuScreen registry (Step 3). Wire `rmlui_wrapper_new_frame()` / `_render()` into the main-loop draw ticker behind `ENABLE_RMLUI`.
+**What it does:** Copy 3sxtra's `menu_network.c` (1764 LOC) + `menu_network.h` + `menu_network_constants.h` into `src/sf33rd/Source/Game/menu/`. Replace the 2-item `Netplay_Menu` at our `src/sf33rd/Source/Game/menu/menu.c:1339` with a call to `Network_Lobby` dispatched through the MenuScreen registry (Step 3). Wire `rmlui_wrapper_new_frame()` / `_render()` into the main-loop draw ticker behind `ENABLE_RMLUI`.
 
 **Why it matters:** This is the actual user-visible Phase 6 content — the new network lobby gateway. It replaces the tiny stub we ship today. Without this the user cannot reach any of the RmlUi screens in Steps 11–13.
 

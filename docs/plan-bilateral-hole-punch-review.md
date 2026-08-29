@@ -112,7 +112,7 @@
 
 **Claim in plan:** §Step 6 "Add field to `Configuration` / `NetplayTestingFlags` (whatever the struct name is; verify via grep)."
 
-**Actual:** `src/args.c:218` shows the existing fields are on `configuration->test_netplay_event_queue`, `configuration->test_mist_handshake`, `configuration->test_room_code`, `configuration->test_stun_mock`. The field is a simple `bool` on the top-level `Configuration` struct, not a separate `NetplayTestingFlags`. The plan's hedge ("whatever the struct name is") is honest, but since this is a concrete concretely-implementable step, it would be cleaner to state the struct.
+**Actual:** `src/args.c:265-286` shows the existing fields are on `configuration->test_netplay_event_queue`, `configuration->test_mist_handshake`, `configuration->test_room_code`, `configuration->test_stun_mock`. The field is a simple `bool` on the top-level `Configuration` struct, not a separate `NetplayTestingFlags`. The plan's hedge ("whatever the struct name is") is honest, but since this is a concrete concretely-implementable step, it would be cleaner to state the struct.
 
 **Impact:** None for correctness; just a small ambiguity.
 
@@ -293,7 +293,7 @@ The 16-byte `peer_ip` field with the IPv4-mapped-IPv6-OR-raw-IPv4 alternation is
 
 **Claim in plan (pre-revision):** §Decision 1 (B-evaluation) said "their room code IS `"ip|public_port|local_port"` per `Stun_EncodeEndpoint`" with a citation to `/tmp/3sxtra/tools/lobby-server/lobby-server.js:362`.
 
-**Actual:** `grep -r "Stun_EncodeEndpoint" /tmp/3sxtra/` returns zero hits (the function exists in our repo at `src/netplay/stun.c:39` but not upstream); the cited `lobby-server.js:362` is unreachable (NEW-5).
+**Actual:** `grep -r "Stun_EncodeEndpoint" /tmp/3sxtra/` returns zero hits (the function exists in our repo at `src/netplay/stun.c:40` but not upstream); the cited `lobby-server.js:362` is unreachable (NEW-5).
 
 **Impact:** Conclusion ("we'd be coupling on undocumented schema") is correct but the cited evidence is wrong.
 
@@ -361,7 +361,7 @@ The plan's labels for host/join were swapped, and the three-thread cleanup model
 
 #### P-1.D — Drop unverifiable `/tmp/3sxtra/src/netplay/lobby_server.{c,h}` citations
 
-**Claim in plan (pre-round-2):** `plan-bilateral-hole-punch.md:44` cited `/tmp/3sxtra/src/netplay/lobby_server.{c,h}` as the verification source. `plan-bilateral-hole-punch-review.md:141` (Things verified correct) asserted both `lobby_server.c` and `sha256.{c,h}` exist there.
+**Claim in plan (pre-round-2):** `plan-bilateral-hole-punch.md:44` cited `/tmp/3sxtra/src/netplay/lobby_server.{c,h}` as the verification source. `plan-bilateral-hole-punch-review.md:143` (Things verified correct) asserted both `lobby_server.c` and `sha256.{c,h}` exist there.
 
 **Actual:** `find /tmp/3sxtra -type f` returns zero files (verified 2026-04-26). The directory exists but is empty everywhere underneath, including `tools/lobby-server/`, `src/netplay/`, and the entire upstream tree.
 
@@ -473,9 +473,9 @@ The plan's labels for host/join were swapped, and the three-thread cleanup model
 
 **Claim in plan (pre-round-2):** §Step 3 CMakeLists.txt bullet said "tf-psa-crypto is already linked (`CMakeLists.txt:246`)".
 
-**Actual:** `CMakeLists.txt:246` is `set(TF_PSA_CRYPTO_ROOT ...)` — the path declaration. The link line is `CMakeLists.txt:278` (`target_link_libraries(... "${TF_PSA_CRYPTO_ROOT}/lib/libtfpsacrypto.a")`).
+**Actual:** `CMakeLists.txt:451` is `set(TF_PSA_CRYPTO_ROOT ...)` — the path declaration. The link line is `CMakeLists.txt:483` (`target_link_libraries(... "${TF_PSA_CRYPTO_ROOT}/lib/libtfpsacrypto.a")`).
 
-**Disposition:** Addressed in §Step 3 (citation split: `:246` declaration, `:278` link).
+**Disposition:** Addressed in §Step 3 (citation split: `:451` declaration, `:483` link).
 
 ---
 
@@ -491,4 +491,4 @@ The plan's labels for host/join were swapped, and the three-thread cleanup model
 
 #### Nit-3 — Original review's Stun_HolePunch / Stun_CloseSocket swap
 
-**Disposition:** Per append-only convention, original review entry at `plan-bilateral-hole-punch-review.md:136` is untouched. Appended one-line nit to the existing "Re-verification 2026-04-26" section: `Stun_CloseSocket` is at `stun.h:28`, `Stun_HolePunch` at `stun.h:41-42`.
+**Disposition:** Per append-only convention, original review entry at `plan-bilateral-hole-punch-review.md:138` is untouched. Appended one-line nit to the existing "Re-verification 2026-04-26" section: `Stun_CloseSocket` is at `stun.h:28`, `Stun_HolePunch` at `stun.h:41-42`.

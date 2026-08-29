@@ -371,8 +371,8 @@ All but one exist as globals in our engine tree — they're just not currently s
 
 | Field | Type | Note |
 |---|---|---|
-| `combo_type[2]` | `ComboType` | 3sxtra moved into PLW as a member (`/tmp/3sxtra/src/include/structs.h:672`). Ours kept as top-level global (`plcnt.c:81`). |
-| `remake_power[2]` | `ComboType` | Same — moved into PLW (`structs.h:692`). Ours global (`plcnt.c:82`). |
+| `combo_type[2]` | `ComboType` | 3sxtra moved into PLW as a member (`/tmp/3sxtra/src/include/structs.h:672`). Ours kept as top-level global (`plcnt.c:83`). |
+| `remake_power[2]` | `ComboType` | Same — moved into PLW (`structs.h:692`). Ours global (`plcnt.c:84`). |
 | `Disp_Input_History` | `u8` | Training-mode flag; 3sxtra has separate `sf33rd/Source/Game/training/` subsystem (8 files, not in our fork). |
 
 ### 5.5 GS_SAVE/GS_LOAD macro counts
@@ -1017,7 +1017,7 @@ No blockers. Pi4 recipe is ~90% reusable.
 - Header-only C API; C++ impl.
 - `NO_ASIO_BUILD=ON` removes the heavy dep.
 - **REQUIRES VERIFICATION**: whether `asio.hpp` is still transitively pulled at compile time even with `NO_ASIO_BUILD=ON`. Only manifests during the actual ARM cross-build.
-- Our fork already builds it for desktop (`CMakeLists.txt:113` defines `GEKKONET_STATIC GEKKONET_NO_ASIO`).
+- Our fork already builds it for desktop (`CMakeLists.txt:208` defines `GEKKONET_STATIC GEKKONET_NO_ASIO`).
 
 ### 13.3 Lobby server (separate, not in game binary)
 
@@ -1353,7 +1353,7 @@ Our `config.h` has no `CFG_KEY_NETPLAY_*` keys today. Must add:
 | **3. Focused checksum + sanitizers** | Port `save_current_state` with focused checksum, `sanitize_plw_pointers` (keep our `cb`/`rp` zeroing), `sanitize_work_rendering`, and `dump_desync_state`. Unconditional of DEBUG. | Desync detection works in Release; `#if DEBUG` keeps the dump pipeline | S (2-3d) | **DONE** (merge `417609b4`, feat `671aa18c`) |
 | **4. RmlUi + FreeType cross-compile** | Add recipes to `build-deps.sh` mister profile. Pi4 template with `CMAKE_SYSTEM_PROCESSOR=arm`. | `librmlui.a`, `libfreetype.a` in `build/mister-deps/`; CMake `find_package` succeeds | S (2-3d) | **DONE** (merge `b82802db`, feat `2433afdd` + `36443d96`) |
 | **5. Blend-mode SDL subclass** | Subclass `RenderInterface_SDL::BeginFrame()` for `SDL_BLENDMODE_BLEND`; ensure non-premultiplied textures. First-light prototype. | Minimal RmlUi test overlay renders visually correctly on MiSTer | S (1-2d) | **DONE** (merge `b82802db`, feat `48edcda2`) |
-| **6. Port `menu_network.c` + `ms_*` glue + 9 RmlUi screens + assets** | Full UI port from 3sxtra. Replace our `Netplay_Menu` in `menu.c:1451` with `Network_Lobby` dispatcher. | Navigate lobby → create/join room → initiate match flow on desktop | L (10-15d) | Pending |
+| **6. Port `menu_network.c` + `ms_*` glue + 9 RmlUi screens + assets** | Full UI port from 3sxtra. Replace our `Netplay_Menu` in `menu.c:1339` with `Network_Lobby` dispatcher. | Navigate lobby → create/join room → initiate match flow on desktop | L (10-15d) | Pending |
 | **7. GekkoNet + SDL3_net ARM cross-compile** | Move recipes out of desktop-profile gate. Verify with `readelf -A`. | Binary links, runs on MiSTer without dynamic-loader errors | S (1-2d) | **DONE** (merge `a46073a3`, feat `36ffbb07`) |
 | **8. Net thread pinning** | Pin game loop + pacer to CPU0, net thread to CPU1 with `SCHED_OTHER` (or `SCHED_FIFO` prio 20). | No frame-pacer regression during active net I/O; `show-fps` overlay stable | S (1-2d) | Pending |
 | **9. LAN match on two MiSTers** | On-device test using onboard `eth0` on two boxes | 0 desync events in 300-frame match, stable 60 FPS | M (3-5d; desync hunts wildcard) | Pending |
