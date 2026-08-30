@@ -11,11 +11,18 @@ Usage: python3 compile_corpus.py <corpus.yaml> <output-dir>
 Writes <output-dir>/script.fdi, <output-dir>/expected.json, and
 <output-dir>/meta.json (Phase 6 Step 3: {"p1_character": <id>}, read by
 run.sh to pass --test-p1-character through to the game invocation).
-meta.json also carries optional `p1_super_art` / `sa_gauge` keys (EX/Supers
-program, Step 1 procedure item 4) - present ONLY when the corpus sets the
-top-level `super_art:` / `sa_gauge:` keys, so meta.json (and script.fdi/
-expected.json, untouched by this feature) stay byte-identical for every
-corpus that doesn't use them.
+meta.json also carries optional `p1_super_art` / `sa_gauge` / `p1_super_full`
+keys (EX/Supers program Step 1 procedure item 4; `super_full:` added by task
+#108) - present ONLY when the corpus sets the corresponding top-level key, so
+meta.json (and script.fdi/expected.json, untouched by these features) stay
+byte-identical for every corpus that doesn't use them.
+
+meta.json ALWAYS carries `balance` ("ps2" | "arcade", task #108): which engine
+the corpus is measured against. It is unconditional precisely because the
+engine under test used to be implicit - run.sh passed --test-enable and
+arcade_balance.c inferred PS2 from it - so every 94-corpus "green" run
+measured the port while the shipping device auto-selects arcade. Every RUNDIR
+now records in writing which engine it ran.
 """
 
 import json
@@ -463,6 +470,50 @@ def resolve_sa_gauge(value, context):
     return value
 
 
+# Task #108: optional top-level `balance:` corpus key, threaded to the game's
+# --test-balance. This is the corpus stating WHICH ENGINE its expectations were
+# authored against - "ps2" (the port tables) or "arcade" (the shipping CPS3
+# tables, ArcadeBalance_IsEnabled()). It defaults to "ps2", which is what all
+# 94 pre-#108 corpora were measured under, so their goldens are unaffected.
+#
+# Unlike `super_art`/`sa_gauge`, this key is ALWAYS written into meta.json even
+# when the corpus omits it. The whole point of #108 is that the engine under
+# test stops being implicit: every RUNDIR now records, in writing, which one it
+# ran, and run.sh always passes the flag rather than letting the binary decide.
+BALANCE_VALUES = ("ps2", "arcade")
+DEFAULT_BALANCE = "ps2"
+
+
+def resolve_balance(value, context):
+    if value is None:
+        return DEFAULT_BALANCE
+    if not isinstance(value, str) or value not in BALANCE_VALUES:
+        raise CompileError(
+            f"{context}: 'balance' must be one of {BALANCE_VALUES} (src/args.c --test-balance), "
+            f"got {value!r}"
+        )
+    return value
+
+
+# Task #108: optional top-level `super_full:` corpus key -> --test-p1-super-full.
+#
+# Why an ARCADE corpus needs this and `sa_gauge:` will not do: the training
+# S.A.GAUGE menu options (`sa_gauge:`) are implemented by the PS2 half of
+# player_mv_0000, inside `if (!ArcadeBalance_IsEnabled())`
+# (src/sf33rd/Source/Game/engine/plmain.c:183-204) - the whole
+# demo_set_sa_full / clear_super_arts_point switch is skipped under arcade
+# balance, so an arcade corpus that asks for `sa_gauge: 3` gets NO meter at
+# all. --test-p1-super-full goes through test_runner.c's own
+# tr_spgauge_cont_init2 (src/test/test_runner.c:993-1009), which is not gated
+# on balance, so it is the meter lever that works on both engines.
+def resolve_super_full(value, context):
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise CompileError(f"{context}: 'super_full' must be a bool, got {value!r}")
+    return value
+
+
 def resolve_oracle_path(value, context):
     if not isinstance(value, str) or not value.strip():
         raise CompileError(f"{context}: 'oracle' must be a non-empty string filename")
@@ -528,7 +579,7 @@ def load_corpus(path):
     if isinstance(data, list):
         char_id = resolve_character(DEFAULT_CHARACTER, "corpus 'character'")
         oracle_path = resolve_oracle_path(DEFAULT_ORACLE, "corpus 'oracle'")
-        return data, DEFAULT_INTER_ENTRY_WAIT, char_id, oracle_path, None, None
+        return data, DEFAULT_INTER_ENTRY_WAIT, char_id, oracle_path, None, None, DEFAULT_BALANCE, None
     if isinstance(data, dict):
         entries = data.get("entries")
         if not isinstance(entries, list):
@@ -540,7 +591,9 @@ def load_corpus(path):
         oracle_path = resolve_oracle_path(data.get("oracle", DEFAULT_ORACLE), "corpus 'oracle'")
         super_art = resolve_super_art(data.get("super_art"), "corpus 'super_art'")
         sa_gauge = resolve_sa_gauge(data.get("sa_gauge"), "corpus 'sa_gauge'")
-        return entries, inter_entry_wait, char_id, oracle_path, super_art, sa_gauge
+        balance = resolve_balance(data.get("balance"), "corpus 'balance'")
+        super_full = resolve_super_full(data.get("super_full"), "corpus 'super_full'")
+        return entries, inter_entry_wait, char_id, oracle_path, super_art, sa_gauge, balance, super_full
     raise CompileError("corpus file must be a YAML list of entries (optionally a mapping with an 'entries' key)")
 
 
@@ -651,7 +704,9 @@ def compile_entry(entry, qjson_by_name):
 
 
 def compile_corpus(corpus_path, out_dir):
-    entries, inter_entry_wait, char_id, oracle_path, super_art, sa_gauge = load_corpus(corpus_path)
+    entries, inter_entry_wait, char_id, oracle_path, super_art, sa_gauge, balance, super_full = load_corpus(
+        corpus_path
+    )
     if not entries:
         raise CompileError("corpus has no entries")
 
@@ -684,11 +739,14 @@ def compile_corpus(corpus_path, out_dir):
     # p1_super_art / sa_gauge (EX/Supers Step 1 procedure item 4) are added
     # ONLY when the corpus set them - keeps meta.json byte-identical for
     # every corpus that doesn't use the meter mechanism.
-    meta = {"p1_character": char_id}
+    # `balance` is unconditional (task #108) - see resolve_balance above.
+    meta = {"p1_character": char_id, "balance": balance}
     if super_art is not None:
         meta["p1_super_art"] = super_art
     if sa_gauge is not None:
         meta["sa_gauge"] = sa_gauge
+    if super_full is not None:
+        meta["p1_super_full"] = super_full
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
 
 

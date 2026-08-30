@@ -83,6 +83,8 @@ MPP mpp_w;
 Configuration configuration = {
     .test =
         {
+            .balance = NULL,
+            .select_dwell_frames = 0,
             .scene_preset = NULL,
             .characters = { -1, -1 },
             .super_arts = { -1, -1 },

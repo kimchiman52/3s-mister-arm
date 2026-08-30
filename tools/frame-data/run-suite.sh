@@ -185,6 +185,40 @@ if [ "${#CORPORA[@]}" -eq 0 ]; then
 fi
 
 # ---------------------------------------------------------------------
+# Arcade-balance preflight (task #108)
+#
+# Corpora carrying `balance: arcade` run the SHIPPING CPS3 tables and need a
+# verified romset; without one the game exits 6 and run.sh turns that into a
+# RED. Catching it once, here, beats N identical REDs at the end of a
+# multi-minute fan-out - and, more importantly, it is stated rather than
+# skipped: the alternative failure mode this whole task exists to close is a
+# suite that quietly measures the wrong engine and reports green.
+#
+# $FDH_CPS3_ZIP (dev-only) is exported by run.sh as $THIRDSARM_CPS3_ZIP;
+# leaving it unset is fine on a machine with a romset installed where
+# docs/config.md's discovery looks.
+# ---------------------------------------------------------------------
+
+ARCADE_CORPORA=()
+for c in "${CORPORA[@]}"; do
+    if grep -qE '^[[:space:]]*balance:[[:space:]]*(arcade|"arcade"|'"'"'arcade'"'"')[[:space:]]*$' "$c"; then
+        ARCADE_CORPORA+=("$(name_for "$c")")
+    fi
+done
+
+if [ "${#ARCADE_CORPORA[@]}" -gt 0 ]; then
+    echo "[run-suite.sh] ${#ARCADE_CORPORA[@]} arcade-balance corpus/corpora selected: ${ARCADE_CORPORA[*]}" >&2
+    if [ -n "${FDH_CPS3_ZIP:-}" ] && [ ! -f "${FDH_CPS3_ZIP}" ]; then
+        echo "error: FDH_CPS3_ZIP=${FDH_CPS3_ZIP} does not exist, but arcade corpora are selected" >&2
+        exit 2
+    fi
+    if [ -z "${FDH_CPS3_ZIP:-}" ]; then
+        echo "[run-suite.sh] note: FDH_CPS3_ZIP unset - the arcade corpora rely on an installed romset" >&2
+        echo "[run-suite.sh]       and will RED with 'arcade balance UNAVAILABLE' if there is none." >&2
+    fi
+fi
+
+# ---------------------------------------------------------------------
 # Jobs
 # ---------------------------------------------------------------------
 

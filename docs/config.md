@@ -105,8 +105,17 @@ Notes:
   writes that key at all.)
 - Netplay arms only in verified-arcade state and the MIST handshake carries a
   digest of the adapted data, so peers always simulate identical balance.
-- The test runner (`--test-enable`, used by the frame-data suite) pins PS2
-  balance regardless of ROM presence so corpus expectations stay hermetic.
+- The test runner picks its balance EXPLICITLY, via `--test-balance ps2|arcade`
+  (task #108). `--test-enable` with no `--test-balance` still pins PS2
+  regardless of ROM presence, so harness expectations stay hermetic on any
+  machine — but that is now a stated default rather than an unavoidable
+  consequence of being a test process. `--test-balance arcade` runs the
+  shipping CPS3 tables and is a hard requirement: a run that cannot reach
+  20/20-adapted arcade balance logs the reason and exits 6 instead of quietly
+  falling back to PS2. `--test-scene-preset training-frame-data` (the
+  frame-data corpus suite) refuses to start without an explicit
+  `--test-balance`; each corpus declares its own via a `balance:` key
+  (`tools/frame-data/CORPUS-AUTHORING.md`).
 
 ### `bgm-type`
 

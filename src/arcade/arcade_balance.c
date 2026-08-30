@@ -9,6 +9,11 @@
 #include <SDL3/SDL.h>
 
 #include <stdarg.h>
+#include <stdlib.h>
+
+/* Task #108. Distinct from 1 (args), 3 (input_script.c), 4
+ * (rollback_determinism.c) and 5 (ldreq_timing_trace.c). */
+#define TEST_BALANCE_ARCADE_UNAVAILABLE_EXIT_CODE 6
 
 static bool is_enabled = false;
 static uint64_t digest = 0;
@@ -111,12 +116,33 @@ void ArcadeBalance_Init() {
     /* Balance AUTO-SELECTS at boot: CPS3 ROM present AND the full
      * 20-character adaptation succeeds -> arcade balance; anything else
      * -> PS2 balance with a logged reason. There is no OSD toggle. */
+    /* Task #108. A harness run's balance is now something the run STATES,
+     * not something it inherits.
+     *
+     * What was here before: `if (configuration.test.enabled) -> pin PS2`,
+     * unconditionally and before ArcadeCharData_Init was ever called. Every
+     * automated run in this tree passes --test-enable, so every automated run
+     * exercised the PS2 tables -- while a real device auto-selects ARCADE the
+     * moment the romset verifies. The suite could not see the engine that
+     * ships, and `sag_union_0/1/3` (plmain.c:642/691/790) were unreachable
+     * from it by construction.
+     *
+     * The PS2 pin is still the DEFAULT, deliberately: --test-enable with no
+     * --test-balance keeps resolving to PS2, so the netplay/perf/rollback
+     * harnesses that pass --test-enable resolve identically on every machine
+     * whether or not a romset happens to be installed. What changed is that
+     * "arcade" is now sayable, and that the frame-data suite is required to
+     * say which one it means (args.c). */
+    const char* requested = configuration.test.balance;
+    const bool test_requests_arcade = requested != NULL && SDL_strcasecmp(requested, "arcade") == 0;
+
     do {
-        if (configuration.test.enabled) {
-            /* The frame-data suite's corpora encode PS2-balance
-             * expectations; the harness must resolve identically on
-             * every machine regardless of ROM presence. */
-            set_ps2_reason("test runner pins PS2 balance");
+        if (configuration.test.enabled && !test_requests_arcade) {
+            /* A PS2-balance corpus (--test-balance ps2, or an older harness
+             * that names no balance at all) must resolve identically on every
+             * machine regardless of ROM presence. */
+            set_ps2_reason(requested != NULL ? "test runner pins PS2 balance (--test-balance ps2)"
+                                             : "test runner pins PS2 balance");
             break;
         }
 
@@ -162,6 +188,22 @@ void ArcadeBalance_Init() {
     }
 
     write_status_file();
+
+    /* Task #108: --test-balance arcade is a REQUIREMENT, not a preference.
+     * Falling back to PS2 here is precisely how a suite ends up claiming
+     * arcade coverage it does not have, so the run dies loudly instead. Exit
+     * 6 is unused by the other harness exits (1 args, 3 input_script.c, 4
+     * rollback_determinism.c, 5 ldreq_timing_trace.c), so a caller can tell
+     * "no romset" apart from "the corpus mismatched". */
+    if (test_requests_arcade && !is_enabled) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "--test-balance arcade was requested but arcade balance is UNAVAILABLE: %s. "
+                     "Point $THIRDSARM_CPS3_ZIP at a verified sfiii3nr1/sfiii3 romset (dev-only "
+                     "override) or install one where docs/config.md's discovery looks.",
+                     ps2_reason);
+        SDL_Quit();
+        exit(TEST_BALANCE_ARCADE_UNAVAILABLE_EXIT_CODE);
+    }
 }
 
 bool ArcadeBalance_IsEnabled() {

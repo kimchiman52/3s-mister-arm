@@ -27,6 +27,37 @@ typedef struct NetplayConfiguration {
 
 typedef struct TestRunnerConfiguration {
     bool enabled;
+
+    /* Task #108: which balance table a harness run must exercise, chosen
+     * EXPLICITLY instead of falling out of `enabled` as a side effect.
+     *
+     * NULL (the default) keeps the historical behaviour every non-frame-data
+     * harness relies on: a test-runner process pins PS2 so a corpus resolves
+     * identically on every machine regardless of whether a CPS3 romset
+     * happens to be installed (see ArcadeBalance_Init, src/arcade/
+     * arcade_balance.c). "ps2" states that same intent out loud; "arcade"
+     * asks for the shipping CPS3 balance and is a HARD REQUIREMENT - a run
+     * that cannot reach 20/20-adapted arcade balance exits non-zero rather
+     * than silently running the PS2 engine under an arcade label, which is
+     * exactly the failure task #108 exists to close.
+     *
+     * Values: NULL | "ps2" | "arcade". Validated in args.c. */
+    const char* balance;
+
+    /* Task #108: extra frames the test runner idles on the CHARACTER-SELECT
+     * screen before it starts driving cursors. 0 (default) is the historical
+     * behaviour - the runner mashes through select in a handful of frames,
+     * which is far short of UNIT_OF_TIMER_MAX (50, src/constants.h:6), the
+     * period of one Select_Timer decrement. A select-timer observation needs
+     * the screen to actually be inhabited; this is that dwell.
+     *
+     * Only meaningful in a #if DEBUG build (or -DENABLE_DEBUG_HOOKS=ON):
+     * src/test/test_runner.c is wrapped in `#if defined(DEBUG)` end to end,
+     * so the phase machine that reads this does not exist otherwise. Same
+     * constraint as --test-pin-rng. `balance` above has NO such constraint -
+     * ArcadeBalance_Init is ordinary shipped code. */
+    int select_dwell_frames;
+
     const char* states_path;
     /* Phase 1 Step H1 (docs/plan-frame-data-harness.md section 1.3):
      * optional path to a line-oriented `.fdi` input script played back by

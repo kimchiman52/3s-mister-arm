@@ -143,6 +143,22 @@ echo "[run.sh] wall-clock cap: ${RUN_TIMEOUT_SECONDS}s (${EXPECTED_LABEL_COUNT} 
 # - the corpus file stays the single source of truth for P1's character.
 P1_CHARACTER="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["p1_character"])' "$RUNDIR/meta.json")"
 
+# Task #108: which balance table this corpus is measured against. Always
+# present in meta.json (compile_corpus.py's resolve_balance, default "ps2"),
+# so the flag is always passed. Before #108 the harness passed only
+# --test-enable and arcade_balance.c inferred PS2 from it, which meant all 94
+# corpora silently exercised the PORT engine while a real device auto-selects
+# the ARCADE one the moment its romset verifies.
+BALANCE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["balance"])' "$RUNDIR/meta.json")"
+
+# An `arcade` corpus needs a verified CPS3 romset. $THIRDSARM_CPS3_ZIP is the
+# dev-only override (src/arcade/arcade_char_data.c:628); FDH_CPS3_ZIP lets the
+# suite point at one without exporting a variable that would also change an
+# unrelated non-harness run in the same shell.
+if [ "$BALANCE" = "arcade" ] && [ -n "${FDH_CPS3_ZIP:-}" ]; then
+    export THIRDSARM_CPS3_ZIP="$FDH_CPS3_ZIP"
+fi
+
 # EX/Supers program, Step 1 procedure item 4: optional `p1_super_art` /
 # `sa_gauge` meta.json keys, present only when the corpus's `super_art:` /
 # `sa_gauge:` top-level keys asked for them (compile_corpus.py). Threaded as
@@ -159,11 +175,21 @@ SA_GAUGE="$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get("sa_
 if [ -n "$SA_GAUGE" ]; then
     EXTRA_ARGS="$EXTRA_ARGS --test-training-sa-gauge $SA_GAUGE"
 fi
+# Task #108: `super_full:` -> --test-p1-super-full. The training S.A.GAUGE
+# options an `sa_gauge:` corpus uses live in the PS2-only half of
+# player_mv_0000 (plmain.c:183-204), so they are inert under arcade balance;
+# this lever is not balance-gated (test_runner.c:993-1009) and is what an
+# arcade supers corpus uses to get its one stock.
+SUPER_FULL="$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get("p1_super_full"); print("1" if v else "")' "$RUNDIR/meta.json")"
+if [ -n "$SUPER_FULL" ]; then
+    EXTRA_ARGS="$EXTRA_ARGS --test-p1-super-full"
+fi
 
-echo "[run.sh] running harness (training-frame-data, pinned RNG, p1_character=$P1_CHARACTER${EXTRA_ARGS:+, extra=$EXTRA_ARGS})..." >&2
+echo "[run.sh] running harness (training-frame-data, pinned RNG, balance=$BALANCE, p1_character=$P1_CHARACTER${EXTRA_ARGS:+, extra=$EXTRA_ARGS})..." >&2
 set +e
 FRAME_TRACE_PATH="$RUNDIR/trace.log" SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
     run_with_timeout "$RUN_TIMEOUT_SECONDS" "$BIN_PATH" --test-enable --test-scene-preset training-frame-data \
+    --test-balance "$BALANCE" \
     --test-input-script "$RUNDIR/script.fdi" --test-pin-rng --test-p1-character "$P1_CHARACTER" \
     $EXTRA_ARGS
 game_exit=$?
@@ -174,6 +200,11 @@ if [ "$game_exit" -eq 3 ]; then
     exit 1
 elif [ "$game_exit" -eq 124 ]; then
     echo "error: game hung and was killed by the timeout (${RUN_TIMEOUT_SECONDS}s cap for ${EXPECTED_LABEL_COUNT} labels) - RUNDIR=$RUNDIR" >&2
+    exit 1
+elif [ "$game_exit" -eq 6 ]; then
+    echo "error: corpus asks for balance=$BALANCE but arcade balance was UNAVAILABLE (no verified CPS3" >&2
+    echo "       romset). Set FDH_CPS3_ZIP=/path/to/sfiii3nr1.zip (dev-only) or install a romset where" >&2
+    echo "       docs/config.md's discovery looks. RUNDIR=$RUNDIR" >&2
     exit 1
 elif [ "$game_exit" -ne 0 ]; then
     echo "error: game exited with unexpected code $game_exit - RUNDIR=$RUNDIR" >&2

@@ -26,6 +26,13 @@ static bool is_supported_test_stage(int stage) {
     return stage >= 0 && stage <= 19 && stage != 17;
 }
 
+/* Task #108. The three legal answers to "which balance table does this
+ * harness run exercise?". NULL means "unstated", which is legal for every
+ * harness EXCEPT the frame-data corpus suite (see below). */
+static bool is_supported_test_balance(const char* balance) {
+    return balance == NULL || SDL_strcmp(balance, "ps2") == 0 || SDL_strcmp(balance, "arcade") == 0;
+}
+
 static bool is_supported_test_scene_preset(const char* preset) {
     return preset == NULL || SDL_strcmp(preset, "stage-heavy") == 0 || SDL_strcmp(preset, "effect-heavy") == 0 ||
            SDL_strcmp(preset, "super-heavy") == 0 || SDL_strcmp(preset, "yun-sa3-repeat") == 0 ||
@@ -177,6 +184,35 @@ static void verify_configuration(Configuration* configuration) {
                             "ken-sa3-repeat, ken-sa3-repeat-pressure, chunli-sa2-repeat, chunli-sa2-repeat-pressure, "
                             "basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage, "
                             "or training-frame-data.",
+                            EXIT_CODE_RUNTIME_ERROR);
+    }
+
+    if (test->select_dwell_frames < 0) {
+        error_out_with_code("--test-select-dwell-frames must be >= 0.", EXIT_CODE_RUNTIME_ERROR);
+    }
+
+    /* Task #108: balance is CHOSEN, never inherited from --test-enable. */
+    if (!is_supported_test_balance(test->balance)) {
+        error_out_with_code("--test-balance must be 'ps2' or 'arcade'.", EXIT_CODE_RUNTIME_ERROR);
+    }
+
+    if (test->balance != NULL && !test->enabled) {
+        error_out_with_code("--test-balance requires --test-enable (it selects the balance table a "
+                            "harness run exercises).",
+                            EXIT_CODE_RUNTIME_ERROR);
+    }
+
+    /* The frame-data corpus suite must name its engine. Before task #108 the
+     * suite ran with the balance decided for it, as a side effect of
+     * --test-enable, and every one of its corpora silently exercised PS2
+     * while the shipping device path auto-selects arcade. Requiring the flag
+     * here is what keeps that from being re-introduced by omission:
+     * tools/frame-data/run.sh always passes it, from the corpus's own
+     * `balance:` key. */
+    if (test->scene_preset != NULL && SDL_strcmp(test->scene_preset, "training-frame-data") == 0 &&
+        test->balance == NULL) {
+        error_out_with_code("--test-scene-preset training-frame-data requires an explicit "
+                            "--test-balance ps2|arcade (task #108).",
                             EXIT_CODE_RUNTIME_ERROR);
     }
 
@@ -470,6 +506,27 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
 #endif
         OPT_GROUP("Test runner"),
         OPT_BOOLEAN(0, "test-enable", &configuration->test.enabled, "Enable test runner.", NULL, 0, 0),
+        OPT_INTEGER(0,
+                    "test-select-dwell-frames",
+                    &configuration->test.select_dwell_frames,
+                    "Idle this many extra frames on the character-select screen before the test runner "
+                    "starts driving cursors. Lets a run actually inhabit select long enough for the "
+                    "select-timer countdown to advance (task #108). 0 (default) = historical behaviour. "
+                    "Requires a #if DEBUG build (or -DENABLE_DEBUG_HOOKS=ON): the whole test runner is "
+                    "compiled out otherwise.",
+                    NULL,
+                    0,
+                    0),
+        OPT_STRING(0,
+                   "test-balance",
+                   &configuration->test.balance,
+                   "Balance table this harness run exercises: 'ps2' (the historical test-runner pin) "
+                   "or 'arcade' (the shipping CPS3 tables; requires a verified romset -- the run exits "
+                   "6 rather than silently falling back to PS2). Required with --test-scene-preset "
+                   "training-frame-data. Requires --test-enable.",
+                   NULL,
+                   0,
+                   0),
         OPT_STRING(0,
                    "test-states",
                    &configuration->test.states_path,
