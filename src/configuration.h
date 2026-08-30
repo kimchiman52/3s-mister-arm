@@ -250,6 +250,15 @@ typedef struct Configuration {
      * reason -> ConnectFailCode verdict mapping, all of which are in the
      * shipped build. */
     bool test_rendezvous_wire;
+    /* Task #132: when true, main() runs the MIST compat-gate unit harness
+     * (src/netplay/test_mist_compat_gate.c) and exits. Honors the CLI flag
+     * --test-mist-compat-gate. Parsed unconditionally; the real body is
+     * gated by ENABLE_NETPLAY=ON && ENABLE_NETPLAY_TESTS, otherwise the
+     * stub returns 2. Pure in-process — no session, no sockets, and no
+     * NETPLAY_TEST_HOOKS: it drives classify_peer_payload, parse_header
+     * and the four bounds-checked payload readers directly through the
+     * ENABLE_NETPLAY_TESTS trampolines in mist_handshake.c. */
+    bool test_mist_compat_gate;
     /* Tasks #59/#61: when true, main() runs the ext texture-cache
      * brick-prevention harness (src/test/test_texcash_bounds.c) and exits.
      * Honors --test-texcash-bounds. Parsed unconditionally; the real body is

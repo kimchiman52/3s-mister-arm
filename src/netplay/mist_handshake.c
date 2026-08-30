@@ -1000,4 +1000,60 @@ void mist_handshake_test_reset(void) {
     s_last_reject[0] = '\0';
 }
 
+/* --- task #132: the compat/desync gate, reachable from a unit test ----
+ *
+ * classify_peer_payload (:314) and the four bounds-checked readers it
+ * drives (:236 read_cstr, :255 read_u8, :263 read_u16be, :271 read_u64be)
+ * plus parse_header (:210) are the decision that says whether a peer is
+ * allowed to play with us. They are `static`, so before this block no
+ * test could reach them: the harnesses could only drive them THROUGH a
+ * socket or the runner, where a wrong verdict on a malformed frame is
+ * indistinguishable from a dropped datagram.
+ *
+ * These are thin trampolines and nothing else -- the same shape as
+ * mist_handshake_build_frame above, which has forwarded to the static
+ * build_frame since R-1. Deliberately NOT the mist_handshake_gate_next
+ * (:894) shape, which is a production export: promoting the classifier
+ * to a production symbol would widen the shipped API surface of the
+ * compat gate for no shipped caller. Nothing below this #ifdef exists in
+ * the shipped build (tools/gates/run-gates.sh builds it with
+ * NETPLAY_TEST_HOOKS=OFF and no -DENABLE_NETPLAY_TESTS).
+ *
+ * The other half of the blocker -- the s_balance_digest file global --
+ * needed no extraction: mist_handshake_set_balance_digest is already a
+ * production setter (:110), so a test can pin the local side of the
+ * digest comparison without touching the arcade stack. */
+
+uint8_t mist_handshake_test_classify_payload(const uint8_t* payload,
+                                             size_t payload_len,
+                                             char* text, size_t text_cap) {
+    return classify_peer_payload(payload, payload_len, text, text_cap);
+}
+
+bool mist_handshake_test_parse_header(const uint8_t* buf, size_t len,
+                                      uint8_t* out_msg_type,
+                                      size_t* out_payload_len) {
+    return parse_header(buf, len, out_msg_type, out_payload_len);
+}
+
+bool mist_handshake_test_read_cstr(const uint8_t* payload, size_t payload_len,
+                                   size_t* off, char* out, size_t out_cap) {
+    return read_cstr(payload, payload_len, off, out, out_cap);
+}
+
+bool mist_handshake_test_read_u8(const uint8_t* payload, size_t payload_len,
+                                 size_t* off, uint8_t* out) {
+    return read_u8(payload, payload_len, off, out);
+}
+
+bool mist_handshake_test_read_u16be(const uint8_t* payload, size_t payload_len,
+                                    size_t* off, uint16_t* out) {
+    return read_u16be(payload, payload_len, off, out);
+}
+
+bool mist_handshake_test_read_u64be(const uint8_t* payload, size_t payload_len,
+                                    size_t* off, uint64_t* out) {
+    return read_u64be(payload, payload_len, off, out);
+}
+
 #endif /* ENABLE_NETPLAY_TESTS */

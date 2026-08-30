@@ -450,6 +450,37 @@ size_t mist_handshake_build_bad_magic(uint8_t* out, size_t cap);
 
 /* Reset the cached reject reason (test isolation). */
 void mist_handshake_test_reset(void);
+
+/* Task #132 — the compat/desync gate, reachable directly.
+ *
+ * classify_peer_payload and the bounds-checked payload readers are
+ * `static` in mist_handshake.c; these are thin forwarders so the unit
+ * harness can drive the ATTACKER-FACING parse decision without a socket.
+ * A wrong verdict here is an authentication or desync failure, and both
+ * look exactly like a lost datagram from any integration harness.
+ *
+ * Contract of each forwarder is the contract of the static it calls; see
+ * the block comments at mist_handshake.c:210 (parse_header), :236
+ * (read_cstr), :255/:263/:271 (fixed-width readers) and :314
+ * (classify_peer_payload). `text` receives the human-readable reason and
+ * is never written past `text_cap`.
+ *
+ * The local side of the digest comparison is set with the production
+ * mist_handshake_set_balance_digest above -- no extraction needed. */
+uint8_t mist_handshake_test_classify_payload(const uint8_t* payload,
+                                             size_t payload_len,
+                                             char* text, size_t text_cap);
+bool mist_handshake_test_parse_header(const uint8_t* buf, size_t len,
+                                      uint8_t* out_msg_type,
+                                      size_t* out_payload_len);
+bool mist_handshake_test_read_cstr(const uint8_t* payload, size_t payload_len,
+                                   size_t* off, char* out, size_t out_cap);
+bool mist_handshake_test_read_u8(const uint8_t* payload, size_t payload_len,
+                                 size_t* off, uint8_t* out);
+bool mist_handshake_test_read_u16be(const uint8_t* payload, size_t payload_len,
+                                    size_t* off, uint16_t* out);
+bool mist_handshake_test_read_u64be(const uint8_t* payload, size_t payload_len,
+                                    size_t* off, uint64_t* out);
 #endif
 
 #ifdef __cplusplus

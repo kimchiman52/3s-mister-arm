@@ -1103,6 +1103,12 @@ int Netplay_Test_GsCoverage(void);
 // it pins Rendezvous_ParseNack (which shipped with zero callers) and the
 // reason -> ConnectFailCode verdict mapping.
 int Netplay_Test_RendezvousWire(void);
+// Task #132: forward-decl of the MIST compat-gate unit harness
+// (src/netplay/test_mist_compat_gate.c). Same gating pattern as the other
+// Phase 6 tests. Pure: no sockets, no threads, no NETPLAY_TEST_HOOKS — it
+// drives classify_peer_payload/parse_header/read_* directly, which is the
+// decision that says whether a peer is allowed to play with us.
+int Netplay_Test_MistCompatGate(void);
 #endif
 
 /* Tasks #59/#61: forward-decl of the ext texture-cache brick-prevention
@@ -1244,6 +1250,16 @@ int main(int argc, const char* argv[]) {
 #else
         fprintf(stderr,
                 "--test-rendezvous-wire requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+    if (configuration.test_mist_compat_gate) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_MistCompatGate();
+#else
+        fprintf(stderr,
+                "--test-mist-compat-gate requires a build with ENABLE_NETPLAY=ON.\n");
         return 2;
 #endif
     }
