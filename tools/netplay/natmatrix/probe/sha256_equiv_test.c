@@ -73,8 +73,14 @@ int main(void) {
     }
 
     /* The exact shape rendezvous.c hashes: an 8-byte domain-separation prefix
-     * followed by the 10-byte packed payload (ip[4] || port_be[2] || nonce_be[4])
-     * -- src/netplay/rendezvous.c:130-149. */
+     * followed by the 10-byte packed payload (ip[4] || port_be[2] || nonce_be[4]).
+     * That layout is stated verbatim at src/netplay/rendezvous.c:81-87
+     * (rend_derive's contract, "ip[4] || port_be[2] || nonce_be[4]"), packed
+     * into `payload` (`REND_KEY_PAYLOAD_LEN` bytes) at
+     * src/netplay/rendezvous.c:104-111, and hashed domain-first at
+     * rendezvous.c:118-122. The previous citation, rendezvous.c:130-149,
+     * landed on `memcpy(out, digest, out_len);` and the two public wrappers --
+     * past the packing it claimed to point at. */
     {
         unsigned char payload[10] = { 203, 0, 113, 10, 0x1b, 0x58, 0xde, 0xad, 0xbe, 0xef };
         sha256 s; char hex[SHA256_HEX_SIZE];
