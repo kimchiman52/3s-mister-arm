@@ -4,12 +4,14 @@
  * This is the acceptance instrument for rig/natpmp_mock.py. It does NOT
  * reimplement the protocol: it compiles src/netplay/natpmp.c unmodified and
  * calls Natpmp_AddMapping(), so what is exercised is the shipped codec, the
- * shipped PCP-then-NAT-PMP ordering (natpmp.c:1164-1310), the shipped
- * truncated retransmit ladder (natpmp.c:828) and the shipped per-phase budgets.
+ * shipped PCP-then-NAT-PMP ordering (`try_pcp` before `try_pmp`,
+ * natpmp.c:1164-1310), the shipped truncated retransmit ladder
+ * (`k_ladder_ms`, natpmp.c:828) and the shipped per-phase budgets.
  * If this binary reports a mapping, the production client accepted the mock.
  *
- * The redirection seam is Natpmp_TestHook_SetGateway (natpmp.h:345), consulted
- * at natpmp.c:757-763 BEFORE the ENABLE_NETPLAY_TESTS block at :764-785 that
+ * The redirection seam is Natpmp_TestHook_SetGateway (natpmp.h:345), whose
+ * `s_hook_gw_ip` is consulted at natpmp.c:757-763 BEFORE the
+ * ENABLE_NETPLAY_TESTS block at :764-785 that
  * otherwise refuses to consult the real default route. That ordering is the
  * only reason a test build can be pointed at a mock at all.
  *

@@ -243,10 +243,11 @@ int main(int argc, char** argv) {
     Stun_TestHook_SetServers(servers, nstun);
 
     /* #121: point the production NAT-PMP client at the mock gateway in this
-     * side's NAT namespace. natpmp.c:756-762 consults the hook BEFORE the
-     * ENABLE_NETPLAY_TESTS refusal, so this is the only way a test build can
-     * reach a gateway at all -- and it can still only reach THIS one, which is
-     * the safety property that refusal exists for. */
+     * side's NAT namespace. natpmp.c:757-763 consults the `s_hook_gw_ip` hook
+     * BEFORE the ENABLE_NETPLAY_TESTS refusal (natpmp.c:764-785), so this is
+     * the only way a test build can reach a gateway at all -- and it can still
+     * only reach THIS one, which is the safety property that refusal exists
+     * for. */
     if (natpmp_gw != NULL) {
         char gw_ip[64];
         uint16_t gw_port = NATPMP_GATEWAY_PORT;

@@ -33,7 +33,8 @@ satisfy. Citations are to that file.
     emit is RFC 6886 sec 3.5's 8-byte "Unsupported Version" reply --
     Vers=0, OP=0, Result Code=1 (u16), Epoch (u32) -- which satisfies exactly
     that test. Note the minimum length the parser demands for this branch is
-    4 bytes (natpmp.c:148), so 8 is comfortably legal.
+    4 bytes (Natpmp_ParsePcpMapResponse, natpmp.c:140-148), so 8 is comfortably
+    legal.
   * PCP MAP grant (--mode pcp). 60-byte response; the parser at
     natpmp.c:183-269 requires: len >= 24, <= 1100, len %% 4 == 0; buf[0] == 2;
     R bit set and opcode 1 (so buf[1] == 0x81); nonce echoed at [24:36];
@@ -41,17 +42,22 @@ satisfy. Citations are to that file.
     External IP at [44:60] MUST be a full IPv4-mapped IPv6 address
     (get_v4_mapped, natpmp.c:93-104) or the frame is discarded. Lifetime is at
     [4:8], Epoch at [8:12], assigned external port at [42:44].
-    natpmp.c:1190-1200 additionally refuses a grant whose external IP is zero.
-  * NAT-PMP public address (op 0). 12-byte response, natpmp.c:286-313:
+    natpmp.c:1190-1213 additionally refuses a grant whose external_ip_be is
+    zero: the accept branch is guarded on it at :1191 and the else-if at
+    :1201-1213 logs the refusal and gives up on PCP.
+  * NAT-PMP public address (op 0). 12-byte response,
+    Natpmp_ParsePmpAddrResponse at natpmp.c:286-313:
     buf[0] == 0, buf[1] == 128 + 0, result u16 at [2:4], epoch u32 at [4:8],
-    external IPv4 at [8:12]. natpmp.c:1255-1264 refuses a success carrying
-    0.0.0.0, so --external-ip must be a real address.
-  * NAT-PMP mapping (op 1 UDP / op 2 TCP). 16-byte response, natpmp.c:342-385:
+    external IPv4 at [8:12]. natpmp.c:1255-1264 refuses a success whose
+    external_ip_be is 0.0.0.0, so --external-ip must be a real address.
+  * NAT-PMP mapping (op 1 UDP / op 2 TCP). 16-byte response,
+    Natpmp_ParsePmpMapResponse at natpmp.c:342-385:
     buf[0] == 0, buf[1] == 128 + the opcode the client sent, result u16 at
-    [2:4], epoch u32 at [4:8], INTERNAL port echoed at [8:10] (this is the only
-    request correlator NAT-PMP has -- natpmp.c:361-369), mapped external port at
+    [2:4], epoch u32 at [4:8], INTERNAL port echoed at [8:10] and compared
+    against req_internal_port -- the only request correlator NAT-PMP has
+    (natpmp.c:361-369) -- mapped external port at
     [10:12], granted lifetime u32 at [12:16]. natpmp.c:1288-1289 refuses a
-    success whose external port is zero.
+    success whose external_port is zero.
 
 Forwarding rules
 ----------------
@@ -154,11 +160,12 @@ EPHEMERAL_HI = 60000
 
 
 def v4_mapped(ip_str):
-    """RFC 6887 sec 5 / natpmp.c:83-88: ::ffff:0:0/96 + the 4 IPv4 bytes.
+    """RFC 6887 sec 5 / put_v4_mapped, natpmp.c:83-88: ::ffff:0:0/96 + the 4
+    IPv4 bytes.
 
-    natpmp.c:93-104 checks all 96 leading bits, so the 10 zero bytes and the
-    two 0xFF bytes are both mandatory -- a lazy 12-zero-byte prefix would be
-    silently discarded as NOT_OURS.
+    get_v4_mapped, natpmp.c:93-104 checks all 96 leading bits, so the 10 zero
+    bytes and the two 0xFF bytes are both mandatory -- a lazy 12-zero-byte
+    prefix would be silently discarded as NOT_OURS.
     """
     return b"\x00" * 10 + b"\xff\xff" + socket.inet_aton(ip_str)
 
