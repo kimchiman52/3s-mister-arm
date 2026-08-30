@@ -151,12 +151,15 @@ void effect_E3_move(WORK_Other* ewk) {
             switch (Training[0].contents[0][0][2]) {
             case 0:
             sw1_case_0:
-                mwk->spmv_ng_flag2 |= DIP_UNKNOWN_9;
+                /* [TM-10] DIP2 name on a flag2 field. DIP_UNKNOWN_9 (Dipswitch)
+                 * and DIP2_QUICK_STAND_DISABLED (Dipswitch2) are both 1 << 9, so
+                 * the old spelling worked only by numeric coincidence. */
+                mwk->spmv_ng_flag2 |= DIP2_QUICK_STAND_DISABLED;
                 break;
 
             case 1:
             sw1_case_1:
-                mwk->spmv_ng_flag2 &= ~DIP_UNKNOWN_9;
+                mwk->spmv_ng_flag2 &= ~DIP2_QUICK_STAND_DISABLED;
                 break;
 
             default:
