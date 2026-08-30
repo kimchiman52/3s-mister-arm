@@ -1039,8 +1039,25 @@ void same_dm_stop(WORK* as, WORK* ds) { // 🟢
 }
 
 s32 defense_sky_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
+    /* [TM-01] Training auto-guard / auto-parry. The CPS3 defense path never
+     * read these two DIP bits, so the training dummy's GUARD setting did
+     * nothing whenever arcade balance was active (the default on device).
+     * Mirrors defense_ground_ps2 / defense_sky_ps2. Deliberately ports ONLY
+     * the two DIP reads and their gates - no other PS2-only guard semantics
+     * (e.g. DIP_ABSOLUTE_GUARD_DISABLED) are brought across. */
+    s8 abs;
+    s8 ags;
+
+    abs = (ds->spmv_ng_flag & DIP_AUTO_PARRY_DISABLED) == 0;
+    ags = (ds->spmv_ng_flag & DIP_AUTO_GUARD_DISABLED) == 0;
+
+    if (Play_Mode != 0) {
+        abs = 0;
+        ags = 0;
+    }
+
     if (ds->py->flag == 0 && !(ds->guard_flag & 2) && as->wu.att.guard & 4) {
-        if (!(ds->spmv_ng_flag & DIP_AIR_PARRY_DISABLED) && ds->cp->waza_flag[5] != 0) {
+        if (!(ds->spmv_ng_flag & DIP_AIR_PARRY_DISABLED) && (ds->cp->waza_flag[5] != 0 || abs)) {
             blocking_point_count_up(ds);
             as->wu.hf.hit.player = 0x80;
             ds->wu.routine_no[2] = 0x22;
@@ -1052,7 +1069,7 @@ s32 defense_sky_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
             return 0;
         }
 
-        if (!(ds->spmv_ng_flag & DIP_ANTI_AIR_PARRY_DISABLED) && ds->cp->waza_flag[6] != 0) {
+        if (!(ds->spmv_ng_flag & DIP_ANTI_AIR_PARRY_DISABLED) && (ds->cp->waza_flag[6] != 0 || abs)) {
             blocking_point_count_up(ds);
             as->wu.hf.hit.player = 0x80;
             ds->wu.routine_no[2] = 0x23;
@@ -1077,8 +1094,10 @@ s32 defense_sky_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
         return 2;
     }
 
-    if (!(gddir & ds->saishin_lvdir)) {
-        return 2;
+    if (!ds->auto_guard && !ags) {
+        if (!(gddir & ds->saishin_lvdir)) {
+            return 2;
+        }
     }
 
     as->wu.hf.hit.player = 0x20;
@@ -1205,8 +1224,24 @@ void blocking_point_count_up(PLW* wk) { // 🟡
 }
 
 s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
+    /* [TM-01] Training auto-guard / auto-parry. The CPS3 defense path never
+     * read these two DIP bits, so the training dummy's GUARD setting did
+     * nothing whenever arcade balance was active (the default on device).
+     * Mirrors defense_ground_ps2 / defense_sky_ps2. Deliberately ports ONLY
+     * the two DIP reads and their gates - no other PS2-only guard semantics
+     * (e.g. DIP_ABSOLUTE_GUARD_DISABLED) are brought across. */
     s8 just_now = 0;
     s8 attr_att = 0;
+    s8 abs;
+    s8 ags;
+
+    abs = (ds->spmv_ng_flag & DIP_AUTO_PARRY_DISABLED) == 0;
+    ags = (ds->spmv_ng_flag & DIP_AUTO_GUARD_DISABLED) == 0;
+
+    if (Play_Mode != 0) {
+        abs = 0;
+        ags = 0;
+    }
 
     if (ds->guard_chuu != 0 && ds->guard_chuu < 5) {
         just_now = 1;
@@ -1216,7 +1251,7 @@ s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
     if (ds->py->flag == 0 && !(ds->guard_flag & 2) && as->wu.att.guard & 3) {
         if ((as->wu.att.guard & 2) && !(ds->spmv_ng_flag & DIP_UNKNOWN_8)) {
             if (just_now) {
-                if (ds->cp->waza_flag[3] >= grdb[ds->wu.id][attr_att][0]) {
+                if ((ds->cp->waza_flag[3] >= grdb[ds->wu.id][attr_att][0]) || abs) {
                     blocking_point_count_up(ds);
                     as->wu.hf.hit.player = 0x40;
 
@@ -1233,7 +1268,7 @@ s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
                     return 0;
                 }
             } else if (as->wu.jump_att_flag == 0) {
-                if (ds->cp->waza_flag[3] != 0) {
+                if (ds->cp->waza_flag[3] != 0 || abs) {
                     blocking_point_count_up(ds);
                     as->wu.hf.hit.player = 0x40;
 
@@ -1249,7 +1284,7 @@ s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
 
                     return 0;
                 }
-            } else if (ds->cp->waza_flag[12] != 0) {
+            } else if (ds->cp->waza_flag[12] != 0 || abs) {
                 blocking_point_count_up(ds);
                 as->wu.hf.hit.player = 0x40;
 
@@ -1269,7 +1304,7 @@ s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
 
         if ((as->wu.att.guard & 1) && !(ds->spmv_ng_flag & DIP_UNKNOWN_9)) {
             if (just_now) {
-                if (ds->cp->waza_flag[4] >= grdb[ds->wu.id][attr_att][1]) {
+                if ((ds->cp->waza_flag[4] >= grdb[ds->wu.id][attr_att][1]) || abs) {
                     blocking_point_count_up(ds);
                     as->wu.hf.hit.player = 0x40;
                     ds->wu.routine_no[2] = 0x21;
@@ -1280,7 +1315,7 @@ s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
 
                     return 0;
                 }
-            } else if (ds->cp->waza_flag[4] != 0) {
+            } else if (ds->cp->waza_flag[4] != 0 || abs) {
                 blocking_point_count_up(ds);
                 as->wu.hf.hit.player = 0x40;
                 ds->wu.routine_no[2] = 0x21;
@@ -1306,7 +1341,7 @@ s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
         return 2;
     }
 
-    if (!ds->auto_guard) {
+    if (!ds->auto_guard && !ags) {
         if (!(ds->saishin_lvdir & gddir)) {
             return 2;
         }
@@ -1318,7 +1353,7 @@ s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
 
     switch (as->wu.att.guard & 0x18) {
     case 8:
-        if (!(ds->cp->sw_lvbt & 2)) {
+        if (!(ds->cp->sw_lvbt & 2) && ags == 0) {
             return 2;
         }
 
@@ -1326,7 +1361,7 @@ s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
         break;
 
     case 16:
-        if (ds->cp->sw_lvbt & 2) {
+        if (ds->cp->sw_lvbt & 2 && ags == 0) {
             return 2;
         }
 
