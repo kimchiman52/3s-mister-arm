@@ -1068,11 +1068,38 @@ static DirectP2PHostDgramClass classify_host_datagram(
     return DP2P_HOST_DGRAM_IGNORE;
 }
 
+/* Of the datagrams classify_host_datagram sends to IGNORE, which ones is
+ * the punch gate entitled to charge? Punch-SHAPED ones only (arbitrary
+ * garbage teaches an attacker nothing) -- EXCEPT a late-punch probe that
+ * parses under this session's token. Such a probe is 26 bytes, so it is
+ * not the exact 17-byte punch and is correctly IGNOREd for ROUTING, but
+ * it proved the token rather than guessing at it and is not a gate probe.
+ * Splitting this out of host_tick_receive keeps the distinction testable
+ * without a socket; routing is decided solely by classify_host_datagram
+ * and is not affected by anything here. */
+static bool host_ignore_is_chargeable(
+        const uint8_t* buf, int len,
+        const uint8_t token[STUN_PUNCH_TOKEN_LEN], bool token_valid) {
+    if (!Stun_HasPunchPrefix(buf, len)) {
+        return false;
+    }
+    if (token_valid && Stun_ParseProbePayload(buf, len, token, NULL, NULL)) {
+        return false;
+    }
+    return true;
+}
+
 #ifdef NETPLAY_TEST_HOOKS
 DirectP2PHostDgramClass DirectP2P_TestHook_ClassifyHostDatagram(
         const uint8_t* buf, int len,
         const uint8_t token[STUN_PUNCH_TOKEN_LEN], bool token_valid) {
     return classify_host_datagram(buf, len, token, token_valid);
+}
+
+bool DirectP2P_TestHook_HostIgnoreIsChargeable(
+        const uint8_t* buf, int len,
+        const uint8_t token[STUN_PUNCH_TOKEN_LEN], bool token_valid) {
+    return host_ignore_is_chargeable(buf, len, token, token_valid);
 }
 #endif /* NETPLAY_TEST_HOOKS */
 
@@ -5033,6 +5060,10 @@ static bool host_tick_receive(void) {
          * wrong token is called out as probable version mismatch. */
         const bool punch_shaped =
             Stun_HasPunchPrefix(dgram->buf, dgram->buflen);
+        const bool chargeable = host_ignore_is_chargeable(
+            dgram->buf, dgram->buflen, s_work.punch_token,
+            s_work.punch_token_valid);
+        const bool authed_probe = punch_shaped && !chargeable;
         char src_ip[64];
         SDL_strlcpy(src_ip, NET_GetAddressString(dgram->addr), sizeof(src_ip));
 
@@ -5044,18 +5075,21 @@ static bool host_tick_receive(void) {
                     ConnectFail_Code(CONNECT_FAIL_PUNCH_AUTH),
                     s_host_unauth_drops, src_ip, (unsigned)dgram->port,
                     dgram->buflen,
-                    punch_shaped
-                        ? ", punch-shaped: peer build too old or wrong code"
-                        : "");
+                    !punch_shaped ? ""
+                        : authed_probe
+                            ? ", authenticated late-punch probe: not charged"
+                            : ", punch-shaped: peer build too old or wrong code");
         }
 
         /* S4-review HIGH-1b: only a punch-SHAPED datagram that failed
          * the token check is a gate probe. Arbitrary garbage (port
          * scans, stray traffic) is logged above but deliberately NOT
          * charged — it teaches an attacker nothing and charging it
-         * would let unrelated noise trip the re-roll. */
+         * would let unrelated noise trip the re-roll. An authenticated
+         * late-punch probe is exempt for the same reason: it proves the
+         * token rather than guessing at it (host_ignore_is_chargeable). */
         bool reroll_owed = false;
-        if (punch_shaped) {
+        if (chargeable) {
             reroll_owed = host_punch_gate_note_bad(src_ip, SDL_GetTicks());
         }
         NET_DestroyDatagram(dgram);

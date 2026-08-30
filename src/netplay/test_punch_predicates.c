@@ -60,6 +60,7 @@
 
 #ifdef ENABLE_NETPLAY_TESTS
 
+#include "netplay/direct_p2p.h"
 #include "netplay/late_punch.h"
 #include "netplay/stun.h"
 
@@ -1188,12 +1189,41 @@ static void test10_probe_frames(void) {
                            challenge);
 
     /* The frame is punch-PREFIXED on purpose: every receive path in the
-     * tree already drops punch-prefixed traffic before GekkoNet
-     * (sdl_net_adapter.c:386-393), and the host gate demands the exact
-     * 17-byte payload so it still ignores this (direct_p2p.c:1063-1066). */
+     * tree already drops punch-prefixed traffic before GekkoNet (the
+     * Stun_HasPunchPrefix arm in sdl_net_adapter.c's receive drain), and
+     * classify_host_datagram demands the exact 17-byte payload, so it
+     * routes this to IGNORE. IGNORE is routing only: it is also the arm
+     * that CHARGES the punch gate, so host_tick_receive exempts a probe
+     * that parses under this session's token (task #137). */
     CHECK(tag, Stun_HasPunchPrefix(challenge, (int)sizeof(challenge)));
     CHECK(tag, !Stun_IsPunchPayload(challenge, (int)sizeof(challenge), k_token));
     check_eq_int(tag, (long)sizeof(challenge), 26, "the probe frame is 26 bytes");
+    /* Routing: unchanged, and asserted rather than asserted-in-prose. */
+    check_eq_int(tag,
+                 DirectP2P_TestHook_ClassifyHostDatagram(
+                     challenge, (int)sizeof(challenge), k_token, true),
+                 DP2P_HOST_DGRAM_IGNORE, "the host gate still IGNOREs a probe");
+    /* Accounting: an authenticated probe is NOT a gate probe, while the
+     * same length with a wrong token, and the 9-byte legacy punch the
+     * gate's rationale names, both still are. */
+    CHECK(tag, !DirectP2P_TestHook_HostIgnoreIsChargeable(
+                   challenge, (int)sizeof(challenge), k_token, true));
+    {
+        uint8_t wrong[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+        uint8_t other[STUN_PUNCH_TOKEN_LEN];
+        memcpy(wrong, challenge, sizeof(wrong));
+        memcpy(other, k_token, sizeof(other));
+        other[0] ^= 0xFFu;
+        CHECK(tag, DirectP2P_TestHook_HostIgnoreIsChargeable(
+                       wrong, (int)sizeof(wrong), other, true));
+        /* Fail closed: no token means nothing can authenticate. */
+        CHECK(tag, DirectP2P_TestHook_HostIgnoreIsChargeable(
+                       challenge, (int)sizeof(challenge), k_token, false));
+        CHECK(tag, DirectP2P_TestHook_HostIgnoreIsChargeable(
+                       (const uint8_t*)"3SX_PUNCH", 9, k_token, true));
+        CHECK(tag, !DirectP2P_TestHook_HostIgnoreIsChargeable(
+                       (const uint8_t*)"not a punch at all", 18, k_token, true));
+    }
 
     /* Round-trip the codec, including the kind byte. */
     {

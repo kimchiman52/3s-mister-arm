@@ -323,6 +323,14 @@ bool DirectP2P_TestHook_IsLanPeer(const char* ip);
 DirectP2PHostDgramClass DirectP2P_TestHook_ClassifyHostDatagram(
     const uint8_t* buf, int len,
     const uint8_t token[STUN_PUNCH_TOKEN_LEN], bool token_valid);
+/* The ACCOUNTING half of the same decision, which is not the routing
+ * half: IGNORE is the arm that charges host_punch_gate_note_bad, so a
+ * 26-byte late-punch probe carrying this session's token used to be
+ * billed as a bad punch purely for sharing the prefix. True means "this
+ * IGNOREd datagram is a gate probe and may be charged". */
+bool DirectP2P_TestHook_HostIgnoreIsChargeable(
+    const uint8_t* buf, int len,
+    const uint8_t token[STUN_PUNCH_TOKEN_LEN], bool token_valid);
 /* S3-review HIGH-1: override the joiner's fallback-signaling budget
  * (ms; <= 0 restores the config value). The self-DELIVER regression
  * test must wait the FULL budget out — its fix removes the loop's

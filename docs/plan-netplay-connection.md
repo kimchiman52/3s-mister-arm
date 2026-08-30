@@ -57,8 +57,8 @@ All from `src/netplay/direct_p2p.c` (current lines); labels from
 
 | Terminal state | Status text | Raised at |
 |---|---|---|
-| `DIRECT_P2P_FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:3673, 1146; thread-spawn failure paths in Begin* :1991/:2051; joiner: :1217 |
-| `DIRECT_P2P_FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:5312, 4576 |
+| `DIRECT_P2P_FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:3700, 1173; thread-spawn failure paths in Begin* :2018/:2078; joiner: :1244 |
+| `DIRECT_P2P_FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:5346, 4603 |
 | `FAILED_SYMMETRIC` | "Could not connect. Try a different network." | joiner bypasses :1152/:1158/:1165 (host side no longer has a terminal gate — same-IP DELIVERs are ignored as stale self-registrations, review H1) |
 | `FAILED_BILATERAL` | "Could not connect. Try a different network." | joiner signaling/punch failures :1189-:1336; host: punch-thread spawn failure :1719, retry-budget exhaustion :2130 (review M1: a single host-side punch failure returns to HOST_WAITING) |
 | `FAILED_HANDSHAKE` | MIST reject reason | R-1 path, :1435 |
@@ -95,13 +95,13 @@ Demonstrated end-to-end against the real server (see §3.4).
 
 Mechanics verified in code; classifications are standard NAT taxonomy.
 "UPnP" means the host's router granted the mapping
-(`try_portmap`, direct_p2p.c:2446-2521) and its external IP is not
+(`try_portmap`, direct_p2p.c:2473-2548) and its external IP is not
 provably non-public (CGNAT gate, §3.6; review M3).
 
 | Host \ Joiner | Full-cone / restricted | Port-restricted | Symmetric |
 |---|---|---|---|
 | **UPnP mapped** | direct punch to mapped port succeeds | succeeds (joiner's own mapping opens on first send) | succeeds — mapped port accepts any source |
-| **Full/restricted cone, no UPnP** | direct punch succeeds | succeeds | joiner's source port differs per destination → host's echo goes to the STUN-observed (wrong) port; **bilateral fallback required**, host-side learns true port from first inbound (host_tick_receive captures source, direct_p2p.c:1945-1964) |
+| **Full/restricted cone, no UPnP** | direct punch succeeds | succeeds | joiner's source port differs per destination → host's echo goes to the STUN-observed (wrong) port; **bilateral fallback required**, host-side learns true port from first inbound (host_tick_receive captures source, direct_p2p.c:1972-1991) |
 | **Port-restricted, no UPnP** | succeeds | succeeds (simultaneous send opens both) | fails direct; bilateral gives the host the joiner's fresh mapping via DELIVER — works iff joiner's NAT maps the rendezvous-learned port for the host too (usually not, for true symmetric) |
 | **Symmetric, no UPnP** | host's advertised STUN port is per-destination-wrong; joiner's punch lands on a dead mapping. Bilateral: server learns the host's port *toward the server*, still wrong toward the joiner → punching fails; **TERMINAL** (`FAILED_SYMMETRIC`/`FAILED_BILATERAL`) | same | punching **cannot** work here by construction; **TERMINAL** — the one cell with no path at all. An S5 relay briefly closed this cell (§7) but was removed before shipping; S7's UPnP/NAT-PMP/PCP (§9) is the primary mitigation for the population that would otherwise land here |
 | **CGNAT (any inner type)** | pre-S1: silently broken when UPnP "succeeded" (wrong ip/port pair, §3.3.5); post-S1: behaves as the corresponding no-UPnP row | ↑ | ↑ |
@@ -120,7 +120,7 @@ stale registration, so the host now IGNORES it and keeps waiting
 Fix = keep the host alive for as long as it is advertising.
 
 ### 3.1 Persistent re-REGISTER
-`host_rendezvous_thread_fn` (direct_p2p.c:998-1089) now re-REGISTERs
+`host_rendezvous_thread_fn` (direct_p2p.c:998-1116) now re-REGISTERs
 every `netplay-direct-p2p-register-interval-ms` (default 5 000 ms,
 floor 1 000 ms; config.c defaults block) for the **entire duration of
 HOST_WAITING** — exit on `s_rendezvous_cancel` or on the state leaving
@@ -129,7 +129,7 @@ flag; the state check covers it). Server cost ≈ 0.2 pkt/s/host against
 the verified 10 pkt/s/IP limiter (rendezvous-server.js:276-277
 `RATE_WINDOW_MS`/`RATE_LIMIT_PER_WINDOW`). Spawn remains behind the
 `netplay-direct-p2p-disable-bilateral` kill switch
-(direct_p2p.c:1250-1257).
+(direct_p2p.c:1277-1284).
 
 Bonus correctness fix: the session key is now derived from the
 **advertised** tuple (`Work.advertised_port`, direct_p2p.c:103-115) on
@@ -144,10 +144,10 @@ bilateral fallback could never pair those hosts.
 Every `netplay-direct-p2p-stun-keepalive-ms` (default 20 000 ms, ≤ 0
 disables) while HOST_WAITING, the main thread re-issues a STUN Binding
 Request on the same socket toward the server that answered discovery
-(`host_stun_keepalive_tick`, direct_p2p.c:4559-4575;
+(`host_stun_keepalive_tick`, direct_p2p.c:4586-4602;
 `Stun_SendKeepalive`, stun.c). The probe refreshes the advertised NAT
 mapping; the response is routed through a new STUN gate in
-`host_tick_receive` (direct_p2p.c:1934-1944) — which also fixes a
+`host_tick_receive` (direct_p2p.c:1961-1971) — which also fixes a
 latent pre-S1 bug where a straggler Binding Response from a slower
 `Stun_Discover` server arriving during HOST_WAITING was captured as
 "the peer" (@1b217758:1295-1322 had no payload validation at all).
@@ -156,7 +156,7 @@ latent pre-S1 bug where a straggler Binding Response from a slower
 last known one, the NAT rebound and the displayed code is already
 dead. We re-encode and **display the NEW code** with status "Network
 changed! Share the NEW code." (`host_handle_stun_rebind`,
-direct_p2p.c:4609-4649), and restart the rendezvous loop under the new
+direct_p2p.c:4636-4676), and restart the rendezvous loop under the new
 session key (cancel+join before mutating the fields it reads).
 Review M2: the rewrite is debounced — a drift commits only when two
 consecutive keepalives report the same new endpoint, so a NAT that
@@ -193,7 +193,7 @@ unsolicited DELIVER push (pair-able). Output is in the S1 task report.
 
 ### 3.5 UPnP lease renewal
 The 1-hour lease (upnp.c:71) is renewed at half-life (30 min,
-`upnp_renew_tick`, direct_p2p.c:2897-3050), retry at 5 min on failure,
+`upnp_renew_tick`, direct_p2p.c:2924-3077), retry at 5 min on failure,
 **including mid-session**: `main.c` now ticks the orchestrator from
 the active-session branch (main.c, `DirectP2P_Tick` beside
 `Netplay_Run`), because the mapping is what carries the peer's
@@ -211,7 +211,7 @@ Behind CGNAT/double-NAT the inner router reports a private/CGN
 external IP while STUN reports the true public IP; the room code
 paired the STUN IP with the UPnP port (@1b217758:739-740) — a wrong
 pair that silently killed the direct path. Now compared after STUN
-discovery (direct_p2p.c:1163-1198): the mapping is dropped only when
+discovery (direct_p2p.c:1190-1225): the mapping is dropped only when
 the router-reported IP parses and is provably non-public (RFC1918 /
 CGN 100.64.0.0/10 / loopback / link-local — review M3); a
 public-but-different (1:1 NAT / DMZ) or unparseable external IP keeps
@@ -321,7 +321,7 @@ post-S2 tree.
   discovery on local_port 0 with the previous socket closed, so the
   retry binds a FRESH local port (dodges stuck conntrack/NAT state;
   also covers host-still-in-UPnP-probe start-skew). (b) host —
-  Tick's FAILED_STUN case (direct_p2p.c:5716) re-spawns
+  Tick's FAILED_STUN case (direct_p2p.c:5750) re-spawns
   host_thread_fn after a 5 s backoff, ≤3 retries per hosting session,
   instead of parking terminal; composes with (and does not touch) the
   S1 bilateral-failure return-to-HOST_WAITING path.
@@ -472,7 +472,7 @@ Three sub-stages, all landed. As-built below.
   '3SXR' frame / STUN Binding Response / **authenticated** punch /
   IGNORE. **Fail closed** — no valid token, no acceptance. The IGNORE
   arm drops the datagram, does not echo, and **keeps waiting**
-  (host_tick_receive, direct_p2p.c:2539-2561): the peer slot is never
+  (host_tick_receive, direct_p2p.c:2566-2588): the peer slot is never
   consumed. Pre-S4a that arm was "anything else IS the peer".
 - The host's echo (which authenticates the host back to the joiner)
   only ever carries an already-validated payload.
@@ -691,7 +691,7 @@ cadence). The host receives CHALLENGEs on the **main** thread while
 REGISTER resends are built on the rendezvous **worker** thread, so the
 8-byte cookie crosses via a seqlock (`signal_cookie_publish`, direct_p2p.c:793;
 `signal_cookie_snapshot`, direct_p2p.c:808) and the main thread also
-echoes immediately (`host_handle_challenge`, direct_p2p.c:4941).
+echoes immediately (`host_handle_challenge`, direct_p2p.c:4968).
 `Rendezvous_ParseChallenge` (rendezvous.c:196) validates magic, version,
 type **and** that the frame carries *our* session key (cross-talk +
 forgery gate — the key embeds the S4b nonce), and **zeroes its output on
@@ -1385,7 +1385,7 @@ for the joiner's two attempts. Verified headroom against the callers:
   frames to a derived bound**: it is now
   `DirectP2P_OrchWorstCaseMs()` plus `NAV_ORCH_TIMEOUT_MARGIN_MS`, summed
   from the orchestrator's own live clamped budgets in
-  `DirectP2P_OrchWorstCaseMsForRole` (`direct_p2p.c:6424`). At the
+  `DirectP2P_OrchWorstCaseMsForRole` (`direct_p2p.c:6458`). At the
   shipped defaults the joiner's deadline is 31 800 ms (1 908 frames), not
   150 000 ms. 18 400 ms of race against 31 800 ms is 1.7x headroom rather
   than 8.2x — still comfortable, and the two tail exemptions are now
@@ -1848,7 +1848,7 @@ the neutralisation record.
 
   - The host enters the race **only** from `try_handle_deliver`, and
     only while still in `HOST_WAITING`
-    (`try_handle_deliver` at `src/netplay/direct_p2p.c:4826`,
+    (`try_handle_deliver` at `src/netplay/direct_p2p.c:4853`,
     `HOST_WAITING` gate at `:4279`, `host_bilateral_punch_thread_fn`
     spawn at `:4372`). *[The three numbers previously here — `:3821`,
     `:3658`, `:3751` — named a thread-join line, a timings assignment and
@@ -1864,7 +1864,7 @@ the neutralisation record.
   - When it is **lost**, the host learns only from the reply DELIVER to
     its own next REGISTER (`rendezvous-server.js:714`), and that
     interval is **5 000 ms** (`src/port/config/config.c:111`, read at
-    `src/netplay/direct_p2p.c:2889`). One lost datagram therefore places
+    `src/netplay/direct_p2p.c:2916`). One lost datagram therefore places
     the host's race start at a roughly uniform point in the next 5 s —
     **which is exactly where the band sits at production constants**,
     since `punch_leg_ms` is 5 000 ms. The band's location and its
@@ -2211,7 +2211,7 @@ at once.
 `UpnpMapping` gained two fields (upnp.h:14-39): `backend`
 (`PortMapBackend` NONE/UPNP/NATPMP/PCP) and `lifetime_s`.
 
-- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:2558),
+- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:2585),
   and every removal site goes through it. `Upnp_RemoveMapping` and
   `Natpmp_RemoveMapping` each additionally **refuse** a mapping they do
   not own. This is not defensive decoration: on a router that speaks
@@ -2227,7 +2227,7 @@ at once.
   existing `preferred_external = s_upnp_mapping.external_port` line
   already did.
 - **The renewal interval now follows the granted lease**
-  (`portmap_renew_interval_ms`, direct_p2p.c:2950). RFC 6886 §3.3: "The
+  (`portmap_renew_interval_ms`, direct_p2p.c:2977). RFC 6886 §3.3: "The
   NAT gateway MAY reduce the lifetime from what the client requested."
   A router granting 120 s against our 3600 s request would have
   silently lost the mapping 28 minutes before a fixed half-hour timer
@@ -2574,14 +2574,14 @@ runs on Linux.
   worker is either joined or detached-and-abandoned, and that a detached
   straggler can never be followed by a renewal. That covers a *renewal*.
   It does not cover a second *probe*, and the second probe is reachable:
-  `SDL_DetachThread` (`direct_p2p.c:2675`) abandons the timed-out
+  `SDL_DetachThread` (`direct_p2p.c:2702`) abandons the timed-out
   worker, and `try_portmap` returns false **without** adopting the
   result — the `s_upnp_mapping` assignment is on the joined path only
-  (`direct_p2p.c:2584`) — so `s_upnp_mapping.active` stays false; the
+  (`direct_p2p.c:2611`) — so `s_upnp_mapping.active` stays false; the
   FAILED_STUN auto-retry re-spawns `host_thread_fn`
-  (`direct_p2p.c:5700`); the "reuse the live mapping" shortcut is gated
-  on that same `s_upnp_mapping` flag (`direct_p2p.c:3448`) and is
-  therefore skipped; and `try_portmap` runs again (`direct_p2p.c:3591`),
+  (`direct_p2p.c:5734`); the "reuse the live mapping" shortcut is gated
+  on that same `s_upnp_mapping` flag (`direct_p2p.c:3475`) and is
+  therefore skipped; and `try_portmap` runs again (`direct_p2p.c:3618`),
   spawning a second worker into `Natpmp_AddMapping` while the straggler
   may still be inside it. `s_pcp_nonce` / `s_pcp_nonce_valid` /
   `s_pcp_nonce_port` (`s_pcp_nonce` is at `natpmp.c:496`) and
