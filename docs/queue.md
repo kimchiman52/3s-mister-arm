@@ -18,7 +18,8 @@ Findings and citations only. No narrative, no status prose.
 ## #130 — slot-reclaim staleness — CLOSED
 
 Both port-reclaim arms now carry a staleness precondition:
-`tools/rendezvous-server/rendezvous-server.js:1348` (slot B) and `:1365` (slot A).
+`tools/rendezvous-server/rendezvous-server.js:1362` (slot B, `slotReclaimable(entry, 'B', now)`)
+and `:1379` (slot A).
 
 The threshold is a multiple of the slot's **own observed cadence**, not a fixed
 window — `slotReclaimIdleMs` (`rendezvous-server.js:739`), measured by
@@ -701,7 +702,7 @@ logging, and comments).
    old gate passed 24.
 
 4. **Unthrottled WARNs — FIXED, and it was three sites not one** (`a1928795`).
-   `notePushLost` (`rendezvous-server.js:1212`) now routes through
+   `notePushLost` (`rendezvous-server.js:1201`) now routes through
    `noteThrottled`. Auditing every `logWarn` found two *worse* post-cookie
    per-packet sites, both of which fire with **no attacker present**:
    "REGISTER NAT mismatch" (`:1249`, once per REGISTER for any
@@ -814,7 +815,7 @@ finds nothing is worse than no check.
 `EXPECTED_TESTS` (commenting one call out → "ran 8, expected exactly 9"), the
 assertion floor ("only 527 assertion(s) ran, floor is 550"), and per-sweep
 case floors. Both stubs say "not compiled **in**", the spelling
-`tools/gates/run-gates.sh:181` greps for; both exit **2** against the
+`tools/gates/run-gates.sh:204` greps for; both exit **2** against the
 shipped-config binary.
 
 **Judged NOT worth testing, with reasons:**
@@ -1020,7 +1021,7 @@ All interaction bugs, where a mocked unit passes vacuously.
 re-open them:**
 
 - `src/netplay/test_sparse_effect_save.c` printed "not compiled **with**" where
-  `tools/gates/run-gates.sh:179` greps "not compiled **in**". Fixed. The same
+  `tools/gates/run-gates.sh:204` greps "not compiled **in**". Fixed. The same
   evasion was found and fixed in `src/test/test_texcash_bounds.c`.
 - `tools/netplay/natmatrix/mech_matrix.sh` fell off the end of the file and
   exited 0 regardless of per-rep `rc` — the last statement was an `echo`, with

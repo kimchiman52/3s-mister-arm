@@ -457,7 +457,7 @@ Returns nothing. Engine is integer-only.
 
 Sim uses `f32` only via `scr_sc` at `system/work_sys.c:40` (BG zoom scale) and `PrioBase`/`PrioBaseOriginal` (priority LUT in `rendering/mtrans.c:43-44`). `scr_sc` IS saved (`game_state.c:745`). `PrioBase` is init-only.
 
-`scr_sc` is written by `Zoom_Value_Set` at `stage/bg.c:1291-1310` which performs `1.0f / (add + work)` with integer-derived inputs. ARMv7 with `-mfpu=neon-vfpv3 -mfloat-abi=hard` (confirmed at `CMakeLists.txt:185`) produces IEEE-754 semantics. Two identical binaries producing identical floats given identical inputs — deterministic.
+`scr_sc` is written by `Zoom_Value_Set` at `stage/bg.c:1291-1310` which performs `1.0f / (add + work)` with integer-derived inputs. ARMv7 with `-mfpu=neon-vfpv3 -mfloat-abi=hard` (confirmed at `CMakeLists.txt:451-455`) produces IEEE-754 semantics. Two identical binaries producing identical floats given identical inputs — deterministic.
 
 ### B.3 Uninitialized reads / BSS leakage
 

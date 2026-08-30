@@ -234,7 +234,7 @@ defined go/no-go (§6, Step B3).
   `CRS_INPUT_DRIVER_SDL` → `CRS_INPUT_DRIVER_STATCHECK` (:85-86),
   suppresses `CHECKSUM` in Release when statcheck is on (:73). Sources
   are picked up by `file(GLOB_RECURSE GAME_SRC … src/*.c)` (:41) —
-  same glob pattern as the fork (CMakeLists.txt:144), so newly added
+  same glob pattern as the fork (`GLOB_RECURSE GAME_SRC`, CMakeLists.txt:185), so newly added
   `src/**/*.c` files need no CMake source-list edits in either repo.
 - `upstream:src/test/ram_archive.{c,h}` — SCRD reader: magic check,
   LE u16 entry count, LE u32 offset/size table, zero-run decode
@@ -382,24 +382,24 @@ defined go/no-go (§6, Step B3).
   only a false positive (`tls` = "top-left s" texcoord variable,
   src/platform/video/software/software_renderer.c:699). Link set:
   `m, libminizip-ng.a, libtfpsacrypto.a, ZLIB::ZLIB, stdc++`
-  (CMakeLists.txt:419-425) — `tf-psa-crypto` is the Mbed-TLS
+  (CMakeLists.txt:583-589) — `tf-psa-crypto` is the Mbed-TLS
   *crypto-only* package (fetched from
-  `github.com/Mbed-TLS/TF-PSA-Crypto/releases`, build-deps.sh:414-446;
+  `github.com/Mbed-TLS/TF-PSA-Crypto/releases`, build-deps.sh:944-984;
   used for PSA SHA-256, src/utils/sha256.c:17-29). No `libmbedtls`
   (TLS layer) is built or linked.
 - **zlib IS already linked** (`find_package(ZLIB REQUIRED)`
-  CMakeLists.txt:435, `ZLIB::ZLIB` :484; in-tree consumer
+  CMakeLists.txt:538, `ZLIB::ZLIB` :587; in-tree consumer
   src/sf33rd/Source/Compress/zlibApp.c:9) — the −12 savestate inflate
   needs nothing new.
 - TCP client via SDL3_net exists (matchmaking `NET_CreateClient`,
   src/netplay/matchmaking.c:77, with `NET_GetAddressStatus` DNS
   states :74-76); raw POSIX UDP + `getaddrinfo` also in use
   (src/netplay/stun.c:250-258). SDL3_net + GekkoNet + miniupnpc are
-  linked only under `ENABLE_NETPLAY` (CMakeLists.txt:434-441).
+  linked only under `ENABLE_NETPLAY` (CMakeLists.txt:598-609).
 - Rendezvous server: Node.js UDP service (tools/rendezvous-server/
   `rendezvous-server.js`, `package.json`, systemd unit, `deploy.sh`),
   binary protocol REGISTER(28)/DELIVER(32)/POLL(28) with magic
-  `0x33535852` (tools/rendezvous-server/__test_protocol.js:16);
+  `0x33535852` (`MAGIC`, tools/rendezvous-server/__test_protocol.js:22);
   live at `udp://46.62.244.55:3478` (the
   `CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL` default,
   src/port/config/config.c:104).
@@ -435,7 +435,7 @@ defined go/no-go (§6, Step B3).
   (:278-290; "O[30],Arcade Balance,Off,On;" at :280, "T[29],Play
   Online;" at :281 — line numbers at the pinned `54c95d13`; the file
   gained 4 lines by current HEAD), rendered by the vendored wrapper
-  (`OsdSetSize(8)` — 8 rows — vendor/Main_MiSTer/thirdsarm_wrapper.cpp:1686;
+  (`OsdSetSize(8)` — 8 rows — vendor/Main_MiSTer/thirdsarm_wrapper.cpp:1863;
   status reads via `user_io_status_get("[NN]")`, e.g. :1859 for
   Arcade Balance). Upstream MiSTer `menu.cpp` is **not** vendored
   (`ls vendor/Main_MiSTer/*.cpp` — no menu.cpp), so there is no
@@ -475,13 +475,13 @@ defined go/no-go (§6, Step B3).
 - Desktop build: `sh build-deps.sh --profile desktop` then
   `CC=clang cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build
   build --parallel` (docs/building.md:60-70). DEBUG features come from
-  `$<$<CONFIG:Debug>:DEBUG>` (CMakeLists.txt:124).
+  `$<${DEBUG_HOOKS_GENEX}:DEBUG>` (CMakeLists.txt:271).
 - Deploy: `misterctl.sh deploy --src build/mister-<flavor>-package`
   to `/media/fat/games/3s-arm/` (docs/mister-runbook.md:341-395;
   MISTER_PASSWORD=1; lock/busy preflight described there). RBF is a
   separate wrapper deploy — not touched by this plan.
 - `file(GLOB_RECURSE GAME_SRC CONFIGURE_DEPENDS src/*.c)`
-  (CMakeLists.txt:144) — new C files under `src/` are auto-picked-up.
+  (`GLOB_RECURSE GAME_SRC`, CMakeLists.txt:185) — new C files under `src/` are auto-picked-up.
 
 ---
 
@@ -1444,7 +1444,7 @@ device half so each /implement cycle stays ≤ ~2 h.
 the spec — read `do_handshake`/`recv_frame`/`download_replay` fully),
 `src/netplay/matchmaking.c` (SDL3_net TCP client pattern + state
 machine), `src/netplay/direct_p2p.c` (worker thread + polled state
-pattern), CMakeLists.txt:434-441 (SDL3_net is ENABLE_NETPLAY-only —
+pattern), CMakeLists.txt:598-603 (SDL3_net is ENABLE_NETPLAY-only —
 decide: gate the downloader on ENABLE_NETPLAY too (MiSTer builds ship
 with netplay), or use plain POSIX sockets to avoid the coupling;
 **decision: plain POSIX TCP**, matching stun.c precedent, so the
@@ -1694,8 +1694,8 @@ not the client.
 keep the SD tidy.
 
 **Read first:** menu.sv CONF_STR (:278-290), wrapper trigger/argv
-pattern (thirdsarm_wrapper.cpp:1961-2000 T-triggers, :2797-2812 argv
-injection, :2325 arm-and-restart), docs/mister-wrapper.md, AGENTS.md
+pattern (thirdsarm_wrapper.cpp:2171-2213 T-triggers, :3028-3040 argv
+injection, :2543 `direct_p2p_arm_and_restart`), docs/mister-wrapper.md, AGENTS.md
 FPGA-build note (:23 — CONF_STR changes require a Quartus wrapper-core
 rebuild in the colima VM; **scope check: a new `T[NN]` line changes
 the RBF**).

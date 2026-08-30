@@ -296,7 +296,7 @@ netem() { # netem <A|B|both> <delay_ms> <jitter_ms> <loss_pct>
 # 33 53 58 52 02 02 matches DELIVER and nothing else.
 #
 # This models the real mechanism: the server's unsolicited push to the host at
-# rendezvous-server.js:1252 is a bare socket.send with NO retransmit, so when it is
+# rendezvous-server.js:1443 is a bare socket.send with NO retransmit, so when it is
 # lost the host learns the peer endpoint only from the reply to its OWN next
 # REGISTER -- a full register-interval later (direct_p2p.c:3242).
 #

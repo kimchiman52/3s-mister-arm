@@ -12,7 +12,7 @@
 
 **Claim in plan:** §Decision 2 and §Step 3: "**We do NOT link SHA-256 from tf-psa-crypto**; instead we implement the tiny public-domain SHA-256 already present at `/tmp/3sxtra/src/netplay/sha256.{c,h}` (copy it in as Step 1)" and "Create `src/netplay/sha256.c` and `src/netplay/sha256.h` — direct copy of `/tmp/3sxtra/src/netplay/sha256.{c,h}`."
 
-**Actual:** `src/utils/sha256.h:1-23` and `src/utils/sha256.c:1-17` already implement SHA-256 against tf-psa-crypto. The API is `sha256_init` / `sha256_append` / `sha256_finalize_bytes` / `sha256_finalize_hex`. `third_party/tf-psa-crypto` is already linked by `CMakeLists.txt:246`, and `src/port/resources.c:113,205` actively uses this module today (asset hashing). So the premise "we would need libcurl+OpenSSL cross-compiled to get SHA-256" is wrong — SHA-256 is already a solved build dependency we ship on MiSTer.
+**Actual:** `src/utils/sha256.h:1-23` and `src/utils/sha256.c:1-17` already implement SHA-256 against tf-psa-crypto. The API is `sha256_init` / `sha256_append` / `sha256_finalize_bytes` / `sha256_finalize_hex`. `third_party/tf-psa-crypto` is already linked by `CMakeLists.txt:586`, and `src/port/resources.c:113,205` actively uses this module today (asset hashing). So the premise "we would need libcurl+OpenSSL cross-compiled to get SHA-256" is wrong — SHA-256 is already a solved build dependency we ship on MiSTer.
 
 **Impact:** Vendoring a second SHA-256 implementation creates two code paths for the same primitive (inconsistent with the existing pattern), adds ~120 LOC of code we have to maintain (and re-audit for the public-domain license claim), and misses the chance to keep the netplay module consistent with the rest of the codebase. Step 3's "Do NOT" list also forbids `identity.c / lobby_server.c / discovery.c` — but `src/utils/sha256.c` is ours, not 3sxtra's, and is explicitly the right dependency.
 
@@ -473,7 +473,7 @@ The plan's labels for host/join were swapped, and the three-thread cleanup model
 
 **Claim in plan (pre-round-2):** §Step 3 CMakeLists.txt bullet said "tf-psa-crypto is already linked (`CMakeLists.txt:246`)".
 
-**Actual:** `CMakeLists.txt:451` is `set(TF_PSA_CRYPTO_ROOT ...)` — the path declaration. The link line is `CMakeLists.txt:483` (`target_link_libraries(... "${TF_PSA_CRYPTO_ROOT}/lib/libtfpsacrypto.a")`).
+**Actual:** `CMakeLists.txt:554` is `set(TF_PSA_CRYPTO_ROOT ...)` — the path declaration. The link line is `CMakeLists.txt:586` (`target_link_libraries(... "${TF_PSA_CRYPTO_ROOT}/lib/libtfpsacrypto.a")`).
 
 **Disposition:** Addressed in §Step 3 (citation split: `:451` declaration, `:483` link).
 

@@ -60,7 +60,7 @@ Before the fix, `set_yc_mode()` always computed `PHASE_INC` from the FPGA core p
 **Fix (`bc77d52a`):** Added `fb_native_analog_auto` condition in `video.cpp`: when `vga_fb=1` and native TV mode is active and output clock is available, use `v_cur.Fpix` (output pixel clock, 12.587 MHz) as `CLK_VIDEO`.
 
 ### Bug 3 — Wrong PAL/NTSC detection (HPS)
-Even with the correct clock, `pal` was derived from `current_video_info.vtime`. When `video_refresh_yc_mode()` is called at `thirdsarm_wrapper.cpp:1075` (before the game starts), `vtime=0` → `fps=0 < 55 → pal=1` → `CLK_REF=4.43 MHz` (PAL) → `PHASE_INC=387,289,675,374` → 4.43 MHz subcarrier on NTSC TV → colorburst PLL cannot lock → grayscale.
+Even with the correct clock, `pal` was derived from `current_video_info.vtime`. When `video_refresh_yc_mode()` is called at `thirdsarm_wrapper.cpp:2905` (before the game starts), `vtime=0` → `fps=0 < 55 → pal=1` → `CLK_REF=4.43 MHz` (PAL) → `PHASE_INC=387,289,675,374` → 4.43 MHz subcarrier on NTSC TV → colorburst PLL cannot lock → grayscale.
 
 **Fix (`video.cpp`):** After `fb_native_analog_auto` is determined, if `vtime==0`, derive `pal` from `v_cur` output timing (htotal/vtotal/Fpix). For NTSC 15K: `output_fps = 12.587e6 / (800×262) ≈ 60.05 Hz > 55 → pal=0 → CLK_REF=3.579545 → PHASE_INC≈312,741,000,000 → 3.58 MHz NTSC → color confirmed working on real hardware.`
 

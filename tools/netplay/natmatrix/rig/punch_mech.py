@@ -12,9 +12,9 @@ Cascade order being modelled (src/netplay/direct_p2p.c):
      -> the HOST's endpoint becomes the room code (room_code.c), so the joiner
         holds it before anyone has punched.
      -> the JOINER's endpoint is what the rendezvous server DELIVERs to the
-        host (tools/rendezvous-server/rendezvous-server.js:1077 builds the
+        host (tools/rendezvous-server/rendezvous-server.js:1254 builds the
         endpoint from rinfo, the SERVER-OBSERVED source, not the client's
-        claim; :1252 is the unsolicited push that carries it).
+        claim; :1443 is the unsolicited push that carries it).
   2. The joiner punches the host's endpoint immediately (race leg 0,
      direct_p2p.c:1734).
   3. The host punches the joiner's DELIVERed endpoint about one signalling

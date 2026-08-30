@@ -24,12 +24,12 @@ Before running any of these, confirm the following once per session:
    EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DNETPLAY_TEST_HOOKS=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS" \
        tools/mister/build-game.sh --flavor telemetry
    ```
-   `NETPLAY_TEST_HOOKS` is a real CMake `option()` (`CMakeLists.txt:57`,
+   `NETPLAY_TEST_HOOKS` is a real CMake `option()` (`CMakeLists.txt:98`,
    default OFF); `ENABLE_NETPLAY_TESTS` is not an option and only reaches
    the compiler through `CMAKE_C_FLAGS`. Passing only the latter
    configures cleanly and then fails the build with ~20 compile errors.
    (`EXTRA_CMAKE_ARGS` is whitespace-split by
-   `tools/mister/build-game.sh:576-584`, so keep each `-D` token
+   `tools/mister/build-game.sh:727-735` (the `read -ra extra_args` split), so keep each `-D` token
    whitespace-free.) The equivalent host build is:
    ```bash
    cmake -S . -B build/host -DCMAKE_BUILD_TYPE=Debug -DENABLE_NETPLAY=ON \

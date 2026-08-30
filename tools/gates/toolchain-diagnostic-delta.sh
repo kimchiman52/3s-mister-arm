@@ -7,7 +7,9 @@
 # and had never been measured. It is now, and it is only half true:
 #
 #   * The two toolchains are DIFFERENT CLANG MAJORS. The ARM container installs
-#     clang-20 from apt.llvm.org (tools/mister/setup-build-container.sh:9,170-175);
+#     clang-20 from apt.llvm.org (`llvm_version` default,
+#     tools/mister/setup-build-container.sh:13; the apt.llvm.org source and
+#     install at :202-209);
 #     the host is whatever Xcode ships. So a version-driven delta is possible in
 #     principle and this script measures it.
 #

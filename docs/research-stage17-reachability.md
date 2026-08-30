@@ -35,7 +35,7 @@ lands on stage 17, which then triggers the §A/§F black-BG mechanism in
 The prior investigation prompt equates `17` with `CHAR_MAKOTO` (the CPS3-enum
 value). That is **incorrect for this build**. The codebase uses the **3SX
 enum** (non-CPS3 block at `src/constants.h:36-60`) because the `CPS3` define
-is commented out at `CMakeLists.txt:104` (`# CPS3`).
+is commented out at `CMakeLists.txt:284` (`# CPS3`).
 
 Under the 3SX enum:
 
@@ -472,7 +472,7 @@ Citations:
 - Face grid with Q at row 1 col 4: `src/sf33rd/Source/Game/screen/sel_data.c:8-10`.
 - bg_w.stage = Battle_Country: `sel_pl.c:1598`.
 - Enum confirmation: `src/constants.h:36-60` (3SX enum used because
-  `CMakeLists.txt:104` has CPS3 commented out).
+  `CMakeLists.txt:284` has CPS3 commented out).
 
 ### Why the symptom only reproduces when "one peer picked Q" (user report)
 

@@ -394,7 +394,7 @@ else from the current 50+ counter list at
 
 ### Current state (pre-rip)
 
-`CMakeLists.txt:147-157` defines `CRS_SW_CANVAS_16BPP=1`
+`CMakeLists.txt:315-320` defines `CRS_SW_CANVAS_16BPP=1`
 unconditionally whenever `THIRDSARM_USE_GIBLET_RENDERER=ON`,
 regardless of the host architecture.
 
@@ -508,7 +508,7 @@ pre-existing rot.
 - MiSTer cross build green (giblet renderer ON):
   `MISTER_BUILD_CONTAINER=3s-mister-giblet-build EXTRA_CMAKE_ARGS="-DTHIRDSARM_USE_GIBLET_RENDERER=ON" tools/mister/build-game.sh --flavor telemetry`.
   `build-game.sh` accepts the cmake passthrough via the
-  `EXTRA_CMAKE_ARGS` env var (see `tools/mister/build-game.sh:41-48`,
+  `EXTRA_CMAKE_ARGS` env var (see `tools/mister/build-game.sh:116-121`,
   `113`, `161`).
 
 #### Dependencies
@@ -553,8 +553,8 @@ code" risk from the "wire it up" risk.
 - `pr-243:src/platform/app/arm/arm_display_drm.c` (550 LOC)
 - `pr-243:src/platform/app/arm/arm_display_fbdev.c` (133 LOC)
 - `pr-243:CMakeLists.txt:14-50` (CRS_RPI_DRM / CRS_MISTER setup)
-- Current `CMakeLists.txt:1-50, 77-200` (option parsing and the
-  GAME_SRC GLOB)
+- Current `CMakeLists.txt:33-167` (option parsing) and `CMakeLists.txt:185`
+  (the `GLOB_RECURSE GAME_SRC` GLOB)
 
 #### Files to create / modify
 
@@ -582,7 +582,7 @@ between giblet's tree layout and ours):
 - `src/port/input_backend.c` (verbatim from
   `pr-243:src/port/input_backend.c`) — implementation that
   delegates to `SDLPad_*` from our existing `port/sdl/sdl_pad.h`.
-  The GLOB at `CMakeLists.txt:77` picks it up automatically; no
+  The GLOB at `CMakeLists.txt:185` (`GLOB_RECURSE GAME_SRC`) picks it up automatically; no
   cmake edit required for this file alone.
 
 **Note on header location**: pr-243 puts headers next to their `.c`.
@@ -603,7 +603,7 @@ Modify:
     `CRS_APP_DRIVER_SDL=1` and pull the new `src/platform/app/sdl`
     files into the build (these are GLOB-included automatically by
     the existing `file(GLOB_RECURSE GAME_SRC ... src/*.c)` at
-    `CMakeLists.txt:77`, but the `#if CRS_APP_DRIVER_*` guards
+    `CMakeLists.txt:185` (`GLOB_RECURSE GAME_SRC`), but the `#if CRS_APP_DRIVER_*` guards
     keep them empty until the option is on — same pattern as the
     giblet renderer files).
   - Add libdrm autodetection (gated to non-Apple ARM Linux):

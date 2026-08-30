@@ -45,7 +45,7 @@ stage baseline ${PIPESTATUS[0]}
 echo
 echo "################ 2. DELIVER LOSS = 100% toward the HOST ################"
 # The server's unsolicited DELIVER push is a bare socket.send with no retransmit
-# (rendezvous-server.js:1252). Dropping it forces the host to learn the peer only
+# (rendezvous-server.js:1443). Dropping it forces the host to learn the peer only
 # from the reply to its OWN next REGISTER -- a full register interval later
 # (direct_p2p.c:3242). This is the mechanism that manufactures the start skew
 # behind the residual split-brain band.
