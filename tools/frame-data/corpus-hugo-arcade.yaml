@@ -1,4 +1,4 @@
-# Hugo under ARCADE (CPS3) balance -- task #133, generalisation probe.
+# Hugo under ARCADE (CPS3) balance -- task #136, generalisation probe.
 #
 # WHY THIS CORPUS EXISTS
 # ----------------------
@@ -219,7 +219,7 @@ entries:
   expect: { S: from-qjson, A: from-qjson, R: from-qjson }
 
 # --- Crouching normals, BLOCK ----------------------------------------------
-# ARCADE DEVIATIONS (task #133), 2 of them, neither touching an `expect:`.
+# ARCADE DEVIATIONS (task #136), 2 of them, neither touching an `expect:`.
 #
 # 1. `dummy: crouch` on h-crshort-block and h-crforward-block, where
 #    corpus-hugo.yaml says `dummy: stand`. Both are LOWS, and

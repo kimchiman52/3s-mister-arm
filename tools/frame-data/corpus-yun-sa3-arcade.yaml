@@ -96,7 +96,7 @@
 # The original reason given here was different and is now obsolete. It read
 # that a `dummy: stand` entry which BLOCKs under PS2 was observed to HIT under
 # arcade, that the divergence was "real and unexplained", and that per
-# CORPUS-AUTHORING.md Phase 6 that made BLOCK entries a STOP. Task #133
+# CORPUS-AUTHORING.md Phase 6 that made BLOCK entries a STOP. Task #136
 # isolated it: the training ALL-GUARD DIP only makes the dummy block through
 # PS2's `ags` term (hitcheck.c:1365-1366/:1496), which defense_ground_cps3()
 # does not have, so an arcade dummy needs `auto_guard` set instead. The harness

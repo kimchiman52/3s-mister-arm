@@ -1,4 +1,4 @@
-# Q under ARCADE (CPS3) balance -- task #108, completed by task #133.
+# Q under ARCADE (CPS3) balance -- task #108, completed by task #136.
 #
 # WHAT THIS IS
 # ------------
@@ -474,7 +474,7 @@ entries:
   outcome: HIT
   expect: { S: from-qjson, A: from-qjson, R: from-qjson }
 
-# ARCADE DEVIATION 1 of 3 (task #133): corpus-q.yaml says `dummy: stand` here.
+# ARCADE DEVIATION 1 of 3 (task #136): corpus-q.yaml says `dummy: stand` here.
 # Dashing Leg Attack is a LOW (its att.guard & 0x18 selects case 8), and
 # defense_ground_cps3() requires the crouch bit to be held to guard a low --
 # `case 8: if (!(ds->cp->sw_lvbt & 2)) return 2;`, hitcheck.c:1320-1321.
@@ -890,7 +890,7 @@ entries:
   outcome: HIT
   expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
 
-# ARCADE DEVIATIONS 2 and 3 of 3 (task #133).
+# ARCADE DEVIATIONS 2 and 3 of 3 (task #136).
 #
 # 2: `dummy: crouch`, where corpus-q.yaml says `dummy: stand`. cr.MK is a LOW;
 #    same rule as ARCADE DEVIATION 1 above (hitcheck.c:1320-1321 vs :1508).

@@ -281,13 +281,60 @@ are true on the PS2 path and NOT on the arcade path, learned the hard way:
 
 - [ ] **`sa_gauge:` is inert.** See the `super_full:` note in Phase 2. Use
       `super_full: true`.
-- [ ] **Dummy BLOCK is not trustworthy yet.** `check_illegal_lever_data()`
-      lever normalization is PS2-only (`plmain.c:52-55`). A `dummy: stand`
-      entry that BLOCKs under PS2 was observed to **HIT** under arcade
-      (`corpus-smoke.yaml`'s `close-lp-block-vs-stand`, measured this
-      session). That divergence is unexplained, so per Phase 6 it is a
-      **STOP, not an xfail** — do not author BLOCK entries into an arcade
-      corpus until it is understood. Tracked in `docs/queue.md` under #108.
+- [ ] **Dummy BLOCK works, but the dummy's STANCE is now load-bearing.**
+      (Task #136; supersedes #108's "not trustworthy yet / STOP" entry, whose
+      suspicion of the PS2-only `check_illegal_lever_data()` at
+      `plmain.c:52-55` was a guess and was NOT the cause.)
+
+      The training ALL-GUARD DIP makes a PS2 dummy block through
+      `defense_ground_ps2`'s `ags` term (`hitcheck.c:1365-1366`, consumed at
+      `:1496`). `defense_ground_cps3` never reads that bit; its gate is the
+      bare `if (!ds->auto_guard)` at `hitcheck.c:1309`. The harness now sets
+      the dummy's `auto_guard` (`input_script_apply_guard_mode()`,
+      `src/test/input_script.c`, which carries the full derivation), so a
+      `dummy: stand`/`dummy: crouch` entry blocks under arcade.
+
+      Two things follow that a PS2 corpus never had to think about:
+
+      - **A LOW must be blocked CROUCHING.** `defense_ground_cps3`'s
+        `case 8` requires the crouch bit held (`hitcheck.c:1320-1321`);
+        `defense_ground_ps2`'s same case has an `&& ags == 0` escape
+        (`:1508`, and `:1516` for the overhead case) that lets a STANDING
+        ALL-GUARD dummy block a low. So an arcade corpus must say
+        `dummy: crouch` wherever its PS2 twin got away with `dummy: stand`
+        against a low. This is a REAL engine difference, not a workaround —
+        say so at the entry. Worked examples: `corpus-q-arcade.yaml`
+        (`q-dla-rh-block`, `q-crmk-multimove-merge`),
+        `corpus-hugo-arcade.yaml`, `corpus-remy-arcade.yaml`,
+        `corpus-twelve-arcade.yaml`.
+      - **Two `dummy: crouch` hazards, both BALANCE-INDEPENDENT** (they
+        reproduce under `--test-balance ps2` too; they are simply invisible
+        in the existing PS2 corpora because no PS2 entry sits where they
+        bite):
+        1. *Fresh-DOWN parry window.* Forcing the crouch drives a new DOWN
+           edge on the frame the `G` directive runs, opening a low-parry
+           window. An attack with a very short startup lands inside it and
+           the entry reads `PARRY` instead of `BLOCK` (measured:
+           `h-crshort-block`, S=3). Prepend a `wait 20;` to the entry's
+           input. A startup of ~8 frames or more is already clear.
+        2. *Stance carryover into the NEXT entry.* A `dummy: crouch` entry
+           leaves the dummy crouching into the FIRST entry that follows it,
+           long enough that a hit landing ~10 frames in reads the oracle's
+           `Crouch_hit_advantage` rather than its `Hit_advantage` (measured:
+           `q-crmp-hit-capture-a`, +0 vs −1, on BOTH engines). Do not place a
+           `dummy: crouch` entry immediately before an entry whose `adv` you
+           are asserting.
+- [ ] **The dummy's vitality is not restored under arcade.**
+      `check_omop_vital()` — the port's EXTRA OPTIONS vitality restore
+      (`plmain.c:1134-1244`, `sysdir.c:126-127`) — is arcade-skipped at
+      `plmain.c:335-337`, so an arcade dummy's health only ever goes down and
+      a long corpus grinds it to zero. At zero, `same_dm_stop()`'s nearly-dead
+      branch (`hitcheck.c:1023-1039`) shortens the defender's hitstop by a
+      frame and every later `adv` reads one low. The harness now tops the
+      dummy up at each entry's `L` directive
+      (`input_script_restore_vitality()`, `src/test/input_script.c`), so this
+      is handled — but if you ever see a long arcade corpus where `adv`
+      degrades monotonically down the file, this is the first thing to check.
 - [ ] **The CPS3 super-art state machines are only reachable here.**
       `sag_union` dispatches on `sa->gauge_type` under arcade balance
       (`plmain.c:1042-1050`); `sag_union_0/1/3` (`:642/:691/:790`) cannot

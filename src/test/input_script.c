@@ -77,7 +77,7 @@ static bool g_exit_requested = false;
 
 static bool g_guard_default_applied = false;
 
-/* Task #133 (R1). The dummy's blocking state, re-asserted every tick by
+/* Task #136 (R1). The dummy's blocking state, re-asserted every tick by
  * InputScript_Tick(). See input_script_apply_guard_mode() for why the
  * training ALL-GUARD DIP alone is not enough under arcade balance. */
 static s8 g_dummy_auto_guard = 0;
@@ -160,7 +160,7 @@ static void input_script_apply_guard_mode(int mode) {
     Training[2].contents[0][0][1] = guard_slot;
     control_pl_rno = (u8)stance_slot;
 
-    /* Task #133 (R1): guard slot 2 (ALL GUARD) is not sufficient to make the
+    /* Task #136 (R1): guard slot 2 (ALL GUARD) is not sufficient to make the
      * dummy block under ARCADE balance, and that is the whole reason
      * corpus-q-arcade.yaml originally shipped with all 22 of corpus-q.yaml's
      * BLOCK entries omitted.
@@ -208,7 +208,7 @@ static void input_script_apply_guard_mode(int mode) {
     plw[1].auto_guard = g_dummy_auto_guard;
 }
 
-/* Task #133 (R2). Restores both players to full vitality; called once per
+/* Task #136 (R2). Restores both players to full vitality; called once per
  * corpus entry, at the entry's `L` directive.
  *
  * The PS2 balance path gets this for free: check_omop_vital() walks

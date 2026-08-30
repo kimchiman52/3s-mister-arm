@@ -25,14 +25,16 @@ match the present.
 
 | Quantity | Value |
 |---|---|
-| Corpora GREEN | 96<!-- canon:corpora --> |
-| Total rows | 1,403<!-- canon:total --> |
-| PASS | 1,348<!-- canon:pass --> |
-| XFAIL | 55<!-- canon:xfail --> |
+| Corpora GREEN | 99<!-- canon:corpora --> |
+| Total rows | 1,488<!-- canon:total --> |
+| PASS | 1,435<!-- canon:pass --> |
+| XFAIL | 53<!-- canon:xfail --> |
 
-**Two of the 96 run the ARCADE (CPS3) engine** (`corpus-q-arcade.yaml`,
-`corpus-yun-sa3-arcade.yaml` — 54 of the 1,403 rows), added by task #108. The
-other 94 run the PS2 port tables, as they always have. Which engine a corpus
+**Five of the 99 run the ARCADE (CPS3) engine** (`corpus-q-arcade.yaml` 73,
+`corpus-hugo-arcade.yaml` 30, `corpus-twelve-arcade.yaml` 17,
+`corpus-remy-arcade.yaml` 16, `corpus-yun-sa3-arcade.yaml` 3 — 139 of the 1,488
+rows), added by tasks #108 and #136. The other 94 run the PS2 port tables, as
+they always have. Which engine a corpus
 runs is now its own declared `balance:` key rather than a side effect of
 `--test-enable`; see `tools/frame-data/CORPUS-AUTHORING.md` Phase 2 and
 Phase 4a. The arcade corpora need a verified CPS3 romset:
@@ -987,7 +989,7 @@ only. |
 | **Sum-preserving A/R boundary shift, magnitude-5 (EX)** (NEW 2026-07-12, wave-5) | `necro-exflyingviper-block/-hit/-crouch-probe` | measured S=24/A=10/R=9 vs oracle S=24/A=5/R=14 (adv=+2 both legs), T=43 both ways (S+A+R conserved); reproduced byte-identical across a connecting-distance window (130-230px); crouch-probe byte-identical to the stand-guard BLOCK entry (no defender-stance-conditionality; tested, not inherited, against the base Jab's own crouch-vs-stand swing in the "Defender-stance-conditional attacker R" row above) | NEW, UNCLASSIFIED. Checked against this table's own "Sum-preserving A/R boundary shift" row (`remy-cbk-lk-whiff`): that row's live, ledger-proven member trades magnitude-1 (a single boundary tick, active_pf==engine_a); this EX sighting trades magnitude-5, a different magnitude class, with no own-trace/credit-ledger citation this session (NEVER-build wave-5 scope, no lever-F test run). Per the same-shape grouping rule the EX-CONTACT-R disposition itself established (leg + field + direction + magnitude class + box/cut context), a magnitude-5 shift does not join a magnitude-1 row on name resemblance alone - logged as its OWN new one-off, NOT merged into the row above, same posture that row's own dated corrections used when yun-zesshou/remy's contact legs turned out not to share the whiff leg's exact shape despite an initial "family-of-two" framing. Cites the row above for context only; does not convert. |
 | **Contact-only A-overcount, box-backed (real active tick)** (NEW 2026-07-12, wave-5) | `sean-exdragonsmash-block/-hit` | measured A=13 vs arcade 12 on BOTH contact legs, WHIFF leg clean at A=12 (contact-only); box_a=13 == engine_a=13 (real box-tracked active agrees with the displayed credit) - the OPPOSITE of §12.2.3 F3's bar (box_a < engine_a, declared-credit without box backing); HIT-leg A(13) == BLOCK-leg A(13), same shape both legs; R/adv stay arcade-exact on both legs | NEW, UNCLASSIFIED. Explicitly tested against §12.2.3 F3 and REFUSED membership - F3's bar requires box_a < engine_a; here box and engine agree, ruling F3 out by definition (not merely "not yet re-traced"). Two HYPOTHESES stated, neither confirmed: a genuine extra real active tick fires only on the contact branch (distinct from F3's declared-only insertion), or an unisolated contact-tick artifact - no lever-F toggle test run (NEVER-build wave-5 scope). No existing §12.2.4 row shares this exact box_a==engine_a-on-contact signature. Flagged to the orchestrator/user for follow-up classification, per Phase 6's "candidates never convert without their own recorded signature" discipline. |
 | **Non-sum-preserving joint A/R shift, adv-exact (EX)** (NEW 2026-07-12, wave-6) | `remy-exrrf-block/-hit` | measured S=6/A=3/R=38 vs oracle S=6/A=5/R=41 (adv=-21 both legs, exact); T (S+A+R) = 46 on WHIFF's own clean reading vs T=41 on BLOCK/HIT - **NOT conserved** (Δ=-5), disqualifying this from the "Sum-preserving A/R boundary shift" row above (that row's bar is T constant; here it moves) | NEW, UNCLASSIFIED. Explicitly checked against S+A+R conservation (the sum-preserving row's own defining test) and FAILED it - both A and R drop together (non-compensating) rather than trading ticks, a distinct shape from both the magnitude-1 (`remy-cbk-lk-whiff`) and magnitude-5 (`necro-exflyingviper`) sum-preserving members. Also checked against Phase-6 bucket 1 (R-exact) and bucket 7 (A-exact) - fails both since both fields move. Does not match the base RRF's own §12.2.3 F3 A-overcount precedent (this member UNDERcounts, opposite sign). No lever-F toggle test run (NEVER-build wave-6 scope). Juggle check passes (BLOCK A=3 == HIT A=3). Flagged for follow-up classification. **Related but distinct sighting, same corpus, NOT added as its own row:** `remy-excbk-block/-hit` (measured S=18/A=11/R=9 vs oracle S=18/A=9/R=10, adv=-1 both legs exact; T=19 WHIFF vs T=20 BLOCK/HIT, also not conserved, Δ=+1, opposite sign from RRF's own Δ=-5) was kept at the SAME conservative fully-xfail disposition as the base (non-EX) Cold Blue Kick entry `remy-cbk-lk-block/-hit` (this table's own "Same-tick interior-transition credit banking" row, F13) purely as a precedent-following caution, NOT as a claim that it shares that row's mechanism or the sum-preserving shape - its own T is not conserved either, so it is neither a sum-preserving member nor a same-tick-interior-transition member on the numbers; it remains an unlinked, undirected xfail pending its own investigation. |
-| **BUFFER-1 capture-depth-raise regression** (NEW 2026-07-13, BUFFER-1 fix) | `elena-exspinscythe-block` | previously a plain PASS at R=31, oracle-exact by coincidence of the old `FD_CAPTURE_LEN=72` cap; post-raise (256) measured R=41 (busyr=43) vs oracle 31 (`elena.json` Spinning Scythe (EX) Recovery=31) — a genuine engine/oracle divergence only exposed once the capture window is long enough to observe this leg's true recovery span, not a new engine behavior | NEW, UNCLASSIFIED. Not part of the M1 register (that register's members were all previously R-omitted/xfailed pending the raise; this row was previously a clean PASS and is the opposite direction — the raise EXPOSES a divergence rather than resolving one). Per house rule (wrong values never ship), converted from a stale PASS to an explicit `xfail` asserting the ORACLE value (from-qjson) — same idiom as `corpus-akuma-sa2.yaml`'s A-clause (assert oracle, xfail the measured/busyr divergence, cite the exposing mechanism) rather than a silent de-assert. No per-tick declared-credit ledger trace taken this session; flagged for orchestrator/user follow-up classification. See `tools/frame-data/corpus-elena-ex.yaml`'s `elena-exspinscythe-block` entry for the dated note. **Housekeeping, same sighting:** the pre-existing `:947` M1 note above cites its own Elena control as `elena-lynxtail-lk-block` (Spinning Scythe (EX)) — those two labels name two DIFFERENT Elena EX moves (`elena-lynxtail-lk-block` is Lynx Tail (Short), a non-EX move, per `corpus-elena.yaml:770`; Spinning Scythe (EX) is `elena-exspinscythe-block`, per `corpus-elena-ex.yaml:265`, this row's own subject). That label/description conflict predates this fix and is left as-is here (not silently resolved by picking a reading) rather than assumed to mean either move without verification. |
+| **BUFFER-1 capture-depth-raise regression** (NEW 2026-07-13, BUFFER-1 fix) | `elena-exspinscythe-block` | previously a plain PASS at R=31, oracle-exact by coincidence of the old `FD_CAPTURE_LEN=72` cap; post-raise (256) measured R=41 (busyr=43) vs oracle 31 (`elena.json` Spinning Scythe (EX) Recovery=31) — a genuine engine/oracle divergence only exposed once the capture window is long enough to observe this leg's true recovery span, not a new engine behavior | NEW, UNCLASSIFIED. Not part of the M1 register (that register's members were all previously R-omitted/xfailed pending the raise; this row was previously a clean PASS and is the opposite direction — the raise EXPOSES a divergence rather than resolving one). Per house rule (wrong values never ship), converted from a stale PASS to an explicit `xfail` asserting the ORACLE value (from-qjson) — same idiom as `corpus-akuma-sa2.yaml`'s A-clause (assert oracle, xfail the measured/busyr divergence, cite the exposing mechanism) rather than a silent de-assert. No per-tick declared-credit ledger trace taken this session; flagged for orchestrator/user follow-up classification. See `tools/frame-data/corpus-elena-ex.yaml`'s `elena-exspinscythe-block` entry for the dated note. **Housekeeping, same sighting:** the pre-existing `:947` M1 note above cites its own Elena control as `elena-lynxtail-lk-block` (Spinning Scythe (EX)) — those two labels name two DIFFERENT Elena EX moves (`elena-lynxtail-lk-block` is Lynx Tail (Short), a non-EX move, per `corpus-elena.yaml:784-787`; Spinning Scythe (EX) is `elena-exspinscythe-block`, per `corpus-elena-ex.yaml:265`, this row's own subject). That label/description conflict predates this fix and is left as-is here (not silently resolved by picking a reading) rather than assumed to mean either move without verification. |
 
 **Trigger re-check (wave-5, 2026-07-12), authoring-policy.md's "≥3 same-shaped quarantines ⇒ STOP":** both new sightings above are first-of-their-shape - verified against every existing §12.2.4 row and the EX-CONTACT-R program ledger: the necro sighting's magnitude class (5) is distinct from the existing sum-preserving row's (1), and the sean sighting's box_a==engine_a contact shape has no precedent anywhere in this document (direct grep, zero prior hits). Neither joins an existing bucket to 3+, and neither forms its own 3-member bucket alone (1 sighting each). Trigger NOT tripped this wave.
 
@@ -7187,12 +7189,12 @@ asserting the oracle, with the true mechanism documented — the honest floor.
 
 **§13.16 addendum (HONEST FLOOR, dated 2026-07-14, user decision —
 opus-substitute / WANTS FABLE RE-REVIEW).** As of the drive-to-zero closing
-pass the overlay is **frame-exact on 1,348<!-- canon:pass --> of
-1,403<!-- canon:total --> legs** (the two figures carry live canon markers, so
+pass the overlay is **frame-exact on 1,435<!-- canon:pass --> of
+1,488<!-- canon:total --> legs** (the two figures carry live canon markers, so
 they track the suite; the parenthetical arithmetic that follows is the dated
 2026-07-14..17 derivation of the then-current 1,296/1,349 and is left as the
-historical record it is -- the delta to today is task #108's two arcade
-corpora, +52 PASS +2 XFAIL) (1,290 at the
+historical record it is -- the delta to today is the five arcade corpora,
++139 PASS +0 XFAIL, from task #108 and task #136) (1,290 at the
 2026-07-14 floor + 4 from the 2026-07-17 lever-V remy-sa1 resolution + 2 from
 the 2026-07-17 lever-W yang landing-cut re-anchor) and within ~1 frame on the
 remaining 53, with **every one of the 53 deviations diagnosed and terminally
@@ -7221,22 +7223,34 @@ partition into seven terminal classes, none of which admits a suite-safe fix:
 | **CAPABILITY-GATED-remaining** | 4 | projectile rows, now hardware-measured (CAP-3) — the divergence is documented (was 8; remy-sa1 ×4 removed 2026-07-17, the slot-0-latch artifact resolved by lever V, not a table split) |
 | **CONVENTION/RULED** | 6 | genuinely ambiguous mapping between two hardware-real quantities (yang startup 5-vs-7; yun-zesshou A 15-vs-16), user-ruled, both readings defensible |
 | **REACHABILITY-GAP** | 4 | the clean-whiff baseline is harness-unproducible (urien-chariot connects even at DIST_MAX; sean-sa1 Hadou-Burst projectile has no reachable whiff) |
-| **ARCADE-VS-PORT-DIVERGENCE** | 2 | `q-arcade` ×2 (`q-crmp-hit-capture-a`, `-b`), added 2026-08-30 by task #108. Under ARCADE balance the pair measure `adv=-2` where the PS2 corpus measures the oracle's `-1`; outcome, S, A and R are identical on both engines. A one-frame defender-recovery divergence BETWEEN THE TWO ENGINES — a class that could not exist before the suite could run the shipping engine at all. Cause not isolated; candidates are the arcade-only skips in `plmain.c` (`check_illegal_lever_data` at `:52-55`, `check_omop_vital` at `:335-337`, the `about_gauge_process` calls at `:246-249`/`:274-277`/`:293-295`/`:305-307`). NOT terminal — an open work item, tracked in `docs/queue.md` under #108, with the reopen condition stated in the corpus note (it XPASSes the moment the engines agree) |
+| **ARCADE-VS-PORT-DIVERGENCE** | 0 | `q-arcade` ×2 (`q-crmp-hit-capture-a`, `-b`), opened 2026-08-30 by task #108 and CLOSED the same day by task #136. Under ARCADE balance the pair measured `adv=-2` against the oracle's `-1`. Cause: arcade skips `check_omop_vital` (`plmain.c:335-337`), the training dummy is never healed, and at zero vitality `same_dm_stop`'s nearly-dead branch (`hitcheck.c:1023-1039`) shortens the defender hitstop by one frame. `att.dipsw`/`hs_me`/`hs_you` are identical on both engines. Not an engine divergence — a dead dummy. Fixed in the harness (`input_script_restore_vitality`, `src/test/input_script.c`); both rows now PASS at the oracle. The class is kept at 0 rather than deleted so the reopen condition stays on the record |
 | **ENGINE-MODEL-LIMITATION** | 2 | urien-sa2 ×2 — re-adjudicated 2026-07-17 (digest finding #1): the earlier "ORACLE-TABLE-INCONSISTENCY / S+R=92>T=91 over-budget" label is REFUTED (the 91 is the engine meter window, not an oracle quantity; the arcade 94-frame post-flash busy window makes oracle S=1+R=91 jointly satisfiable). Terminal because the engine's single-slot proj-split model (`R = meter_len − proj_s`) cannot place S and R independently AND the engine meter window is 3 frames short of arcade's 94 at the window OPEN (sa_stop-vs-frz definitional gap; re-anchor path CLOSED 2026-07-18 — the oracle conventions sit on the engine's window and a re-anchor regresses 20+ passing S legs; see the Q6 closure above). S now displays oracle 1 (lever V, display-only); residual is A (travel-dependent, no flat canonical value) + the open 91-vs-94 window. The genuine cross-character oracle-table convention split is `twelve-sa1` (classified under CAPABILITY-GATED-remaining; `proj_spawn_raw=3` post-append consume, `proj-split/fit.md §1`) |
-| **Total** | **55**<!-- canon:xfail --> | 53 characterized known-limitations + 2 open arcade-vs-port work items; zero UNCLASSIFIED |
+| **Total** | **53**<!-- canon:xfail --> | 53 characterized known-limitations; zero UNCLASSIFIED |
 
 No row remains UNCLASSIFIED. The engine is LAYER-1 arcade-faithful; the
 residual 53 are the diagnosed floor, held honestly rather than papered over.
 
-**(Class-table reconciliation, dated 2026-08-30 — task #108.)** The per-class
-rows now sum to **55** (15+12+10+4+6+4+2+**2**). The +2 is the new
-ARCADE-VS-PORT-DIVERGENCE class, and it is not a regression of the 53: those
-53 are unchanged, row for row. It is the first result from a part of the
-engine the suite could not previously execute — arcade balance was pinned off
-for every test-runner process — so the two rows are NEW COVERAGE reporting a
-disagreement, not old coverage getting worse. They are the only XFAILs among
-the 54 arcade rows added; the other 52 agree with the PS2-authored
-expectations exactly.
+**(Class-table reconciliation, dated 2026-08-30 — task #136.)** The per-class
+rows now sum to **53** (15+12+10+4+6+4+2+**0**). ARCADE-VS-PORT-DIVERGENCE
+opened at 2 earlier the same day and closed at 0: its cause was isolated to the
+training dummy reaching zero vitality under arcade (`check_omop_vital` is
+arcade-skipped at `plmain.c:335-337`, and `same_dm_stop`'s nearly-dead branch,
+`hitcheck.c:1023-1039`, then shortens the defender hitstop by one frame), fixed
+in the harness, and both rows now PASS at the oracle. None of the 53 moved,
+row for row, in either direction across #108 or #136. The arcade corpora now
+contribute 139 rows over five corpora, all PASS — 73 for Q (the 22 BLOCK
+entries #108 had to omit are restored), 30 Hugo, 17 Twelve, 16 Remy, 3 Yun SA3.
+
+**(Class-table reconciliation, dated 2026-08-30 — task #108; HISTORICAL,
+superseded by the #136 note above the same day; left as written.)** The
+per-class rows then summed to **55** (15+12+10+4+6+4+2+**2**). The +2 was the
+new ARCADE-VS-PORT-DIVERGENCE class, and it was not a regression of the 53:
+those 53 were unchanged, row for row. It was the first result from a part of
+the engine the suite could not previously execute — arcade balance was pinned
+off for every test-runner process — so the two rows were NEW COVERAGE
+reporting a disagreement, not old coverage getting worse. They were the only
+XFAILs among the 54 arcade rows added; the other 52 agreed with the
+PS2-authored expectations exactly.
 
 **(Class-table reconciliation, dated 2026-07-17 — HISTORICAL, superseded by
 the 2026-08-30 note above; left as written.)** The per-class rows above

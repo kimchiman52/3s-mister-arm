@@ -1,11 +1,11 @@
-# Remy under ARCADE (CPS3) balance -- task #133, generalisation probe.
+# Remy under ARCADE (CPS3) balance -- task #136, generalisation probe.
 #
 # WHY THIS CORPUS EXISTS
 # ----------------------
 # Task #108 shipped arcade coverage for exactly two corpora (Q and Yun SA3) and
 # was explicit that "the other 18 characters port cheaply" was an ARGUMENT, not
 # a measurement. This corpus is one of three bounded tests of that
-# generalisation (task #133), alongside corpus-hugo-arcade.yaml (heaviest body,
+# generalisation (task #136), alongside corpus-hugo-arcade.yaml (heaviest body,
 # command-grab machinery) and corpus-twelve-arcade.yaml.
 #
 # IT IS A SLICE, NOT A PORT
@@ -31,7 +31,7 @@
 # its own does not reproduce the full corpus's carried state. Measured
 # 2026-08-30.
 #
-# ONE ARCADE DEVIATION (task #133), not touching any `expect:`
+# ONE ARCADE DEVIATION (task #136), not touching any `expect:`
 # ------------------------------------------------------------
 # `remy-crroundhouse-block` says `dummy: crouch` where corpus-remy.yaml says
 # `dummy: stand`. cr.HK is a LOW, and defense_ground_cps3() requires the crouch
