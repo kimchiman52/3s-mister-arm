@@ -114,10 +114,22 @@ python3 tools/netplay/natmatrix/summarize.py /tmp/s8results/baseline.jsonl
 ```
 
 `run_all.sh` propagates the worst stage rc (`run_all.sh:24-31`, restored
-after it too used to run off its end). **`mech_matrix.sh`
-does not** — it runs off the end at `mech_matrix.sh:112` and exits 0 regardless
-of per-rep rc. Read its JSONL, do not trust its exit code. (Open item; see
-`docs/queue.md`.)
+after it too used to run off its end). `mech_matrix.sh` now does the same:
+it used to run off the end of the file — the last statement was an `echo`, so
+it exited with that `echo`'s status, 0, whatever the per-rep rcs had been — and
+it now classifies every rep and exits `0` / `4` (contaminated) / `3` (vacuous)
+with run_matrix.sh's vocabulary. A rep rc of **10 is a finding, not a failure**
+(`symmetric × symmetric` is expected to return it); only rc 20 and unrecognised
+rcs mean the rig did not run the trial.
+
+The grids above are unaffected by that defect: both were read from the JSONL
+rows, which have carried `host_rc`/`join_rc` per rep all along. What the
+always-0 exit could hide is a run that measured *nothing* — every cell failing
+to come up writes no rows at all — so a **caller** could not tell an empty run
+from a clean one. No automated caller ever consulted it (`mech_matrix.sh` is
+not invoked by `run_all.sh` or any other script in the tree; it is run by
+hand), which bounds the exposure to a human who read the exit code instead of
+the file.
 
 ---
 

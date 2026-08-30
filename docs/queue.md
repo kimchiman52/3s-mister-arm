@@ -797,9 +797,7 @@ All interaction bugs, where a mocked unit passes vacuously.
 
 ## Open structural gaps
 
-- `tools/netplay/natmatrix/mech_matrix.sh:112` falls off the end of the file
-  and exits 0 regardless of per-rep `rc` — the last statement is an `echo`,
-  with no stage-rc propagation of the kind `tools/netplay/natmatrix/run_all.sh:27-31` grew.
+*(none open)*
 
 **Closed 2026-08-30 (task #122 test commit), recorded so the list does not
 re-open them:**
@@ -807,6 +805,20 @@ re-open them:**
 - `src/netplay/test_sparse_effect_save.c` printed "not compiled **with**" where
   `tools/gates/run-gates.sh:179` greps "not compiled **in**". Fixed. The same
   evasion was found and fixed in `src/test/test_texcash_bounds.c`.
+- `tools/netplay/natmatrix/mech_matrix.sh` fell off the end of the file and
+  exited 0 regardless of per-rep `rc` — the last statement was an `echo`, with
+  no stage-rc propagation of the kind `tools/netplay/natmatrix/run_all.sh:27-31`
+  grew. **Closed 2026-08-30.** It now classifies every rep against
+  `rig/punch_mech.py`'s rc vocabulary (0/10 = finding, 20 and anything else =
+  the rig did not run the trial) and exits 0 / 4 (contaminated) / 3 (vacuous),
+  the same three codes `run_matrix.sh` uses. Proved with a red/green pair on a
+  stubbed copy of the driver: the pre-fix script exits 0 with every rep at
+  rc=20; the fixed script exits 3 there, 4 on a mixed run (rep 2 rig error,
+  reps 1+3 scored), 3 when the topology never comes up, and 0 both on all-rc-0
+  and on all-rc-10 — the second confirming a legitimate negative finding is
+  still green. No past grid is in doubt: both grids in `docs/nat-matrix.md`
+  were read from the JSONL rows, which have always carried `host_rc`/`join_rc`,
+  and no script in the tree ever invoked `mech_matrix.sh` to consult its rc.
 
 ---
 
