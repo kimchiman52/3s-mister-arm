@@ -97,9 +97,9 @@ per-move ERRATA verdicts §13.15 cites.
 
 **Verdict: STRUCTURAL**
 
-**Corpus citation:** `tools/frame-data/corpus-akuma.yaml:781,786` (entry
-`akuma-ashura-whiff`), section comment `tools/frame-data/corpus-akuma.yaml:747-779`
-(review ruling dated 2026-07-08 cited at lines 752 and 776):
+**Corpus citation:** `tools/frame-data/corpus-akuma.yaml:838-843` (entry
+`akuma-ashura-whiff`), section comment `tools/frame-data/corpus-akuma.yaml:786-821`
+(review ruling dated 2026-07-08 cited at lines 791 and 816):
 
 ```
 expect: { R: from-qjson, xfail: "R incomparable - zero-active teleport, whole
@@ -331,9 +331,9 @@ slash-separated `11/12/14`-shaped triplet matching EventHubs' Active
 column.
 
 **Side finding 2 (does not bear on the verdict): motion notation
-conflict.** `tools/frame-data/corpus-ibuki.yaml:646` states "CONFIRMED
+conflict.** `tools/frame-data/corpus-ibuki.yaml:787-788` states "CONFIRMED
 MOTION: Kubiori is hcf+P (Jab strength via LP), NOT hcf+K", based on
-in-repo live motion probing (`:635-646`). FAT-3S's own `plnCmd` for this
+in-repo live motion probing (the MOTION VERIFICATION block, `:776-788`). FAT-3S's own `plnCmd` for this
 exact move (`Ibuki.moves.normal["Kubiori"]`) is `"qcf+P"` (236+P), and an
 independent GameFAQs Ibuki FAQ (by _Arlieth_,
 `gamefaqs.gamespot.com/arcade/575310.../faqs/14080`, retrieved
