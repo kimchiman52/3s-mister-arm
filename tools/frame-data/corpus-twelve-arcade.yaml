@@ -1,0 +1,166 @@
+# Twelve under ARCADE (CPS3) balance -- task #133, generalisation probe.
+#
+# WHY THIS CORPUS EXISTS
+# ----------------------
+# Task #108 shipped arcade coverage for exactly two corpora (Q and Yun SA3) and
+# was explicit that "the other 18 characters port cheaply" was an ARGUMENT, not
+# a measurement. This corpus is one of three bounded tests of that
+# generalisation (task #133), alongside corpus-hugo-arcade.yaml (heaviest body,
+# command-grab machinery) and corpus-remy-arcade.yaml.
+#
+# IT IS A SLICE, NOT A PORT
+# -------------------------
+# 17 of corpus-twelve.yaml's 59 entries, chosen to span the mechanics that
+# distinguish Twelve: the two projectile/limb specials that define the character (A.X.E. and
+#   N.D.L.), plus normals, crouching normals, UOH, a throw and a jump
+#   negative control. It is NOT full arcade coverage for Twelve and does not
+# claim to be; the 42 entries not listed here are still PS2-only.
+#
+# PROVENANCE
+# ----------
+# Every `setup`/`input`/`qjson`/`outcome`/`expect` below is reproduced
+# unchanged from corpus-twelve.yaml's entry of the same label. The per-entry
+# authoring comments are NOT duplicated -- read them at that label in
+# corpus-twelve.yaml, which stays the single source of the rationale.
+#
+# RESULT
+# ------
+# 17/17 PASS under --test-balance arcade, and the parsed table is
+# byte-identical to running THIS SAME FILE under --test-balance ps2 -- the
+# control that isolates engine from corpus composition, since a slice run on
+# its own does not reproduce the full corpus's carried state. Measured
+# 2026-08-30.
+#
+# ONE ARCADE DEVIATION (task #133), not touching any `expect:`
+# ------------------------------------------------------------
+# `twelve-crroundhouse-block` says `dummy: crouch` where corpus-twelve.yaml
+# says `dummy: stand`. cr.HK is a LOW, and defense_ground_cps3() requires the
+# crouch bit to be held to guard a low (`case 8: if (!(ds->cp->sw_lvbt & 2))
+# return 2;`, hitcheck.c:1320-1321); defense_ground_ps2()'s same case has an
+# `&& ags == 0` escape (hitcheck.c:1508) that lets a STANDING training
+# ALL-GUARD dummy block a low, which is why the PS2 twin never had to say
+# `crouch`. Measured verbatim-with-`stand` under arcade: HIT adv=+24 kd=1
+# (and A read 10, not 7) instead of BLOCK adv=-11. That single rule is the ONLY
+# arcade-vs-port divergence this slice found.
+character: twelve
+oracle: twelve.json
+balance: arcade
+inter_entry_wait: 150
+entries:
+
+- label: twelve-jab-block
+  setup: {"dist": "close", "dummy": "stand"}
+  input: "press LP"
+  qjson: {"name": "Jab"}
+  outcome: BLOCK
+  expect: {"S": "from-qjson", "A": "from-qjson", "R": "from-qjson", "adv": "from-qjson"}
+
+- label: twelve-crstrong-block
+  setup: {"dist": "close", "dummy": "stand"}
+  input: "press DOWN+MP"
+  qjson: {"name": "Crouching Strong"}
+  outcome: BLOCK
+  expect: {"S": "from-qjson", "A": 1, "R": 15, "adv": "from-qjson"}
+
+- label: twelve-crroundhouse-block
+  setup: {"dist": "close", "dummy": "crouch"}
+  input: "press DOWN+HK"
+  qjson: {"name": "Crouching Roundhouse"}
+  outcome: BLOCK
+  expect: {"S": "from-qjson", "A": "from-qjson", "R": "from-qjson", "adv": "from-qjson"}
+
+- label: twelve-jab-hit
+  setup: {"dist": "close", "dummy": "none"}
+  input: "press LP"
+  qjson: {"name": "Jab"}
+  outcome: HIT
+  expect: {"S": "from-qjson", "A": "from-qjson", "R": "from-qjson", "adv": "from-qjson"}
+
+- label: twelve-fierce-hit
+  setup: {"dist": "close", "dummy": "none"}
+  input: "press HP"
+  qjson: {"name": "Fierce"}
+  outcome: HIT
+  expect: {"S": "from-qjson", "A": "from-qjson", "R": "from-qjson", "adv": "from-qjson"}
+
+- label: twelve-crfierce-hit
+  setup: {"dist": "close", "dummy": "none"}
+  input: "press DOWN+HP"
+  qjson: {"name": "Crouching Fierce"}
+  outcome: HIT
+  expect: {"S": "from-qjson", "A": 18, "R": 13, "adv": "from-qjson"}
+
+- label: twelve-lp-whiff
+  setup: {"dist": 250, "dummy": "none"}
+  input: "press LP"
+  qjson: {"name": "Jab"}
+  outcome: WHIFF
+  expect: {"S": "from-qjson", "A": "from-qjson", "R": "from-qjson"}
+
+- label: twelve-hk-whiff
+  setup: {"dist": 250, "dummy": "none"}
+  input: "press HK"
+  qjson: {"name": "Roundhouse"}
+  outcome: WHIFF
+  expect: {"S": "from-qjson", "A": "from-qjson", "R": "from-qjson"}
+
+- label: twelve-uoh-block
+  setup: {"dist": "close", "dummy": "stand"}
+  input: "press MP+MK"
+  qjson: {"name": "Universal Overhead"}
+  outcome: BLOCK
+  expect: {"S": "from-qjson", "A": 12, "R": 4}
+
+- label: twelve-uoh-hit
+  setup: {"dist": "close", "dummy": "none"}
+  input: "press MP+MK"
+  qjson: {"name": "Universal Overhead"}
+  outcome: HIT
+  expect: {"S": "from-qjson", "A": "from-qjson", "R": 4}
+
+- label: twelve-throw-hit
+  setup: {"dist": 13, "dummy": "none"}
+  input: "press LP+LK; wait 90"
+  qjson: {"name": "Throw"}
+  outcome: HIT
+  expect: {"S": "from-qjson", "A": "from-qjson", "kd": 1}
+
+- label: twelve-axe-jab-whiff
+  setup: {"dist": 250, "dummy": "none"}
+  input: "motion qcb LP"
+  qjson: {"name": "A.X.E. (Jab)"}
+  outcome: WHIFF
+  expect: {"S": "from-qjson", "A": "from-qjson", "R": "from-qjson"}
+
+- label: twelve-axe-jab-block
+  setup: {"dist": "close", "dummy": "stand"}
+  input: "motion qcb LP"
+  qjson: {"name": "A.X.E. (Jab)"}
+  outcome: BLOCK
+  expect: {"S": "from-qjson", "A": 8, "R": "from-qjson", "adv": "from-qjson"}
+
+- label: twelve-axe-jab-hit
+  setup: {"dist": "close", "dummy": "none"}
+  input: "motion qcb LP"
+  qjson: {"name": "A.X.E. (Jab)"}
+  outcome: HIT
+  expect: {"S": "from-qjson", "A": 8, "R": 12}
+
+- label: twelve-ndl-jab-block
+  setup: {"dist": "close", "dummy": "stand"}
+  input: "motion qcf LP"
+  qjson: {"name": "N.D.L. (Jab)"}
+  outcome: BLOCK
+  expect: {"S": "from-qjson", "A": "from-qjson", "R": "from-qjson", "adv": "from-qjson"}
+
+- label: twelve-ndl-jab-hit
+  setup: {"dist": "close", "dummy": "none"}
+  input: "motion qcf LP"
+  qjson: {"name": "N.D.L. (Jab)"}
+  outcome: HIT
+  expect: {"S": "from-qjson", "A": "from-qjson", "R": "from-qjson"}
+
+- label: twelve-jump-none
+  setup: {"dist": 250, "dummy": "none"}
+  input: "press UP"
+  outcome: NONE
