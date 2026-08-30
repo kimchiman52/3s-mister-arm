@@ -670,3 +670,103 @@ re-open them:**
 *Verified at `dcf7631a` (`upstream-engine-fixes`), i.e. with task #122's
 client-half (`bfa20e56`) and test (`dcf7631a`) commits applied. Re-verify every
 line number if the tree has moved.*
+
+---
+
+## #134 — the five boot-time AFS load failures — CLOSED (root-caused and fixed)
+
+Every device smoke run logged exactly five
+`ファイルの読み込みに失敗しました。ファイル番号：N` lines for N = 9, 10, 1454,
+1456, 1458, and nothing consumed the error. **Not a missing asset and not a cut
+PS2 asset — a lost wakeup in the port's async I/O layer.**
+
+**The numbers are AFS entry indices**, emitted by `load_it_use_this_key`
+(`src/sf33rd/Source/Game/io/gd3rd.c:355-380`, the message at `:378`). All five
+resolve, and all five are physically present in the shipped archive — parsed
+from `SF33RD.AFS` (1535 entries, format per `src/port/io/afs.c:89-160`):
+
+| fnum | name | size | verdict |
+| --- | --- | --- | --- |
+| 9 | `default.bin` | 61,440 | present, read inside EOF |
+| 10 | `scrscrn.ppg` | 50,348 | present, read inside EOF |
+| 1454 | `ef02_usa.bin` | 1,128,236 | present, read inside EOF |
+| 1456 | `ef06.bin` | 595,800 | present, read inside EOF |
+| 1458 | `ef40.bin` | 170,688 | present, read inside EOF |
+
+The sibling "file number is abnormal" message (`gd3rd.c:311-312`, the
+`AFS_GetFileCount` bound test and the `flLogOut` it guards) was never logged,
+which already ruled out an out-of-range index.
+
+**Root cause.** `AFS_ReadSync` (`src/port/io/afs.c`) drained the async queue and
+decided whose completion it had by reading `request->index` **after**
+`process_asyncio_outcome` had run. That handler `SDL_zerop()`s a slot whose
+deferred close has landed, which resets `index` to 0 — so every such completion
+was indistinguishable from slot 0's, and `AFS_ReadSync(0, ...)` returned while
+its own read was still in flight. `fsCheckFileReaded` then saw
+`AFS_READ_STATE_READING`, `fsFileReadSync` reported failure, and the retry loop
+in `load_it_use_this_key` (`gd3rd.c:355-380`) logged and retried — the retry succeeding, because nothing was
+ever wrong with the file. Second half of the same defect: `AFS_Open` reuses the
+first free slot, so a CLOSE completion left over from the slot's previous user
+carried the same index and would end the wait just as wrongly.
+
+**Fixed** by reading the slot identity before the handler can zero it and by
+ending the wait only on this slot's own `SDL_ASYNCIO_TASK_READ`.
+
+**Reproduced and proven on the host, no device needed.** The bug is in shared
+port code, not MiSTer-specific:
+
+```
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  build/host-release/3S-ARM.app/Contents/MacOS/3S-ARM --headless --perf-capture 600
+```
+
+Before: the same five numbers, in call order `9, 1456, 1458, 10, 1454`
+(`Init_load_on_memory_data` at `src/sf33rd/Source/Game/rendering/aboutspr.c:102-109`,
+then `Scrscreen_Init` at `src/sf33rd/Source/Game/ui/sc_sub.c:425-437`, then
+`checkSelObjFileLoaded` at `src/sf33rd/Source/Game/rendering/texgroup.c:558`).
+After: zero, with 600 frames still completing.
+
+**The 379 ms startup outliers are a consequence, not a separate cause.** The
+outlier test (`src/port/sdl/sdl_app.c:3627`, threshold 50 ms — its comment
+still says 25 ms and is stale) measures a window that encloses the blocking
+loads (`src/main.c:902-904`). Each failure made the game read the file twice —
+for fnum 1454 that is 2 x 551 x 2048 = 2,256,896 bytes of blocking I/O in one
+frame. The host reproduces the failures but logs **no** outlier at all, so the
+379 ms figure is the device's slower storage crossing the threshold on the
+doubled read. **Not verified on hardware** — the device lock was held.
+
+---
+
+## Citation-cost measurement (analysis only, no scheme landed)
+
+Re-measured at `522e574c`, linter `check_doc_citations.py` sha256
+`3acc6c44c93fd0d6cf567acf5fff76501f8e2a4eacb2c5ba005102eadc508073`. **The
+working tree also carried three other lanes' uncommitted edits at the time**,
+so these are counts over that tree, not over the commit alone.
+
+That caveat is not decoration. The same script run twenty minutes earlier at
+`81571c85` gave 3,521 line anchors, 1,020 clean and 996 moved, against 3,540 /
+1,014 / 1,017 here. A ceiling fitted to either number would have been red at
+the other — which is the concrete form of the hazard that sank the previous
+`<tree> [unanchored-citation]` ceiling.
+
+- **3,540** line-anchored citations tree-wide; 12,015 positionless references
+  (3,042 bare paths + 8,973 backticked symbols). Line anchors are 22.8% of all
+  references.
+- Only **2,217 of the 3,540 make a checkable claim at all**. Of those: 45.7%
+  clean, 45.9% merely moved, and **8.4% (186) name a file that has never
+  contained the symbol the prose claims.** The linter is silent on that last
+  class by design ("absence of proof is not a finding"), so the class most
+  likely to be a genuine defect is the one nothing reports. That 186 was
+  identical at both commits.
+- Line-anchor invalidation over the last 30 h alone: **69 of 283** citations
+  carrying a uniquely-locatable symbol (24.4%) had that symbol move, i.e. would
+  have needed a hand repoint. The symbol itself stayed resolvable in every one.
+- **22 commits on this branch have "repoint" as their subject**, all inside that
+  same 30 h window (1,019 insertions / 486 deletions across 84 file-touches).
+- In the 11 enforced scopes: **85.2% of resolvable citations are pure pointers**;
+  only 14.8% restate a value the code defines (17.6% under a looser literal
+  test). Hand-auditing 12 sampled "stale value" findings, every one I could
+  check concretely was a false positive — bare line numbers in prose, markdown
+  table row bleed, or a value the code computes rather than spells. **Value
+  duplication is not a significant staleness surface in the enforced scopes.**
