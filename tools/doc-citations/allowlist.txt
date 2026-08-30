@@ -4,3 +4,4 @@
 # Every entry here is a check switched off. Prefer correcting the prose.
 # Before adding something, confirm it is genuinely not a symbol of this tree --
 # a real missing symbol added here is the exact defect the linter exists for.
+__builtin___snprintf_chk    # a clang builtin, not a symbol of this tree. tools/gates/fortify_blind_sweep.py must name it: it is what Darwin's <secure/_stdio.h> rewrites snprintf() into, which is the precise reason -Wformat-truncation cannot fire on the host (task #106).

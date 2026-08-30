@@ -44,7 +44,7 @@
  * tree, and the reason is structural, not effort:
  *
  *   - NetplayNav's state machine ends at NAV_START_NETPLAY -> NAV_DONE
- *     (netplay/netplay_nav.c:458-461) and injects no input past that
+ *     (netplay/netplay_nav.c:468-471) and injects no input past that
  *     point, so two auto-navigated peers connect and then sit in
  *     character select forever (docs/netplay-auto-nav.md:33-34, :88).
  *   - The only character-select automation in the tree is the test

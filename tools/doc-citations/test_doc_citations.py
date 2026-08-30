@@ -52,6 +52,12 @@ MUST_CATCH = [
      "drift", "texgroup.c:440-443"),
     ("6 path that never existed at that location",
      "wrong-path", "tools/mister/build-deps.sh"),
+    # Task #110. The blind spot anchor-required.txt closes: a bare line number
+    # into a macro table, anchored to nothing. If this stops being caught, the
+    # ~186 game_state.c citations that motivated the check are silently
+    # accepted again.
+    ("7 bare line citation into an anchor-required file",
+     "unanchored-citation", "src/netplay/game_state.c:580"),
 ]
 
 # Case 4 is a documented RECALL GAP, asserted as such so that it cannot be

@@ -35,6 +35,7 @@ files; the sample size is given so you can weigh it.
 | `drift` | error | 23/40 | file and line exist, but the line no longer contains the symbol the citation is about. Carries the line where the symbol actually is. |
 | `wrong-path` | error† | 5/9 | the path has never existed, but a file with that basename does — carries the suggestion. |
 | `line-out-of-range` | error | 4/9 | the file has fewer lines than the citation claims. |
+| `unanchored-citation` | error | 20/20 | a citation into an `anchor-required.txt` file that names nothing checkable. Precision is 20/20 by construction: it reports the ABSENCE of a claim, so it cannot be wrong about one — but see the caveat below. |
 | `phantom-path` | advisory | **0/9** | no commit on any ref has ever contained this path. |
 | `phantom-identifier` | advisory | **1/9** | a backticked symbol absent from all current code *and* all historical revisions. |
 | `stale-path` | advisory | — | the path existed and was deleted. A historical record, not a fabrication. |
@@ -87,6 +88,10 @@ Three files, each requiring a written reason per entry:
 - `allowlist.txt` — identifiers that are legitimately not symbols of this repo.
 - `record-documents.txt` — globs for proposals and superseded write-ups, where
   naming a not-yet-existing thing is the document's job.
+- `anchor-required.txt` — globs for files where a bare `file:LINE` is an ERROR
+  rather than silently accepted, because the file is a dense table whose line
+  numbers move in bulk. Listed files also contribute their own macro arguments
+  as anchor candidates, so short member names can anchor at all.
 - `external-paths.txt` — paths that deliberately point at another repository or
   another machine, which no amount of checking this tree can resolve.
 
@@ -138,3 +143,41 @@ python3 tools/doc-citations/check_doc_citations.py --baseline b.json   # exit 1 
 The baseline is a derived artifact and is **not** committed (`.gitignore`) —
 a checked-in list of known-bad citations would itself go stale, which is the
 failure this tool exists to catch. Generate it in CI at the pinned commit.
+
+## The anchor model, and what it still cannot see (task #110)
+
+A citation is checked by finding an **anchor** — a symbol named in the prose
+around it — and asking whether the cited line mentions that symbol. Everything
+follows from that, including the limits.
+
+A citation that names no symbol has no anchor, so there is nothing to test, so
+it is accepted. Forever. That silence is deliberate for most of the tree:
+demanding an anchor everywhere would bury the real findings. But it fails badly
+in one shape — a long mechanical table where every insertion moves everything
+below it. `src/netplay/game_state.c` is 609 `GS_SAVE`/`GS_LOAD` pairs on the
+rollback save/load path, and a wrong line number there sends a desync
+investigation to the wrong member. Files listed in `anchor-required.txt` are
+therefore held to a higher standard: cite something checkable, or be reported.
+
+Two supporting details matter more than they look:
+
+- **Short members can now anchor.** The generic rule needs a token of at least
+  `MIN_IDENT_LEN` characters containing an underscore. 80 of game_state.c's 609
+  members are shorter than that — `bg_w`, `M_Lv`, `VS_Index` — so requiring an
+  anchor without this would demand something the checker had already decided it
+  could not see. Anchor-required files supply a vocabulary derived from their
+  own macro CALL sites (see `macro_vocabulary`).
+- **`#define` lines are excluded from that vocabulary**, because a macro
+  definition names formal parameters, not members. Admitting them let the
+  English word "row" — from `EFFL8_ROW_IN_RANGE(row)` — outrank a correctly
+  backticked `ca_check_flag` and produce a confident, wrong drift report.
+
+**The caveat on `unanchored-citation`'s precision.** It reports that a citation
+makes no checkable claim, which is a fact about the prose, not a guess about
+the code. What it cannot tell you is whether the citation is *also* wrong. Of
+the 20 recorded in `baselines.txt`, measurement showed most were **never
+right** — authored against a working tree that a later squash removed, so they
+were internally consistent when written and match no commit in this repository.
+Repointing such a number would manufacture a citation nobody ever verified, so
+they are reported and left alone. `--fix` does not touch this code, and cannot:
+there is no anchor to derive a target from.

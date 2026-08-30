@@ -258,7 +258,9 @@ The log's "24 FAIL:handle=0" count therefore does not imply layer 0 is broken; i
 
 ### C.1 What `GameState_Save` / `GameState_Load` touch
 
-From `src/netplay/game_state.c:580-603` (Save) and `:1271-1291` (Load):
+From `src/netplay/game_state.c:721-739` (Save, `GS_SAVE(bg_w)` through
+`GS_SAVE(rw_dat)`) and `:1444-1462` (Load, `GS_LOAD(bg_w)` through
+`GS_LOAD(rw_dat)`):
 
 - `GS_SAVE(bg_w)` → `bg_w.stage, bg_w.area, bg_w.bg_index, bg_w.scno, bg_w.scrno, bg_w.bg_routine, bg_w.bg_r_1, bg_w.bg_r_2, bg_w.compel_flag, bg_w.bgw[7], bg_w.bg_opaque, bg_w.pos_offset, bg_w.scr_stop, bg_w.frame_flag, …` — all restored.
 - `GS_SAVE(Screen_Switch)` and `GS_SAVE(Screen_Switch_Buffer)` — restored.

@@ -50,3 +50,16 @@ citation put back to the value it drifted from:
 ## 6 -- a path that has never existed at that location  [wrong-path]
 
 Desktop dependencies are installed by `tools/mister/build-deps.sh`.
+
+## 7 -- a bare line citation into an anchor-required file  [unanchored-citation]
+
+Task #110. This is the shape that was invisible before anchor-required.txt
+existed: a line number into a dense macro table, with prose that names nothing
+the checker can test. It must be reported, not silently accepted.
+
+    The rollback save set pins this value; see
+    src/netplay/game_state.c:580.
+
+(Deliberately anchor-free. If a future edit adds a symbol name to the sentence
+above, this case stops testing what it is for -- the citation would then be
+checked by the ordinary drift path instead.)

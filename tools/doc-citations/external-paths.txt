@@ -15,3 +15,10 @@ artifacts/**            # uncommitted scratchpad outputs from research sessions
 fightcade-fbneo/**      # external FBNeo checkout on the capture rig
 crowded-street/**       # the upstream 3s-decomp project, a different repository
 3s-decomp/**            # ditto, cited under its short name
+
+# Task #106. The macOS SDK header whose _FORTIFY_SOURCE macro rewrites
+# snprintf() to __builtin___snprintf_chk() and so hides -Wformat-truncation
+# from every host build. tools/gates/fortify_blind_sweep.py has to name it to
+# explain why that gate exists; it lives in Xcode, not in this repository.
+*MacOSX.sdk/usr/include/**   # macOS SDK headers, cited to explain host blindness
+secure/_stdio.h              # ditto, cited under its short SDK-relative name

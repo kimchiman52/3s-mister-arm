@@ -783,12 +783,71 @@ def unwrap_identifiers(raw):
     return out
 
 
-def is_symbol_candidate(tok):
+def is_symbol_candidate(tok, extra_vocab=None):
+    """Could this prose token be naming a symbol?
+
+    The default rule is deliberately blunt -- >= MIN_IDENT_LEN and containing an
+    underscore -- because below that, snake_case tokens in prose are more often
+    accidents than symbols.
+
+    extra_vocab (task #110) is an escape from that bluntness for the files where
+    it does the most damage. In a macro table like src/netplay/game_state.c, the
+    thing a citation is about is a save-set MEMBER NAME, and 80 of that file's
+    609 members are shorter than MIN_IDENT_LEN -- `bg_w`, `M_Lv`, `VS_Index`.
+    The generic rule can never anchor on any of them, so every citation about
+    one of them is unanchorable by construction. When the cited file supplies a
+    mechanically-derived vocabulary of its own macro arguments, membership in
+    that vocabulary is better evidence than any length heuristic, so it is
+    accepted directly. This only ever ADDS candidates.
+    """
+    if extra_vocab and tok in extra_vocab:
+        return RE_IDENT_FULL.match(tok) is not None
     return (
         len(tok) >= MIN_IDENT_LEN
         and "_" in tok
         and RE_IDENT_FULL.match(tok) is not None
     )
+
+
+# An ALL-CAPS macro call taking an identifier as its first argument:
+# GS_SAVE(bg_w), GS_LOAD(zoom_request_flag), HASHONE(x). This is how the
+# save-set files name their members, and it is the whole vocabulary that
+# matters for citations into them.
+RE_MACRO_ARG = re.compile(
+    r"\b[A-Z][A-Z0-9_]{2,}\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*[,)]")
+
+# A preprocessor definition. Its arguments are formal parameters, not members.
+RE_DEFINE_LINE = re.compile(r"^\s*#\s*define\b")
+
+_MACRO_VOCAB_CACHE = {}
+
+
+def macro_vocabulary(target, flines):
+    """Identifiers this file names as macro CALL arguments.
+
+    Mechanical and self-maintaining: it is derived from the file as it is right
+    now, so adding a GS_SAVE() line makes that member citable in the same commit
+    that adds it, with nobody maintaining a list. Cached per target.
+
+    `#define` lines are skipped, and that exclusion is load-bearing rather than
+    tidiness. A macro DEFINITION names its formal parameters, which are not
+    symbols anybody cites -- game_state.c:193 defines
+    EFFL8_ROW_IN_RANGE(row), and admitting `row` to the vocabulary made the
+    English word "row" outrank a correctly-backticked `ca_check_flag` as an
+    anchor, producing a confident and wrong drift report against
+    docs/research-desync-deep-investigation.md:825 ("if outcome G.2 row 2").
+    Call SITES name members; definitions name placeholders.
+    """
+    if target in _MACRO_VOCAB_CACHE:
+        return _MACRO_VOCAB_CACHE[target]
+    vocab = set()
+    for ln in flines:
+        if RE_DEFINE_LINE.match(ln):
+            continue
+        for m in RE_MACRO_ARG.finditer(ln):
+            vocab.add(m.group(1))
+    _MACRO_VOCAB_CACHE[target] = vocab
+    return vocab
 
 
 def load_allowlist(path):
@@ -849,7 +908,7 @@ class Finding:
 # Checks
 # ---------------------------------------------------------------------------
 
-def anchor_tokens(unit, cite_off, cite_text):
+def anchor_tokens(unit, cite_off, cite_text, extra_vocab=None):
     """Identifier-shaped tokens belonging to THIS citation, best evidence first.
 
     Backticked tokens rank above bare ones: an author who backticked it was
@@ -915,13 +974,13 @@ def anchor_tokens(unit, cite_off, cite_text):
     nearby = set()
     for m in RE_BACKTICK.finditer(window):
         for t in unwrap_identifiers(m.group(1)):
-            if is_symbol_candidate(t) and t not in path_words:
+            if is_symbol_candidate(t, extra_vocab) and t not in path_words:
                 nearby.add(t)
                 if owns(m.start()):
                     ranked.append((0, -len(t), t))
     for m in RE_WORD.finditer(window):
         t = m.group(0)
-        if is_symbol_candidate(t) and t not in path_words:
+        if is_symbol_candidate(t, extra_vocab) and t not in path_words:
             nearby.add(t)
             if owns(m.start()):
                 ranked.append((1, -len(t), t))
@@ -942,7 +1001,7 @@ def anchor_tokens(unit, cite_off, cite_text):
 
 
 def check_path_cites(repo, unit, findings, seen_paths, history, dclass,
-                     external_globs):
+                     external_globs, anchor_required_globs=()):
     text = unit.text
 
     def unresolved(cited, line_no, how):
@@ -1045,9 +1104,52 @@ def check_path_cites(repo, unit, findings, seen_paths, history, dclass,
                           % (target, lo, flines[lo - 1].strip() or "(blank)")]))
             return True
 
-        anchors, nearby = anchor_tokens(unit, mstart, matched_text)
+        # ANCHOR-REQUIRED FILES (task #110).
+        #
+        # A citation with no anchor is unfalsifiable: `game_state.c:580` claims  # doccite:quote
+        # nothing a checker can test, so it is accepted forever no matter how
+        # far the file moves underneath it. When select_timer_state was removed
+        # from GameState, ~136 such citations shifted tree-wide and the linter
+        # reported none of them -- and spot-checks then showed several had been
+        # wrong even before the shift.
+        #
+        # For most of the tree that silence is the right trade: demanding an
+        # anchor everywhere would bury real findings under thousands of
+        # unactionable ones. But for a macro table on the rollback save/load
+        # path it is the worst possible place to be blind. game_state.c is
+        # 2,653 lines of 609 GS_SAVE/GS_LOAD pairs; every save-set change moves
+        # everything below it, and a wrong line number here sends a future
+        # desync investigation to the wrong member.
+        #
+        # So files listed in anchor-required.txt are held to a higher standard:
+        # cite something checkable, or be reported. Note the ORDER -- the
+        # vocabulary is computed first so that short member names like `bg_w`
+        # can anchor at all (see is_symbol_candidate); reporting a citation as
+        # unanchored when the linter simply refused to look at its anchor would
+        # be a fabricated finding.
+        must_anchor = any(fnmatch.fnmatch(target, g)
+                          for g in anchor_required_globs)
+        vocab = macro_vocabulary(target, flines) if must_anchor else None
+        anchors, nearby = anchor_tokens(unit, mstart, matched_text, vocab)
         if not anchors:
-            degenerate()
+            if degenerate():
+                return
+            if must_anchor:
+                findings.append(Finding(
+                    "unanchored-citation", "error", unit.path, line_no,
+                    "cited %s:%s with nothing to anchor against"
+                    % (target, ("%d-%d" % (lo, hi)) if hi else str(lo)),
+                    evidence=[
+                        "%s:%d is: %s"
+                        % (target, lo, flines[lo - 1].strip()[:110] or "(blank)"),
+                        "this file is anchor-required (see "
+                        "tools/doc-citations/anchor-required.txt): a bare "
+                        "line number here cannot be checked and cannot be "
+                        "repaired mechanically",
+                        "name the member or symbol the line is supposed to "
+                        "hold, e.g. GS_SAVE(bg_w), so the claim becomes "
+                        "falsifiable",
+                    ]))
             return
         cited_body = "\n".join(flines[lo - 1:hi_eff])
         cited_words = set(RE_WORD.findall(cited_body))
@@ -1280,6 +1382,11 @@ def main(argv=None):
                     help="globs for RECORD-class documents (proposals and "
                          "superseded write-ups) where a not-yet-existing "
                          "name is the point rather than a defect")
+    ap.add_argument("--anchor-required",
+                    default=os.path.join(SCRIPT_DIR, "anchor-required.txt"),
+                    help="globs for files where a citation MUST name something "
+                         "checkable; a bare file:LINE into one of these is an "
+                         "error rather than silently accepted")
     ap.add_argument("--include-testdata", action="store_true",
                     help="also scan tools/doc-citations/testdata (fixtures)")
     ap.add_argument("--no-history", action="store_true",
@@ -1305,6 +1412,7 @@ def main(argv=None):
     history = History(root, enabled=not args.no_history)
     record_globs = load_record_globs(args.record_globs)
     external_globs = load_record_globs(args.external_paths)
+    anchor_required_globs = load_record_globs(args.anchor_required)
 
     extra = ["tools/doc-citations/testdata"] if args.include_testdata else None
     targets = scan_targets(repo, extra)
@@ -1321,7 +1429,8 @@ def main(argv=None):
         for unit in prose_units(repo, relpath):
             if "c1" in checks or "c3" in checks:
                 check_path_cites(repo, unit, findings, seen_paths, history,
-                                 dclass, external_globs)
+                                 dclass, external_globs,
+                                 anchor_required_globs)
             if "c2" in checks:
                 check_identifiers(repo, unit, findings, allowed, stats, history, dclass)
             if "c4" in checks:
@@ -1329,7 +1438,8 @@ def main(argv=None):
 
     if "c1" not in checks:
         findings = [f for f in findings
-                    if f.code not in ("drift", "line-out-of-range")]
+                    if f.code not in ("drift", "line-out-of-range",
+                                      "unanchored-citation")]
     if "c3" not in checks:
         findings = [f for f in findings
                     if f.code not in ("missing-path", "wrong-path")]

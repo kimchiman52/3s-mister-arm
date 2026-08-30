@@ -241,7 +241,8 @@ branch A above). So the branch-C quirk never surfaces.
 In the port of /tmp/3sxtra, `setup_vs_mode()` resets most rollback-hashed
 fields but **explicitly omits `New_Challenger`**. Not commented; simply not
 touched. Likely because NC is not part of the tier-1 netplay-sync audit (it's
-hashed in the GameState rollback snapshot at `game_state.c:138` but the
+hashed in the GameState rollback snapshot at `GS_SAVE(New_Challenger)`,
+`game_state.c:254`, but the
 netplay team didn't recognise that its initial value matters for
 Setup_Battle_Country).
 

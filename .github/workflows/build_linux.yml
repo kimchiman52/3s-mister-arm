@@ -3,6 +3,25 @@ name: Build (Linux)
 on:
     pull_request:
         branches: [ "main", "netplay" ]
+    # Task #106. This job compiles with clang against GLIBC headers, and that
+    # combination is the only one in CI that can see a whole class of defect
+    # the macOS host is structurally blind to: Darwin's <secure/_stdio.h>
+    # macro-rewrites snprintf() to __builtin___snprintf_chk() under the default
+    # _FORTIFY_SOURCE, and clang's -Wformat-truncation check keys on the
+    # snprintf builtin, so it never fires on macOS. glibc does no such rewrite.
+    #
+    # The -Wformat-truncation error that failed the first ARM cross-build of
+    # ed37cb42 -- after nine harnesses, the shipped-config build and frame-data
+    # 94 GREEN all passed -- would have been caught here. It was not, because
+    # this workflow only ever ran on pull requests into main/netplay, and the
+    # work was happening on upstream-engine-fixes with no such PR open. The
+    # coverage existed and was unreachable.
+    #
+    # So it now runs on push to any branch. See tools/gates/run-gates.sh for
+    # the local gate set and tools/gates/host-diagnostic-parity.sh for the
+    # host-side check that closes the same gap without waiting for CI.
+    push:
+        branches: [ "**" ]
 
 jobs:
     build:
