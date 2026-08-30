@@ -570,7 +570,7 @@ static inline uint64_t netplay_utc_ms(void) {
 // is what makes it thread-safe for free and what makes it impossible for
 // the two files to disagree about what happened.
 
-// MIST_BUILD_HASH is NOT a global compile definition: CMakeLists.txt:174-177
+// MIST_BUILD_HASH is NOT a global compile definition: CMakeLists.txt:210-213
 // attaches it with set_property(SOURCE ...) to a specific source list. This
 // TU is on that list (see the same block), but the #ifdef stays so that a
 // build system change downgrades the header field to "unknown" instead of
