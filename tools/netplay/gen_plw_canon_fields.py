@@ -18,10 +18,16 @@ resulting member-path lists are required to be identical; a difference would
 mean a member exists on only one architecture, which the canonical image cannot
 represent.
 
-Aggregate members are descended into only when they are unions (whose branches
-overlap) — every other nested struct is emitted whole, and the generated
-header's own coverage assertions (see src/netplay/test_gs_coverage.c) prove the
-result tiles PLW exactly.
+Aggregate members are descended into EXCEPT when they are unions: a union is
+emitted WHOLE, because its branches overlap and descending would count the same
+bytes more than once, while every other nested struct is descended into. The
+generated header's own coverage assertions (see src/netplay/test_gs_coverage.c)
+prove the result tiles PLW exactly.
+
+(This paragraph stated the rule backwards until task #131. The code has always
+been the version above — parse_plw descends when a node has children and is not
+a union, and emits-then-skips otherwise — so only the prose was wrong and no
+generated output ever changed.)
 """
 
 import argparse

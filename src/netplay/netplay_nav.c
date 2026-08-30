@@ -130,9 +130,15 @@ static void inject_start_press(void) {
  * A smaller FLAT constant is not the fix, for two reasons. The shallow
  * one: at the config ceiling (race-budget-ms 30000, stun-timeout-ms
  * 15000) the joiner's attempts legitimately total 92.8 s and the host's
- * port-map + STUN retry ladder 120.2 s, so any constant short enough to
+ * port-map + STUN retry ladder 87.05 s, so any constant short enough to
  * be good UX at the shipped defaults would abort a legal maximal config
- * mid-attempt — a spurious failure, which is worse than a slow one. The
+ * mid-attempt — a spurious failure, which is worse than a slow one.
+ * (The host figure read 120.2 s until #96 latched the port-map verdict
+ * and stopped re-probing on every rung; #131 then added back the 600 ms
+ * of per-rung worker startup the ladder macro had been undercounting.
+ * Both numbers are DERIVED in direct_p2p.c and pinned by _Static_assert
+ * there — this sentence is prose about them, so it is the half that can
+ * go stale, and twice now has.) The
  * deep one: a constant is what rotted. Replacing one constant whose
  * derivation went stale with another constant whose derivation can go
  * stale fixes today's number and not the failure mode.

@@ -57,8 +57,8 @@ All from `src/netplay/direct_p2p.c` (current lines); labels from
 
 | Terminal state | Status text | Raised at |
 |---|---|---|
-| `DIRECT_P2P_FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:3671, 1146; thread-spawn failure paths in Begin* :1991/:2051; joiner: :1217 |
-| `DIRECT_P2P_FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:5310, 4574 |
+| `DIRECT_P2P_FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:3673, 1146; thread-spawn failure paths in Begin* :1991/:2051; joiner: :1217 |
+| `DIRECT_P2P_FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:5312, 4576 |
 | `FAILED_SYMMETRIC` | "Could not connect. Try a different network." | joiner bypasses :1152/:1158/:1165 (host side no longer has a terminal gate — same-IP DELIVERs are ignored as stale self-registrations, review H1) |
 | `FAILED_BILATERAL` | "Could not connect. Try a different network." | joiner signaling/punch failures :1189-:1336; host: punch-thread spawn failure :1719, retry-budget exhaustion :2130 (review M1: a single host-side punch failure returns to HOST_WAITING) |
 | `FAILED_HANDSHAKE` | MIST reject reason | R-1 path, :1435 |
@@ -691,7 +691,7 @@ cadence). The host receives CHALLENGEs on the **main** thread while
 REGISTER resends are built on the rendezvous **worker** thread, so the
 8-byte cookie crosses via a seqlock (`signal_cookie_publish`, direct_p2p.c:793;
 `signal_cookie_snapshot`, direct_p2p.c:808) and the main thread also
-echoes immediately (`host_handle_challenge`, direct_p2p.c:4939).
+echoes immediately (`host_handle_challenge`, direct_p2p.c:4941).
 `Rendezvous_ParseChallenge` (rendezvous.c:196) validates magic, version,
 type **and** that the frame carries *our* session key (cross-talk +
 forgery gate — the key embeds the S4b nonce), and **zeroes its output on
@@ -1379,12 +1379,12 @@ for the joiner's two attempts. Verified headroom against the callers:
   `NETPLAY_SESSION_CONNECTING` (`netplay.c:2395-2414`), i.e. *after* the
   handoff, and bounds GekkoNet's sync, not establishment.
 - The bound that does apply is nav's NAV_WAIT_ORCHESTRATOR deadline
-  (`nav_orch_timeout_frames` at `netplay_nav.c:163`, enforced at
-  `netplay_nav.c:438`). **Task #76 changed this from a flat `150 * 60`
+  (`nav_orch_timeout_frames` at `netplay_nav.c:169`, enforced at
+  `netplay_nav.c:444`). **Task #76 changed this from a flat `150 * 60`
   frames to a derived bound**: it is now
   `DirectP2P_OrchWorstCaseMs()` plus `NAV_ORCH_TIMEOUT_MARGIN_MS`, summed
   from the orchestrator's own live clamped budgets in
-  `DirectP2P_OrchWorstCaseMsForRole` (`direct_p2p.c:6375`). At the
+  `DirectP2P_OrchWorstCaseMsForRole` (`direct_p2p.c:6377`). At the
   shipped defaults the joiner's deadline is 31 800 ms (1 908 frames), not
   150 000 ms. 18 400 ms of race against 31 800 ms is 1.7x headroom rather
   than 8.2x — still comfortable, and the two tail exemptions are now
@@ -1847,7 +1847,7 @@ the neutralisation record.
 
   - The host enters the race **only** from `try_handle_deliver`, and
     only while still in `HOST_WAITING`
-    (`try_handle_deliver` at `src/netplay/direct_p2p.c:4824`,
+    (`try_handle_deliver` at `src/netplay/direct_p2p.c:4826`,
     `HOST_WAITING` gate at `:4279`, `host_bilateral_punch_thread_fn`
     spawn at `:4372`). *[The three numbers previously here — `:3821`,
     `:3658`, `:3751` — named a thread-join line, a timings assignment and
@@ -2222,7 +2222,7 @@ at once.
   existing `preferred_external = s_upnp_mapping.external_port` line
   already did.
 - **The renewal interval now follows the granted lease**
-  (`portmap_renew_interval_ms`, direct_p2p.c:2948). RFC 6886 §3.3: "The
+  (`portmap_renew_interval_ms`, direct_p2p.c:2950). RFC 6886 §3.3: "The
   NAT gateway MAY reduce the lifetime from what the client requested."
   A router granting 120 s against our 3600 s request would have
   silently lost the mapping 28 minutes before a fixed half-hour timer
@@ -2569,14 +2569,14 @@ runs on Linux.
   worker is either joined or detached-and-abandoned, and that a detached
   straggler can never be followed by a renewal. That covers a *renewal*.
   It does not cover a second *probe*, and the second probe is reachable:
-  `SDL_DetachThread` (`direct_p2p.c:2673`) abandons the timed-out
+  `SDL_DetachThread` (`direct_p2p.c:2675`) abandons the timed-out
   worker, and `try_portmap` returns false **without** adopting the
   result — the `s_upnp_mapping` assignment is on the joined path only
   (`direct_p2p.c:2584`) — so `s_upnp_mapping.active` stays false; the
   FAILED_STUN auto-retry re-spawns `host_thread_fn`
   (`direct_p2p.c:5700`); the "reuse the live mapping" shortcut is gated
-  on that same `s_upnp_mapping` flag (`direct_p2p.c:3446`) and is
-  therefore skipped; and `try_portmap` runs again (`direct_p2p.c:3589`),
+  on that same `s_upnp_mapping` flag (`direct_p2p.c:3448`) and is
+  therefore skipped; and `try_portmap` runs again (`direct_p2p.c:3591`),
   spawning a second worker into `Natpmp_AddMapping` while the straggler
   may still be inside it. `s_pcp_nonce` / `s_pcp_nonce_valid` /
   `s_pcp_nonce_port` (`s_pcp_nonce` is at `natpmp.c:496`) and

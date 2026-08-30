@@ -2640,7 +2640,9 @@ static bool try_portmap(uint16_t internal_port, uint16_t preferred_external) {
      *
      * S7: the worker may now run TWO backends serially, so the outer
      * deadline is UPNP_PROBE_BUDGET_MS + NATPMP_PROBE_BUDGET_MS. That
-     * 10 s ceiling is reached only when BOTH protocols are dead silent;
+     * 11.25 s ceiling (6000 + 3 x 1750, the value the loop below actually
+     * enforces via PORTMAP_PROBE_BUDGET_MS) is reached only when BOTH
+     * protocols are dead silent;
      * the case S7 exists for — a NAT-PMP router with no IGD — costs
      * ~2 s (miniupnpc's own UPNP_DISCOVER_TIMEOUT_MS) plus one LAN
      * round-trip, because a router that speaks NAT-PMP answers
