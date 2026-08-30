@@ -3,7 +3,7 @@
 # matrix inside Linux network namespaces, and emit one JSON line per attempt.
 #
 # Cascade under test: STUN -> direct punch -> rendezvous signaling -> bilateral
-# punch (all raced concurrently by p2p_race, src/netplay/direct_p2p.c:1721).
+# punch (all raced concurrently by p2p_race, src/netplay/direct_p2p.c:1724).
 # There is no relay; the S5 relay was removed and is deliberately not modelled.
 #
 # For every cell we record the MEASURED NAT type on each side (rig/nat_classify.py)
@@ -152,33 +152,53 @@ for B in $TYPES; do
     MEAS_A="${MEAS_A:-unmeasured}"; MEAS_B="${MEAS_B:-unmeasured}"
     echo "  declared A=$A B=$B | measured A=$MEAS_A B=$MEAS_B" >&2
 
-    # --- impairments ---
-    "$NATNS" netem A "$OWD_A" "$JITTER" "$LOSS" >/dev/null 2>&1
-    "$NATNS" netem B "$OWD_B" "$JITTER" "$LOSS" >/dev/null 2>&1
-    "$NATNS" deliverloss "$DELIVER_LOSS" A       >/dev/null 2>&1
-
-    # --- joiner port-map gateway (#121) -----------------------------------
-    # Started AFTER classification on purpose: measA/measB must describe the
-    # NAT as the rig configured it, not as a granted mapping temporarily makes
-    # it look. If the mock refuses to come up the cell is a RIG error, not a
-    # NAT finding, so say so and skip rather than quietly running without it.
     PROBE_JOIN_EXTRA=""
-    if [ "$NATPMP_JOINER" = 1 ]; then
-        if "$NATNS" portmap B up >"$WORK/portmapB_${A}_${B}.log" 2>&1; then
-            PROBE_JOIN_EXTRA="--natpmp-gateway $JOINER_LAN_GW"
-        else
-            echo "  PORTMAP_UP_FAILED (side B)" >&2
-            sed -n '1,20p' "$WORK/portmapB_${A}_${B}.log" >&2
-            printf '{"label":"%s","natA":"%s","natB":"%s","rep":0,"cell_status":"RIG_ERROR","reason":"portmap B up failed"}\n' \
-                "$LABEL" "$A" "$B" >> "$OUT"
-            rig_errors=$((rig_errors+1))
-            "$NATNS" down >/dev/null 2>&1
-            continue
-        fi
-    fi
 
     for rep in $(seq 1 "$REPS"); do
         stop_servers
+
+        # REPETITIONS MUST BE INDEPENDENT (task-102, re-landed in task #126).
+        # The classification pass above, and every earlier rep, leave live
+        # conntrack entries and live xt_recent entries in the NAT namespaces --
+        # both outlive a rep by design (120 s, set in natns.sh apply_nat). A warm
+        # NAT is a DIFFERENT NAT: measured on this rig, addr-restricted x
+        # fullcone answered the host's punch from external port 22733 on rep 1
+        # and from 7000 on reps 2 and 3, because rep 1 had already put the peer's
+        # address into the s8sent list. Reps 2+ were then not replications of rep
+        # 1 at all, and averaging them hid a 1-in-3 failure. Tearing the topology
+        # down and back up is the only way to clear per-namespace netfilter state
+        # without a conntrack(8) binary on the rig host.
+        "$NATNS" portmap B down >/dev/null 2>&1
+        "$NATNS" up "$A" "$B" >>"$WORK/up.log" 2>&1
+
+        # --- impairments (re-applied: the re-up above cleared them) ---
+        "$NATNS" netem A "$OWD_A" "$JITTER" "$LOSS" >/dev/null 2>&1
+        "$NATNS" netem B "$OWD_B" "$JITTER" "$LOSS" >/dev/null 2>&1
+        "$NATNS" deliverloss "$DELIVER_LOSS" A       >/dev/null 2>&1
+
+        # --- joiner port-map gateway (#121) -------------------------------
+        # Started AFTER classification on purpose: measA/measB must describe
+        # the NAT as the rig configured it, not as a granted mapping
+        # temporarily makes it look. Re-started per rep because the re-up
+        # above deleted the namespace the daemon was living in. If the mock
+        # refuses to come up the cell is a RIG error, not a NAT finding, so
+        # say so and abandon the cell rather than quietly running without it.
+        if [ "$NATPMP_JOINER" = 1 ]; then
+            if "$NATNS" portmap B up >"$WORK/portmapB_${A}_${B}_${rep}.log" 2>&1; then
+                PROBE_JOIN_EXTRA="--natpmp-gateway $JOINER_LAN_GW"
+            else
+                echo "  PORTMAP_UP_FAILED (side B, rep $rep)" >&2
+                sed -n '1,20p' "$WORK/portmapB_${A}_${B}_${rep}.log" >&2
+                printf '{"label":"%s","natA":"%s","natB":"%s","rep":%d,"cell_status":"RIG_ERROR","reason":"portmap B up failed"}\n' \
+                    "$LABEL" "$A" "$B" "$rep" >> "$OUT"
+                rig_errors=$((rig_errors+1))
+                # Abandon the whole cell: the post-loop cleanup below runs and
+                # the outer loop moves on. Never score a rep against a rig that
+                # did not come up the way the cell declared.
+                break
+            fi
+        fi
+
         ns s8-srv python3 "$HERE/rig/stun_mock.py" \
             --bind "${SRV_IP}:19302" --bind "${SRV_IP2}:19302" --bind "${SRV_IP}:19303" \
             > "$WORK/stun_${A}_${B}_${rep}.log" 2>&1 &
@@ -212,7 +232,7 @@ for B in $TYPES; do
         JRC=$?
 
         # The HOST has no wall-clock budget by design -- it waits in HOST_WAITING
-        # as long as the room code is on screen (direct_p2p.c:5916-5918). So on a
+        # as long as the room code is on screen (direct_p2p.c:3235-3239). So on a
         # failing cell the host never terminates on its own. Give it a grace
         # period to land a late handoff, then stop that ONE pid (never pkill).
         for _ in $(seq 1 30); do kill -0 "$HPID" 2>/dev/null || break; sleep 0.1; done
