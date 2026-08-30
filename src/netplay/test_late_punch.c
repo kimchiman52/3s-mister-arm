@@ -42,6 +42,7 @@
 #ifdef ENABLE_NETPLAY_TESTS
 
 #include "netplay/late_punch.h"
+#include "netplay/netplay.h"
 #include "netplay/rendezvous.h"
 #include "netplay/stun.h"
 
@@ -303,6 +304,39 @@ int Netplay_Test_LatePunch(void) {
     CHECK("A11", LatePunch_IsArmed());
     CHECK("A11", LatePunch_HandleDatagram(payload, (int)sizeof(payload), "127.0.0.1", portB));
     LatePunch_Disarm();
+
+    /* ---- A12 (task #131): installing a DIFFERENT STUN socket disarms.
+     *
+     * late_punch BORROWS its socket and never closes it (late_punch.c:26),
+     * while Netplay_SetStunSocket DESTROYS the socket it replaces. Armed
+     * across that call, LatePunch_Tick's next NET_SendDatagram would run
+     * on freed memory.
+     *
+     * No production ordering reaches this today — do_handoff is the only
+     * caller and it cannot run twice per session (see the comment on
+     * Netplay_SetStunSocket for the guard that stops it). That is exactly
+     * why this case is worth pinning: the property is currently held by
+     * call-ordering discipline in ANOTHER translation unit, so nothing
+     * else would notice a second call site appearing, and the symptom
+     * would be a use-after-free in a thread that never named either
+     * function. */
+    {
+        NET_DatagramSocket* held = NET_CreateDatagramSocket(lo, 0);
+        NET_DatagramSocket* nextsock = NET_CreateDatagramSocket(lo, 0);
+        CHECK("A12-setup", held != NULL && nextsock != NULL);
+        if (held != NULL && nextsock != NULL) {
+            /* Ownership of both moves into netplay.c, which frees them. */
+            Netplay_SetStunSocket(held);
+            LatePunch_Arm(held, token, "127.0.0.1", portB);
+            CHECK("A12-armed", LatePunch_IsArmed());
+            /* Destroys `held` — the borrowed pointer must not outlive it. */
+            Netplay_SetStunSocket(nextsock);
+            CHECK("A12-disarmed", !LatePunch_IsArmed());
+            /* A tick while armed here would have been the UAF. */
+            LatePunch_Tick(1000);
+            Netplay_SetStunSocket(NULL); /* frees `nextsock`, clears the slot */
+        }
+    }
 
     NET_DestroyDatagramSocket(sockA);
     NET_DestroyDatagramSocket(sockB);

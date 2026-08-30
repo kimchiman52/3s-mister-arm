@@ -2727,6 +2727,33 @@ void Netplay_GetNetworkStats(NetworkStats* stats) {
 void Netplay_SetStunSocket(struct NET_DatagramSocket* socket) {
     NET_DatagramSocket* sock = (NET_DatagramSocket*)socket;
     if (stun_socket != NULL && stun_socket != sock) {
+        // Task #131: the late-punch layer BORROWS this socket
+        // (late_punch.c:26 — it never closes it), so destroying it out
+        // from under an armed LatePunch_Tick would be a use-after-free
+        // on the next tick's NET_SendDatagram.
+        //
+        // NO CALLER DOES THIS TODAY, and the attempt to build one failed
+        // on a real structural guard rather than on luck: the only
+        // production caller is do_handoff (direct_p2p.c:4520), which
+        // nulls s_work.stun.socket immediately after
+        // (direct_p2p.c:4529), and Tick's HANDOFF case re-enters
+        // join_tick_handoff only while that field is non-NULL
+        // (direct_p2p.c:5782). So a second handoff inside one session --
+        // the one ordering that would install a DIFFERENT socket while
+        // late-punch is armed -- cannot be reached. Both terminal paths
+        // are correct for the same reason and by explicit ordering:
+        // EXITING disarms (:2542) before the destroy below runs (:2562),
+        // and SessionStarted disarms at :1798.
+        //
+        // This is therefore a guard on the INVARIANT, not a fix for a
+        // live bug. It is here because the invariant is currently held
+        // only by call-ordering discipline in another translation unit:
+        // nothing stops a future second call site, and the failure mode
+        // it would produce is a UAF in a thread that never named this
+        // function. Disarming costs one branch on a once-per-session
+        // path and cannot regress the handoff, which arms only AFTER
+        // this call returns (netplay.c:2179, from Netplay_BeginDirectP2P).
+        LatePunch_Disarm();
         NET_DestroyDatagramSocket(stun_socket);
     }
     stun_socket = sock;
