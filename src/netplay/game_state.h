@@ -10,9 +10,11 @@
 #include "sf33rd/Source/Game/engine/vital.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include "sf33rd/Source/Game/stage/bg.h"
+#include "netplay/plw_canon_fields.h"
 #include "structs.h"
 #include "types.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct EffectState {
@@ -878,12 +880,44 @@ void GameState_Load(const GameState* src);
 
 /* Sanitize a scratch COPY of a PLW / effect-pool WORK to the exact view
  * the focused cross-peer checksum hashes (pointers nulled, rendering
- * bits masked, allocation-order fields zeroed, pointer-like u64 sweep
- * for PLW). Shared by save_current_state() and the rollback-determinism
- * harness (src/test/rollback_determinism.c) so "what counts as gameplay
- * bytes" has one definition. Never call on live state. */
+ * bits masked, allocation-order fields zeroed). Shared by
+ * save_current_state() and the rollback-determinism harness
+ * (src/test/rollback_determinism.c) so "what counts as gameplay bytes"
+ * has one definition. Never call on live state. */
 void GameState_SanitizePlwCopyForHash(PLW* copy);
 void GameState_SanitizeWorkCopyForHash(WORK* w);
+
+/* === Canonical PLW hash image (task #111) ===============================
+ *
+ * The desync checksum must not hash PLW's raw bytes: sizeof(PLW) is
+ * 1092 on armv7 and 1304 on 64-bit (49 pointer slots at 4 vs 8 bytes,
+ * plus 11 vs 27 bytes of padding), so the same logical state produces a
+ * different byte image per architecture — and the padding bytes are not
+ * gameplay state at all.
+ *
+ * GameState_EmitPlwCanonical copies every NON-POINTER member of PLW, in
+ * declaration order, into a gap-free image of PLW_CANON_SIZE bytes. The
+ * member list is generated from clang's record layout for PLW by
+ * tools/netplay/gen_plw_canon_fields.py and is required to be identical
+ * on both architectures, so PLW_CANON_SIZE is the same constant
+ * everywhere (asserted in game_state.c) and the image is byte-comparable
+ * across architectures. src/netplay/test_gs_coverage.c proves the list
+ * tiles PLW exactly: emitted + pointer + padding == sizeof(PLW), with no
+ * member counted twice.
+ *
+ * Callers pass a scratch copy that has already been through
+ * GameState_SanitizePlwCopyForHash. */
+#define PLW_CANON_SIZEOF_MEMBER(f) +(unsigned)sizeof(((PLW*)0)->f)
+enum { PLW_CANON_SIZE = 0 PLW_CANON_FIELD_LIST(PLW_CANON_SIZEOF_MEMBER) };
+enum { PLW_CANON_POINTER_BYTES = 0 PLW_CANON_POINTER_LIST(PLW_CANON_SIZEOF_MEMBER) };
+
+unsigned GameState_EmitPlwCanonical(const PLW* copy, uint8_t* out);
+
+/* How many contiguous byte runs the member list collapses to (15 today) —
+ * exposed so --test-gs-coverage can pin it: a run count that jumps toward
+ * the member count means the members stopped being adjacent, i.e. PLW's
+ * layout moved under the table. */
+int GameState_PlwCanonicalRunCount(void);
 
 // Rollback save/load public API (Track A Phase 3). These mirror 3sxtra's
 // signatures in /tmp/3sxtra/src/include/game_state.h:787-800.
