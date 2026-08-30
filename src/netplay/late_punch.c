@@ -202,3 +202,36 @@ bool LatePunch_TakeRelearn(char* ip_out, size_t ip_cap, uint16_t* port_out) {
     }
     return true;
 }
+
+#ifdef ENABLE_NETPLAY_TESTS
+/* Task #132. Read-only window onto the decision state HandleDatagram
+ * produces, so the three verdicts that need no socket can be asserted
+ * without one.
+ *
+ * Without it the send TARGET is only observable by actually sending —
+ * which means a loopback socket, a Tick, a delivery wait, and a clock
+ * advance past LATE_PUNCH_TX_INTERVAL_MS. That is exactly what makes the
+ * two properties below untestable today: "a refused move still targets
+ * the LEARNED endpoint" and "a foreign-IP punch does not trigger a
+ * prompt answer" both disappear the moment you advance the clock far
+ * enough to observe a datagram, because the cadenced keepalive would
+ * have sent one anyway.
+ *
+ * Read-only and test-only: this changes no production behaviour and the
+ * symbol does not exist in the shipped build. */
+void LatePunch_TestPeek(char* ip_out, size_t ip_cap, uint16_t* port_out,
+                        bool* tx_prompt_out, int* relearn_count_out) {
+    if (ip_out != NULL && ip_cap > 0) {
+        SDL_strlcpy(ip_out, s_peer_ip, ip_cap);
+    }
+    if (port_out != NULL) {
+        *port_out = s_peer_port;
+    }
+    if (tx_prompt_out != NULL) {
+        *tx_prompt_out = s_tx_prompt;
+    }
+    if (relearn_count_out != NULL) {
+        *relearn_count_out = s_relearn_count;
+    }
+}
+#endif /* ENABLE_NETPLAY_TESTS */

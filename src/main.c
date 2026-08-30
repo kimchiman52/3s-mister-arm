@@ -1109,6 +1109,11 @@ int Netplay_Test_RendezvousWire(void);
 // drives classify_peer_payload/parse_header/read_* directly, which is the
 // decision that says whether a peer is allowed to play with us.
 int Netplay_Test_MistCompatGate(void);
+// Task #132: forward-decl of the punch-predicate unit harness
+// (src/netplay/test_punch_predicates.c). Pure: no sockets, no threads, no
+// NETPLAY_TEST_HOOKS — the STUN/punch classifiers swept bit by bit, plus
+// the three late-punch decisions the socket harness cannot observe.
+int Netplay_Test_PunchPredicates(void);
 #endif
 
 /* Tasks #59/#61: forward-decl of the ext texture-cache brick-prevention
@@ -1260,6 +1265,16 @@ int main(int argc, const char* argv[]) {
 #else
         fprintf(stderr,
                 "--test-mist-compat-gate requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+    if (configuration.test_punch_predicates) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_PunchPredicates();
+#else
+        fprintf(stderr,
+                "--test-punch-predicates requires a build with ENABLE_NETPLAY=ON.\n");
         return 2;
 #endif
     }

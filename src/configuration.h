@@ -259,6 +259,16 @@ typedef struct Configuration {
      * and the four bounds-checked payload readers directly through the
      * ENABLE_NETPLAY_TESTS trampolines in mist_handshake.c. */
     bool test_mist_compat_gate;
+    /* Task #132: when true, main() runs the punch-predicate unit harness
+     * (src/netplay/test_punch_predicates.c) and exits. Honors the CLI flag
+     * --test-punch-predicates. Parsed unconditionally; the real body is
+     * gated by ENABLE_NETPLAY=ON && ENABLE_NETPLAY_TESTS, otherwise the
+     * stub returns 2. Pure in-process — no sockets and no
+     * NETPLAY_TEST_HOOKS: it sweeps Stun_IsBindingResponse /
+     * Stun_HasPunchPrefix / Stun_IsPunchPayload bit by bit, and drives the
+     * three late-punch decisions (foreign IP, relearn cap, learned-target)
+     * that are invisible from the socket harness. */
+    bool test_punch_predicates;
     /* Tasks #59/#61: when true, main() runs the ext texture-cache
      * brick-prevention harness (src/test/test_texcash_bounds.c) and exits.
      * Honors --test-texcash-bounds. Parsed unconditionally; the real body is

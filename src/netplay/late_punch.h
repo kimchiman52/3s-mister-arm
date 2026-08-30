@@ -128,4 +128,13 @@ void LatePunch_Tick(uint32_t now_ms);
  * adapter retarget). */
 bool LatePunch_TakeRelearn(char* ip_out, size_t ip_cap, uint16_t* port_out);
 
+#ifdef ENABLE_NETPLAY_TESTS
+/* Task #132, test-only: the current send target, the pending prompt-answer
+ * flag, and the relearn counter. Read-only; see the comment on the
+ * definition in late_punch.c for why the send target has to be observable
+ * without a socket. Any pointer may be NULL. */
+void LatePunch_TestPeek(char* ip_out, size_t ip_cap, uint16_t* port_out,
+                        bool* tx_prompt_out, int* relearn_count_out);
+#endif
+
 #endif /* NETPLAY_LATE_PUNCH_H */
