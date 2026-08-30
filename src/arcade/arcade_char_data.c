@@ -9,6 +9,11 @@
 
 #define BASE_OFFSET 0x6000000
 
+// remap_cg_number's early-return threshold below which a raw cg_number is
+// never remapped. Moved 0x800 -> 0x400 in ae309dc4; see the _Static_assert
+// beside remy_cg_ranges, which depends on this staying <= 0x601.
+#define CG_REMAP_CUTOFF 0x400
+
 // Uncomment to enable parsed char data dumping to dump folder
 // #define DUMP_CHAR_DATA
 
@@ -83,7 +88,7 @@ static int SDLCALL compare_u32(const void* lhs, const void* rhs) {
 }
 
 static Uint16 remap_cg_number(Uint16 value, Character character) {
-    if (value < 0x400) {
+    if (value < CG_REMAP_CUTOFF) {
         return value;
     }
 
@@ -778,7 +783,20 @@ static const CgRemapRange twelve_cg_ranges[] = {
 
 static const CgRemapRange remy_cg_ranges[] = {
     { .first = 0x7141, .last = 0x714B, .delta = -0x07C1 },
+    /* Raw CG 1537 (0x0601) is an Alex sprite placed in Remy's nmca[48] /
+       exca[30,37,38] slots. Remy's default_delta underflows it (§7.4's
+       negative clamp), so it passes through raw into Gill's group with an
+       out-of-range residual (§17.3). PS2 stores 1569 for all six counterpart
+       cells -- Alex's own delta, +0x20. See
+       docs/research-arcade-cg-data-accuracy.md §8.K. */
+    { .first = 0x0601, .last = 0x0601, .delta = 0x20 },
 };
+
+// See docs/research-arcade-cg-data-accuracy.md §8.K -- this binds a cutoff
+// that has already moved once (ae309dc4).
+_Static_assert(
+    CG_REMAP_CUTOFF <= 0x601, "remy_cg_ranges' 0x0601 row (doc §8.K) requires CG_REMAP_CUTOFF <= 0x601"
+);
 
 static const CharacterCgMap cg_maps[NUM_CHARS] = {
     [CHAR_GILL] = { .default_delta = 0x0000, .ranges = gill_cg_ranges, .range_count = SDL_arraysize(gill_cg_ranges) },
