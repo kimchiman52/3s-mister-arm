@@ -326,7 +326,7 @@ static UpnpMapping s_upnp_mapping = { 0 };
  * side it optimised is the side that did not need it: a host that GOT a
  * mapping is not the host having a bad time. A host whose probe FAILS
  * re-paid PORTMAP_PROBE_BUDGET_MS on every one of the ladder's
- * 1 + HOST_STUN_MAX_RETRIES rungs — 45,000 of the 76,200 ms host bound
+ * 1 + HOST_STUN_MAX_RETRIES rungs — 45,000 of the 76,800 ms host bound
  * at shipped defaults, 59% of it, spent re-asking a question that was
  * answered the first time.
  *
@@ -6040,6 +6040,12 @@ bool DirectP2P_HostStunRetryPending(void) {
  *
  *   WORKER_STARTUP_DELAY_MS   host_thread_fn / join_thread_fn pre-NET_Init
  *                             settle delay (SDL_Delay at both sites).
+ *                             PER SPAWN, not per session: it is the
+ *                             worker's FIRST statement, so the S2 ladder
+ *                             — which RESPAWNS host_thread_fn on every
+ *                             rung — pays it 1 + HOST_STUN_MAX_RETRIES
+ *                             times. The joiner pays it once, because
+ *                             its retry is a loop INSIDE one worker.
  *   JOIN_MAX_ATTEMPTS         the join_thread_fn attempt loop.
  *   stun_budget_ms()          the STUN_DISCOVER argument at both sites,
  *                             clamped [STUN_BUDGET_MIN_MS, _MAX_MS].
@@ -6133,8 +6139,8 @@ bool DirectP2P_HostStunRetryPending(void) {
  * genuinely did, 45,000 ms of it at shipped defaults, and the code no
  * longer does it.
  *
- * Shipped defaults: 200 + 11250 + 4 * 4000 + 3 * 5000 = 42,450 ms,
- * down from 76,200.
+ * Shipped defaults: 4 * 200 + 11250 + 4 * 4000 + 3 * 5000 = 43,050 ms,
+ * down from 76,800.
  *
  * AND THE HOST BOUND IS NOW A MAX, NOT JUST THE LADDER. The two host
  * phases — the ladder, and the post-HOST_WAITING race — are separated by
@@ -6143,13 +6149,14 @@ bool DirectP2P_HostStunRetryPending(void) {
  * every legal config and assert [C] pinned exactly that, which is why
  * the bound could be written as the ladder alone. #96 shortens the
  * ladder enough to invert that at one corner (STUN at its floor, race at
- * its ceiling: 30,450 vs 31,300), so the max is now load-bearing rather
+ * its ceiling: 31,050 vs 31,300), so the max is now load-bearing rather
  * than decorative. Writing it out is strictly more correct than the
  * previous form, which was only correct because [C] happened to hold —
  * and [C] below now guards the max itself. */
-#define ORCH_HOST_LADDER_MS(stun_ms)                          \
-    (WORKER_STARTUP_DELAY_MS + PORTMAP_PROBE_BUDGET_MS +      \
-     (1 + HOST_STUN_MAX_RETRIES) * (stun_ms) +                \
+#define ORCH_HOST_LADDER_MS(stun_ms)                                 \
+    ((1 + HOST_STUN_MAX_RETRIES) * WORKER_STARTUP_DELAY_MS +         \
+     PORTMAP_PROBE_BUDGET_MS +                                       \
+     (1 + HOST_STUN_MAX_RETRIES) * (stun_ms) +                       \
      HOST_STUN_MAX_RETRIES * HOST_STUN_RETRY_BACKOFF_MS)
 
 /* The host's ONE post-HOST_WAITING race: the same resolve poll + whole
@@ -6228,7 +6235,7 @@ _Static_assert(ORCH_JOIN_ATTEMPT_MS(STUN_BUDGET_MIN_MS, RACE_BUDGET_MAX_MS) >=
  * stopped holding at one corner:
  *
  *     STUN at its floor, race at its ceiling
- *     ladder   = 200 + 11250 + 4*1000 + 3*5000 = 30,450 ms
+ *     ladder   = 4*200 + 11250 + 4*1000 + 3*5000 = 31,050 ms
  *     postwait = 100 + 30000 + 2*600           = 31,300 ms
  *
  * The response is NOT to weaken the guarantee — it is to stop relying on
@@ -6257,13 +6264,13 @@ _Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MIN_MS, RACE_BUDGET_MIN_MS) >
  * turns a slow-but-successful join into a spurious failure, which is a
  * worse bug than the one being fixed. Recomputed at current tip:
  *   joiner ceiling 200 + 2*(15000 + 100 + 30000 + 1200) = 92800 ms
- *   host   ceiling 200 + 11250 + 4*15000 + 3*5000       = 86450 ms
+ *   host   ceiling 4*200 + 11250 + 4*15000 + 3*5000     = 87050 ms
  * These are lower bounds on the derivation, so they fail if a leg is
  * DROPPED from the sum as well as if the sum is capped.
  *
- * THE HOST NUMBER MOVED, 120200 -> 86450, AND THAT IS NOT A CAP.
+ * THE HOST NUMBER MOVED, 120800 -> 87050, AND THAT IS NOT A CAP.
  * [D] guards against shortening the bound below work the code still
- * does. Task #96 did the opposite: it deleted the work. 120,200 was
+ * does. Task #96 did the opposite: it deleted the work. 120,800 was
  * 4 x PORTMAP_PROBE_BUDGET_MS because host_thread_fn really did re-run
  * the probe on all four rungs of the ladder — 45,000 ms of it, measured
  * (a failing probe reaches its full 11,250 ms budget in the field; see
@@ -6277,16 +6284,16 @@ _Static_assert(ORCH_JOIN_WORST_CASE_MS(STUN_BUDGET_MAX_MS, RACE_BUDGET_MAX_MS) >
                "task #76: the joiner bound fell below the measured 92800 ms "
                "config-ceiling cascade — a legal maximal config would now be "
                "aborted mid-attempt");
-_Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MAX_MS, RACE_BUDGET_MAX_MS) >= 86450,
-               "task #76/#96: the host bound fell below the 86450 ms "
+_Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MAX_MS, RACE_BUDGET_MAX_MS) >= 87050,
+               "task #76/#96: the host bound fell below the 87050 ms "
                "config-ceiling cascade — a legal maximal config would now be "
                "aborted mid-ladder");
 /* And the #96 saving is itself pinned: if a future change puts the
  * port-map probe back inside the ladder's multiplier (or adds a second
  * one-time leg of that size), the host bound climbs back over the old
- * 120,200 ms and this fails. That is the direction #96 exists to
+ * 120,800 ms and this fails. That is the direction #96 exists to
  * prevent, so it gets a check of its own rather than a comment. */
-_Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MAX_MS, RACE_BUDGET_MAX_MS) < 120200,
+_Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MAX_MS, RACE_BUDGET_MAX_MS) < 120800,
                "task #96: the host bound is back at its pre-#96 size — the "
                "port-map probe is being paid more than once per hosting session "
                "again. Latch the verdict, do not re-derive the ceiling.");
