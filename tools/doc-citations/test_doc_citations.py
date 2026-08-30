@@ -27,6 +27,7 @@ Exit: 0 all assertions hold; 1 an assertion failed; 2 harness failure.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -34,6 +35,14 @@ import tempfile
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 CHECKER = os.path.join(SCRIPT_DIR, "check_doc_citations.py")
+
+# Imported, not copied. The anchor fixture below has to know the cap at which
+# the checker gives up on an anchor, and a second hardcoded copy of it would
+# drift silently -- which is the same class of bug that rotted this test's
+# line numbers. The checker guards main() behind __name__, so importing it
+# only binds definitions.
+sys.path.insert(0, SCRIPT_DIR)
+from check_doc_citations import ANCHOR_MAX_HITS  # noqa: E402
 BAD = "tools/doc-citations/testdata/known-bad-citations.md"
 GOOD = "tools/doc-citations/testdata/good-citations.md"
 
@@ -186,45 +195,129 @@ def check_fix_refuses_range_citations():
     return failures
 
 
+RE_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# The file both anchor cases are built against. A real, heavily-commented
+# source file is the point: the defect only appears where a symbol is
+# discussed far more often than it is defined.
+ANCHOR_TARGET = "src/netplay/direct_p2p.c"
+
+# Symbols, not line numbers. See check_fix_anchors_to_definition_not_mention.
+ANCHOR_SYM_COMMENT = "ORCH_JOIN_WORST_CASE_MS"
+ANCHOR_SYM_STRING = "race_budget_expired"
+
+
+def looks_like_prose_line(text):
+    """True if `text` is a comment continuation, a comment opener, or a bare
+    string-literal line.
+
+    Deliberately a crude textual predicate and deliberately NOT the checker's
+    own strip_c_comments/blank_strings machinery. Reusing the code under test
+    here would make the central assertion pass vacuously the moment that
+    machinery broke -- which is the exact failure this test exists to catch.
+    """
+    s = text.lstrip()
+    return (s.startswith("*") or s.startswith("/*") or s.startswith("//")
+            or s.startswith('"'))
+
+
+def build_anchor_case(lines, symbol, trap_is_string, forbidden_tokens):
+    """Locate a (trap, cite, code_lines) triple for `symbol` in `lines`.
+
+    trap  -- a line that only MENTIONS the symbol, in a comment or inside a
+             string literal. Chosen as the mention furthest from any real
+             code line, so the trap is unambiguous.
+    cite  -- a stale line number strictly NEARER to `trap` than to any real
+             code line. That is the shape that fools a nearest-line anchor
+             search into "repairing" a citation onto the mention.
+
+    Computed rather than hardcoded. The previous version of this test pinned
+    six literal line numbers into direct_p2p.c; a few merges moved that file
+    ~250 lines and every one of them silently stopped describing what it
+    claimed to, so the test failed for reasons that had nothing to do with
+    the behaviour under test. Symbols are stable, line numbers are not.
+
+    Returns None if `symbol` cannot host the case (no mention, no code use,
+    or more occurrences than ANCHOR_MAX_HITS, at which point the checker
+    discards the anchor entirely and there is nothing to assert).
+    """
+    pat = re.compile(r"\b%s\b" % re.escape(symbol))
+    hits = [i for i, ln in enumerate(lines, 1) if pat.search(ln)]
+    if not hits or len(hits) > ANCHOR_MAX_HITS:
+        return None
+    code = [h for h in hits if not looks_like_prose_line(lines[h - 1])]
+    if trap_is_string:
+        traps = [h for h in hits if lines[h - 1].lstrip().startswith('"')]
+    else:
+        traps = [h for h in hits
+                 if looks_like_prose_line(lines[h - 1])
+                 and not lines[h - 1].lstrip().startswith('"')]
+    if not code or not traps:
+        return None
+    trap = max(traps, key=lambda t: min(abs(t - c) for c in code))
+    margin = min(abs(trap - c) for c in code)
+    for delta in range(2, max(3, margin // 2)):
+        for cite in (trap + delta, trap - delta):
+            if not 1 <= cite <= len(lines) or cite in hits:
+                continue
+            if abs(cite - trap) >= min(abs(cite - c) for c in code):
+                continue
+            body = lines[cite - 1]
+            # Substantive, so the degenerate-target path (blank lines, a lone
+            # brace) does not pre-empt the anchor path being tested...
+            if len(body.strip()) < 12:
+                continue
+            # ...and sharing no token with the fixture prose, so the checker's
+            # "the cited line names something the prose is discussing" escape
+            # hatch does not silence the finding either.
+            if set(RE_TOKEN.findall(body)) & forbidden_tokens:
+                continue
+            return trap, cite, code
+    return None
+
+
 def check_fix_anchors_to_definition_not_mention():
     """Regression for task #89's third proven `--fix` defect (#84 fixed the
     other two: corrupted ranges, and inventing repairs for already-correct
-    citations).
+    citations), plus the string-literal half of the same defect.
 
-    Observed bug: the anchor-hit search did not distinguish a comment/prose
-    MENTION of a symbol from its actual CODE definition/usage. It just took
-    every line containing the token and picked whichever was numerically
-    nearest to the citation's stale line number. A symbol discussed in a
-    long algorithm-description comment block is mentioned many times close
-    together, so a citation whose true target had drifted far away could
-    get "fixed" onto a nearby comment line instead of its real definition.
-    Observed in the wild: `--fix` wanted to collapse 5 distinct citations
-    onto `direct_p2p.c:1719` and 2 onto `direct_p2p.c:1472` -- both inside
-    prose, not definitions.
+    Observed bug: the anchor-hit search did not distinguish a MENTION of a
+    symbol from its actual CODE definition/usage. It took every line
+    containing the token and picked whichever was numerically nearest to the
+    citation's stale line number. A symbol discussed in a long
+    algorithm-description comment block is mentioned many times close
+    together, so a citation whose true target had drifted far away could get
+    "fixed" onto a nearby mention instead of its real definition. Observed in
+    the wild, against the tree as it stood at task #89: `--fix` wanted to
+    collapse 5 distinct citations onto `direct_p2p.c:1719` and 2 onto  # doccite:quote
+    `direct_p2p.c:1472` -- both inside prose. Those two are a QUOTE of a  # doccite:quote
+    historical measurement, not live citations; direct_p2p.c has moved
+    several hundred lines since and they are not meant to track it.
 
-    This reproduces the exact mechanism against the REAL, unmodified
-    src/netplay/direct_p2p.c (copied into a throwaway detached git
-    worktree so --fix's in-place edit never touches a tracked file):
+    Two mention KINDS, one per case, because they were fixed at different
+    times and each can regress without the other:
 
-    - `RACE_PUNCH_SETTLE_MS` is mentioned in 6 comment lines (970, 1255,
-      1431, 1472, 1687, 1706) and appears in real code at only 4 (1227's
-      #define, 1236-1237's _Static_assert, 1493's cast). A citation
-      drifted to :1460 is numerically nearest to the comment mention at
-      :1472 (distance 12) and farther from every real code line (nearest
-      code line 1493 is distance 33) -- exactly the shape that fooled the
-      old anchor search.
-    - `race_budget_expired` is mentioned in 3 comment lines (1230, 1466,
-      1689) and used in real code at 5 (1006, 1238, 1671, 1700, 1869). A
-      citation drifted to :1469 is nearest to the comment mention at
-      :1466 (distance 3), not to any real code line (nearest is 1238,
-      distance 231).
+    - CASE A, comment mention. Fixed by task #89, which taught the anchor
+      search to prefer lines that survive comment stripping.
+    - CASE B, string literal. The checker's code-only line view (see
+      Repo.code_only_lines) stripped comments but not string literals, so a
+      symbol named inside a _Static_assert message still counted as code and
+      could outrank its own definition. Measured
+      before the fix, on the tree at merge 77d8175d: `--fix` moved the
+      `race_budget_expired` citation onto direct_p2p.c:1519, the second  # doccite:quote
+      line of a _Static_assert message, over the function's own
+      definition. After the fix it resolves to the definition. That line
+      number is a QUOTE of that one measurement and is not maintained.
 
-    Confirmed by hand before the fix landed: running the pre-fix checker's
-    `--fix` on this exact fixture rewrote both citations onto those two
-    comment lines (:1472 and :1466). The fixed behaviour resolves each to
-    a real code line instead (:1493 and :1238 respectively) -- two
-    DIFFERENT lines, proving this is not just a different popular line
-    the citations now collapse onto.
+    Both cases run against the REAL, unmodified direct_p2p.c, copied into a
+    throwaway detached git worktree so --fix's in-place edit never touches a
+    tracked file.
+
+    WHAT IS ASSERTED, and why it is not circular: not a line NUMBER, but the
+    CONTENT of whatever line --fix chose. The chosen line must name the
+    symbol, must not be the mention we baited it with, and must not look like
+    a comment or string line under looks_like_prose_line -- a predicate this
+    file owns and the checker never sees.
     """
     wt_parent = tempfile.mkdtemp(prefix="doccite-anchor-test-")
     wt_dir = os.path.join(wt_parent, "wt")
@@ -234,23 +327,37 @@ def check_fix_anchors_to_definition_not_mention():
             ["git", "worktree", "add", "--detach", wt_dir, "HEAD"],
             cwd=REPO_ROOT, capture_output=True, text=True, check=True)
 
+        with open(os.path.join(wt_dir, ANCHOR_TARGET), encoding="utf-8") as fh:
+            tlines = fh.read().split("\n")
+
+        header = (
+            "# Fixture: --fix must anchor to a definition, not a mention\n\n"
+            "NOT A REAL DOCUMENT. Built by test_doc_citations.py.\n\n")
+        forbidden = set(RE_TOKEN.findall(header)) | {
+            ANCHOR_SYM_COMMENT, ANCHOR_SYM_STRING, "Case", "direct_p2p", "c"}
+
+        cases = []
+        for label, symbol, is_string in (
+                ("A", ANCHOR_SYM_COMMENT, False),
+                ("B", ANCHOR_SYM_STRING, True)):
+            built = build_anchor_case(tlines, symbol, is_string, forbidden)
+            if built is None:
+                sys.stderr.write(
+                    "harness: case %s cannot be built against %s for `%s` -- "
+                    "the symbol no longer has both a %s mention and a code "
+                    "use under ANCHOR_MAX_HITS. Pick another symbol; do not "
+                    "delete the case.\n"
+                    % (label, ANCHOR_TARGET, symbol,
+                       "string-literal" if is_string else "comment"))
+                raise SystemExit(2)
+            trap, cite, code = built
+            cases.append((label, symbol, trap, cite, code))
+
         fixture_rel = "tools/doc-citations/testdata/fix-anchor-mention-regression.md"
         fixture_path = os.path.join(wt_dir, fixture_rel)
-        content = (
-            "# Fixture: --fix must anchor to a definition, not a comment "
-            "mention\n\n"
-            "NOT A REAL DOCUMENT. Reproduces task #89's third proven "
-            "`--fix` defect against the real, unmodified "
-            "`src/netplay/direct_p2p.c`: the anchor-hit search did not "
-            "distinguish a comment/prose MENTION of a symbol from its "
-            "actual CODE definition/usage, so a citation whose true "
-            "target had drifted far away could get \"fixed\" onto a "
-            "nearer comment line instead.\n\n"
-            "Case A: `RACE_PUNCH_SETTLE_MS` is the one-tail settle "
-            "budget granted on a confirmed leg (direct_p2p.c:1460).\n\n"
-            "Case B: `race_budget_expired` reports whether the race "
-            "clock ran out (direct_p2p.c:1469).\n"
-        )
+        content = header + "".join(
+            "Case %s: `%s` (direct_p2p.c:%d).\n\n" % (label, symbol, cite)
+            for label, symbol, _trap, cite, _code in cases)
         with open(fixture_path, "w", encoding="utf-8") as fh:
             fh.write(content)
         subprocess.run(["git", "add", fixture_rel], cwd=wt_dir, check=True,
@@ -268,19 +375,39 @@ def check_fix_anchors_to_definition_not_mention():
         with open(fixture_path, encoding="utf-8") as fh:
             fixed = fh.read()
 
-        if "direct_p2p.c:1472" in fixed or "direct_p2p.c:1466" in fixed:
-            failures.append(
-                "ANCHORED TO A COMMENT MENTION: --fix must not collapse "
-                "either citation onto the comment lines (:1472, :1466); "
-                "file now reads: %r" % fixed)
-        if "direct_p2p.c:1493" not in fixed:
-            failures.append(
-                "--fix did not repair RACE_PUNCH_SETTLE_MS onto its real "
-                "code line (:1493): %r" % fixed)
-        if "direct_p2p.c:1238" not in fixed:
-            failures.append(
-                "--fix did not repair race_budget_expired onto its real "
-                "code line (:1238): %r" % fixed)
+        for label, symbol, trap, cite, code in cases:
+            row = [ln for ln in fixed.split("\n") if symbol in ln]
+            m = re.search(r"direct_p2p\.c:(\d+)", row[0]) if row else None
+            if m is None:
+                failures.append(
+                    "case %s (`%s`): the fixture line lost its citation "
+                    "entirely; file now reads: %r" % (label, symbol, fixed))
+                continue
+            got = int(m.group(1))
+            if got == cite:
+                failures.append(
+                    "case %s (`%s`): --fix left the stale citation at :%d "
+                    "unrepaired (real code lines are %s)"
+                    % (label, symbol, cite, code))
+            elif got == trap:
+                failures.append(
+                    "ANCHORED TO A MENTION: case %s (`%s`) was repaired onto "
+                    ":%d, which is the %s mention it was baited with, not a "
+                    "definition or use -- %r"
+                    % (label, symbol, trap,
+                       "string-literal" if label == "B" else "comment",
+                       tlines[got - 1].strip()))
+            elif not re.search(r"\b%s\b" % re.escape(symbol),
+                               tlines[got - 1]):
+                failures.append(
+                    "case %s (`%s`): --fix chose :%d, a line that does not "
+                    "name the symbol at all -- %r"
+                    % (label, symbol, got, tlines[got - 1].strip()))
+            elif looks_like_prose_line(tlines[got - 1]):
+                failures.append(
+                    "ANCHORED TO A MENTION: case %s (`%s`) was repaired onto "
+                    ":%d, which is a comment or string-literal line -- %r"
+                    % (label, symbol, got, tlines[got - 1].strip()))
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", wt_dir],
                        cwd=REPO_ROOT, capture_output=True)

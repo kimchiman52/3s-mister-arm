@@ -126,7 +126,7 @@ floor 1 000 ms; config.c defaults block) for the **entire duration of
 HOST_WAITING** — exit on `s_rendezvous_cancel` or on the state leaving
 `HOST_WAITING` (the direct-punch handoff path never raises the cancel
 flag; the state check covers it). Server cost ≈ 0.2 pkt/s/host against
-the verified 10 pkt/s/IP limiter (rendezvous-server.js:41-42
+the verified 10 pkt/s/IP limiter (rendezvous-server.js:185-186
 `RATE_WINDOW_MS`/`RATE_LIMIT_PER_WINDOW`). Spawn remains behind the
 `netplay-direct-p2p-disable-bilateral` kill switch
 (direct_p2p.c:1250-1257).
@@ -169,7 +169,7 @@ staring at a code they already shared. A live UPnP mapping pins the
 advertised port, so only IP drift can change the code there.
 
 ### 3.3 Server TTL + cap
-`SESSION_TTL_MS` 60 s → **10 min** (rendezvous-server.js:30) so a code
+`SESSION_TTL_MS` 60 s → **10 min** (rendezvous-server.js:52) so a code
 shared over chat/voice stays pair-able; `MAX_SESSIONS = 4096` bounds
 the memory exposure the longer TTL creates (~1.3-2 MB realistic under
 V8). Review H2 replaced drop-on-full (itself a lockout vector) with a

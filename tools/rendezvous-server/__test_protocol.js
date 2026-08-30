@@ -1583,7 +1583,7 @@ async function testKeyBudgetCoversLegitimateSignalling(handle) {
     // `_keyRateLimit <= 4 * steadyPerSec` (<= 12), which looks like a
     // tight sizing guard but is really a hardcoded TWO-PEER model: the
     // session key IS the room code (derived from the host's public
-    // endpoint, src/netplay/direct_p2p.c:3188-3190), so a room's real
+    // endpoint, src/netplay/direct_p2p.c:3191-3193), so a room's real
     // traffic is 1 + 2N for N simultaneous dialers, and every dialer
     // charges this bucket whether or not the two-slot policy lets it in.
     // A guard that can only ever see N = 1 cannot distinguish a correctly
@@ -1599,18 +1599,18 @@ async function testKeyBudgetCoversMultiJoinerRoom(handle) {
     // cannot see: N people dialling ONE room code.
     //
     // Why they all share a bucket: the session key is derived from the
-    // HOST's public endpoint (src/netplay/direct_p2p.c:3188-3190), so the
+    // HOST's public endpoint (src/netplay/direct_p2p.c:3191-3193), so the
     // key IS the room code. Everyone who pastes that code hashes to the
     // same key, and each one starts its 500 ms REGISTER resend
-    // (direct_p2p.c:1544-1545 -> 2/s) the moment the code is entered,
-    // without waiting to be accepted (cfg.signal_leg, direct_p2p.c:3230,
+    // (direct_p2p.c:1958 -> 2/s) the moment the code is entered,
+    // without waiting to be accepted (cfg.signal_leg, direct_p2p.c:4059,
     // keys only on "have signal URL + have session key"). The server's
     // two-slot policy silences dialers 2..N at DISPATCH -- but the per-key
     // gate runs UPSTREAM of dispatch (returnRoutabilityGate), so they have
     // already spent the budget by then.
     //
     // What must survive: the host's re-REGISTER liveness leg (floor
-    // 1000 ms, direct_p2p.c:2460-2462 -> 1/s). Its packets are what
+    // 1000 ms, direct_p2p.c:2463-2465 -> 1/s). Its packets are what
     // refresh entry.lastSeenA; if they are rate-dropped, lastSeenA goes
     // stale and SLOT_STALE_MS / SESSION_TTL_MS reclaim a room whose code
     // is still displayed on the host's screen. No attacker required.
@@ -2227,8 +2227,8 @@ async function testLostPairingPushObserved(handle) {
     //
     // It is observable after all, because of one measured property of the
     // shipped client: A CLIENT STOPS RE-REGISTERING THE INSTANT A
-    // REAL-ENDPOINT DELIVER LANDS (src/netplay/direct_p2p.c:4748-4749 for
-    // the host, :2067-2068 for the joiner). So a REGISTER arriving from a
+    // REAL-ENDPOINT DELIVER LANDS (src/netplay/direct_p2p.c:4767-4768 for
+    // the host, :2070-2071 for the joiner). So a REGISTER arriving from a
     // peer we already pushed to is that peer still behaving as UNPAIRED:
     // direct evidence the push was lost, not an inference.
     handle._resetSessions();
@@ -2284,8 +2284,8 @@ async function testLostPairingPushObserved(handle) {
 
     // --- HAIRPIN EXCLUSION, and it is correctness, not tidiness. ---------
     // When the pushed endpoint carries the recipient's OWN address, the
-    // client's self-DELIVER gate (direct_p2p.c:4741-4746 host,
-    // :2045-2049 joiner) deliberately does NOT cancel the resender. Such a
+    // client's self-DELIVER gate (direct_p2p.c:4760-4765 host,
+    // :2048-2052 joiner) deliberately does NOT cancel the resender. Such a
     // peer keeps REGISTERing whether or not the push arrived, so counting
     // it would manufacture loss that did not happen -- the H-1 shape.
     {
@@ -2310,8 +2310,8 @@ async function testLostPairingPushObserved(handle) {
 
 async function testPairingToPunchHistogram(handle) {
     // METRIC 2. On the host, the DELIVER that cancels the resender is the
-    // SAME DELIVER that spawns the punch: src/netplay/direct_p2p.c:4769
-    // sets FALLBACK_BILATERAL_PUNCH and :4777 spawns the punch thread, in
+    // SAME DELIVER that spawns the punch: src/netplay/direct_p2p.c:4788
+    // sets DIRECT_P2P_FALLBACK_BILATERAL_PUNCH and :4796 spawns the punch, in
     // the same function, off the same frame. So
     //
     //   time(pairing -> the pushed-to peer's re-REGISTER)
@@ -2319,7 +2319,7 @@ async function testPairingToPunchHistogram(handle) {
     //
     // exactly. A landed push makes it 0 ms; a LOST push makes it one whole
     // re-REGISTER interval, and the host's interval DEFAULTS TO 5000 ms
-    // (src/port/config/config.c:111, floor 1000 ms at direct_p2p.c:3241).
+    // (src/port/config/config.c:111, floor 1000 ms at direct_p2p.c:3244).
     // One lost datagram therefore costs up to five seconds of connect
     // latency, invisibly. That is the distribution this histogram exists
     // to expose, and why a single mean would not do.

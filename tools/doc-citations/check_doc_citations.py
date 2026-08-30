@@ -100,7 +100,20 @@ the same convention tools/rollback-determinism/allowlist.txt uses.
 SCOPE
 -----
 Scanned for citations: docs/**.md, top-level *.md, and comment text in
-src/**, include/**, tools/** ({.c,.h,.cpp,.hpp,.py,.sh}).
+src/**, include/**, tools/** ({.c,.h,.cpp,.hpp,.py,.sh,.js}).
+
+An extension missing from that set does not read as "clean" -- it reads as
+findings=0, which is indistinguishable from "checked and fine" unless you also
+look at files_scanned. .js was absent until task #119's follow-up, so
+tools/rendezvous-server (the production rendezvous server) had never been
+checked at all. Known still-unscanned, each carrying real citations in `#`
+comments: .yaml/.yml (~125 citation-shaped tokens, mostly tools/frame-data
+corpora; already in CODE_CORPUS_EXTS and DECOMMENTABLE_EXTS, so only
+CODE_PROSE_EXTS is missing them) and CMakeLists.txt (4; .txt is in
+CODE_CORPUS_EXTS but has no decommenter, so it needs one first). Surveyed and
+found to carry NO citations, so nothing is being missed there: .sv, .v, .vhd,
+.json, .tsv, .tcl, .qsf, .sdc, .inc, .cmake, .service. No .mjs, .ts or .cjs
+file is tracked in this repo.
 
 NOT scanned: vendor/. It is third-party-derived; its comments cite an upstream
 line numbering we neither control nor may edit, so every finding there would be
@@ -173,14 +186,19 @@ QUOTE_MARKER = "doccite:quote"
 PHANTOM_SEVERITY = "advisory"
 
 # Extensions whose comment text is scanned for citations.
-CODE_PROSE_EXTS = {".c", ".h", ".cpp", ".hpp", ".py", ".sh"}
+#
+# .js earns its place the same way the C extensions did: tools/rendezvous-server
+# is the production rendezvous server and its comments carry real file:line
+# citations into src/netplay. Before it was listed here, linting that directory
+# reported findings=0 over files_scanned=2 -- not "clean", but "not looked at".
+CODE_PROSE_EXTS = {".c", ".h", ".cpp", ".hpp", ".py", ".sh", ".js"}
 
 # Extensions treated as "code" when building the identifier existence corpus.
 # Deliberately broad: a symbol may be defined in a Makefile, a linker script, a
 # JSON config or a shell script and still be a real symbol.
 CODE_CORPUS_EXTS = {
     ".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".s", ".S", ".inc",
-    ".py", ".sh", ".bash", ".mk", ".mak", ".cmake", ".txt", ".json",
+    ".py", ".sh", ".bash", ".js", ".mk", ".mak", ".cmake", ".txt", ".json",
     ".yml", ".yaml", ".toml", ".cfg", ".ini", ".sv", ".v", ".qsf", ".tcl",
     ".sdc", ".qip", ".ld", ".mra", ".xml", ".rules", ".service", ".conf",
 }
@@ -195,7 +213,7 @@ SKIP_SCAN_DIRS = ("vendor/", "src/imgui/", "tools/doc-citations/testdata/")
 # File extensions that make a bare token look like a path reference. Used only
 # to RECOGNISE a filename (so `menu_network.c` is not mistaken for a symbol).  # doccite:quote
 PATH_EXTS = (
-    "md|c|h|cpp|hpp|py|sh|txt|json|mk|yml|yaml|toml|cfg|ini|rbf|sv|v|qsf|"
+    "md|c|h|cpp|hpp|py|sh|js|txt|json|mk|yml|yaml|toml|cfg|ini|rbf|sv|v|qsf|"
     "tcl|sdc|mra|xml|log|csv|zip|bin|elf|map|ld|s|inc|patch|diff"
 )
 
@@ -275,7 +293,7 @@ RE_EVIDENCE_REF = re.compile(
 # Comment / prose extraction
 # ---------------------------------------------------------------------------
 
-def strip_c_comments(text):
+def strip_c_comments(text, blank_strings=False):
     """Return (code_only, comment_spans).
 
     code_only has every comment byte replaced by a space, preserving offsets
@@ -284,6 +302,15 @@ def strip_c_comments(text):
 
     A real state machine rather than a regex: `"http://x"` contains // and is
     not a comment, and a regex gets that wrong.
+
+    blank_strings additionally blanks STRING-LITERAL bytes. A literal is prose
+    that happens to sit inside the code -- an assertion message naming the
+    constant it guards is a MENTION, not a definition -- so anchor selection
+    must not count it as code. Measured: without this, `--fix` wanted to
+    repoint RACE_PUNCH_SETTLE_MS and race_budget_expired onto the two
+    _Static_assert message lines in direct_p2p.c, outranking the `#define` and
+    the function's own definition. Comment spans are unaffected either way, so
+    prose extraction sees exactly what it saw before.
     """
     out = list(text)
     spans = []
@@ -292,6 +319,7 @@ def strip_c_comments(text):
         ch = text[i]
         if ch == '"' or ch == "'":
             quote = ch
+            body = i + 1
             i += 1
             while i < n:
                 if text[i] == "\\":
@@ -303,6 +331,10 @@ def strip_c_comments(text):
                 if text[i] == "\n" and quote == '"':
                     break  # unterminated; bail rather than eat the file
                 i += 1
+            if blank_strings:
+                for k in range(body, min(i, n)):
+                    if text[k] != "\n":
+                        out[k] = " "
             continue
         if ch == "/" and i + 1 < n and text[i + 1] == "/":
             start = i
@@ -329,7 +361,7 @@ def strip_c_comments(text):
     return "".join(out), spans
 
 
-def strip_hash_comments(text, triple_quotes_are_prose):
+def strip_hash_comments(text, triple_quotes_are_prose, blank_strings=False):
     """Same contract as strip_c_comments, for Python and shell.
 
     Python docstrings count as prose: this repo's own tools carry their
@@ -360,6 +392,7 @@ def strip_hash_comments(text, triple_quotes_are_prose):
             continue
         if ch == '"' or ch == "'":
             quote = ch
+            body = i + 1
             i += 1
             while i < n and text[i] != "\n":
                 if text[i] == "\\":
@@ -369,6 +402,10 @@ def strip_hash_comments(text, triple_quotes_are_prose):
                     i += 1
                     break
                 i += 1
+            if blank_strings:
+                for k in range(body, min(i, n)):
+                    if text[k] != "\n":
+                        out[k] = " "
             continue
         if ch == "#":
             start = i
@@ -405,27 +442,46 @@ def offset_to_line(starts, off):
 # because no decommenter below handles them, so they stay "don't know,
 # don't filter" rather than silently passing every line through as code.
 DECOMMENTABLE_EXTS = {
-    ".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".py", ".sh", ".bash",
+    ".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".js", ".py", ".sh", ".bash",
     ".mk", ".mak", ".cmake", ".tcl", ".cfg", ".ini", ".yml", ".yaml",
     ".toml", ".conf", ".rules", ".service",
 }
 
+# Of DECOMMENTABLE_EXTS, the ones where a quoted run is a STRING LITERAL --
+# payload text that happens to be spelled in the file, not code that defines or
+# uses anything. Only these get blank_strings=True (see strip_comments_for_ext).
+#
+# The config formats (.yml/.yaml/.toml/.cfg/.ini/.conf/.mk/.tcl/.rules/
+# .service) are deliberately absent: there, a quoted run IS the content, quoting
+# is optional and inconsistent, and blanking it would delete real data rather
+# than prose. Comment stripping still applies to them exactly as before.
+STRING_LITERAL_EXTS = {
+    ".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".js", ".py", ".sh", ".bash",
+}
 
-def strip_comments_for_ext(text, ext):
+
+def strip_comments_for_ext(text, ext, blank_strings=False):
     """Dispatch to the right decommenter for `ext`. Caller must check
     `ext in DECOMMENTABLE_EXTS` first -- an unrecognized extension falls
     through to returning `text` unchanged, which looks like "no comments
     found" rather than "don't know".
 
     Shared by code_tokens() (the whole-repo identifier corpus) and
-    Repo.code_only_lines() (per-file, line-indexed) so the two never
-    disagree about what counts as code in a given file.
+    Repo.code_only_lines() (per-file, line-indexed). They agree on comments.
+    They differ, deliberately, on string literals: code_only_lines asks "is
+    this line a DEFINITION/USE I should anchor a citation to", for which a
+    literal is prose and must not count; code_tokens asks the weaker "does
+    this name exist in this tree at all", for which a literal spelling it out
+    is still evidence and dropping it would manufacture phantom findings.
+    blank_strings is honoured only for STRING_LITERAL_EXTS.
     """
-    if ext in (".c", ".h", ".cpp", ".hpp", ".cc", ".hh"):
-        return strip_c_comments(text)[0]
+    if ext in (".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".js"):
+        return strip_c_comments(text, blank_strings)[0]
     if ext == ".py":
-        return strip_hash_comments(text, True)[0]
-    if ext in (".sh", ".bash", ".mk", ".mak", ".cmake", ".tcl", ".cfg",
+        return strip_hash_comments(text, True, blank_strings)[0]
+    if ext in (".sh", ".bash"):
+        return strip_hash_comments(text, False, blank_strings)[0]
+    if ext in (".mk", ".mak", ".cmake", ".tcl", ".cfg",
                ".ini", ".yml", ".yaml", ".toml", ".conf", ".rules",
                ".service"):
         return strip_hash_comments(text, False)[0]
@@ -491,7 +547,9 @@ class Repo:
             if t is None or ext not in DECOMMENTABLE_EXTS:
                 result = None
             else:
-                result = strip_comments_for_ext(t, ext).split("\n")
+                result = strip_comments_for_ext(
+                    t, ext, blank_strings=ext in STRING_LITERAL_EXTS
+                ).split("\n")
             self._code_only_lines_cache[relpath] = result
         return self._code_only_lines_cache[relpath]
 
@@ -723,7 +781,7 @@ def prose_units(repo, relpath):
     if ext == ".md":
         starts = line_index(text)
         return [Prose(relpath, text, 1, lambda o, s=starts: offset_to_line(s, o))]
-    if ext in (".c", ".h", ".cpp", ".hpp"):
+    if ext in (".c", ".h", ".cpp", ".hpp", ".js"):
         _, spans = strip_c_comments(text)
     elif ext == ".py":
         _, spans = strip_hash_comments(text, True)
