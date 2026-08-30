@@ -56,6 +56,41 @@ option(ENABLE_MISTER_ARM_HARDENING
 # byte-identical machine code to pre-Step-6 (no indirect calls).
 option(NETPLAY_TEST_HOOKS "Compile in test seams for direct_p2p.c (Step 6)" OFF)
 
+# Task #116 -- decouple the deterministic-harness code from the optimisation
+# level.
+#
+# The scripted harnesses (src/test/test_runner.c:1 and src/test/input_script.c:1
+# are whole-file `#if defined(DEBUG)`, and --test-pin-rng's effect lives behind
+# the same gate at src/sf33rd/Source/Game/game.c:373) only exist in a Debug
+# build, and Debug is -O0. Simply adding -DDEBUG to a Release build does not
+# work: `${IMGUI_SOURCES}` below is added to the target only under
+# $<CONFIG:Debug>, so the link fails on the cImGui_ImplSDL3_* symbols the
+# DEBUG blocks in src/port/sdl/sdl_app.c reference. The practical effect was
+# that every cross-architecture determinism sweep could only ever run at -O0,
+# while the configuration that actually ships is -O3.
+#
+# The optimisation level is not neutral for cross-architecture agreement. This
+# tree passes no -ffp-contract flag, so clang's default `on` applies, and the
+# measured behaviour of `float t = a * b; return t + c;` (two statements)
+# differs by level: at -O0 both targets emit an unfused multiply then add
+# (arm64 `fmul`/`fadd`, armv7 `vmul.f32`/`vadd.f32`), but at -O3 armv7
+# -mcpu=cortex-a9 -mfpu=neon-vfpv3 contracts the pair into a single
+# `vmla.f32` while arm64 leaves `fmul`/`fadd` in place. An -O0 sweep cannot
+# observe that class of difference at all.
+#
+# ENABLE_DEBUG_HOOKS compiles exactly the same DEBUG code paths at whatever
+# optimisation level the configuration selects, so an -O3 sweep runs the same
+# program the -O0 sweep ran and the only variable is the optimiser.
+#
+# It is OFF by default and must stay that way. With OFF, `${DEBUG_HOOKS_GENEX}`
+# below is $<OR:$<CONFIG:Debug>,$<BOOL:OFF>>, which evaluates identically to
+# the bare $<CONFIG:Debug> each of its three use sites had before, so shipped
+# builds are bit-for-bit unaffected.
+option(ENABLE_DEBUG_HOOKS
+       "Compile the #if DEBUG debug/harness code (and ImGui) into a non-Debug configuration (task #116)"
+       OFF)
+set(DEBUG_HOOKS_GENEX "$<OR:$<CONFIG:Debug>,$<BOOL:${ENABLE_DEBUG_HOOKS}>>")
+
 # pr-243 ARM Linux display backend (fbdev + DRM/KMS) for non-MiSTer ARM Linux
 # targets (Pi-class, handheld Linux, etc.). Mutually exclusive with PORT_MISTER.
 # libdrm-dev must be available at build time on the target sysroot (libdrm +
@@ -86,6 +121,7 @@ message(STATUS "ENABLE_FFMPEG_ADX=${ENABLE_FFMPEG_ADX}")
 message(STATUS "ENABLE_SDL_DIALOGS=${ENABLE_SDL_DIALOGS}")
 message(STATUS "ENABLE_MISTER_ARM_HARDENING=${ENABLE_MISTER_ARM_HARDENING}")
 message(STATUS "NETPLAY_TEST_HOOKS=${NETPLAY_TEST_HOOKS}")
+message(STATUS "ENABLE_DEBUG_HOOKS=${ENABLE_DEBUG_HOOKS}")
 message(STATUS "PORT_ARM_FBDEV=${PORT_ARM_FBDEV}")
 message(STATUS "PORT_MIYOO_MINI_PLUS=${PORT_MIYOO_MINI_PLUS}")
 
@@ -119,7 +155,7 @@ endif()
 
 add_executable(3s-arm MACOSX_BUNDLE
     ${GAME_SRC}
-    $<$<CONFIG:Debug>:${IMGUI_SOURCES}>
+    $<${DEBUG_HOOKS_GENEX}:${IMGUI_SOURCES}>
 )
 
 # The rollback-determinism capture (src/test/rollback_determinism.c) hashes
@@ -191,7 +227,7 @@ target_include_directories(3s-arm PRIVATE
 # ======================================
 
 target_compile_definitions(3s-arm PRIVATE
-    $<$<CONFIG:Debug>:DEBUG>
+    $<${DEBUG_HOOKS_GENEX}:DEBUG>
 
     $<$<CONFIG:Release>:RELEASE>
     # CHECKSUM = SHA256 verify SF33RD.AFS at startup. Skip on PORT_MISTER
@@ -352,9 +388,9 @@ target_compile_options(3s-arm PRIVATE
 
     ${DISABLED_WARNINGS}
 
-    $<$<CONFIG:Debug>:-Wno-unused-function>
-    $<$<CONFIG:Debug>:-Wno-unused-variable>
-    $<$<CONFIG:Debug>:-Wno-unused-but-set-variable>
+    $<${DEBUG_HOOKS_GENEX}:-Wno-unused-function>
+    $<${DEBUG_HOOKS_GENEX}:-Wno-unused-variable>
+    $<${DEBUG_HOOKS_GENEX}:-Wno-unused-but-set-variable>
 )
 
 if(PORT_MISTER AND ENABLE_MISTER_ARM_HARDENING)
