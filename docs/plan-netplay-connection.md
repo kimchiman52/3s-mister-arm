@@ -126,7 +126,7 @@ floor 1 000 ms; config.c defaults block) for the **entire duration of
 HOST_WAITING** — exit on `s_rendezvous_cancel` or on the state leaving
 `HOST_WAITING` (the direct-punch handoff path never raises the cancel
 flag; the state check covers it). Server cost ≈ 0.2 pkt/s/host against
-the verified 10 pkt/s/IP limiter (rendezvous-server.js:185-186
+the verified 10 pkt/s/IP limiter (rendezvous-server.js:276-277
 `RATE_WINDOW_MS`/`RATE_LIMIT_PER_WINDOW`). Spawn remains behind the
 `netplay-direct-p2p-disable-bilateral` kill switch
 (direct_p2p.c:1250-1257).

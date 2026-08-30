@@ -860,6 +860,27 @@ async function testStaleJoinerSlotReplaced(handle) {
     assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'stale-joiner: third party -> NACK SESSION_FULL');
 }
 
+// --- #130 helpers -----------------------------------------------------------
+//
+// Give a slot an OBSERVED cadence by making its occupant actually re-REGISTER
+// after `gapMs` of simulated silence. This drives the real touchSlot() path
+// rather than poking entry.refreshX, so a regression that stops MEASURING the
+// cadence (as opposed to stops CHECKING it) still fails these tests.
+function observeCadence(handle, entry, key, slot, ip, port, gapMs, stub) {
+    entry[slot === 'A' ? 'lastSeenA' : 'lastSeenB'] -= gapMs;
+    handle._onMessage(regFrom(key, port, ip, port), { address: ip, port }, stub);
+    return entry[slot === 'A' ? 'refreshA' : 'refreshB'];
+}
+
+// Age a slot by exactly enough to cross (or not cross) its own reclaim
+// threshold. Returns the threshold so a test can assert against it.
+function ageSlotPast(handle, entry, slot, extraMs) {
+    const refresh = entry[slot === 'A' ? 'refreshA' : 'refreshB'];
+    const threshold = handle._slotReclaimIdleMs(refresh);
+    entry[slot === 'A' ? 'lastSeenA' : 'lastSeenB'] -= threshold + extraMs;
+    return threshold;
+}
+
 async function testJoinerPortReclaimSameIp(handle) {
     // Task #105. The joiner's automatic second attempt binds a FRESH local
     // socket on purpose (it exists to dodge stale per-port NAT state), so
@@ -875,10 +896,38 @@ async function testJoinerPortReclaimSameIp(handle) {
     const entry = handle._sessionMap.get(key.toString('hex'));
     assertEq(entry.endpointB.port, 2222, 'joiner-port: attempt 1 holds slot B');
 
-    // Attempt 2: same public IP, new port, slot B deliberately LEFT FRESH.
+    // #130 DIRECTION 1 -- a LIVE slot is NOT reclaimable.
+    //
+    // Attempt 1 is racing at its ~500 ms cadence, so let the server MEASURE
+    // that, then have a same-IP party on a fresh port try to take the slot
+    // while it is still being refreshed. Pre-#130 this succeeded and the
+    // paired peer was re-notified with the claimant's endpoint -- the whole
+    // finding. It must now be refused exactly like any other third party.
+    const refreshB = observeCadence(handle, entry, key, 'B', '198.51.100.41', 2222, 500, stub);
+    assert(refreshB >= 500, `joiner-port: slot B cadence observed (got ${refreshB})`);
+    assertEq(handle._slotReclaimIdleMs(refreshB),
+             refreshB * handle._portReclaimMissedRefreshes,
+             'joiner-port: a joiner-cadence slot scales, it does not hit the SLOT_STALE_MS ceiling');
     stub.sent.length = 0;
     handle._onMessage(regFrom(key, 3333, '198.51.100.41', 3333), { address: '198.51.100.41', port: 3333 }, stub);
-    assertEq(entry.endpointB.port, 3333, 'joiner-port: live slot B repointed to the retry port');
+    assertEq(entry.endpointB.port, 2222, 'joiner-port: LIVE slot B NOT repointed by a same-IP new port');
+    assertEq(entry.portReclaims, 0, 'joiner-port: no reclaim budget spent on a live slot');
+    assertEq(stub.sent.length, 1, 'joiner-port: same-IP claimant on a live slot gets exactly one frame');
+    assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'joiner-port: live-slot claim -> NACK SESSION_FULL');
+
+    // #130 DIRECTION 2 -- a GENUINELY stale slot still is. This is the #105
+    // case and it must keep working, or the retry lockout returns. Attempt 1's
+    // socket is gone, so its lastSeenB is frozen and crosses the threshold
+    // while attempt 2 is still re-REGISTERing every 500 ms into an 8000 ms
+    // signalling leg (src/netplay/direct_p2p.c:4126).
+    const thresholdB = ageSlotPast(handle, entry, 'B', 1);
+    assert(thresholdB < 8000,
+           `joiner-port: threshold ${thresholdB}ms must fit inside the 8000ms attempt-2 signal leg, or #105 is inert again`);
+    stub.sent.length = 0;
+    handle._onMessage(regFrom(key, 3333, '198.51.100.41', 3333), { address: '198.51.100.41', port: 3333 }, stub);
+    assertEq(entry.endpointB.port, 3333, 'joiner-port: stale slot B repointed to the retry port');
+    assertEq(entry.portReclaims, 1, 'joiner-port: the PORT-reclaim arm ran (not the bStale arm)');
+    assertEq(entry.refreshB, 0, 'joiner-port: a repointed slot restarts its cadence measurement');
     assertEq(entry.endpointA.port, 1111, 'joiner-port: host slot untouched');
     assertEq(stub.sent.length, 2, 'joiner-port: retry got a reply AND the host got a re-notify push');
     const toJoiner = stub.sent.find((s) => s.port === 3333);
@@ -895,23 +944,130 @@ async function testJoinerPortReclaimSameIp(handle) {
     assertEq(stub.sent.length, 1, 'joiner-port: different-IP third party gets exactly one frame');
     assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'joiner-port: different-IP third party -> NACK SESSION_FULL');
 
-    // The reclaim is budgeted, so a co-located peer cannot flap the slot
-    // forever. Spend the remainder, then prove the next one is refused
-    // while the slot is still fresh.
+}
+
+async function testPortReclaimBudgetExhausted(handle) {
+    // The cap still bounds flapping, now as the SECOND of two independent
+    // conditions rather than the only one. Split out of
+    // testJoinerPortReclaimSameIp because #130 added two more REGISTERs from
+    // that test's joiner IP and the combined test crossed the 10/s cookied
+    // per-IP budget -- which silently dropped reclaims and made the cap look
+    // like it had been hit early. A fresh key and a fresh pair of IPs keeps
+    // every source under RATE_LIMIT_PER_WINDOW.
+    const key = crypto.randomBytes(16);
+    const stub = makeStubSocket();
+    handle._onMessage(regFrom(key, 1111, '198.51.100.60', 1111), { address: '198.51.100.60', port: 1111 }, stub);
+    handle._onMessage(regFrom(key, 2222, '198.51.100.61', 2222), { address: '198.51.100.61', port: 2222 }, stub);
+    const entry = handle._sessionMap.get(key.toString('hex'));
+
     const cap = handle._maxPortReclaims;
-    assert(cap > 0, 'joiner-port: cap is exposed and positive');
-    for (let i = entry.portReclaims; i < cap; i++) {
-        const p = 5000 + i;
-        handle._onMessage(regFrom(key, p, '198.51.100.41', p), { address: '198.51.100.41', port: p }, stub);
+    assert(cap > 0, 'budget: cap is exposed and positive');
+    // Each flap must ALSO wait the slot out. Drive them through the real
+    // arm, one per source port, aging the slot past its own threshold first.
+    for (let i = 0; i < cap; i++) {
+        const port = 5000 + i;
+        entry.lastSeenB -= handle._slotReclaimIdleMs(entry.refreshB) + 1;
+        handle._onMessage(regFrom(key, port, '198.51.100.61', port), { address: '198.51.100.61', port }, stub);
     }
-    assertEq(entry.portReclaims, cap, 'joiner-port: budget fully spent');
+    assertEq(entry.portReclaims, cap, 'budget: fully spent through the real reclaim arm');
+
     const heldPort = entry.endpointB.port;
     stub.sent.length = 0;
-    handle._onMessage(regFrom(key, 6000, '198.51.100.41', 6000), { address: '198.51.100.41', port: 6000 }, stub);
-    assertEq(entry.endpointB.port, heldPort, 'joiner-port: reclaim refused once the budget is spent');
-    // Budget spent, so this falls through to the third-party arm.
-    assertEq(stub.sent.length, 1, 'joiner-port: over-budget reclaim gets exactly one frame');
-    assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'joiner-port: over-budget reclaim -> NACK SESSION_FULL');
+    // Stale enough to pass #130's precondition, but out of budget. Keep it
+    // UNDER SLOT_STALE_MS so the pre-existing bStale arm cannot mask the
+    // refusal -- otherwise this would assert nothing about the cap.
+    entry.refreshB = 500;
+    entry.lastSeenB -= handle._slotReclaimIdleMs(500) + 1;
+    assert(handle._slotReclaimIdleMs(500) + 1 < handle._slotStaleMs,
+           'budget: the aged slot is below SLOT_STALE_MS, so bStale cannot mask the cap');
+    handle._onMessage(regFrom(key, 6000, '198.51.100.61', 6000), { address: '198.51.100.61', port: 6000 }, stub);
+    assertEq(entry.endpointB.port, heldPort, 'budget: reclaim refused once the budget is spent');
+    assertEq(stub.sent.length, 1, 'budget: over-budget reclaim gets exactly one frame');
+    assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'budget: over-budget reclaim -> NACK SESSION_FULL');
+}
+
+async function testLiveHostSlotNotHijackable(handle) {
+    // TASK #130, THE FINDING ITSELF, at the slot that matters most.
+    //
+    // Pre-#130 both reclaim arms fired on same-IP + budget alone. A party
+    // sharing a public IP with the HOST (CGNAT) and holding the room code
+    // could therefore evict the live host from slot A and have the paired
+    // joiner re-notified with ITS endpoint -- not a denial, a redirection.
+    //
+    // What closes it is that the threshold is a multiple of the slot's OWN
+    // observed cadence. A host advertises every 5000 ms
+    // (src/port/config/config.c:111), so 6 x 5000 = 30000 ms = SLOT_STALE_MS:
+    // over host-cadence slots the port-reclaim arms now grant exactly nothing
+    // that the pre-existing staleness rule did not already grant. This test
+    // asserts that equivalence numerically, so a change to either constant
+    // that breaks it fails here rather than silently reopening the window.
+    const key = crypto.randomBytes(16);
+    const stub = makeStubSocket();
+    handle._onMessage(regFrom(key, 1111, '198.51.100.70', 1111), { address: '198.51.100.70', port: 1111 }, stub);
+    handle._onMessage(regFrom(key, 2222, '198.51.100.71', 2222), { address: '198.51.100.71', port: 2222 }, stub);
+    const entry = handle._sessionMap.get(key.toString('hex'));
+
+    // Let the server measure the HOST's 5 s advertise cadence.
+    const refreshA = observeCadence(handle, entry, key, 'A', '198.51.100.70', 1111, 5000, stub);
+    assert(refreshA >= 5000, `live-host: host cadence observed (got ${refreshA})`);
+    assertEq(handle._slotReclaimIdleMs(refreshA), handle._slotStaleMs,
+             'live-host: a host-cadence slot resolves to exactly SLOT_STALE_MS');
+
+    // A joiner-scale idle (well past 6 x 500 ms) must NOT be enough here.
+    // This is the assertion a fixed window could never make: the same 3 s of
+    // silence reclaims a joiner slot and must not touch a host slot.
+    const joinerScaleIdle = handle._slotReclaimIdleMs(500) + 100;
+    assert(joinerScaleIdle < handle._slotStaleMs, 'live-host: joiner-scale idle is below the host threshold');
+    entry.lastSeenA -= joinerScaleIdle;
+    stub.sent.length = 0;
+    handle._onMessage(regFrom(key, 9999, '198.51.100.70', 9999), { address: '198.51.100.70', port: 9999 }, stub);
+    assertEq(entry.endpointA.port, 1111, 'live-host: LIVE host slot NOT hijacked by a same-IP claimant');
+    assertEq(entry.endpointB.port, 2222, 'live-host: joiner slot untouched');
+    assertEq(entry.portReclaims, 0, 'live-host: no reclaim budget spent');
+    assertEq(stub.sent.length, 1, 'live-host: same-IP claimant gets exactly one frame');
+    assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'live-host: same-IP claimant -> NACK SESSION_FULL');
+
+    // Past SLOT_STALE_MS the host slot is reclaimable exactly as it was
+    // BEFORE #105 existed -- via the pre-existing stale-host arm, which is
+    // why portReclaims stays at zero. The capability is not removed, it is
+    // put back behind the bar it was always meant to sit behind.
+    entry.lastSeenA -= handle._slotStaleMs;
+    stub.sent.length = 0;
+    handle._onMessage(regFrom(key, 9999, '198.51.100.70', 9999), { address: '198.51.100.70', port: 9999 }, stub);
+    assertEq(entry.endpointA.port, 9999, 'live-host: genuinely stale host slot still reclaimable');
+    assertEq(entry.portReclaims, 0, 'live-host: reclaimed by the pre-existing stale arm, not the port arm');
+}
+
+async function testUnobservedSlotMaximallyProtected(handle) {
+    // #130 default-safety. A slot the server has seen exactly ONCE has no
+    // measured cadence, and "no measurement" must resolve to maximally
+    // protected, never to zero. Getting this backwards would reopen the
+    // whole finding for the first seconds of every room -- precisely the
+    // window in which a host has just begun advertising and has not yet sent
+    // its second REGISTER.
+    assertEq(handle._slotReclaimIdleMs(0), handle._slotStaleMs,
+             'unobserved: an unmeasured cadence resolves to SLOT_STALE_MS');
+    const key = crypto.randomBytes(16);
+    const stub = makeStubSocket();
+    handle._onMessage(regFrom(key, 1111, '198.51.100.80', 1111), { address: '198.51.100.80', port: 1111 }, stub);
+    handle._onMessage(regFrom(key, 2222, '198.51.100.81', 2222), { address: '198.51.100.81', port: 2222 }, stub);
+    const entry = handle._sessionMap.get(key.toString('hex'));
+    assertEq(entry.refreshB, 0, 'unobserved: one REGISTER yields no cadence');
+
+    // Far past a joiner-cadence threshold, still short of SLOT_STALE_MS.
+    entry.lastSeenB -= handle._slotReclaimIdleMs(500) * 2;
+    stub.sent.length = 0;
+    handle._onMessage(regFrom(key, 3333, '198.51.100.81', 3333), { address: '198.51.100.81', port: 3333 }, stub);
+    assertEq(entry.endpointB.port, 2222, 'unobserved: unmeasured slot is not reclaimable on a joiner-scale idle');
+    assertEq(entry.portReclaims, 0, 'unobserved: no reclaim budget spent');
+    assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'unobserved: claimant -> NACK SESSION_FULL');
+
+    // A repointed slot must ALSO reset to unmeasured, so a reclaimer cannot
+    // inherit the liveness the previous occupant demonstrated.
+    entry.lastSeenB -= handle._slotStaleMs;
+    handle._onMessage(regFrom(key, 3333, '198.51.100.81', 3333), { address: '198.51.100.81', port: 3333 }, stub);
+    assertEq(entry.endpointB.port, 3333, 'unobserved: stale slot reclaimed');
+    assertEq(entry.refreshB, 0, 'unobserved: the new occupant starts unmeasured, inheriting nothing');
 }
 
 async function testPortReclaimSlotA(handle) {
@@ -931,10 +1087,27 @@ async function testPortReclaimSlotA(handle) {
     assertEq(entry.endpointA.address, '198.51.100.50', 'slotA-reclaim: retrying party holds slot A');
     assertEq(entry.endpointB.address, '198.51.100.51', 'slotA-reclaim: peer holds slot B');
 
-    // Its attempt 2 arrives on a fresh port, both slots LIVE.
+    // #130 DIRECTION 1 -- live slot A is NOT reclaimable either. This is the
+    // worse half of the finding: slot A is where a HOST sits, so pre-#130 a
+    // co-located party could evict the host and have the joiner DELIVERed the
+    // attacker's endpoint.
+    const refreshA = observeCadence(handle, entry, key, 'A', '198.51.100.50', 1111, 500, stub);
+    assert(refreshA >= 500, `slotA-reclaim: slot A cadence observed (got ${refreshA})`);
     stub.sent.length = 0;
     handle._onMessage(regFrom(key, 3333, '198.51.100.50', 3333), { address: '198.51.100.50', port: 3333 }, stub);
-    assertEq(entry.endpointA.port, 3333, 'slotA-reclaim: live slot A repointed to the retry port');
+    assertEq(entry.endpointA.port, 1111, 'slotA-reclaim: LIVE slot A NOT repointed by a same-IP new port');
+    assertEq(entry.portReclaims, 0, 'slotA-reclaim: no reclaim budget spent on a live slot');
+    assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'slotA-reclaim: live-slot claim -> NACK SESSION_FULL');
+
+    // #130 DIRECTION 2 -- the #105 slot-A retry still works once the old
+    // endpoint has actually gone silent for longer than its own cadence.
+    const thresholdA = ageSlotPast(handle, entry, 'A', 1);
+    assert(thresholdA < 8000,
+           `slotA-reclaim: threshold ${thresholdA}ms must fit inside the 8000ms attempt-2 signal leg`);
+    stub.sent.length = 0;
+    handle._onMessage(regFrom(key, 3333, '198.51.100.50', 3333), { address: '198.51.100.50', port: 3333 }, stub);
+    assertEq(entry.endpointA.port, 3333, 'slotA-reclaim: stale slot A repointed to the retry port');
+    assertEq(entry.portReclaims, 1, 'slotA-reclaim: the PORT-reclaim arm ran');
     assertEq(entry.endpointB.port, 2222, 'slotA-reclaim: peer slot untouched');
     assertEq(stub.sent.length, 2, 'slotA-reclaim: retry got a reply AND the peer got a re-notify push');
     const toRetry = stub.sent.find((s) => s.port === 3333);
@@ -2462,7 +2635,11 @@ async function testSweepHook(handle) {
 // +5 (task #122): nackPerReason, nackAmplificationBound,
 // nackNeverAnswersOwnFrames, lostPairingPushObserved,
 // pairingToPunchHistogram.
-const EXPECTED_TESTS = 36; // +2: joinerPortReclaimSameIp, portReclaimSlotA (task #105)
+const EXPECTED_TESTS = 39; // +3 (task #130): portReclaimBudgetExhausted,
+// liveHostSlotNotHijackable, unobservedSlotMaximallyProtected. The first is
+// split OUT of joinerPortReclaimSameIp rather than new coverage -- #130 added
+// two REGISTERs from that test's joiner IP and the combined test crossed the
+// 10/s cookied per-IP budget, which drops packets instead of failing loudly.
 
 let testsRun = 0;
 let testsFailed = 0;
@@ -2539,6 +2716,9 @@ async function main() {
         await runTest('staleJoinerSlotReplaced', () => testStaleJoinerSlotReplaced(handle));
         await runTest('joinerPortReclaimSameIp', () => testJoinerPortReclaimSameIp(handle));
         await runTest('portReclaimSlotA', () => testPortReclaimSlotA(handle));
+        await runTest('portReclaimBudgetExhausted', () => testPortReclaimBudgetExhausted(handle));
+        await runTest('liveHostSlotNotHijackable', () => testLiveHostSlotNotHijackable(handle));
+        await runTest('unobservedSlotMaximallyProtected', () => testUnobservedSlotMaximallyProtected(handle));
 
         // --- S4c: return-routability + per-key cap + version interlock ---
         await runTest('cookieChallengeRequired', () => testCookieChallengeRequired(handle, serverPort));

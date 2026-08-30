@@ -157,18 +157,109 @@ const SLOT_STALE_MS = 30 * 1000;
 //     a valid cookie for the endpoint it is claiming. What S4 closed --
 //     unproven sources binding, evicting or naming a session -- stays
 //     closed.
-// The residual exposure is a party that (a) knows the room code and (b) is
-// behind the SAME public IP as the joiner (CGNAT). Such a party can already
-// deny the room today by simply REGISTERing into slot B first: the room
-// code is a capability, and this change does not alter that. The cap below
-// bounds the churn rather than carrying a security property.
+// THE RESIDUAL, CORRECTED (task #130). An earlier revision of this comment
+// said the residual was a same-IP party that "can already deny the room
+// today by simply REGISTERing into slot B first", and that the cap "bounds
+// the churn rather than carrying a security property". Both understated it,
+// and the correction is why PORT_RECLAIM_MISSED_REFRESHES exists below.
+//
+// What a reclaimer actually proves is: same public address, knowledge of the
+// 16-byte session key, and return-routability AT ITS OWN NEW ENDPOINT.
+// cookieForSlot() does not mix the session key, so the cookie says nothing
+// about WHICH party is claiming -- it does NOT prove original-party identity.
+// The as-shipped rule therefore did not merely let a co-located party win a
+// race for an EMPTY slot; it let one repoint a LIVE, OCCUPIED slot and have
+// the server re-notify the paired peer with the attacker's endpoint. Before
+// #105 a live occupied slot survived (the third-party drop); after #105 and
+// before #130 it was actively hijackable, slot A -- the host -- included.
+// That is a strictly new capability, not a restatement of the pre-existing
+// first-come property, and the cap bounded only how OFTEN it could be used.
+//
+// Scope of the correction, stated so it is not over-read: off-path and
+// different-IP attackers were never in this window and are not what #130
+// closes. They stay blocked by return-routability at the source address
+// (testStaleJoinerSlotReplaced / testJoinerPortReclaimSameIp assert exactly
+// that, and still do). The downstream punch stays gated by the S4a token and
+// the S4b nonce. The room code is a 128-bit session key
+// (Rendezvous_DeriveSessionKey, src/netplay/rendezvous.c:135) and is not
+// brute-forcible against the 10/s cookied per-IP cap. #130 narrows ONE
+// thing: the same-IP trust boundary, which had been widened from "may win an
+// unoccupied slot" to "may evict a live one".
 //
 // THE CAP. The client needs exactly ONE reclaim per join (attempt 2 of 2),
 // so a small multiple covers repeated user-initiated joins against the same
 // still-live room code within SESSION_TTL_MS without letting a co-located
-// peer flap the slot indefinitely. Once the budget is spent the slot falls
-// back to the pre-existing staleness rule.
+// peer flap the slot indefinitely. It bounds frequency only: the staleness
+// precondition below, not this cap, is what carries the security property.
 const MAX_PORT_RECLAIMS = 8;
+
+// Task #130 -- the staleness precondition on the two port-reclaim arms.
+//
+// WHY A PRECONDITION AT ALL. See the correction above: without one, both
+// arms fire on same-IP-plus-budget alone and repoint a LIVE slot.
+//
+// WHY THIS IS NOT SIMPLY "PICK A WINDOW". The bug #105 exists to fix WAS a
+// badly-chosen window. SLOT_STALE_MS is 30 s, calibrated (see its comment)
+// against the HOST's <= 5 s advertise cadence -- "6+ missed host refreshes".
+// Applied to a JOINER slot refreshed every ~500 ms, that same 30 s is 60
+// missed refreshes, and it exceeded the joiner's entire 31,800 ms derived
+// deadline (src/netplay/direct_p2p.c:6114-6120), so the retry could never
+// re-register and the mechanism was inert in exactly the lossy conditions it
+// was built for. The defect was never the NUMBER; it was applying a
+// host-calibrated constant to a slot whose occupant runs 10x faster.
+//
+// WHY NO FIXED WINDOW W CAN WORK. Take the two constraints literally:
+//   * To protect a LIVE HOST slot, W must exceed the host's advertise
+//     cadence (5000 ms default, src/port/config/config.c:111) by enough to
+//     survive a lost refresh -- otherwise a single dropped REGISTER over a
+//     multi-minute advertise opens a 5 s strike window, and over minutes
+//     that is not a residual, it is a certainty. Even ONE missed refresh of
+//     margin demands W > 10000.
+//   * To preserve #105, the reclaim must land inside attempt 2's signalling
+//     leg, which is signal_budget_ms = 8000 (src/netplay/direct_p2p.c:4126)
+//     and ends the re-REGISTER stream (direct_p2p.c:1958-1959). So W < 8000.
+// 10000 < W < 8000 is empty. A single constant cannot serve both slots
+// because the two slots' occupants do not share a cadence.
+//
+// THE DERIVATION. Keep the standard SLOT_STALE_MS already encodes -- six
+// missed refreshes -- and express it in units of the slot's OWN OBSERVED
+// cadence instead of the host's assumed one. That is the whole fix: the
+// factor is not new, it is SLOT_STALE_MS / the host cadence it was written
+// against, 30000 / 5000 = 6, and tools/rendezvous-server/check_reclaim_window.py
+// reads both out of their real definitions and fails if they stop agreeing.
+//
+// What it yields, per slot, with no new magic numbers:
+//   * A JOINER-cadence slot (~500 ms observed) becomes reclaimable after
+//     6 x 500 = 3000 ms of silence. Attempt 2 re-REGISTERs every 500 ms for
+//     8000 ms, and the dead slot's lastSeen is FROZEN (its socket is gone),
+//     so the threshold is crossed ~2-2.5 s into attempt 2's race and the
+//     reclaim still leaves >= 5 s of race plus the RACE_HARD_CAP tails.
+//     #105 keeps working, with margin, which testJoinerPortReclaimSameIp
+//     and testPortReclaimSlotA now assert as a TIMED property.
+//   * A HOST-cadence slot (~5000 ms observed) needs 6 x 5000 = 30000 ms,
+//     which is SLOT_STALE_MS. So over host-cadence slots these arms grant no
+//     power the pre-existing staleness rule did not already grant. The live
+//     host hijack is closed outright, not narrowed.
+//   * A slot whose cadence has NOT been observed yet (one REGISTER, or one
+//     that was just repointed) is treated as maximally protected. Unknown
+//     must mean SLOT_STALE_MS, never 0 -- defaulting an unmeasured slot to
+//     "reclaimable" would reopen the whole finding for the first seconds of
+//     every room, which is precisely when a host is advertising.
+// The ceiling is SLOT_STALE_MS rather than a new constant for a reason: past
+// that point the pre-existing bStale arm reclaims anyway, so a larger
+// threshold could not deny anything -- it would only be unreachable code
+// pretending to be a control.
+//
+// RESIDUAL, STATED PLAINLY. The cadence is MEASURED, so it is only as good
+// as what the slot's occupant has shown. A slot repointed by a legitimate
+// reclaim resets to "unobserved" and is therefore maximally protected, which
+// is the safe direction and also ends the flap war the cap used to bound
+// alone. But an occupant that legitimately refreshes more slowly than it
+// used to (a client tuned via CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS,
+// which has a 1000 ms floor and NO ceiling) is protected only to 6x whatever
+// it has actually demonstrated. That is a config-dependent residual, not a
+// silent one: check_reclaim_window.py gates the SHIPPED default.
+const PORT_RECLAIM_MISSED_REFRESHES = 6;
 const RATE_SWEEP_INTERVAL_MS = 60 * 1000;
 
 // Per-IP budget for requests that have ALREADY PROVEN return routability
@@ -581,6 +672,78 @@ function nowMs() {
 function endpointEq(a, b) {
     if (!a || !b) return false;
     return a.address === b.address && a.port === b.port;
+}
+
+// --- #130: per-slot observed cadence -----------------------------------------
+//
+// touchSlot() is the ONLY place a slot's liveness clock advances, so the
+// observed cadence cannot drift away from lastSeen by someone refreshing one
+// and forgetting the other. Both REGISTER (the idempotent re-register arms)
+// and POLL route through it: the question the cadence answers is "how long
+// may this occupant legitimately be silent", and POLL is liveness for that
+// purpose exactly as REGISTER is.
+//
+// The estimator is the MAXIMUM gap yet seen between consecutive liveness
+// signals from the CURRENT occupant, not the last gap. Under-estimating is
+// the security failure -- it shortens the window in which the occupant is
+// still considered live -- while over-estimating only delays a reclaim, and
+// is bounded anyway by the SLOT_STALE_MS ceiling in slotReclaimIdleMs().
+// A lost REGISTER therefore widens protection rather than opening it.
+function touchSlot(entry, slot, now) {
+    const seenKey = slot === 'A' ? 'lastSeenA' : 'lastSeenB';
+    const refreshKey = slot === 'A' ? 'refreshA' : 'refreshB';
+    const prev = entry[seenKey];
+    // `!== 0`, not `> 0`. Zero is this file's "slot empty" sentinel and is the
+    // only value that must be skipped. A NEGATIVE prev is a legitimately very
+    // old timestamp -- it is also how every test in __test_protocol.js ages
+    // state (`entry.lastTouch -= 61 * 1000` and friends), because the clock is
+    // performance.now() and starts near zero. Writing `> 0` here silently
+    // refused to measure a cadence in exactly those tests, which is a gate
+    // that cannot see the thing it gates.
+    if (prev !== 0 && now > prev) {
+        const gap = now - prev;
+        if (gap > (entry[refreshKey] || 0)) entry[refreshKey] = gap;
+    }
+    entry[seenKey] = now;
+}
+
+// Called wherever a slot changes OCCUPANT. The new occupant has shown no
+// cadence yet, so its measurement must start over -- inheriting the previous
+// occupant's cadence would let a reclaimer borrow a stranger's liveness.
+function seatSlot(entry, slot, source, now) {
+    if (slot === 'A') {
+        entry.endpointA = source;
+        entry.lastSeenA = now;
+        entry.refreshA = 0;
+    } else {
+        entry.endpointB = source;
+        entry.lastSeenB = now;
+        entry.refreshB = 0;
+    }
+}
+
+function clearSlotB(entry) {
+    entry.endpointB = null;
+    entry.lastSeenB = 0;
+    entry.refreshB = 0;
+}
+
+// How long this slot must have been silent before a same-IP port reclaim may
+// repoint it. See the PORT_RECLAIM_MISSED_REFRESHES block for the derivation;
+// the two clauses here are the two halves of it:
+//   * an UNOBSERVED cadence (0) means we have no evidence about this
+//     occupant, and unknown must resolve to maximally protected;
+//   * the ceiling is SLOT_STALE_MS because beyond it the pre-existing bStale
+//     arm reclaims regardless, so a higher threshold would be a control that
+//     cannot deny anything.
+function slotReclaimIdleMs(refreshMs) {
+    if (!(refreshMs > 0)) return SLOT_STALE_MS;
+    return Math.min(refreshMs * PORT_RECLAIM_MISSED_REFRESHES, SLOT_STALE_MS);
+}
+
+function slotReclaimable(entry, slot, now) {
+    const idle = now - (slot === 'A' ? entry.lastSeenA : entry.lastSeenB);
+    return idle > slotReclaimIdleMs(slot === 'A' ? entry.refreshA : entry.refreshB);
 }
 
 // Spec says "truncate session_key to first 4 hex chars". 4 hex chars = 2 bytes.
@@ -1132,13 +1295,18 @@ function handleRegister(socket, buf, rinfo) {
         // #122: pushTo/pushAtMs track the LAST pairing DELIVER we pushed
         // (see the lost-push check at the top of this function). null =
         // nothing outstanding to observe.
-        entry = { endpointA: source, endpointB: null, lastTouch: now, lastSeenA: now, lastSeenB: 0, creatorIp: source.address, portReclaims: 0, pushTo: null, pushAtMs: 0 };
+        // #130: refreshA/refreshB are the per-slot OBSERVED cadence (max gap
+        // between consecutive liveness signals from the current occupant).
+        // They start at 0 = "not yet observed", which slotReclaimIdleMs()
+        // resolves to SLOT_STALE_MS -- a brand-new slot is maximally
+        // protected, not freely reclaimable.
+        entry = { endpointA: source, endpointB: null, lastTouch: now, lastSeenA: now, lastSeenB: 0, refreshA: 0, refreshB: 0, creatorIp: source.address, portReclaims: 0, pushTo: null, pushAtMs: 0 };
         sessionMap.set(hexKey, entry);
         creatorCounts.set(source.address, created + 1);
     } else if (entry.endpointA && endpointEq(entry.endpointA, source)) {
-        entry.lastSeenA = now; // idempotent re-REGISTER from A
+        touchSlot(entry, 'A', now); // idempotent re-REGISTER from A (#130: also measures A's cadence)
     } else if (entry.endpointB && endpointEq(entry.endpointB, source)) {
-        entry.lastSeenB = now; // idempotent re-REGISTER from B
+        touchSlot(entry, 'B', now); // idempotent re-REGISTER from B (#130: also measures B's cadence)
         // Review H1 (within-stale-window re-host): if this key's HOST slot
         // is a stale endpoint from this same IP, we are a re-hosted client
         // that re-registered before its old slot crossed SLOT_STALE_MS and
@@ -1149,10 +1317,8 @@ function handleRegister(socket, buf, rinfo) {
         if (entry.endpointA && entry.endpointA.address === source.address &&
             now - entry.lastSeenA > SLOT_STALE_MS) {
             logInfo(`[RECLAIM] promote B->A key=${shortKey4(hexKey)}... ${entry.endpointA.address}:${entry.endpointA.port} (stale) replaced by ${source.address}:${source.port}`);
-            entry.endpointA = source;
-            entry.lastSeenA = now;
-            entry.endpointB = null;
-            entry.lastSeenB = 0;
+            seatSlot(entry, 'A', source, now);
+            clearSlotB(entry);
         }
     } else {
         // Source matches neither slot exactly. Review H1: before the old
@@ -1168,35 +1334,35 @@ function handleRegister(socket, buf, rinfo) {
             // leftover joiner slot so the reclaimed host is not handed a
             // dead endpoint in the reply DELIVER.
             logInfo(`[RECLAIM] host slot key=${shortKey4(hexKey)}... ${entry.endpointA.address}:${entry.endpointA.port} -> ${source.address}:${source.port} (stale ${Math.round((now - entry.lastSeenA) / 1000)}s)`);
-            entry.endpointA = source;
-            entry.lastSeenA = now;
+            seatSlot(entry, 'A', source, now);
             if (bStale) {
-                entry.endpointB = null;
-                entry.lastSeenB = 0;
+                clearSlotB(entry);
             }
         } else if (!entry.endpointA) {
-            entry.endpointA = source;
-            entry.lastSeenA = now;
+            seatSlot(entry, 'A', source, now);
         } else if (!entry.endpointB) {
-            entry.endpointB = source;
-            entry.lastSeenB = now;
+            seatSlot(entry, 'B', source, now);
             pairedPeer = entry.endpointA; // notify A that B has now joined
         } else if (entry.endpointB &&
                    entry.endpointB.address === source.address &&
+                   slotReclaimable(entry, 'B', now) &&
                    (entry.portReclaims || 0) < MAX_PORT_RECLAIMS) {
             // Task #105: a party of THIS room retrying on a fresh source
-            // port, and it happens to hold slot B. Same public address,
-            // port changed, slot NOT stale (attempt 1 refreshed it moments
-            // ago). Without this the retry is ignored for the whole connect
-            // budget — see the long note on MAX_PORT_RECLAIMS above for why
-            // this is not a slot hijack and why S4 stays closed.
+            // port, and it happens to hold slot B. Same public address, port
+            // changed, and — task #130 — slot B silent for longer than ITS
+            // OWN observed cadence allows. Without this arm the retry is
+            // ignored for the whole connect budget; without the staleness
+            // term it repointed a LIVE slot. See the PORT_RECLAIM_MISSED_
+            // REFRESHES block above for why the term is a cadence multiple
+            // and not a fixed window (no fixed window exists), and the
+            // MAX_PORT_RECLAIMS block for what this does and does not prove.
             entry.portReclaims = (entry.portReclaims || 0) + 1;
-            logInfo(`[RECLAIM] port key=${shortKey4(hexKey)}... slotB ${entry.endpointB.address}:${entry.endpointB.port} -> ${source.address}:${source.port} (same-IP retry ${entry.portReclaims}/${MAX_PORT_RECLAIMS})`);
-            entry.endpointB = source;
-            entry.lastSeenB = now;
+            logInfo(`[RECLAIM] port key=${shortKey4(hexKey)}... slotB ${entry.endpointB.address}:${entry.endpointB.port} -> ${source.address}:${source.port} (same-IP retry ${entry.portReclaims}/${MAX_PORT_RECLAIMS}, idle ${now - entry.lastSeenB}ms > ${slotReclaimIdleMs(entry.refreshB)}ms)`);
+            seatSlot(entry, 'B', source, now);
             pairedPeer = entry.endpointA; // re-notify the peer with the new endpoint
         } else if (entry.endpointA &&
                    entry.endpointA.address === source.address &&
+                   slotReclaimable(entry, 'A', now) &&
                    (entry.portReclaims || 0) < MAX_PORT_RECLAIMS) {
             // Task #105 follow-up. The SAME retry, for the party that holds
             // slot A instead. This arm is NOT redundant: slots are
@@ -1207,14 +1373,19 @@ function handleRegister(socket, buf, rinfo) {
             // showed 16 ignored REGISTERs and zero reclaims, because a
             // B-only rule cannot match a source whose address sits in A.
             //
-            // Note this also repairs the non-stale HOST retry, which
-            // previously fell through to "fill slot B" and filed the host as
-            // its own joiner; the H1 reclaim above only covers the case
-            // where slot A has already gone STALE.
+            // Note this also repairs the HOST retry that the H1 reclaim
+            // above misses. #130 narrows HOW MUCH it repairs, deliberately:
+            // a host-cadence slot (~5000 ms observed) resolves to a 30000 ms
+            // threshold, i.e. SLOT_STALE_MS, so over host-cadence slots this
+            // arm now grants nothing the H1 arm did not already grant. That
+            // is the point — the live-host hijack was the worst half of the
+            // finding, and closing it is worth losing a repair that only
+            // ever applied to a party whose HOST_WAITING state is unbounded
+            // by design (src/netplay/direct_p2p.c:3331-3345) and can afford
+            // to wait. The joiner, which cannot, keeps its fast path.
             entry.portReclaims = (entry.portReclaims || 0) + 1;
-            logInfo(`[RECLAIM] port key=${shortKey4(hexKey)}... slotA ${entry.endpointA.address}:${entry.endpointA.port} -> ${source.address}:${source.port} (same-IP retry ${entry.portReclaims}/${MAX_PORT_RECLAIMS})`);
-            entry.endpointA = source;
-            entry.lastSeenA = now;
+            logInfo(`[RECLAIM] port key=${shortKey4(hexKey)}... slotA ${entry.endpointA.address}:${entry.endpointA.port} -> ${source.address}:${source.port} (same-IP retry ${entry.portReclaims}/${MAX_PORT_RECLAIMS}, idle ${now - entry.lastSeenA}ms > ${slotReclaimIdleMs(entry.refreshA)}ms)`);
+            seatSlot(entry, 'A', source, now);
             pairedPeer = entry.endpointB; // re-notify the peer with the new endpoint
         } else if (bStale) {
             // Both slots filled but the joiner slot is stale (abandoned
@@ -1222,8 +1393,7 @@ function handleRegister(socket, buf, rinfo) {
             // fresh joiner arriving after an abandoned pairing — and
             // re-notify A of the new joiner endpoint.
             logInfo(`[RECLAIM] joiner slot key=${shortKey4(hexKey)}... ${entry.endpointB.address}:${entry.endpointB.port} -> ${source.address}:${source.port} (stale ${Math.round((now - entry.lastSeenB) / 1000)}s)`);
-            entry.endpointB = source;
-            entry.lastSeenB = now;
+            seatSlot(entry, 'B', source, now);
             pairedPeer = entry.endpointA;
         } else {
             // Both slots live with different endpoints; treat as a third party.
@@ -1290,10 +1460,12 @@ function handlePoll(socket, buf, rinfo) {
         // Refresh lastTouch even though we don't update endpoints.
         entry.lastTouch = nowMs();
         if (endpointEq(entry.endpointA, source)) {
-            entry.lastSeenA = entry.lastTouch; // slot liveness (review H1)
+            // slot liveness (review H1); #130: POLL is liveness for the
+            // cadence estimate too -- see touchSlot().
+            touchSlot(entry, 'A', entry.lastTouch);
             peer = entry.endpointB;
         } else if (endpointEq(entry.endpointB, source)) {
-            entry.lastSeenB = entry.lastTouch;
+            touchSlot(entry, 'B', entry.lastTouch);
             peer = entry.endpointA;
         } else {
             // Source isn't a registered endpoint for this key.
@@ -1554,6 +1726,8 @@ function start(port) {
         _maxSessions: MAX_SESSIONS,
         _slotStaleMs: SLOT_STALE_MS,
         _maxPortReclaims: MAX_PORT_RECLAIMS, // #105
+        _portReclaimMissedRefreshes: PORT_RECLAIM_MISSED_REFRESHES, // #130
+        _slotReclaimIdleMs: slotReclaimIdleMs, // #130
         _sweepNow() {
             sweepSessions();
             sweepRates();
