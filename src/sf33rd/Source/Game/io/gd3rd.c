@@ -599,7 +599,7 @@ void Ldreq_SetBarrierForced(bool forced) {
  * full enumeration of paths that reach njUserMain()/Game_Task() (and
  * therefore Check_LDREQ_Queue(), game.c:195) while a session exists:
  *
- *   IDLE           main.c:700 calls njUserMain() directly. Offline. The
+ *   IDLE           main.c:718 calls njUserMain() directly. Offline. The
  *                  barrier MUST stay off here — that is the whole
  *                  "offline is untouched" clause below.
  *   TRANSITIONING  netplay.c:1688 step_game(true), once per frame until
@@ -609,8 +609,8 @@ void Ldreq_SetBarrierForced(bool forced) {
  *                  peers of the same session.
  *   CONNECTING     netplay.c:1829 run_netplay(). GekkoNet emits no
  *                  advance until AllActorsValid() first returns true
- *                  (GekkoLib game_session.cpp:125, ref 7be848c pinned in
- *                  build-deps.sh:425), and that same UpdateSession call
+ *                  (GekkoLib game_session.cpp:125, `GEKKONET_REF`=7be848c
+ *                  in build-deps.sh:498), and that same UpdateSession call
  *                  both queues SessionStarted (game_session.cpp:425) and
  *                  advances (:145). Netplay_Run reads session
  *                  events BEFORE update_session (step_logic, netplay.c

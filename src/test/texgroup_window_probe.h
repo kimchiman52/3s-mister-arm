@@ -15,8 +15,9 @@
  *
  *   F4  getObjectHeight() returns 0 when texgrplds[i].ok == 0
  *       (mtrans.c:369-375) into wk->reserv_add_y, which is checksummed
- *       rollback state (game_state.c:654). Question: can the ok == 0
- *       window overlap check_tsukamare_keizoku_check (plpcu.c:236)?
+ *       rollback state: `GS_SAVE(plw)` game_state.c:690, member
+ *       `X(reserv_add_y)` plw_canon_fields.h:419. Question: can the
+ *       ok == 0 window overlap check_tsukamare_keizoku_check (plpcu.c:236)?
  *
  * This header declares the observation points. Everything compiles to
  * nothing unless ENABLE_PERF_TELEMETRY is on, and even when on the

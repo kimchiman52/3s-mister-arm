@@ -494,8 +494,8 @@ void char_move(WORK* wk) {
                      * made whole again. The subtract-then-restore pair is
                      * exact: prior_add was added to this same counter earlier
                      * in the move and nothing clears it mid-engine-tick (the
-                     * overlay's MOVE_START reset runs in the overlay tick,
-                     * main.c:720, strictly after the engine tick, main.c:700),
+                     * overlay's MOVE_START reset runs in `frame_data_overlay_tick()`,
+                     * src/main.c:738, strictly after the engine tick, main.c:718),
                      * so the pre-subtract value is always >= prior_add.
                      * Mutation lever F (docs/plan-frame-data-harness.md
                      * §1.9 item 3, the mutation-test acceptance criterion):

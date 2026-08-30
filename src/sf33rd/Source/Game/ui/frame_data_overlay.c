@@ -1588,13 +1588,13 @@ void frame_data_overlay_tick(void) {
                  * tag right at move-init, same timing as the engine_a/proj
                  * captures below (the engine tick that set cmoa.koc / set
                  * fd_engine_move_is_uoh already ran this same real frame,
-                 * main.c:618 vs :630 — see lever S comment above). */
+                 * main.c:718 vs :738 — see lever S comment above). */
                 g_cur.koc          = (s32)plw[i].wu.cmoa.koc;
                 g_cur.move_is_uoh  = (fd_engine_move_is_uoh[i] != 0);
                 /* Clear the engine's active-count capture slot so char_move
                  * can accumulate this move's active cells' cgctrs fresh. */
                 /* lever S (ENGINE-D2): the engine tick of THIS same real frame runs before
-                 * this overlay tick (main.c:618 vs :630). If char_move() already entered the
+                 * this overlay tick (main.c:718 vs :738). If char_move() already entered the
                  * new move's first active/catch cell this tick (freeze-deferred MOVE_START:
                  * sa_stop parks this scan while the engine runs, so on charts whose first
                  * post-flash cell is active, the add lands before this reset), preserve
@@ -1635,7 +1635,7 @@ void frame_data_overlay_tick(void) {
                  *
                  * BUT: effect_13_init() (which sets fd_engine_proj_spawned)
                  * runs inside njUserMain(), strictly before this overlay
-                 * tick (main.c:618 vs 630) — so a projectile that spawns on
+                 * tick (main.c:718 vs 738) — so a projectile that spawns on
                  * THIS move's very first engine tick already has the flag
                  * set by the time we get here, on the same tick we're about
                  * to zero it for the fresh move. Latch it as a legitimate
@@ -2004,8 +2004,8 @@ void frame_data_overlay_tick(void) {
                     g_cur.cghi1_first_frame    = g_local_frame;
                     g_cur.cghi1_first_raw_slot = g_cur.raw_len;
                     /* §13.9.4 anchor-time snapshot. Valid because
-                     * frame_data_overlay_tick() (main.c:630) runs after
-                     * the engine tick / njUserMain() (main.c:618), so
+                     * frame_data_overlay_tick() (main.c:738) runs after
+                     * the engine tick / njUserMain() (main.c:718), so
                      * every char_move() add for this frame (charset.c's
                      * fd_engine_active_count accumulator) has already
                      * landed by the time we read it here — the snapshot
@@ -2265,8 +2265,8 @@ void frame_data_overlay_tick(void) {
          * BEFORE this consume site runs, since MOVE_START detection and
          * this per-tick block both execute within the same call, in that
          * order. effect_13_init() (which sets the flag) runs inside
-         * njUserMain(), strictly before this overlay tick (main.c:618 vs
-         * 630), so a projectile spawning on a move's very first engine
+         * njUserMain(), strictly before this overlay tick (main.c:718 vs
+         * 738), so a projectile spawning on a move's very first engine
          * tick would otherwise have its flag cleared out from under it
          * right here, never reaching this `if`. The MOVE_START block now
          * latches that slot-0 case itself (proj_spawn_slot=0,

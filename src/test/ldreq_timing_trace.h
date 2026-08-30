@@ -52,7 +52,8 @@
  *     balance (arcade/arcade_balance.c:115-121), which makes
  *     ArcadeBalance_IsEnabled() and therefore Netplay_ArmAllowed()
  *     (netplay/netplay.c:2030-2032) false, so netplay refuses to arm
- *     (netplay_nav.c:166-169, main.c:339-344).
+ *     (the Netplay_ArmAllowed guard: netplay_nav.c:217-219,
+ *     main.c:346-350).
  *
  * The two automations are mutually exclusive by construction. The force
  * flag is what lets the barrier be exercised from the automation that

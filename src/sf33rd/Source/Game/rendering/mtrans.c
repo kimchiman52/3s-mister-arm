@@ -369,7 +369,7 @@ s16 getObjectHeight(u16 cgnum) {
     if (texgrplds[i].ok == 0) {
         /* Task #64 F4 observation point: this early return writes a 0
          * into wk->reserv_add_y at plpcu.c:248, which is checksummed
-         * rollback state (game_state.c:654). */
+         * rollback state: `GS_SAVE(plw)` game_state.c:690, member `X(reserv_add_y)` plw_canon_fields.h:419. */
         TGWP_ObjectHeightZero(cgnum, i);
         return 0;
     }

@@ -63,16 +63,16 @@ Forwarding rules
 ----------------
 A granted mapping is not just a datagram; it has to change what the NAT
 namespace actually does. On every grant we install BOTH directions with -I (head
-of chain) so they take precedence over the dynamic rules natns.sh:76-136
-installed for the declared NAT type:
+of chain) so they take precedence over the dynamic rules `apply_nat()`
+(tools/netplay/natmatrix/natns.sh:89-194) installs for the declared NAT type:
 
   inbound   -t nat -I PREROUTING  -i WAN_IF -p PROTO --dport P_ext \\
                    -j DNAT --to-destination INNER:P_int
   outbound  -t nat -I POSTROUTING -o WAN_IF -p PROTO -s INNER --sport P_int \\
                    -j SNAT --to-source EXT_IP:P_ext
 
-The OUTBOUND rule is the whole point for the symmetric cell. natns.sh:92-98
-emulates symmetric NAT with ``MASQUERADE --random-fully``, which picks a fresh
+The OUTBOUND rule is the whole point for the symmetric cell. The `symmetric)`
+arm (natns.sh:143-148) emulates it with ``MASQUERADE --random-fully``, picking a
 random external source port per destination tuple; a port-restricted host then
 rejects the reply because it never sent to that port. The SNAT rule pins the
 external port for that internal port regardless of destination, i.e. the mapping
