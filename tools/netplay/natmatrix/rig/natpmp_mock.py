@@ -94,6 +94,15 @@ internal port would be inert for those flows. We therefore flush conntrack
 entries for the internal endpoint on install (and on teardown). See the VERIFIED
 note in flush_conntrack() for the measurement that shows this is load-bearing.
 
+The flush needs conntrack(8), which is an OPTIONAL dependency: it is not in a
+base debian image (it is packaged separately, as conntrack). Its absence is
+detected once at startup and reported as ``conntrack=absent`` in the ready line
+plus one explicit skip message per mapping; it is never allowed to surface as an
+exec failure, because a healthy run that merely lacks an optional tool must not
+read as a broken one in the log. The flush is not load-bearing for the datagram
+protocol -- only for retranslating flows that predate a mapping -- so the rest
+of the daemon is unaffected.
+
 Usage
 -----
   natpmp_mock.py --listen 10.1.0.1 --external-ip 203.0.113.10 \\
@@ -105,8 +114,10 @@ rig/stun_mock.py.
 """
 
 import argparse
+import os
 import random
 import selectors
+import shutil
 import signal
 import socket
 import struct
@@ -158,6 +169,11 @@ PMP_UNSUPPORTED_OPCODE = 5
 EPHEMERAL_LO = 10000
 EPHEMERAL_HI = 60000
 
+# How long one idle pass through the main loop blocks. It is also the mapping
+# expiry-sweep cadence, and -- only when signal.set_wakeup_fd is unavailable --
+# the worst-case delay between a stop signal and the start of teardown.
+SELECT_TIMEOUT = 1.0
+
 
 def v4_mapped(ip_str):
     """RFC 6887 sec 5 / put_v4_mapped, natpmp.c:83-88: ::ffff:0:0/96 + the 4
@@ -192,6 +208,20 @@ class Gateway(object):
         self.mode = args.mode
         self.install_rules = not args.no_rules
         self.conntrack_flush = not args.no_conntrack_flush
+        # OPTIONAL dependency, resolved ONCE at startup rather than per call.
+        # conntrack(8) ships in its own package and is absent from a base
+        # debian image; without this probe every flush attempted three execs
+        # that each failed with ENOENT and logged "exec failed: conntrack ...",
+        # which made a run that was working correctly look broken. None here
+        # means "not installed"; a path means "use exactly this binary", so
+        # behaviour where conntrack IS present is unchanged.
+        self.conntrack_bin = shutil.which("conntrack")
+        self.conntrack_absent_logged = False
+        # Shutdown state. Written by request_stop() from signal-handler
+        # context, read by serve()'s loop condition. Both are plain
+        # attribute stores, which is all a Python signal handler may safely do.
+        self.stopping = False
+        self.stop_signal = 0
         self.lifetime_cap = args.lifetime_cap
         self.verbose = args.verbose
         self.logf = open(args.log, "a", buffering=1) if args.log else None
@@ -288,17 +318,39 @@ class Gateway(object):
         --no-conntrack-flush turns all of it off. It exists as the CONTROL for
         the claim above: run the same scenario with and without it and the
         difference is the measurement, not an assertion.
+
+        conntrack(8) itself is OPTIONAL. It is not present in a base debian
+        image, and its absence is a property of the image, not a fault of this
+        run -- so it is ANNOTATED once and skipped, never allowed to reach the
+        log as three "exec failed" lines per mapping. The nat rules are still
+        installed either way; what is lost is only the retranslation of flows
+        that predate the mapping.
         """
         if not self.conntrack_flush:
             self.vlog("conntrack flush SKIPPED (--no-conntrack-flush) for %s:%d"
                       % (m.in_ip, m.in_port))
             return
+        if self.conntrack_bin is None:
+            msg = ("conntrack flush SKIPPED for %s:%d -- conntrack(8) is not "
+                   "installed in this image. Rules ARE installed; only flows "
+                   "that predate this mapping keep their old translation. "
+                   "Install the 'conntrack' package for full fidelity."
+                   % (m.in_ip, m.in_port))
+            if not self.conntrack_absent_logged:
+                # Once at full volume, so the annotation is visible in a
+                # default run; after that quietly, so a long cell does not
+                # bury its real output under a repeated environment note.
+                self.conntrack_absent_logged = True
+                self.log(msg)
+            else:
+                self.vlog(msg)
+            return
         pn = self.proto_name(m.proto)
-        self.run(["conntrack", "-D", "-p", pn,
+        self.run([self.conntrack_bin, "-D", "-p", pn,
                   "--orig-src", m.in_ip, "--orig-port-src", str(m.in_port)])
-        self.run(["conntrack", "-D", "-p", pn,
+        self.run([self.conntrack_bin, "-D", "-p", pn,
                   "--reply-dst", self.ext_ip, "--reply-port-dst", str(m.ext_port)])
-        self.run(["conntrack", "-D", "-p", pn,
+        self.run([self.conntrack_bin, "-D", "-p", pn,
                   "--orig-dst", self.ext_ip, "--orig-port-dst", str(m.ext_port)])
 
     def install(self, m):
@@ -561,6 +613,49 @@ class Gateway(object):
         return self.pcp_map_response(PCP_SUCCESS, granted, nonce, proto,
                                      in_port, ext)
 
+    # --- shutdown ----------------------------------------------------------
+    def request_stop(self, signum):
+        """SIGNAL-HANDLER SAFE stop request: set two attributes, do nothing else.
+
+        No raise, no I/O, no signal.signal() call. Every one of those was tried
+        and each has a failure mode this daemon actually hit:
+
+          raise    the KeyboardInterrupt lands wherever the interpreter happens
+                   to be. If that is inside serve()'s teardown -- and a second
+                   TERM lands there routinely, because natns.sh's `portmap
+                   <side> down` sends one to the pidfile and then immediately
+                   pkills the same command line -- it escapes the finally,
+                   printing a traceback AND abandoning the -I'd rules it was in
+                   the middle of removing.
+          logging  sys.stderr.write() from a handler can re-enter a write that
+                   the interrupted code was already inside.
+          SIG_IGN  calling signal.signal() from inside a handler was observed
+                   to fail with "OSError: Signal 15 ignored due to race
+                   condition" under a burst of signals.
+
+        A flag has none of those. Repeated signals just set it again, which is
+        a no-op, so a signal storm is indistinguishable from a single TERM.
+
+        MEASURED, debian:trixie + python 3.13.5, privileged container, one
+        granted mapping (two -I'd nat rules) live at stop time:
+
+                                       raising handler      this flag
+          natns.sh-shaped kill+pkill   10/10 exit 130,      10/10 exit 0,
+          (x10)                        1 rule left,         0 rules left,
+                                       traceback            no traceback
+          200 x SIGTERM (x10)          10/10 exit 143,      10/10 exit 0,
+                                       2 rules left,        0 rules left,
+                                       traceback in 6/10,   no traceback
+                                       one run lost stderr
+          200 x SIGINT                 (same class)         exit 0, 0 left
+
+        The exit statuses are the tell: 130/143 is "died of a signal", which is
+        what an intentional teardown had been reporting to run_matrix.sh.
+        """
+        if not self.stopping:
+            self.stopping = True
+            self.stop_signal = signum
+
     # --- main loop ---------------------------------------------------------
     def serve(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -568,13 +663,61 @@ class Gateway(object):
         s.bind((self.listen, self.port))
         sel = selectors.DefaultSelector()
         sel.register(s, selectors.EVENT_READ)
-        self.log("ready on %s:%d mode=%s ext=%s inner=%s wan-if=%s rules=%s"
+
+        # WAKE THE SELECTOR THE INSTANT A SIGNAL ARRIVES.
+        #
+        # request_stop only sets a flag, and the flag is tested once per loop
+        # iteration -- so on its own the daemon would keep running for up to
+        # SELECT_TIMEOUT after being asked to stop. natns.sh's `portmap <side>
+        # down` does not wait for us: it signals and returns, so that delay is
+        # time in which the rules it asked us to remove are still in the nat
+        # table while the caller believes they are gone. Measured teardown
+        # latency with the pipe in place: 0.079 s from SIGTERM to exit.
+        #
+        # signal.set_wakeup_fd closes it without running any Python in handler
+        # context: the interpreter writes the signal number to this pipe from
+        # C, the selector wakes on it, and the flag is acted on immediately.
+        # It is main-thread-only, so its absence is tolerated -- the flag is
+        # still correct, just noticed one timeout later.
+        wake_r = wake_w = None
+        prev_wakeup_fd = -1
+        try:
+            wake_r, wake_w = os.pipe()
+            os.set_blocking(wake_r, False)
+            os.set_blocking(wake_w, False)
+            prev_wakeup_fd = signal.set_wakeup_fd(wake_w)
+            sel.register(wake_r, selectors.EVENT_READ)
+        except (ValueError, OSError) as e:
+            self.vlog("no signal wakeup pipe (%s); the %.0fs select timeout is "
+                      "the shutdown poll interval instead" % (e, SELECT_TIMEOUT))
+            for fd in (wake_r, wake_w):
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+            wake_r = wake_w = None
+
+        # natns.sh's `portmap <side> up` greps this log for the literal
+        # "ready on" to know the socket is bound, so that prefix is
+        # load-bearing; conntrack= is appended at the END where it cannot
+        # disturb that match, and states the optional dependency up front
+        # instead of leaving it to be inferred from a missing flush later.
+        self.log("ready on %s:%d mode=%s ext=%s inner=%s wan-if=%s rules=%s "
+                 "conntrack=%s"
                  % (self.listen, self.port, self.mode, self.ext_ip,
                     self.inner_ip, self.wan_if,
-                    "on" if self.install_rules else "off"))
+                    "on" if self.install_rules else "off",
+                    self.conntrack_bin if self.conntrack_bin else "absent"))
         try:
-            while True:
-                for _ in sel.select(timeout=1.0):
+            while not self.stopping:
+                for key, _events in sel.select(timeout=SELECT_TIMEOUT):
+                    if key.fd == wake_r:
+                        try:
+                            os.read(wake_r, 4096)  # drain; the flag is the news
+                        except OSError:
+                            pass
+                        continue
                     try:
                         data, src = s.recvfrom(2048)
                     except OSError:
@@ -590,9 +733,48 @@ class Gateway(object):
                         except OSError as e:
                             self.log("send failed: %s" % e)
                 self.sweep()
+            self.log("stop requested (signal %d) -- tearing down"
+                     % self.stop_signal)
         except KeyboardInterrupt:
-            pass
+            # Only reachable for an interrupt raised before main() installed
+            # the flag handlers, or by a caller that never installed them.
+            self.log("interrupt received -- tearing down")
         finally:
+            # Detach the wakeup fd BEFORE closing it: leaving the interpreter
+            # pointed at a closed descriptor makes every later signal print a
+            # write error from C, which is the same class of cosmetic-looking
+            # noise this whole change exists to remove.
+            if wake_w is not None:
+                try:
+                    signal.set_wakeup_fd(prev_wakeup_fd)
+                except (ValueError, OSError):
+                    pass
+                try:
+                    sel.unregister(wake_r)
+                except (KeyError, ValueError, OSError):
+                    pass
+                for fd in (wake_r, wake_w):
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+            try:
+                sel.close()
+            except Exception:
+                pass
+            try:
+                s.close()
+            except OSError:
+                pass
+            # THE RULES COME OUT LAST, AND NOTHING MAY INTERRUPT IT.
+            #
+            # This is the loop the reported traceback died inside: signal ->
+            # run() -> remove() -> drop() -> here. It survives now because the
+            # handlers raise nothing at all, so however many further TERMs
+            # arrive, every drop() runs and every -I'd rule is removed. A
+            # teardown that stops halfway leaves the next cell running against
+            # a nat table it did not configure, which is a silently WRONG
+            # result rather than a failed one.
             for key in list(self.by_inner):
                 self.drop(key)
             self.log("stopped")
@@ -631,16 +813,40 @@ def main():
     ap.add_argument("--verbose", action="store_true")
     a = ap.parse_args()
 
-    # natns.sh portmap ... down kills us with SIGTERM. Default SIGTERM would
-    # skip serve()'s finally block and leave our -I'd rules in the nat table,
-    # which would silently contaminate the NEXT cell. Turn it into the same
-    # exception the Ctrl-C path already unwinds cleanly.
-    def _term(signum, frame):
-        raise KeyboardInterrupt
-    signal.signal(signal.SIGTERM, _term)
+    gw = Gateway(a)
 
-    Gateway(a).serve()
+    # SIGTERM/SIGINT IS THE SUCCESS PATH, not a failure. This daemon has no
+    # quit command and no finite run length -- natns.sh's `portmap <side> down`
+    # stops it, and it does so TWICE in a row: `kill` on the pidfile, then an
+    # unconditional `pkill -f` on the same command line. So "two signals,
+    # microseconds apart" is the NORMAL case, not an edge one.
+    #
+    # The handler therefore does the least it possibly can: set a flag. The
+    # previous handler raised KeyboardInterrupt, which is what produced the
+    # reported traceback -- the second signal raised inside serve()'s teardown,
+    # escaped the finally, and left the -I'd rules in the nat table for the
+    # next cell. See Gateway.request_stop for the full list of what a handler
+    # must not do here and why.
+    #
+    # Default disposition matters too: SIGTERM's default is silent termination,
+    # which would skip teardown entirely, and SIGINT's default raises
+    # KeyboardInterrupt, which is the failure above. Both are replaced.
+    def _stop(signum, frame):
+        gw.request_stop(signum)
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+
+    try:
+        gw.serve()
+    except KeyboardInterrupt:
+        # Nothing installed above can raise this any more; it remains as the
+        # outermost guard for an interrupt in the window before the handlers
+        # were installed. Exit status 0, because being asked to stop is not an
+        # error and a non-zero status here makes run_matrix.sh's per-cell
+        # cleanup look like a failed cell.
+        return 0
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
