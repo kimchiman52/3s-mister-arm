@@ -234,7 +234,7 @@ defined go/no-go (§6, Step B3).
   `CRS_INPUT_DRIVER_SDL` → `CRS_INPUT_DRIVER_STATCHECK` (:85-86),
   suppresses `CHECKSUM` in Release when statcheck is on (:73). Sources
   are picked up by `file(GLOB_RECURSE GAME_SRC … src/*.c)` (:41) —
-  same glob pattern as the fork (CMakeLists.txt:108), so newly added
+  same glob pattern as the fork (CMakeLists.txt:144), so newly added
   `src/**/*.c` files need no CMake source-list edits in either repo.
 - `upstream:src/test/ram_archive.{c,h}` — SCRD reader: magic check,
   LE u16 entry count, LE u32 offset/size table, zero-run decode
@@ -475,7 +475,7 @@ defined go/no-go (§6, Step B3).
   MISTER_PASSWORD=1; lock/busy preflight described there). RBF is a
   separate wrapper deploy — not touched by this plan.
 - `file(GLOB_RECURSE GAME_SRC CONFIGURE_DEPENDS src/*.c)`
-  (CMakeLists.txt:108) — new C files under `src/` are auto-picked-up.
+  (CMakeLists.txt:144) — new C files under `src/` are auto-picked-up.
 
 ---
 

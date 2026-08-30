@@ -105,7 +105,7 @@ Plus `src/port/sdl/netplay_screen.c/.h` (76 LoC combined) for SDL integration.
 ### 2.3 MiSTer build explicitly disables netplay today
 
 - `CMakeLists.txt:22-28` — `PORT_MISTER=ON` flips `_ENABLE_NETPLAY_DEFAULT=OFF` along with ISO import, FFmpeg/ADX, SDL dialogs.
-- `CMakeLists.txt:66-72` — when disabled, real files excluded from `GAME_SRC` glob; `netplay_stub.c` + `matchmaking_stub.c` substituted.
+- `CMakeLists.txt:101-107` — when disabled, real files excluded from `GAME_SRC` glob; `netplay_stub.c` + `matchmaking_stub.c` substituted.
 - `tools/mister/build-game.sh:147` — always passes `-DPORT_MISTER=ON`.
 - `build-deps.sh:182-212` (GekkoNet) and `:218-246` (SDL3_net) — gated to `if [ "$PROFILE" = "desktop" ]`, print "Skipping" for `mister`.
 
@@ -1010,7 +1010,7 @@ No blockers. Pi4 recipe is ~90% reusable.
 | **Lua** | — | MIT | — | NOT needed (zero `<script>` tags in netplay `.rml`) | — |
 | **librashader** | Rust crate | MPL-2.0 | — | **NOT a netplay dep** | `CMakeLists.txt:524-530` |
 | **Tracy** | `github.com/wolfpld/tracy` v0.13.1 | BSD-3 | — | **NOT a netplay dep** | `CMakeLists.txt:100-109` |
-| **Spout2** | `github.com/leadedge/Spout2` | BSD-2 | Windows-only | **NOT a netplay dep** | `CMakeLists.txt:219,675-684` |
+| **Spout2** | `github.com/leadedge/Spout2` | BSD-2 | Windows-only | **NOT a netplay dep** | `CMakeLists.txt:255,711-720` |
 
 ### 13.2 GekkoNet specifics
 

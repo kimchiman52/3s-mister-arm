@@ -1367,7 +1367,7 @@ Quick-reference citations that every tier-3 plan should re-verify before using.
 |---|---|
 | Netplay disabled for MiSTer | `CMakeLists.txt:22-28` |
 | Stub substitution | `CMakeLists.txt:66-72` (verified live) |
-| `ENABLE_NETPLAY` define | `CMakeLists.txt:112-114` |
+| `ENABLE_NETPLAY` define | `CMakeLists.txt:148-150` |
 | Link libs conditional | `CMakeLists.txt:284-289` (verified live) |
 | GekkoNet desktop-gate | `build-deps.sh:182-212` (verified live) |
 | SDL3_net desktop-gate | `build-deps.sh:218-246` (verified live) |

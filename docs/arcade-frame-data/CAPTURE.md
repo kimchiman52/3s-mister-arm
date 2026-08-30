@@ -302,7 +302,7 @@ fine without it).
 going forward. Grounds: (i) competitive standard -- 990512 is the
 tournament/competitive-standard revision (Fightcade ranked runs it);
 (ii) upstream anchor -- this repo's own `src/arcade/
-arcade_char_data.c:421-422` reads `sfiii3nr1.zip` verbatim, the only
+arcade_char_data.c:511` reads `sfiii3nr1.zip` verbatim, the only
 arcade ROM this repo's code ever reads; (iii) now measured identical to
 Euro-990608 on all 7 re-validated rows plus 13 controls (above) -- the
 dual-revision agreement is real, not a coincidence of the sample.

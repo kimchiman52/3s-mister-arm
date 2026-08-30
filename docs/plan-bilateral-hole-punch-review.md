@@ -334,7 +334,7 @@ A third deep verification pass surfaced 19 additional findings against the post-
 
 #### P-1.B — Host/join label swap on `SDL_DetachThread`; three-thread cleanup model under-specified
 
-**Claim in plan (pre-round-2):** the §Step 5 cancel-semantics bullet (`docs/plan-bilateral-hole-punch.md:586`; cited as :554 at the time) said "Drop `SDL_DetachThread(s_thread)` at `direct_p2p.c` line 644 (host)". The NEW-4 disposition row (`docs/plan-bilateral-hole-punch.md:907`; cited as :773 at the time) repeated the same label. The `direct_p2p.c` numbers throughout this section are review-time positions — see §NEW-4 for where the code went.
+**Claim in plan (pre-round-2):** the §Step 5 cancel-semantics bullet (`docs/plan-bilateral-hole-punch.md:607`; cited as :554 at the time) said "Drop `SDL_DetachThread(s_thread)` at `direct_p2p.c` line 644 (host)". The NEW-4 disposition row (`docs/plan-bilateral-hole-punch.md:928`; cited as :773 at the time) repeated the same label. The `direct_p2p.c` numbers throughout this section are review-time positions — see §NEW-4 for where the code went.
 
 **Actual:** Verified against `src/netplay/direct_p2p.c`:
 - `:603` is `SDL_DetachThread(s_thread)` inside `DirectP2P_BeginHost` (host detach).
