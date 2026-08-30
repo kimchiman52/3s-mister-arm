@@ -66,7 +66,11 @@ void effect_E4_move(WORK_Other* ewk) {
 
         case 2:
             mwk->spmv_ng_flag2 &= 0xFFFEFFFF;
-            mwk->spmv_ng_flag2 |= 0xC0000;
+            /* [TM-03] Was missing DIP2_SA_GAUGE_NO_DEPLETE, unlike the
+             * identical INFINITY case in effe3.c. Since bit 26 is the only
+             * SA-gauge bit with an ungated reader, omitting it made the
+             * parry-training gauges fully inert under arcade balance. */
+            mwk->spmv_ng_flag2 |= 0xC0000 | DIP2_SA_GAUGE_NO_DEPLETE;
             clear_super_arts_point(mwk);
             tr_spgauge_cont_init(mwk->wu.id);
             break;
