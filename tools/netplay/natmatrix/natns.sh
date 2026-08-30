@@ -83,6 +83,44 @@ apply_nat() { # apply_nat <ns> <wif> <ext_ip> <inner_ip> <type>
     ipns "$ns" sysctl -qw net.netfilter.nf_conntrack_udp_timeout=120 2>/dev/null || true
     ipns "$ns" sysctl -qw net.netfilter.nf_conntrack_udp_timeout_stream=180 2>/dev/null || true
 
+    # -----------------------------------------------------------------------
+    # A NAT DISCARDS the inbound datagram its filtering rule refuses. These NAT
+    # namespaces are real Linux hosts with a default-ACCEPT filter INPUT policy,
+    # and the namespace OWNS $ext -- so WITHOUT this rule a refused datagram is
+    # not discarded, it is delivered to the NAT box's own IP stack, and
+    # conntrack CONFIRMS it: nf_conntrack_confirm sits at LOCAL_IN priority
+    # NF_IP_PRI_CONNTRACK_CONFIRM (INT_MAX), i.e. AFTER the filter INPUT chain.
+    # Nothing forwards the packet, but the entry is now real and [UNREPLIED].
+    #
+    # That phantom entry's ORIGINAL tuple is (peerExt:pport -> ourExt:GAME_PORT)
+    # -- bit-for-bit the REPLY tuple the inner host's own outbound punch to that
+    # same peer needs. nf_nat_used_tuple() therefore refuses to preserve the
+    # source port, and our punch leaves from a DIFFERENT external port. The peer
+    # punched ourExt:GAME_PORT, so a port-restricted peer discards the answer and
+    # neither side ever hears the other.
+    #
+    # In other words: without this rule the rig loses endpoint-independent
+    # mapping for exactly the endpoint being punched, purely because that
+    # endpoint punched us first -- behaviour no NAT has. It turned the whole
+    # port-restricted row of the matrix into a false negative (task-102,
+    # rediscovered as task #126 because task-102's fix was never merged).
+    # A real NAT/firewall drops unsolicited WAN input in the INPUT chain, which
+    # runs BEFORE the confirm hook, so no entry is ever created.
+    #
+    # THIS IS THE INBOUND PATH FOR port-restricted AND symmetric, which install
+    # no DNAT of their own. It is not "drop everything": a datagram from an
+    # endpoint the inner host HAS sent to matches the conntrack entry that
+    # outbound flow created, is reverse-NAT'd in nat PREROUTING and routed
+    # onward, so it traverses FORWARD and never reaches INPUT. That is exactly
+    # RFC 4787 address-and-port-dependent filtering. Only the UNSOLICITED
+    # datagram -- the one a real port-restricted NAT drops -- lands here. Same
+    # for the fullcone / addr-restricted DNAT paths, which rewrite the
+    # destination in PREROUTING before the routing decision.
+    #
+    # Scoped to $wif (the WAN side) so the LAN-facing NAT-PMP mock on
+    # ${lan}.1:5351 is untouched -- see portmap() below.
+    ipns "$ns" iptables -A INPUT -i "$wif" -p udp -j DROP
+
     case "$type" in
       none)
         # Pure router, no translation. Control cell: proves the rig itself is not
@@ -125,7 +163,7 @@ apply_nat() { # apply_nat <ns> <wif> <ext_ip> <inner_ip> <type>
         #
         # Deliberately NOT keyed to a fixed port: only the HOST binds a chosen port.
         # The JOINER passes bind_port to STUN_DISCOVER
-        # (src/netplay/direct_p2p.c:3819) and that is 0 on every first attempt,
+        # (src/netplay/direct_p2p.c:3822) and that is 0 on every first attempt,
         # so it gets an OS-assigned ephemeral port; a fixed-port map would
         # silently fail to emulate full cone on the joiner side and would
         # corrupt that column.
@@ -239,9 +277,9 @@ netem() { # netem <A|B|both> <delay_ms> <jitter_ms> <loss_pct>
 # 33 53 58 52 02 02 matches DELIVER and nothing else.
 #
 # This models the real mechanism: the server's unsolicited push to the host at
-# rendezvous-server.js:719 is a bare socket.send with NO retransmit, so when it is
+# rendezvous-server.js:1252 is a bare socket.send with NO retransmit, so when it is
 # lost the host learns the peer endpoint only from the reply to its OWN next
-# REGISTER -- a full register-interval later (direct_p2p.c:3239).
+# REGISTER -- a full register-interval later (direct_p2p.c:3242).
 #
 # The drop is installed at the RECEIVING side's NAT ingress (mangle PREROUTING on
 # its WAN interface), NOT in the server's OUTPUT chain. That distinction matters:
@@ -273,7 +311,7 @@ deliverloss() { # deliverloss <pct 0-100> <A|B|both>
 # NAT-PMP / PCP gateway mock (rig/natpmp_mock.py), one per NAT namespace.
 #
 # Task #121 gives the JOINER a port-mapping probe. The netns had no gateway at
-# all, which is why probe/p2p_probe.c:123-124 disables UPnP and NAT-PMP in every
+# all, which is why probe/p2p_probe.c:143-145 disables UPnP and NAT-PMP in every
 # cell's config. This starts a gateway that speaks the real protocol on
 # 10.x.0.1:5351 and, on a granted mapping, installs static DNAT/SNAT rules at
 # the HEAD of the nat chains -- so the mapping actually overrides the dynamic
@@ -289,17 +327,22 @@ deliverloss() { # deliverloss <pct 0-100> <A|B|both>
 # `natns.sh portmap both down` before `natns.sh down`, or the python process
 # lingers -- harmlessly, in a namespace that no longer exists, but it lingers.
 #
-# RIG NOTE, measured while building this. A NAT namespace OWNS its WAN address,
-# and for symmetric/port-restricted (which install no inbound DNAT) a datagram
-# aimed at ext_ip:P is delivered LOCALLY to the NAT namespace instead of being
-# dropped. That still creates a conntrack entry occupying ext_ip:P, and nf_nat
-# will then refuse to hand that same port to the inner host's own outbound flow
-# -- so a peer punching at an UNMAPPED port on the far side can push that side's
-# port-preserving SNAT off its expected external port. It is pre-existing
-# behaviour of apply_nat(), not of this daemon, but it will confuse any test that
-# assumes "port-restricted side keeps its internal port on the outside". Giving
-# the far side a mapping (portmap both up) removes the confound, because then the
-# packet is DNATed inward instead of landing on the namespace itself.
+# RIG NOTE, measured while building this, and FIXED in apply_nat() as of task
+# #126. A NAT namespace OWNS its WAN address, and for symmetric/port-restricted
+# (which install no inbound DNAT) a datagram aimed at ext_ip:P used to be
+# delivered LOCALLY to the NAT namespace instead of being dropped. That created
+# a conntrack entry occupying ext_ip:P, and nf_nat then refused to hand that same
+# port to the inner host's own outbound flow -- so a peer punching at an UNMAPPED
+# port on the far side pushed that side's port-preserving SNAT off its expected
+# external port. It was pre-existing behaviour of apply_nat(), not of this
+# daemon, and it invalidated any test that assumes "port-restricted side keeps
+# its internal port on the outside".
+#
+# apply_nat() now installs `-A INPUT -i $wif -p udp -j DROP` in every NAT
+# namespace, which runs before the conntrack confirm hook, so the phantom entry
+# is never created and the confound is gone. Giving the far side a mapping
+# (portmap both up) is therefore no longer needed to work around it -- it is only
+# needed when the far side genuinely should have a port mapping.
 #
 # Killing a backgrounded `sudo ip netns exec ...` reaps only the sudo wrapper;
 # the python child survives and keeps UDP 5351 bound (same hazard run_matrix.sh
