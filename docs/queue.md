@@ -1495,3 +1495,162 @@ linter's own suggestion for a `bg_w` claim points at `GS_LOAD(Screen_Switch_Buff
 instead of `GS_LOAD(bg_w)` two lines earlier. Applying it would make the
 citation *look* repaired and leave it wrong — a fresh instance of why `--fix`
 is banned.
+
+## #136 — #108's two residuals, both isolated — CLOSED
+
+Task #108 left two things as "cause not isolated": a dummy that blocks under
+PS2 and takes the hit under arcade (which cost 22 BLOCK entries), and two rows
+measuring `adv=-2` against an oracle of `-1`. Both are now isolated to a
+specific line, and both were harness defects rather than engine divergences.
+It also left "the other 18 characters port cheaply" as a labelled argument;
+that is now partly measured.
+
+Everything below is measured on this tree.
+
+### R1 — the dummy could not block, and it is one missing term
+
+`dummy: stand` writes training guard slot 2 (ALL GUARD), which clears
+`DIP_AUTO_GUARD_DISABLED` (`effe3.c:211-216`). Only `defense_ground_ps2` reads
+that bit back — as `ags`, `hitcheck.c:1365-1366`, consumed at `:1496` as
+`if (!ds->auto_guard && !ags && ...)`. `defense_ground_cps3` never mentions it;
+its gate is the bare `if (!ds->auto_guard)` at `hitcheck.c:1309`. And
+`Control_Player_Tr()` forces the dummy's input word to neutral for
+`DUMMY_ACTION_STAND` (`menu.c:3798-3827`), so `saishin_lvdir & gddir` is false
+and `defense_ground_cps3` returns 2 — took the hit. Reproduced on
+`corpus-smoke.yaml`'s `close-lp-block-vs-stand`: `outcome=BLOCK` under
+`--test-balance ps2`, `outcome=HIT` under `--test-balance arcade`, every
+numeric field identical.
+
+So: category "the dummy isn't in a blocking state", not "arcade guards
+differently" and not an engine bug. `auto_guard` is the field CPS3's own
+defense path provides for exactly this; nothing sets it in a normal round
+(`player_mv_0000` zeroes it, `plmain.c:123`; only the bonus-stage init sets it,
+`plmain2.c:101`) because CPS3 has no training mode to set it from. The harness
+now sets it in `input_script_apply_guard_mode()`
+(`src/test/input_script.c`), re-asserted per tick because the PS2 paths zero it
+whenever `Play_Mode != 0` (`hitcheck.c:1106`, `:1371`).
+
+**Restored: all 22.** `corpus-q-arcade.yaml` goes from 51 entries to all 73 of
+`corpus-q.yaml`'s, 73 PASS / 0 XFAIL, and its parsed table is row-for-row
+identical in content to `golden/q.tsv`. No `expect:` was re-derived or relaxed.
+`corpus-hugo-arcade.yaml` adds 10 more BLOCK entries, Twelve 6, Remy 5 — 43
+arcade BLOCK rows where there were 0.
+
+**One genuine engine difference did fall out**, and it is the interesting part:
+arcade requires a LOW to be blocked CROUCHING. `defense_ground_cps3`'s `case 8`
+demands the crouch bit (`hitcheck.c:1320-1321`); `defense_ground_ps2`'s same
+case carries an `&& ags == 0` escape (`:1508`, and `:1516` for the overhead
+case) that lets a STANDING ALL-GUARD dummy block a low. Six entries across the
+four corpora needed `dummy: crouch` where their PS2 twin got away with
+`dummy: stand` (Q 2, Hugo 2, Remy 1, Twelve 1). That is stated at each entry, not papered over.
+
+### R2 — `adv=-2` was a dead dummy, not a balance change
+
+Neither "the arcade oracle is -2" nor "an off-by-one in the adv measurement".
+
+`check_omop_vital()` — the port's EXTRA OPTIONS vitality restore
+(`plmain.c:1134-1244`, fed by `sysdir.c:126-127`) — is arcade-skipped at
+`plmain.c:335-337`. Under PS2 it walks the dummy back to 160 during every
+`inter_entry_wait`; under arcade the dummy's health only ever goes down, and a
+73-entry corpus grinds it to zero partway through. `same_dm_stop()` then fires
+its nearly-dead branch — `(ds->vital_new - ds->dm_vital) < -2`,
+`hitcheck.c:1023-1039` — and overrides the defender's hitstop with
+`-att.hs_me`. Measured with a temporary probe inside `same_dm_stop`, on
+`q-crmp-hit-capture-a`:
+
+```
+arcade  vnew=0    dmvital=10  delta=-10  hsme=9  hsyou=-10  fires=1
+ps2     vnew=160  dmvital=13  delta=147  hsme=9  hsyou=-10  fires=0
+```
+
+`att.dipsw`, `att.hs_me` and `att.hs_you` are IDENTICAL across the two engines
+at that call; the only differing input is the dummy's vitality. `dm_stop`
+becomes -9 instead of -10, the dummy leaves hitstun one frame early
+(`def_idle_F` 5818 vs 5819 against an identical `atk_idle_F` 5820), and cr.MP
+reads `adv=-2`. Corroborated three ways before the probe: the same corpus text
+with only `balance:` flipped gives -1 under ps2 and -2 under arcade (so it is
+not corpus composition), and the entry run STANDALONE gives -1 under BOTH
+engines (so it is not the move).
+
+Fixed in the harness (`input_script_restore_vitality()`, called at each entry's
+`L` directive), not by re-enabling `check_omop_vital` under arcade — that call
+is a shipping-behaviour decision the harness has no business changing. Both
+rows now PASS at the oracle's -1. **Blast radius, since it was a real
+measurement error:** any arcade entry after the dummy hits 0 vitality, on an
+attack whose `att.dipsw & 1` is set and whose `hs_me != -hs_you`. In
+`corpus-q-arcade.yaml` that was exactly these two — the two other
+already-fired calls (`hsme=8 hsyou=-8`) produced the same value either way,
+which is why the defect showed up as 2 rows and not 20.
+
+### R3 — the extrapolation, bounded rather than extended
+
+Not a port of 18 characters. Three characters picked for distance from Q and
+Yun, run under arcade AND under ps2 from the identical file (the control that
+separates engine from corpus composition, since a slice does not reproduce a
+full corpus's carried state):
+
+| corpus | scope | arcade | vs its own ps2 run |
+|---|---|---|---|
+| `corpus-hugo-arcade.yaml` | all 30 of `corpus-hugo.yaml` — heaviest body, command-grab machinery (SDB/Moonsault/Meat Squasher) | 30/30 PASS | byte-identical, and also identical to committed `golden/hugo.tsv` |
+| `corpus-twelve-arcade.yaml` | 17 of 59 — A.X.E., N.D.L., normals, UOH, throw, jump control | 17/17 PASS | byte-identical |
+| `corpus-remy-arcade.yaml` | 16 of 56 — Light of Virtue, Rising Rage Flash, command normal, UOH, throw, jump control | 16/16 PASS | byte-identical |
+
+Across those 63 entries exactly ONE class of arcade-vs-port divergence appeared
+— the low-block stance rule above, 4 entries (Hugo 2, Remy 1, Twelve 1). Everything else ported with its
+`expect:` untouched.
+
+**Claimed after this work:** arcade coverage on 5 corpora / 139 rows, all PASS
+(Q 73, Hugo 30, Twelve 17, Remy 16, Yun SA3 3). **Still extrapolation:** the
+other 15 characters, and the ~82 Remy/Twelve entries outside these slices. The
+extrapolation is better supported than it was — it now rests on 139 measured
+rows spanning 5 characters including a full non-Q corpus, instead of 49 rows of
+one character — but it is still an argument for the remaining 15.
+
+### Two harness hazards found on the way, both BALANCE-INDEPENDENT
+
+Neither is an arcade property; both reproduce under `--test-balance ps2` and
+are simply invisible in the existing PS2 corpora because no PS2 entry sits
+where they bite. Both are now written into `CORPUS-AUTHORING.md` Phase 4a.
+
+1. **Fresh-DOWN parry window.** Forcing the dummy to crouch drives a new DOWN
+   edge on the frame the `G` directive runs, opening a low-parry window. An
+   attack with a very short startup lands inside it: `h-crshort-block` (S=3)
+   read `PARRY adv=-11` instead of `BLOCK` under BOTH engines. `wait 20;`
+   prepended to the input closes it; `h-crforward-block` (S=8) was already
+   clear.
+2. **Stance carryover into the next entry.** A `dummy: crouch` entry leaves the
+   dummy crouching into the FIRST entry that follows. A 3-entry control corpus
+   `[q-crmk-multimove-merge(crouch), crmp-a, crmp-b]` measured `adv=+0` for
+   crmp-a and `-1` for crmp-b under BOTH `--test-balance arcade` AND
+   `--test-balance ps2`, and `-1/-1` under both with that entry `dummy: stand`
+   or absent. +0 is exactly `q.json`'s `Crouch_hit_advantage` for Crouching
+   Strong. Handled in `corpus-q-arcade.yaml` by moving the one affected entry
+   past the pair.
+
+   NOT fixed in the harness. The real fix is to apply the next entry's `G`
+   BEFORE the `inter_entry_wait` rather than after it, so the dummy settles into
+   its stance during the wait — but that would re-measure every existing PS2
+   corpus that has a crouch entry followed by another entry, which is a
+   different (and larger) piece of work than this task. **Reopen condition:** if
+   a future corpus needs a `dummy: crouch` entry immediately before an entry
+   whose `adv` it asserts, this is the thing to fix rather than to route around.
+
+### Canon
+
+Summed from `tools/frame-data/golden/*.tsv` by
+`tools/frame-data/check-canon-numbers.py`, never from a summary line:
+
+  **corpora 96 -> 99, rows 1,403 -> 1,488, PASS 1,348 -> 1,435, XFAIL 55 -> 53.**
+
+The XFAIL count returns to the pre-#108 53. None of those 53 moved in either
+direction across #108 or #136. `run-suite.sh --check-golden` on the committed
+tree: 99 GREEN / 0 RED, zero drift, 13m41s wall.
+
+### Task-number correction
+
+This lane is #136. Its first three commits (`04f1b3a5`, `58e2f021`,
+`6fcc4c0d`) carry `[task #133]` in their subject lines, which is wrong — #133
+is the live netplay both-caps item above. The number is corrected in every
+file; the three subject lines are left alone because another lane committed on
+top of them before the mistake was caught, and rewriting shared history to fix
+a subject line is not worth orphaning someone else's work.
