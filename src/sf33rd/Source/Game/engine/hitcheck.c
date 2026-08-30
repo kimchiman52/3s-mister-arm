@@ -1251,7 +1251,8 @@ s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
     if (ds->py->flag == 0 && !(ds->guard_flag & 2) && as->wu.att.guard & 3) {
         if ((as->wu.att.guard & 2) && !(ds->spmv_ng_flag & DIP_UNKNOWN_8)) {
             if (just_now) {
-                if ((ds->cp->waza_flag[3] >= grdb[ds->wu.id][attr_att][0]) || abs) {
+                if ((ds->cp->waza_flag[3] >= grdb[ds->wu.id][attr_att][0]) ||
+                    (abs && !(ds->spmv_ng_flag & DIP_RED_PARRY_DISABLED))) {
                     blocking_point_count_up(ds);
                     as->wu.hf.hit.player = 0x40;
 
@@ -1284,7 +1285,8 @@ s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
 
                     return 0;
                 }
-            } else if (ds->cp->waza_flag[12] != 0 || abs) {
+            } else if (ds->cp->waza_flag[12] != 0 ||
+                       (abs && !(ds->spmv_ng_flag & DIP_ANTI_AIR_PARRY_DISABLED))) {
                 blocking_point_count_up(ds);
                 as->wu.hf.hit.player = 0x40;
 
@@ -1304,7 +1306,8 @@ s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
 
         if ((as->wu.att.guard & 1) && !(ds->spmv_ng_flag & DIP_UNKNOWN_9)) {
             if (just_now) {
-                if ((ds->cp->waza_flag[4] >= grdb[ds->wu.id][attr_att][1]) || abs) {
+                if ((ds->cp->waza_flag[4] >= grdb[ds->wu.id][attr_att][1]) ||
+                    (abs && !(ds->spmv_ng_flag & DIP_RED_PARRY_DISABLED))) {
                     blocking_point_count_up(ds);
                     as->wu.hf.hit.player = 0x40;
                     ds->wu.routine_no[2] = 0x21;
@@ -1315,7 +1318,8 @@ s32 defense_ground_cps3(PLW* as, PLW* ds, s8 gddir) { // 🟢
 
                     return 0;
                 }
-            } else if (ds->cp->waza_flag[4] != 0 || abs) {
+            } else if (ds->cp->waza_flag[4] != 0 ||
+                       (abs && !(ds->spmv_ng_flag & DIP_ANTI_AIR_PARRY_DISABLED))) {
                 blocking_point_count_up(ds);
                 as->wu.hf.hit.player = 0x40;
                 ds->wu.routine_no[2] = 0x21;
