@@ -52,7 +52,7 @@ void Netplay_LogConnectEventMT(const char* line) {
 
 #ifdef NETPLAY_TEST_HOOKS
 /* #44: NETPLAY_TEST_HOOKS is an independent CMake option
- * (CMakeLists.txt:57, 211-212) and is not implied by ENABLE_NETPLAY, so a
+ * (CMakeLists.txt:98, 296-297) and is not implied by ENABLE_NETPLAY, so a
  * hooks-on / netplay-off configuration must still link. */
 void Netplay_TestHook_LogPrune(const char* dir) {
     (void)dir;

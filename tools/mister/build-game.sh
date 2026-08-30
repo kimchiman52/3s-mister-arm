@@ -183,8 +183,8 @@ telemetry|clean|both)
     ;;
 esac
 
-if ! [[ "${jobs}" =~ ^[0-9]+$ ]] || [ "${jobs}" -le 0 ]; then
-    echo "--jobs must be a positive integer" >&2
+if [ "${jobs}" != "auto" ] && { ! [[ "${jobs}" =~ ^[0-9]+$ ]] || [ "${jobs}" -le 0 ]; }; then
+    echo "--jobs must be a positive integer or 'auto'" >&2
     exit 2
 fi
 
