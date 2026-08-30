@@ -119,7 +119,26 @@ extern "C" {
  * size untouched, state_ver would have matched and the two builds would
  * have connected and desynced immediately. The guard has to be the one
  * field whose whole job is "these builds are not compatible". */
-#define MIST_PROTO_VER 3
+/*
+ * v4 (lane/training-arcade-fixes, 2026-08-30): PAYLOAD LAYOUT AGAIN UNCHANGED.
+ * Another compatibility bump, for exactly the reason the v3 block above and the
+ * MIST_STATE_VER comment in mist_handshake.c describe.
+ *
+ * That lane un-gated several engine paths that previously did not run under
+ * arcade balance -- which is the mode netplay runs in. In particular [TM-06]
+ * made `wk->omop_vital_timer = 40` execute at round init under arcade, where it
+ * previously stayed 0. That field is in the canonical PLW hash image
+ * (plw_canon_fields.h), and that image feeds the cross-peer desync checksum
+ * (game_state.c). So pre- and post-lane builds compute DIFFERENT checksums for
+ * identical gameplay, every frame, even though nothing reads the field at
+ * default settings.
+ *
+ * Nothing else stops that pairing: sizeof(GameState) is UNCHANGED by the lane
+ * (src/netplay/ is otherwise untouched), so state_ver matches, and build_hash is
+ * a warning only. This is precisely the "sim-logic change with no state-field
+ * change" case that MIST_STATE_VER explicitly does not catch.
+ */
+#define MIST_PROTO_VER 4
 
 /* Reject reason code at payload[0]. Sent as a single unsigned byte.
  * Values are wire-stable — append only, never renumber. */
