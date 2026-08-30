@@ -60,6 +60,7 @@ GATES=(
     "nptest-build|build the hooks-ON test config the harnesses need"
     "netplay-harnesses|run every --test-* harness with true exit codes"
     "rendezvous-protocol|node tools/rendezvous-server/__test_protocol.js"
+    "key-rate-budget|server per-key cap vs the CLIENT cadences it is derived from -- #123"
     "host-diagnostic-parity|diagnostics the host's fortified libc headers hide -- #106"
     "doc-citation-baselines|tools/doc-citations/check_baselines.py (breach AND slack)"
     "arm-cross-build|cross-compile the shipped config for ARM -- #106 (needs --arm)"
@@ -200,6 +201,28 @@ else
     record rendezvous-protocol ERROR
     echo "  __test_protocol.js or node is missing"
 fi
+echo
+
+# ---------------------------------------------------------------------------
+# 4b. Cross-repo constant coupling -- task #123.
+#
+# rendezvous-server.js sizes KEY_RATE_LIMIT_PER_WINDOW from constants in the C
+# CLIENT, and the two deploy INDEPENDENTLY: the server is a long-lived VPS
+# process, the client ships in a release ZIP. No build can catch the drift (no
+# TU and no module sees both a C literal and a JS const), and the symptom is
+# not a crash -- it is a production room whose host liveness REGISTERs get
+# rate-dropped until the code on the host's screen stops working. Same shape,
+# and the same remedy, as tools/ldreq-timing/check_barrier_budget.py.
+# ---------------------------------------------------------------------------
+echo "=== key-rate budget ==="
+python3 tools/rendezvous-server/check_key_rate_budget.py \
+    > "${out_dir}/key-rate-budget.log" 2>&1
+case $? in
+0) record key-rate-budget GREEN ;;
+1) record key-rate-budget RED
+   grep -E "FAIL|legit peak|required cap" "${out_dir}/key-rate-budget.log" | head -10 ;;
+*) record key-rate-budget ERROR; tail -8 "${out_dir}/key-rate-budget.log" ;;
+esac
 echo
 
 # ---------------------------------------------------------------------------
