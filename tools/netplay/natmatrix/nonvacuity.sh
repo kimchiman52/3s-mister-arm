@@ -139,15 +139,26 @@ expect() { # expect <desc> <condition-result 0/1>
 
 # ---------------------------------------------------------------- A
 #
-# The control is fullcone x port-restricted, NOT port-restricted x
-# port-restricted. The latter was the original choice and it FAILS -- measured,
-# reproducibly, on correctly-classified NATs (see the matrix). Keeping a control
-# that the shipped cascade cannot actually satisfy would mean the harness could
-# never go green, and would hide the difference between "the rig is broken" and
-# "this pairing genuinely does not traverse". fullcone x port-restricted is the
-# strongest pairing that is measured to connect, so it is the honest control.
-say "== A. POSITIVE CONTROL: fullcone x port-restricted must CONNECT =="
-CONTROL_A=fullcone; CONTROL_B=port-restricted
+# The control is port-restricted x port-restricted -- the most common consumer
+# pairing, and the textbook case UDP hole punching exists to solve.
+#
+# It was DOWNGRADED to fullcone x port-restricted for task-42 on the reading
+# that port-restricted x port-restricted "FAILS -- measured, reproducibly, on
+# correctly-classified NATs". That reading was wrong, and the downgrade hid the
+# reason: natns.sh let a refused inbound datagram reach the NAT namespace's own
+# IP stack, where conntrack confirmed it and stole the external port the host's
+# own punch needed (see the apply_nat comment in natns.sh, and
+# rig/mapping_poison.sh, which isolates it in three arms). The cell was never a
+# product finding; it was the rig being harsher than any real NAT.
+#
+# Re-measured on this tree with the discard a real NAT performs:
+#   raw sockets, no game code (mech_matrix.sh)  3/3
+#   full cascade (run_matrix.sh --label baseline) 3/3, ~1.1 s to handoff
+# so the strongest control is available again -- and a control this strong is
+# exactly what would have caught the defect in the first place. Downgrading a
+# control to match a failure is how a harness stops being able to fail.
+say "== A. POSITIVE CONTROL: port-restricted x port-restricted must CONNECT =="
+CONTROL_A=port-restricted; CONTROL_B=port-restricted
 "$NATNS" up "$CONTROL_A" "$CONTROL_B" >/dev/null 2>&1
 start_servers
 run_pair A
