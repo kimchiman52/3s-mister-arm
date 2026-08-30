@@ -472,6 +472,148 @@ No source changed for this; the harness lived outside the repo. Re-open if the
 mute is ever seen in the field, or if the same-version question above is
 answered yes.
 
+**ANSWERED 2026-08-30 — the same-version case is NOT reachable, and the reason
+narrows the cross-version finding above by the same amount.**
+
+*The gate at tip is still prefix-only, and it does charge a challenge.* Nothing
+since `e5527f5a` narrowed it. `src/netplay/direct_p2p.c:5034-5035` computes
+`punch_shaped = Stun_HasPunchPrefix(dgram->buf, dgram->buflen)`;
+`src/netplay/stun.c:142-145` is `len >= STUN_PUNCH_PREFIX_LEN` plus a 9-byte
+`memcmp` and reads nothing past byte 9, so a 26-byte probe frame
+(`src/netplay/stun.h:147-151`) satisfies it. `classify_host_datagram`
+(`direct_p2p.c:1044-1069`) routes that frame to `DP2P_HOST_DGRAM_IGNORE` —
+`Stun_IsPunchPayload` demands `len == 17` exactly — and the IGNORE arm charges
+it at `direct_p2p.c:5057-5060`. There are no other branches between the test
+and the charge.
+
+*Demonstrated on the wire, current tree.* A `p2p_probe` built from this HEAD
+was parked in `HOST_WAITING` (`[direct_p2p] HOST_WAITING published ...
+public=127.0.0.1:7000`) and fed, in order, 30 datagrams of 26-byte garbage with
+a wrong magic and then 70 datagrams of the exact probe-frame shape
+(`"3SX_PUNCH" | 8 | 'C' | 8`). Observed:
+
+```
+ADVISORY ... ignored unauthenticated datagram #1 ... (len=26)                 <- garbage, no "punch-shaped"
+ADVISORY ... datagram #50 ... (len=26, punch-shaped: peer build too old ...)
+punch-gate MUTE 127.0.0.1 for 60000 ms after 24 bad-token punches (session total 24)
+punch-gate RE-ROLL #1/3 after 64 bad-token punches — room code regenerated
+```
+
+The session total was 24 at the mute, i.e. **none** of the 30 garbage
+datagrams was charged and **all** of the probe frames were: the instrument
+discriminates, and it can fail. (The token bytes were random. That is
+immaterial and is the point — the charge decision reads bytes 0-8 only.)
+
+*So the whole question is which peer can be in `HOST_WAITING` at a challenged
+port, and the answer is none of them.* A challenge is only ever sent to
+`(s_peer_ip, s_cand_port)` (`src/netplay/late_punch.c:383`), and `s_cand_port`
+is set only by `late_punch_nominate` (`:127`), reached only from `:304` after
+`Stun_IsPunchPayload` passed (`:271`) — so **the challenged port is by
+construction a port that just emitted a valid 17-byte punch**. In the shipped
+netplay code there are exactly three emitters of that payload:
+`Stun_PunchPump` (`stun.c:926`), `LatePunch_Tick` (`late_punch.c:390`), and the
+host's echo of a payload it just validated (`direct_p2p.c:5108`). (Complete:
+every other `NET_SendDatagram` in `src/netplay` sends a 20-byte STUN request,
+a 26-byte probe, a `'3SXR'` frame, a MIST frame or a GekkoNet frame.) Each one
+is paired with a reader that parses probe frames:
+
+- `Stun_PunchPump` runs only inside `p2p_race` (`direct_p2p.c:1973`, its only
+  caller), which drains its own socket every iteration and offers every
+  non-`'3SXR'`, non-STUN datagram to `Stun_PunchOffer` (`:2231-2237`), which
+  parses the probe and answers it (`stun.c:961-981`).
+- `LatePunch_Tick`'s socket is post-handoff, read by `netplay.c:1244` and
+  `sdl_net_adapter.c:388`, both of which call `LatePunch_HandleDatagram`, which
+  parses the probe and echoes it (`late_punch.c:225-249`).
+- the host echo at `direct_p2p.c:5108` is followed unconditionally by
+  `set_state(DIRECT_P2P_HANDOFF)` at `:5118` in the same call, so that socket
+  is in the previous case before any reply can arrive.
+
+`host_tick_receive` has exactly one caller — `DirectP2P_Tick`'s
+`DIRECT_P2P_HOST_WAITING` arm (`direct_p2p.c:5748-5761`) — and in `HOST_WAITING`
+the host emits no punch at all: the arm's sends are `rend_q_drain` (`'3SXR'`,
+`:936`), `host_stun_keepalive_tick` (a STUN binding request) and that one echo.
+A joiner never publishes `HOST_WAITING` at all; it is written only by
+`host_thread_fn` (`:3789`) and by the M1 bilateral-failure return (`:5968`,
+guarded by `s_work.role == ROLE_HOST`, `:5928`).
+
+*Confirmed on the wire, both directions.* The `#119` rescue rig was re-run with
+**both** peers built from this HEAD (`rescue_scenario.sh`, fullcone x fullcone,
+`--lift-s 11`): **GREEN** — baseline `FAILED_HANDSHAKE` / `FAILED_BILATERAL`,
+rescue host `relearned x1` and synced at 11443 ms. In it the host opened four
+nomination windows against the joiner's retry port 45065 and the joiner logged
+`STUN: Hole punch SUCCESS — liveness probe from peer` (`stun.c:972`) — i.e. the
+challenge was consumed by `Stun_PunchOffer`, in `p2p_race`, exactly as above.
+`grep -c "HOST_WAITING published"` over all six phase logs: **1** on each host
+log, **0** on every joiner log. Zero `punch-gate` lines and zero
+`ignored unauthenticated datagram` lines in any of the six.
+
+*The one residual, named rather than closed.* The M1 path (`:5968`) returns the
+HOST's socket — which *did* emit punches from `p2p_race` — to `HOST_WAITING`.
+A challenge landing in that gap would be charged. Getting one there needs the
+joiner to have nominated a host port, which needs the host's observed source
+port to differ from the port the joiner handed off to; and the handoff port IS
+the observed source port (`Stun_PunchOffer` sets `leg->target_port = src_port`,
+`stun.c:977`, read back by `Stun_PunchEndpoint`, `stun.c:1036`; the
+non-`REAL` oracle branch at `direct_p2p.c:1841-1844` is test-only —
+`PUNCH_ORACLE` is `DP2P_PUNCH_REAL` unconditionally in the shipped build,
+`:1443`). So it additionally needs a NAT rebind of the host's mapping
+mid-connect. **Not entered — could not verify.** Tried: the fullcone x fullcone
+rig has no rebind injection, and `natns.sh` exposes no knob for one. Bounded if
+it ever happens: one nomination window is at most 8 datagrams
+(`LATE_PUNCH_CHALLENGE_MS` 1500 / `LATE_PUNCH_CHALLENGE_RETX_MS` 200,
+`late_punch.h:199-200`), well under `HOST_PUNCH_SRC_MAX_BAD` = 24, and it
+cannot renew, because a `HOST_WAITING` host emits no punch to re-nominate on.
+
+**AND THE CROSS-VERSION FINDING ABOVE NARROWS THE SAME WAY.** The old peer's
+gate needs the identical state. An old peer at a challenged port is, by the
+same construction, inside the old `p2p_race` — where the old `Stun_PunchOffer`
+consumes the frame at its bad-token early return (`e5527f5a^:stun.c:865-879`)
+and does not charge anything. The measured 60 s MUTE and the owed re-roll are
+real *given* an old host in `HOST_WAITING` with a moved port, and that state is
+still the unproven step for both versions. The cross-version case is therefore
+**not independently worth a fix**, and could not be fixed on our side anyway:
+the charge happens in the *old* build's gate, and the only new-build lever is
+to emit fewer challenges — the canonical rescue above needed **four** nomination
+windows, so any cap tight enough to stay under 24 charges would have broken it.
+
+**RECOMMENDED FIX (not applied — reporting first).** Make the charge decision at
+`direct_p2p.c:5057-5060` kind-aware: skip `host_punch_gate_note_bad` when
+`Stun_ParseProbePayload(dgram->buf, dgram->buflen, s_work.punch_token, NULL,
+NULL)` succeeds (the token is already in scope at `:5006`). Roughly four lines.
+Why this one and not the alternatives:
+
+- *Length-exact instead* (charge only `len == STUN_PUNCH_PAYLOAD_LEN`) is
+  cheaper and worse: it would also stop charging the 9-byte legacy punch from a
+  pre-S4a build, which is precisely the traffic the gate's own rationale names
+  as chargeable (`direct_p2p.c:635-637`) and which the advisory reports as
+  "peer build too old".
+- *Exempt a frame we sent to a nominee* does not apply. The side that charges is
+  the one in `HOST_WAITING`; its `LatePunch` is disarmed and it never nominated
+  anyone, so there is nothing on that side to exempt against.
+
+It opens no hole in either constraint the design rests on.
+`sdl_net_adapter.c:386-393` still drops punch-prefixed traffic before GekkoNet
+(different file, untouched), and `classify_host_datagram` still returns IGNORE
+for 26 bytes, so a probe frame still cannot be accepted as the peer — only the
+*accounting* changes, not the routing. It is not a brute-force escape either:
+`Stun_ParseProbePayload` verifies the token in constant time
+(`stun.h:165-172`), so only a party that already holds the token is exempted,
+and a 26-byte frame can never yield `PEER_PUNCH` regardless.
+
+**Whether to take it: yes, but as hygiene, not as a live-defect fix.** On the
+evidence above it is unreachable in the canonical rescue and bounded in the one
+residual, so it does not gate the alpha. Its cost is the full netplay gate set
+(harnesses + shipped-config build + ARM cross-build) for four lines.
+
+One stale comment found while reading, left alone: `test_punch_predicates.c:1188-1191`
+says the host gate "still ignores this (direct_p2p.c:1063-1066)". True of the
+routing, false of the accounting — IGNORE is the arm that charges. Worth
+correcting whenever that file is next touched.
+
+GATES: none run and none apply — no compiled code changed. Frame-data is out of
+scope and was skipped deliberately: this is pre-session transport, not
+simulation, and nothing on the frame path was read or written.
+
 ---
 
 ## #129 — ROM search trim + a legible miss — CLOSED
