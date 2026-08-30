@@ -1,6 +1,6 @@
 # Doc-citation error ceilings, enforced by check_baselines.py.
 #
-# Format:  <max_errors>  <scope>   # reason
+# Format:  <max_errors>  <scope>  [code]   # reason
 #
 # A scope that has been cleaned to a known count is recorded here so that it
 # cannot silently un-clean itself. This is a RATCHET, not a target: when a
@@ -11,13 +11,140 @@
 # argued. "It went up" is not a reason.
 #
 # NOTE ON WHY THIS FILE EXISTS
-# These two ceilings were previously carried only in task briefs and prose --
-# "docs/plan-netplay-connection.md must stay at 0", "src/netplay/ must stay at
+# These ceilings were previously carried only in task briefs and prose --
+# "docs/plan-netplay-connection.md must stay at 0", "src/netplay must stay at
 # 11". A protection that lives in prose is protection that stops being true
 # without telling anybody, which is the exact failure mode this whole
 # documentation-hardening effort is about. So they are checked here instead.
+#
+# WHAT IS ENFORCED, AND WHY ONLY THIS  (task #117)
+#
+# Enforcement used to cover two broad scopes -- `src/netplay` for every finding
+# code, and `<tree>` for unanchored-citation. Measured over one session, those
+# two produced almost all of the repair work and almost none of the benefit:
+# task #109 broke 19 citations, tasks #96/#104 repointed 267, task #94 left the
+# two ceilings breached at 16 and 28, and one merge breached both and needed 60
+# citations remapped -- all by hand, because `--fix` is banned (four measured
+# defects, 55.6% of its suggestions wrong). Against that, tree-wide errors moved
+# 1113 -> ~1091 across several dedicated lanes. Measured again here for the
+# record: 1096 errors tree-wide at aa2c2bf1, 1095 after this commit's one
+# repair, same pinned linter.
+#
+# Task #110 then adjudicated 186 of the cited targets: 102 were NEVER RIGHT,
+# 37 repairable, 24 already correct. Most were wrong the day they were written
+# -- several authored against a working tree the a752e2ca omnibus squash
+# removed, with a uniform -4 save / -11 load / -1 header offset against
+# anything that has ever been committed here. Repointing a number that was
+# never true would manufacture a citation nobody ever verified.
+#
+# And task #82 found that all seven high-blast-radius operator documents were
+# ALREADY at zero and had stayed there on their own.
+#
+# So the tax was falling on every code change while the errors sat in archived
+# research documents that nobody follows. This file now enforces the documents
+# a wrong line number actually misleads somebody through, and the one defect
+# class where a wrong line number is expensive:
+#
+#   * the seven operator documents -- what somebody reads at 2am;
+#   * plan documents under active work;
+#   * unanchored-citation, the anchor-required rule that exists for
+#     src/netplay/game_state.c.
+#
+# EVERY CEILING BELOW IS ZERO AND WAS RE-DERIVED ON THIS TREE
+# Re-measured on branch lane/t117-citation-scope (parent aa2c2bf1), with
+# check_doc_citations.py at sha256 8e652ef01300d8ef17375f7f403685dae43719e1
+# 23b000c15cc1c3c969f7d944. The previous `<tree> [unanchored-citation]` ceiling
+# was authored against its own post-merge tree (20 there, 23 on the pre-merge
+# tree), so it could only ever have been green where it was written. Nothing
+# here reproduces that: a ceiling of zero is not fitted to any tree.
+#
+# PROVEN RED, NOT ASSUMED GREEN
+# A narrowed gate that would not catch what justified the tool is disabled, not
+# narrowed. Both defects that motivated it were re-introduced against the
+# config below and check_baselines.py was confirmed to exit 1:
+#
+#   (a) a `DIRECT_P2P_FAILED_PUNCH` claim citing src/netplay/direct_p2p.c:3544,
+#       which is the COMMENT "* Each still yields FAILED_SYMMETRIC with the
+#       same status text; the" -- the code only ever writes the state at :4684,
+#       :4697, :5215. Placed in docs/netplay-diagnostics.md ->
+#       drift, BREACH +1.
+#   (b) `bg_w` cited at src/netplay/game_state.c:580, which on this tree is
+#       GS_SAVE(Tech_Index) -- bg_w is at :737 (save) and :1459 (load). Placed
+#       in docs/plan-netplay-connection.md -> drift, BREACH +1.
+#   (c) the anchor-free form of (b), a bare src/netplay/game_state.c:1462 in a
+#       comment in src/netplay/netplay.c -> unanchored-citation, BREACH +1.
+#
+# All three were reverted; the tree is clean. Re-run them by hand if you change
+# what is enforced here.
+#
+# HOW TO SCOPE A CEILING
+# The scope field is a repo-relative path or directory prefix, matched against
+# the document being SCANNED -- not against the file being cited. The optional
+# third field narrows a ceiling to ONE finding code.
 
-0    docs/plan-netplay-connection.md    # cleaned to zero; the reference for what a clean doc looks like
-9    src/netplay                        # was 11. Tightened by the task #103 consolidation, not loosened: merging #82 and #91/#73 repointed two of the accepted 11 (netplay_nav.c's Menu_Task cite and netplay.c's step_game cite) onto targets that now resolve, so the scope genuinely improved and the checker reported the ceiling as slack. Lowered in the same commit that improved it, per the ratchet rule above. The residual 9 are all citations OUT of src/netplay into engine files no merged branch touched (entry.c, meta_col.c, effj7.c, pls03.c, menu.c), one intra-file game_state.c range, plus netplay.c:870's `3sxtra netplay.c:158-391` provenance note -- that one names a DIFFERENT repository and the linter misresolves it to our own netplay.c; it needs an external-paths entry, not a line number.
+# --- the seven operator documents -------------------------------------------
+# High blast radius, low cost to hold: each was already at zero when task #82
+# measured it, and each is what somebody follows when something is broken and
+# it is late. Held at zero for every finding code, which subsumes
+# unanchored-citation for these files.
 
-19   <tree>   unanchored-citation   # was 20. Tightened by task #109, not loosened: the R4 row of docs/research-desync-deep-investigation.md cited `game_state.c:92,774` bare, and #109 DROPPED those numbers rather than re-pinning them, on the stated evidence that they were already stale before the select_timer_state removal and now name a member that no longer exists. That is a repair-with-evidence, which is exactly what the note below says to lower this for, so it is lowered in the same commit that made it. All 19 remaining cite src/netplay/game_state.c. Task #110. Citations into an anchor-required file (tools/doc-citations/anchor-required.txt) that name nothing checkable. Before #110 this class was INVISIBLE: a bare `game_state.c:580` has no anchor, so the linter accepted it forever -- and 186 such targets had accumulated tree-wide. This ceiling is a WORKLIST, not a settled state. Each remaining one is evidence-classified: 4 name 3sxtra's game_state.c by our path (the same defect baselines.txt already records for netplay.c:870 -- they need prose that says which repository, not a new line number), and the rest were measured NEVER-RIGHT -- authored against a pre-squash working tree that a752e2ca squashed away, so they were internally consistent when written and match no commit in this repository. They are deliberately NOT repointed: repointing a number that was never true would manufacture a citation nobody ever verified. Lower this as they are repaired with evidence.
+0    AGENTS.md                       # the conventions/safety document every agent and contributor is pointed at first
+0    README.md                       # the repository's front door
+0    docs/mister-runbook.md          # deploy and recovery on the real device; a wrong path here destroys save data. Was 1 when #117 measured it (savesub.c:42,335,340, correct at f8b29ded, drifted to a blank line); repaired to :87,380,385 by content in the same commit rather than recorded as a ceiling of 1
+0    docs/building.md                # how every target is built
+0    docs/miyoo-runbook.md           # deploy and recovery on the Miyoo
+0    docs/config.md                  # the runtime configuration surface
+0    docs/netplay-diagnostics.md     # the document a netplay failure is debugged from
+
+# --- plan documents under active work ---------------------------------------
+
+0    docs/plan-netplay-connection.md # the live connection-establishment program (S1-S8); cleaned to zero and the reference for what a clean document looks like. When a plan stops being worked, take it OUT of this file rather than letting it rot under a ceiling
+
+# --- the anchor-required rule -----------------------------------------------
+# tools/doc-citations/anchor-required.txt lists exactly one file,
+# src/netplay/game_state.c, so an `unanchored-citation` finding can only ever
+# be a bare `game_state.c:NNN` -- a line number into a 609-entry GS_SAVE/GS_LOAD
+# table with nothing named to check it against. That is the highest-value
+# single check here: a wrong line sends a desync investigation to the wrong
+# member, and before task #110 the class was invisible.
+#
+# Scoped to `src`, `include` and `tools` -- which, with `docs/*.md` and the
+# root `*.md`, is everything scan_targets() reads (check_doc_citations.py:1333)
+# -- so it covers every citation written in code or tooling. Together with the
+# eight document ceilings above, which are all-codes and so already forbid an
+# unanchored citation, the rule holds over the whole live corpus. The only
+# thing released is docs/*.md that is not one of the eight: the archive.
+#
+# WHAT THIS DELIBERATELY NO LONGER COVERS: the 19 remaining unanchored
+# citations all live in archived research and plan documents
+# (research-desync-deep-investigation.md, research-3sxtra-netplay-port.md,
+# plan-netplay-port.md, plan-netplay-track-a.md, plan-fcade-replay-browser.md).
+# Those are dated historical records -- several correctly describe the tree
+# their own commit replaced -- not live pointers, and holding them at exactly
+# 19 forced every unrelated lane to re-audit them. They are released on
+# purpose. A NEW archived document is likewise not covered; that is the cost
+# of the drop and it is recorded here rather than hidden.
+
+0    src       unanchored-citation   # no source file may cite src/netplay/game_state.c by bare line number
+0    include   unanchored-citation   # ditto for headers
+0    tools     unanchored-citation   # ditto for tooling and gate scripts, which cite the save set when they check it
+
+# --- REMOVED BY TASK #117, with reasons -------------------------------------
+#
+# 9   src/netplay
+#     Every one of the nine was a citation OUT of src/netplay INTO simulation
+#     code this branch does not own (entry.c, meta_col.c, effj7.c, pls03.c,
+#     menu.c), plus netplay.c:870, which names a DIFFERENT repository's
+#     netplay.c and needs an external-paths entry rather than a line number.
+#     Holding that at an exact count made every engine-side line shift a
+#     netplay-lane repair job -- the "tax on every code change" above -- while
+#     protecting nothing anybody reads. src/netplay/game_state.c's own four
+#     findings are the same shape (three into meta_col.c/effj7.c, one
+#     intra-file range), which is why the replacement ceiling is code-scoped to
+#     unanchored-citation instead of covering the file outright.
+#
+# 19  <tree>  unanchored-citation
+#     Superseded by the src/include/tools unanchored-citation ceilings above.
+#     The 19 are all
+#     in archived documents; see the paragraph above this line for why they are
+#     released and what that costs.
