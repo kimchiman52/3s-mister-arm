@@ -86,7 +86,10 @@ tools/mister/build-game.sh --flavor telemetry
 
 Notes:
 - This is the canonical MiSTer Docker build entry point.
-- It defaults to the validated `linux/amd64` Docker cross-build flow, which still produces a real ARM hard-float MiSTer package on the host.
+- It defaults to `--platform auto`: the container platform native to whichever Docker daemon is resolved (`linux/arm64` on Apple Silicon, `linux/amd64` on an x86_64 host). Either way the compiler is `clang --target=arm-linux-gnueabihf`, so this chooses only what the compiler *runs* as, never what it emits; both produce a real ARM hard-float MiSTer package. Pass `--platform linux/amd64` to pin the old behaviour.
+- It defaults to `--jobs auto`, which is the daemon's core count. The old default was 2.
+- It refuses to run on a Docker daemon that is not the native host daemon — in particular the Colima `quartus2` VM, which exists for the FPGA toolchain. When Docker Desktop is not running the `docker` CLI silently falls through to whatever context is live, which is how MiSTer game builds came to run inside the emulated Quartus VM unnoticed. Start Docker Desktop (`open -a Docker`), or set `MISTER_ALLOW_FOREIGN_DOCKER_HOST=1` to build elsewhere deliberately. The resolved daemon is printed as a `docker daemon:` line with the other provenance output.
+- Compilation is cached with `ccache` in a persistent Docker volume (`3s-mister-ccache`), wired via `CMAKE_C_COMPILER_LAUNCHER`. Pass `-DENABLE_CCACHE=OFF` to disable.
 - Use `--flavor clean` for the player-facing package or `--flavor both` when you need both outputs.
 - Use the manual runbook flow in [docs/mister-runbook.md](mister-runbook.md) only when debugging the Docker environment or intentionally choosing a different container platform.
 

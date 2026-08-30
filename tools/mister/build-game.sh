@@ -5,10 +5,19 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SETUP_CONTAINER_SCRIPT="${ROOT_DIR}/tools/mister/setup-build-container.sh"
 
-container_name="${MISTER_BUILD_CONTAINER:-3s-mister-arm-build}"
-platform="${MISTER_DOCKER_PLATFORM:-linux/amd64}"
+# Empty means "derive from the resolved platform" once the daemon is known;
+# see mister_default_container_for_platform in docker-host.sh.
+container_name="${MISTER_BUILD_CONTAINER:-}"
+# 'auto' resolves to the platform native to the resolved Docker daemon; see the
+# Defaults section of the usage text below and tools/mister/docker-host.sh.
+platform="${MISTER_DOCKER_PLATFORM:-auto}"
 flavor="telemetry"
-jobs="${JOBS:-2}"
+# 'auto' resolves to the daemon's core count. The historical default was 2,
+# which on a 10-core daemon left 8 cores idle for the whole compile.
+jobs="${JOBS:-auto}"
+
+# shellcheck source=tools/mister/docker-host.sh
+. "${SCRIPT_DIR}/docker-host.sh"
 # Task #53: the container workdir used to be the hardcoded string
 # "/work-mister" for every invocation. See the --lane block below.
 lane="${MISTER_BUILD_LANE:-mister}"
@@ -28,7 +37,11 @@ Options:
   --flavor <telemetry|clean|both>   Build flavor to produce (default: ${flavor})
   --platform <docker-platform>      Docker platform for the build container
                                     (default: ${platform})
-  --container <name>                Docker container name (default: ${container_name})
+  --container <name>                Docker container name (default: derived from
+                                    the resolved platform -- 3s-mister-arm-build
+                                    for linux/amd64, 3s-mister-arm64-build for
+                                    linux/arm64, 3s-mister-armv7-build for
+                                    linux/arm/v7)
   --jobs <count>                    Parallel build jobs inside Docker (default: ${jobs})
   --lane <name>                     Build lane. Selects the container workdir and
                                     the exclusive lock that protects it
@@ -66,13 +79,38 @@ Worktrees (task #81):
   canary, which compare against this checkout, not against the mount.
 
 Defaults:
-  - The default platform is linux/amd64 because it is the most portable Docker
-    path across macOS and other hosts that cannot execute linux/arm/v7
-    containers locally.
-  - linux/amd64 uses the validated ARM cross-build flow and still produces a
-    real ARM hard-float MiSTer package.
+  - The default platform is 'auto': the container platform native to whichever
+    Docker daemon is resolved. On an Apple Silicon host that is linux/arm64; on
+    an x86_64 host it is linux/amd64. Either way the compiler is clang with
+    --target=arm-linux-gnueabihf, so the container platform decides only what
+    the *compiler itself* is executed as, never what it emits.
+
+    This used to be hardcoded to linux/amd64 and described as "the most
+    portable" and "the validated ARM cross-build flow". Both claims aged badly.
+    On an arm64 host, linux/amd64 means every clang invocation runs under
+    emulation to cross-compile to armv7 -- two layers of translation to produce
+    an artifact neither layer is native to. Debian bullseye publishes the whole
+    cross toolchain for an arm64 host (gcc-arm-linux-gnueabihf,
+    binutils-arm-linux-gnueabihf, libc6-dev-armhf-cross,
+    libstdc++-10-dev-armhf-cross, and the :armhf runtime -dev packages), and
+    apt.llvm.org publishes clang for arm64 bullseye, so 'auto' is as validated
+    as the old default and strictly less translated.
+
+  - linux/amd64 remains fully supported and is still the right value on an
+    x86_64 host; pass --platform linux/amd64 or set MISTER_DOCKER_PLATFORM to
+    pin it anywhere.
   - linux/arm/v7 is supported when the host has binfmt_misc/QEMU support and you
-    explicitly want a native ARM container build.
+    explicitly want a native ARM container build (no cross-compile).
+
+Build host (task #117):
+  The helper refuses to build on a Docker daemon that is not the native host
+  daemon -- in particular the Colima 'quartus2' VM, which is an emulated x86_64
+  profile that exists for the FPGA toolchain (AGENTS.md:23). When Docker Desktop
+  is not running the docker CLI silently falls through to whatever context is
+  live, which is how every game build on this machine came to run inside the
+  Quartus VM without anyone noticing. Set MISTER_ALLOW_FOREIGN_DOCKER_HOST=1 to
+  build there deliberately. The resolved daemon is printed as a 'docker daemon:'
+  line alongside the other provenance output.
 
 Environment:
   EXTRA_CMAKE_ARGS                  Space-separated extra -D... flags forwarded
@@ -173,6 +211,28 @@ else
 fi
 
 require_cmd docker
+
+# Task #117 -- which daemon are we about to build on? Resolves and prints the
+# context, endpoint, OS/arch and core count, and refuses a non-native daemon
+# (notably the emulated Colima Quartus VM) unless explicitly allowed. Runs
+# before any staging so a wrong host costs nothing.
+mister_assert_docker_host
+
+if [ "${platform}" = "auto" ]; then
+    platform="$(mister_native_platform)"
+    echo "platform: auto -> ${platform} (native to ${MISTER_DAEMON_ARCH} daemon)"
+fi
+
+if [ "${jobs}" = "auto" ]; then
+    jobs="${MISTER_DAEMON_NCPU:-2}"
+    [ "${jobs}" -ge 1 ] 2>/dev/null || jobs=2
+    echo "jobs: auto -> ${jobs} (daemon core count)"
+fi
+
+if [ -z "${container_name}" ]; then
+    container_name="$(mister_default_container_for_platform "${platform}")"
+    echo "container: default for ${platform} -> ${container_name}"
+fi
 
 "${SETUP_CONTAINER_SCRIPT}" --container "${container_name}" --platform "${platform}"
 
@@ -571,6 +631,27 @@ esac
 export CC="clang-${llvm_version}"
 export CXX="clang++-${llvm_version}"
 
+# Compiler cache. CMakeLists.txt wires ccache in as CMAKE_C_COMPILER_LAUNCHER
+# when it is installed, which keeps CC above as the compiler CMake probes and
+# records. /ccache is a named Docker volume created by
+# setup-build-container.sh, so the cache outlives `docker rm` of this
+# container; on an older container that predates that mount this is just a
+# container-local directory, which still persists across builds.
+#
+# Sloppiness is left at ccache's strict default on purpose. This build's
+# provenance rests on MIST_BUILD_HASH being a per-source COMPILE_DEFINITION,
+# which is part of the command line ccache hashes, so an object cached for a
+# different commit cannot be served to this one.
+export CCACHE_DIR=/ccache
+export CCACHE_MAXSIZE=5G
+mkdir -p "${CCACHE_DIR}"
+if command -v ccache >/dev/null 2>&1; then
+    ccache --zero-stats >/dev/null 2>&1 || true
+    echo "ccache: $(ccache --version | head -n 1), dir=${CCACHE_DIR} max=${CCACHE_MAXSIZE}"
+else
+    echo "ccache: not installed in this container; building uncached"
+fi
+
 cmake_target_args=()
 if [ "${cross_build}" -eq 1 ]; then
     export PKG_CONFIG_LIBDIR=/usr/lib/arm-linux-gnueabihf/pkgconfig:/usr/share/pkgconfig
@@ -728,6 +809,11 @@ fi
 
 sed -i 's/^status=building$/status=complete/' "${stamp_file}"
 echo "build stamp verified: nonce=${build_nonce} fingerprint=${final_fingerprint}"
+
+if command -v ccache >/dev/null 2>&1; then
+    echo "ccache stats for this build:"
+    ccache --show-stats 2>/dev/null | sed 's/^/  /'
+fi
 EOF
 
 mkdir -p "${ROOT_DIR}/build"
@@ -768,6 +854,13 @@ echo "lane=${lane}"
 echo "workdir=${workdir}"
 echo "build_hash=${git_short_sha}"
 echo "source_fingerprint=${host_fingerprint}"
+# Task #117 -- the third provenance question, after "which tree" (#53) and
+# "which config" (#116): which machine. Repeated here so a single grep of the
+# summary block answers it without scrolling back to the pre-flight line.
+echo "docker_context=${MISTER_DOCKER_CONTEXT}"
+echo "docker_endpoint=${MISTER_DOCKER_ENDPOINT}"
+echo "docker_daemon=${MISTER_DAEMON_OS}/${MISTER_DAEMON_ARCH} ncpu=${MISTER_DAEMON_NCPU}"
+echo "jobs=${jobs}"
 echo "platform=${platform}"
 echo "flavor=${flavor}"
 if [ "${platform}" = "linux/arm/v7" ]; then

@@ -4,10 +4,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-container_name="${MISTER_BUILD_CONTAINER:-3s-mister-arm-build}"
-platform="${MISTER_DOCKER_PLATFORM:-linux/amd64}"
+# Empty means "derive from the resolved platform"; see docker-host.sh.
+container_name="${MISTER_BUILD_CONTAINER:-}"
+# 'auto' resolves to the platform native to the resolved Docker daemon, so an
+# Apple Silicon host gets linux/arm64 and an x86_64 host gets linux/amd64
+# instead of one of them always paying for emulation. See docker-host.sh.
+platform="${MISTER_DOCKER_PLATFORM:-auto}"
 llvm_version="${MISTER_LLVM_VERSION:-20}"
 cross_build_mode="auto"
+# Persistent ccache volume. Named rather than anonymous so it survives
+# `docker rm` of the build container, which is the point of caching at all.
+ccache_volume="${MISTER_CCACHE_VOLUME:-3s-mister-ccache}"
+
+# shellcheck source=tools/mister/docker-host.sh
+. "${SCRIPT_DIR}/docker-host.sh"
 
 usage() {
     cat <<EOF
@@ -72,6 +82,20 @@ done
 
 require_cmd docker
 
+# Which daemon is this? Refuses the emulated Quartus VM and any other
+# non-native daemon before we spend anything on it.
+mister_assert_docker_host
+
+if [ "${platform}" = "auto" ]; then
+    platform="$(mister_native_platform)"
+    echo "platform: auto -> ${platform} (native to ${MISTER_DAEMON_ARCH} daemon)"
+fi
+
+if [ -z "${container_name}" ]; then
+    container_name="$(mister_default_container_for_platform "${platform}")"
+    echo "container: default for ${platform} -> ${container_name}"
+fi
+
 if ! [[ "${llvm_version}" =~ ^[0-9]+$ ]]; then
     echo "--llvm-version must be a numeric major version" >&2
     exit 2
@@ -100,6 +124,9 @@ esac
 case "${platform}" in
 linux/amd64)
     expected_dpkg_arch="amd64"
+    ;;
+linux/arm64)
+    expected_dpkg_arch="arm64"
     ;;
 linux/arm/v7)
     expected_dpkg_arch="armhf"
@@ -142,7 +169,14 @@ if docker ps -a --format '{{.Names}}' | grep -qx "${container_name}"; then
 
     docker start "${container_name}" >/dev/null
 else
-    docker run -d --name "${container_name}" --platform "${platform}" -v "${ROOT_DIR}":/src -w /src debian:11 sleep infinity >/dev/null
+    # /ccache is a named volume so the compiler cache outlives the container.
+    # Recreating the container is the standard recovery for a wedged build
+    # environment, and without this that recovery also threw away every cached
+    # object and bought a full cold rebuild.
+    docker volume create "${ccache_volume}" >/dev/null
+    docker run -d --name "${container_name}" --platform "${platform}" \
+        -v "${ROOT_DIR}":/src -v "${ccache_volume}":/ccache -w /src \
+        debian:11 sleep infinity >/dev/null
 fi
 
 if [ -n "${expected_dpkg_arch}" ]; then
@@ -163,7 +197,7 @@ deb http://security.debian.org/debian-security bullseye-security main
 deb http://archive.debian.org/debian bullseye-backports main contrib non-free
 EOF_APT
 apt-get update
-apt-get install -y build-essential ca-certificates curl git gpg libasound2-dev make pkg-config rsync zlib1g-dev
+apt-get install -y build-essential ca-certificates ccache curl git gpg libasound2-dev make pkg-config rsync zlib1g-dev
 install -d /usr/share/keyrings
 curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor --yes -o /usr/share/keyrings/apt.llvm.org.gpg
 rm -f /etc/apt/sources.list.d/llvm-bullseye-*.list
@@ -188,8 +222,11 @@ docker exec "${container_name}" bash -lc "
 set -euxo pipefail
 cmake --version | head -n 1
 clang-${llvm_version} --version | head -n 1
+ccache --version | head -n 1
 printf 'container=%s\n' '${container_name}'
 printf 'platform=%s\n' '${platform}'
+printf 'dpkg_arch=%s\n' \"\$(dpkg --print-architecture)\"
 printf 'cross_build=%s\n' '${cross_build}'
 printf 'src_mount=%s\n' '/src'
+printf 'nproc=%s\n' \"\$(nproc)\"
 "
