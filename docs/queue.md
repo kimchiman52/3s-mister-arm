@@ -147,26 +147,117 @@ harnesses, every one exit 0, zero "not compiled in" in any log.
 `__test_protocol.js` 39/39. Doc-citation baselines 11 scopes, 0 breached,
 0 slack. ARM cross-build GREEN in the aarch64 container.
 
-## #132 — coverage plan
+## #132 — coverage plan — PRIORITY 1 CLOSED
 
-**Priority 1**
-- `classify_peer_payload` (`src/netplay/mist_handshake.c:314`) and the four
-  payload readers it uses — `read_cstr` `:236`, `read_u8` `:255`, `read_u16be`
-  `:263`, `read_u64be` `:271`, plus `parse_header` `:210`. This is the
-  compat/desync gate and has **zero direct tests**. Blocked by `static` + a
-  file global; extract via the `mist_handshake_gate_next` trampoline precedent
-  at `src/netplay/mist_handshake.c:894`.
-- `Stun_IsBindingResponse` (`src/netplay/stun.c:1028`).
-- Late-punch pure cases: cap saturation, wrong-IP-no-answer, answer targets the
-  learned port.
+Three commits. Priority 2 and 3 remain open, unchanged, below.
 
-**Priority 2**
+**What was covered, and what each test catches.** Every test below was shown
+RED against a specific mutation of the code it pins; a test that has never
+been red proves nothing. Each red was confirmed after deleting BOTH the object
+file AND the linked binary — Unix Makefiles compares mtimes at one-second
+granularity, so rewriting a source inside the same second leaves the harness
+silently re-running the previous binary (observed twice while building the
+proof, once as a one-step lag and once as an every-other-step lag).
+
+### `--test-mist-compat-gate` (`3faacc32`) — 9 tests, 1294 assertions
+
+`classify_peer_payload` (`src/netplay/mist_handshake.c:314`), `parse_header`
+`:210`, and the four bounds-checked readers `:236/:255/:263/:271`, reached
+through six thin trampolines in the existing `ENABLE_NETPLAY_TESTS` block
+(`mist_handshake.c:1003-1057`). NOT the `mist_handshake_gate_next` `:894`
+production-export shape: promoting the classifier to a shipped symbol would
+widen the compat gate's API for no shipped caller. The `s_balance_digest`
+global needed no extraction at all — `mist_handshake_set_balance_digest`
+(`:110`) is already a production setter.
+
+| test | mutation it was proved against |
+| --- | --- |
+| `accept` | build_hash difference becomes a reject |
+| `truncate` | `read_u64be` bound off by one |
+| `reasons` | arch reject reports the platform code |
+| `order` | `state_ver` checked before `proto_ver` |
+| `strings` | `read_cstr` advances by the TRUNCATED copy length |
+| `header` | declared-vs-received length check removed |
+| `readers` | `read_u16be` becomes little-endian |
+| `digest` | digest compared on its 32-bit DISPLAY fold |
+| `text` | the arch reason text ignores `text_cap` |
+
+The truncation sweep asserts a reason per prefix byte: `[0,20]` MALFORMED,
+`[21,23]` LEGACY, `[24,31]` MALFORMED, `32` accept. The LEGACY window is three
+bytes wide between two MALFORMED regions, which is what makes an off-by-one in
+any reader visible.
+
+### `--test-punch-predicates` (`80327519`) — 7 tests, 744 assertions
+
+`Stun_IsBindingResponse` (`src/netplay/stun.c:1028`) had zero tests despite
+gating three receive paths (`direct_p2p.c:1060`, `:2230`,
+`sdl_net_adapter.c:343`). `Stun_IsPunchPayload` `:147` had a four-row truth
+table at `test_stun_mock.c:861-894` that said nothing about WHICH bytes it
+compares. Now: all 64 token bits, all 72 prefix bits, the length swept -2..64,
+plus a FOLD trap and an ORDER trap. Those two earn their place — replacing
+`diff |=` with `diff ^=` at `stun.c:160` passes all 136 single-bit flips and
+fails only those two assertions.
+
+Three late-punch decisions the socket harness cannot observe, because seeing a
+datagram at all means advancing past `LATE_PUNCH_TX_INTERVAL_MS`, by which
+point the cadenced keepalive has fired anyway: a foreign-IP valid token must
+schedule no answer (`late_punch.c:116-123` says so; nothing enforced it),
+the capped move must change nothing and keep targeting the LEARNED endpoint,
+and an accepted relearn must move the target and hand netplay.c the same port.
+`LatePunch_TestPeek` (read-only, `ENABLE_NETPLAY_TESTS` only) is what makes
+the send target observable without a socket.
+
+Mutations proved: N1 binding-response floor 20→16, N2 prefix memcmp 9→1 byte,
+N3 length becomes a minimum, N3b loop drops the last token byte, N3c
+accumulator becomes an xor fold, N4 foreign-IP guard removed, N5 cap removed,
+N6 accepted relearn does not move the target, N6b the capped move moves it,
+N7 a wrong-token punch schedules an answer.
+
+### `constant-time-compare` gate (`c62f2792`) — gate count 9 → 10
+
+`tools/gates/check_constant_time_compare.py`. An early-exiting rewrite of the
+punch-token compare is BEHAVIOURALLY IDENTICAL — same verdict for every input
+— so the 136-bit sweep passes against it unchanged and no unit test can see
+it. A timing measurement over a 17-byte compare is noise. So the property is
+checked where it is expressed: the loop still runs over
+`STUN_PUNCH_TOKEN_LEN`, accumulates with `|=`, and contains no `return`,
+`break`, `goto`, `continue`, `if`, `?:` or short-circuit. Red-proved four
+ways; a renamed function exits **2** (ERROR), because a check that silently
+finds nothing is worse than no check.
+
+**Anti-vacuity, all three devices proved to fire** in both harnesses: literal
+`EXPECTED_TESTS` (commenting one call out → "ran 8, expected exactly 9"), the
+assertion floor ("only 527 assertion(s) ran, floor is 550"), and per-sweep
+case floors. Both stubs say "not compiled **in**", the spelling
+`tools/gates/run-gates.sh:181` greps for; both exit **2** against the
+shipped-config binary.
+
+**Judged NOT worth testing, with reasons:**
+- The `*off + n > payload_len` form in the fixed-width readers wraps for an
+  offset near `SIZE_MAX`. Unreachable by construction — `*off` is only ever
+  advanced by `read_cstr` and by the readers themselves, all of which keep it
+  in `[0, payload_len]`. A test would pin a precondition the code cannot
+  reach; the harness sweeps all 153 `(off, len)` pairs inside the real
+  invariant instead and names the residual in a comment.
+- Whether the relearn-cap path ALSO raises the prompt-answer flag. The flag is
+  sticky until `LatePunch_Tick` sends (`late_punch.c:181`), so after the eight
+  accepted moves an answer is legitimately already owed. Separating the two
+  needs a Tick, which needs a socket, which is `test_late_punch.c`'s job.
+  Faking it would be the vacuous version.
+- Constant-time TIMING itself — see the gate above.
+
+**Frame-data: SKIPPED, deliberately.** Nothing in this lane reaches the
+simulation. Two new test translation units, six test-only trampolines, one
+read-only test-only accessor, and a Python source-shape check; the only
+non-test source edits are inside `#ifdef ENABLE_NETPLAY_TESTS`.
+
+**Priority 2** (open)
 - The `ORCH_*` cascade — `ORCH_HOST_WORST_CASE_MS`
   (`src/netplay/direct_p2p.c:6162`) — table-driven **from independently listed
   constants, never importing the macro under test**.
 - natpmp timeout math, refactored to take a caller-supplied clock.
 
-**Priority 3**
+**Priority 3** (open)
 - Extract ~13 pure blocks out of `src/netplay/test_bilateral_punch.c`.
 
 **Non-goals, deliberately:** the punch race, split brain, the PROMISED

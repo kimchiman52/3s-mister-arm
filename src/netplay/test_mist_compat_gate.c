@@ -39,7 +39,7 @@
  *      A table that loses a row is a failure, not a smaller green run.
  *
  * And the stub at the bottom says "not compiled in", spelled exactly that
- * way, because tools/gates/run-gates.sh:180 greps for that phrase to turn
+ * way, because tools/gates/run-gates.sh:181 greps for that phrase to turn
  * an exit-2 misbuild into a RED gate rather than a pass.
  *
  * NO -DNETPLAY_TEST_HOOKS NEEDED. Every symbol used here comes from
@@ -140,7 +140,7 @@ static void put_u64be(Pay* p, uint64_t v) {
 /* The build_hash string every crafted payload carries. Seven characters,
  * matching the git short SHA the real build stamps in, and deliberately
  * NOT equal to it: a build_hash difference must be a WARNING and never a
- * reject (mist_handshake.c:378-384 / mist_handshake.h:38). Its length is
+ * reject (mist_handshake.c:378-383 / mist_handshake.h:38). Its length is
  * load-bearing for the offset table below. */
 #define TEST_BUILD_HASH "abc1234"
 
@@ -449,7 +449,7 @@ static void test3_reason_matrix(void) {
 }
 
 /* ====================================================================== */
-/* 4. Check ORDER — "ORDER IS LOAD-BEARING" (mist_handshake.c:302).       */
+/* 4. Check ORDER — "ORDER IS LOAD-BEARING" (mist_handshake.c:305).       */
 /* ====================================================================== */
 
 static void test4_precedence(void) {
@@ -891,7 +891,7 @@ static void test8_digest(void) {
                  1, "the production setter installed the local digest");
 
     /* THE FULL 64 BITS. The reject TEXT folds the digest to 32 bits
-     * (mist_handshake.c:372-375) for display. Pick a peer digest whose
+     * (mist_handshake.c:372-374) for display. Pick a peer digest whose
      * fold is IDENTICAL to ours but whose value is not: if anyone ever
      * "simplified" the comparison to the displayed value, two different
      * ROM sets would connect and desync, and the log line would look

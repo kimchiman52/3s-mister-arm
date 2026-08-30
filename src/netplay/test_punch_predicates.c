@@ -47,7 +47,7 @@
  * HOW IT CANNOT PASS VACUOUSLY. The three devices from
  * test_rendezvous_wire.c:73-82 — a LITERAL EXPECTED_TESTS, an assertion
  * floor, and per-sweep case floors on every bit sweep. The stub says
- * "not compiled in", spelled exactly as tools/gates/run-gates.sh:180
+ * "not compiled in", spelled exactly as tools/gates/run-gates.sh:181
  * greps for it.
  *
  * NO -DNETPLAY_TEST_HOOKS NEEDED — stun.c and late_punch.c are both in
@@ -129,7 +129,7 @@ static void check_eq_str(const char* tag, const char* got, const char* want,
 #define RFC5389_MAGIC_COOKIE             0x2112A442u
 
 /* Same reasoning for the punch prefix: k_punch_prefix is static in
- * stun.c:135. Written out here from late_punch.h:27, which documents the
+ * stun.c:133. Written out here from late_punch.h:27, which documents the
  * payload as "3SX_PUNCH" + the 8-byte room-code-derived token. */
 static const char k_expected_prefix[] = "3SX_PUNCH";
 
@@ -278,7 +278,7 @@ static void test1_binding_response(void) {
 
     /* WHAT IT DELIBERATELY DOES NOT CHECK. This is a cheap classifier,
      * not an authenticator: it ignores the transaction ID and the
-     * declared message length. Stun_ParseBindingResponse (stun.c:1037)
+     * declared message length. Stun_ParseBindingResponse (stun.c:1038)
      * is where the txid is verified, and the split is load-bearing — the
      * receive paths need a verdict on datagrams whose txid they do not
      * have. Pinning it here means a future "hardening" that folds the
@@ -443,7 +443,7 @@ static void test3_punch_payload(void) {
     }
 
     /* THE FOLD TRAP. The compare accumulates per-position differences
-     * (`diff |= buf[i] ^ token[i]`, stun.c:158-161). Two flips in
+     * (`diff |= buf[i] ^ token[i]`, stun.c:158-162). Two flips in
      * DIFFERENT bytes at the same bit position cancel exactly under any
      * compare that xor-folds the token to a checksum before comparing —
      * a plausible "optimisation", and one that would accept a token
