@@ -238,6 +238,11 @@ static int perf_capture_recorded_frames = 0;
 static char* perf_capture_output_path = NULL;
 static char* perf_capture_scene_name = NULL;
 static Uint64 perf_frame_start_ns = 0;
+/* Monotonic frame ordinal since process start, for correlating a logged
+ * outlier with whatever else the same frame emitted (an AFS load failure,
+ * say). Deliberately NOT reset by perf-capture start/stop -- a capture
+ * window is not the timeline the log is read against. */
+static Uint64 perf_frame_index = 0;
 static Uint64 perf_update_start_ns = 0;
 static Uint64 perf_update_ns_total = 0;
 static Uint64 perf_render_ns_total = 0;
@@ -3164,6 +3169,7 @@ void SDLApp_BeginFrame() {
 #if ENABLE_PERF_TELEMETRY
     perf_frame_start_ns = SDL_GetTicksNS();
     perf_update_start_ns = perf_frame_start_ns;
+    perf_frame_index++;
 #endif
 
     SDLMessageRenderer_BeginFrame();
@@ -3624,9 +3630,14 @@ void SDLApp_EndFrame() {
     const int dirty_tiles = 0;
     const double dirty_ratio = 0.0;
 
-    /* Issue #16 freeze diagnostics — log frames that exceed 25 ms of work. */
+    /* Issue #16 freeze diagnostics — log frames that exceed 50 ms of work.
+     * The frame ordinal is what makes an outlier attributable: flLogOut() and
+     * backend_logf() both reach stderr, so a captured run log interleaves this
+     * line with engine messages, and frame= says whether a neighbouring
+     * message belongs to this frame or merely landed next to it. */
     if (frame_work_ns > 50000000ULL) {
-        backend_logf("FRAME OUTLIER: total=%.1fms update=%.1f render=%.1f present=%.1f",
+        backend_logf("FRAME OUTLIER: frame=%llu total=%.1fms update=%.1f render=%.1f present=%.1f",
+                     (unsigned long long)perf_frame_index,
                      (double)frame_work_ns / 1e6,
                      (double)update_ns / 1e6,
                      (double)render_ns / 1e6,
