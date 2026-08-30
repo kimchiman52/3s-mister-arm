@@ -50,7 +50,7 @@
 
 **Claim in plan:** §Hard requirement 3 and §Decision 11: "Offline / LAN-only must not touch the rendezvous server. `127.0.0.1` and RFC1918 ranges … skip bilateral-punch entirely."
 
-**Actual:** The existing hairpin case in `direct_p2p.c:406-411` is triggered when `peer_public_ip == self_public_ip` — meaning two peers on the same LAN whose router reports the same public IP to both. In that scenario `peer_ip` is the *public* IP (never private/RFC1918), so `direct_p2p_is_lan_peer(peer_ip)` as defined in §Step 5 ("`127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`") returns **false** for hairpin traffic. The plan's bypass only fires when the user typed a LAN address directly (the `--p2p-remote-ip` path, which §Hard requirement 3(a) correctly notes never enters the orchestrator).
+**Actual:** The existing hairpin case in `direct_p2p.c:527-532` is triggered when `peer_public_ip == self_public_ip` — meaning two peers on the same LAN whose router reports the same public IP to both. In that scenario `peer_ip` is the *public* IP (never private/RFC1918), so `direct_p2p_is_lan_peer(peer_ip)` as defined in §Step 5 ("`127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`") returns **false** for hairpin traffic. The plan's bypass only fires when the user typed a LAN address directly (the `--p2p-remote-ip` path, which §Hard requirement 3(a) correctly notes never enters the orchestrator).
 
 **Impact:** Two peers behind the same router that doesn't support NAT loopback will (a) fail the 2.5s direct punch, (b) fall into FALLBACK_SIGNALING, (c) REGISTER at the rendezvous server with their shared public IP, and (d) both get DELIVER with each other's public endpoint — which the router still won't loop back. The bilateral punch will fail, landing in FAILED_BILATERAL after ~11s instead of today's ~2.5s FAILED_SYMMETRIC. Not security-critical, but worse UX than advertised, and it does hit the rendezvous server which Hard Requirement 3 tried to prevent.
 
@@ -102,9 +102,9 @@
 
 **Claim in plan:** §Step 5 "Do NOT: Start a signaling thread on the joiner side — joiner's existing worker thread handles rendezvous inline."
 
-**Actual:** §Step 5 also says the joiner runs "inline-run REGISTER/POLL loop for the configured budget" on the existing `join_thread_fn` worker thread. That's fine, but the plan says `join_thread_fn` runs STUN discover → hole-punch → HANDOFF and then exits (direct_p2p.c:458 is the return). To REGISTER/POLL inline the worker must stay alive longer, which means it also owns the bilateral Stun_HolePunch call. Currently §Step 5 says "call `Stun_HolePunch` with `CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS` budget; on DELIVER-never-arrived or second punch failure, `FAILED_BILATERAL`; on success, `HANDOFF`." Consistent, but not clearly bookkept against the current worker's "publish state then exit" contract (direct_p2p.c:456-457). The worker will now be alive until the second Stun_HolePunch returns, which may be ~11 seconds after the user pressed "Join."
+**Actual:** §Step 5 also says the joiner runs "inline-run REGISTER/POLL loop for the configured budget" on the existing `join_thread_fn` worker thread. That's fine, but the plan says `join_thread_fn` runs STUN discover → hole-punch → HANDOFF and then exits (direct_p2p.c:579 is the return). To REGISTER/POLL inline the worker must stay alive longer, which means it also owns the bilateral Stun_HolePunch call. Currently §Step 5 says "call `Stun_HolePunch` with `CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS` budget; on DELIVER-never-arrived or second punch failure, `FAILED_BILATERAL`; on success, `HANDOFF`." Consistent, but not clearly bookkept against the current worker's "publish state then exit" contract (direct_p2p.c:577-578). The worker will now be alive until the second Stun_HolePunch returns, which may be ~11 seconds after the user pressed "Join."
 
-**Impact:** The join-side thread lifetime grows significantly. The existing `DirectP2P_Cancel` logic waits up to 500ms for IDLE (direct_p2p.c:659-661). With a Stun_HolePunch in progress on the worker, the worker will see `s_cancel` and return from Stun_HolePunch (it passes `&s_cancel` as the cancel_flag — direct_p2p.c:422), so Cancel still works. But the plan should state that the joiner worker's lifetime is extended by up to `budget_ms + punch_ms` (8s + 3s = 11s), and that DirectP2P_Cancel's existing 500ms grace period is adequate because Stun_HolePunch honors the cancel flag.
+**Impact:** The join-side thread lifetime grows significantly. The existing `DirectP2P_Cancel` logic waits up to 500ms for IDLE (direct_p2p.c:780-782). With a Stun_HolePunch in progress on the worker, the worker will see `s_cancel` and return from Stun_HolePunch (it passes `&s_cancel` as the cancel_flag — direct_p2p.c:543), so Cancel still works. But the plan should state that the joiner worker's lifetime is extended by up to `budget_ms + punch_ms` (8s + 3s = 11s), and that DirectP2P_Cancel's existing 500ms grace period is adequate because Stun_HolePunch honors the cancel flag.
 
 **Fix:** Add a sentence to §Step 5 joiner changes noting the extended worker lifetime and confirming cancel-flag compatibility. No behavior change needed.
 
@@ -123,7 +123,7 @@
 ## Nits
 
 - §Decision 2 wire format: "u16 my_public_port (BE)" — rest of the doc uses "host byte order" / "network byte order." Pick one convention. `StunResult.public_port` is host order per `stun.h:16`, so REGISTER writing `my_public_port` in network byte order requires an `htons`; flag this in the encoder spec.
-- §Decision 3 line 134 says "putting it on the worker thread that publishes `HOST_WAITING` would require redesigning that worker's exit contract (today the worker exits immediately after publishing `HOST_WAITING`)." Verified at `direct_p2p.c:361-365`: host worker publishes HOST_WAITING then returns. Accurate.
+- §Decision 3 line 134 says "putting it on the worker thread that publishes `HOST_WAITING` would require redesigning that worker's exit contract (today the worker exits immediately after publishing `HOST_WAITING`)." Verified at `direct_p2p.c:482-486`: host worker publishes HOST_WAITING then returns. Accurate.
 - §Step 1 "Node.js/Go on the server, ~250 LOC of SDL3_net UDP client" — drop the Go alternative; §Decision 1 locked in Node.js for same-runtime rationale.
 - §Step 5 mentions `docs/plan-bilateral-hole-punch.md` §Bilateral smoke added in Step 7 as a cross-reference for Step 5's success criteria. That creates a forward reference: Step 5 smoke-criteria refers to a doc section that doesn't exist yet until Step 7. Reorder so Step 7 lands before Step 5 smoke is cited, or accept the forward reference and note in Step 5: "(Step 7 will create this section; early Step 5 runs can log-grep manually.)"
 - §Step 8 "Update `MEMORY.md` index with the new entry." MEMORY.md lives at `/Users/sb/.claude/projects/-Users-sb-Developer-3sx-mister/memory/MEMORY.md` — the plan references the directory but not the index file by name. Minor.
@@ -134,7 +134,7 @@
 ## Things verified correct
 
 - **File paths and extensions**: `src/netplay/direct_p2p.{c,h}` exist at the cited paths; `src/netplay/stun.{c,h}`, `src/netplay/room_code.{c,h}`, `src/netplay/netplay.{c,h}` all exist. `src/port/config/config.{c,h}` exist. `src/netplay/test_stun_mock.c` and `src/netplay/test_mist_handshake.c` exist. `docs/direct-p2p-smoke-plan.md` exists. `docs/config.md` exists. `docs/STUN-PORT-STATUS.md` exists.
-- **Function signatures** *(pointers refreshed to the current tree 2026-08-29; each review-time number is kept in its parenthetical, because the finding is about that number)*: `host_thread_fn` at `direct_p2p.c:2678` (was 288; plan cited the range correctly), `join_thread_fn` at `direct_p2p.c:3232` (was 372; plan said 372-457, actual at the time was 372-458 — off by one, nit), `host_tick_receive` at `direct_p2p.c:3821` (was 516; plan cited 516-552, verified exactly), `do_handoff(1, …)` at `direct_p2p.c:3953` (was 550) and `do_handoff(2, …)` at `direct_p2p.c:3961` (was 558), both verified exactly.
+- **Function signatures** *(pointers refreshed to the current tree 2026-08-29; each review-time number is kept in its parenthetical, because the finding is about that number)*: `host_thread_fn` at `direct_p2p.c:2799` (was 288; plan cited the range correctly), `join_thread_fn` at `direct_p2p.c:3404` (was 372; plan said 372-457, actual at the time was 372-458 — off by one, nit), `host_tick_receive` at `direct_p2p.c:3993` (was 516; plan cited 516-552, verified exactly), `do_handoff(1, …)` at `direct_p2p.c:4125` (was 550) and `do_handoff(2, …)` at `direct_p2p.c:4133` (was 558), both verified exactly.
 - **Stun API**: `Stun_Discover(StunResult*, uint16_t)`, `Stun_HolePunch(StunResult*, char*, uint16_t*, int, SDL_AtomicInt*)`, `Stun_CloseSocket(StunResult*)` all match plan-assumed signatures (`stun.h:25,28,41`).
 - **Room-code API**: `RoomCode_Encode` / `RoomCode_Decode` / `RoomCode_NormalizeInput` at `room_code.h:96,104,113`; payload is 6 bytes (`ROOM_CODE_RAW_LEN` at `room_code.h:63`). Plan's derivation of the 6-byte payload from both sides is correct. *[No longer true — corrected here because these are file:line references a reader would follow. As of room code v3: `RoomCode_Encode` `room_code.h:195`, `RoomCode_Decode` `:204` (returns `RoomCodeDecodeResult`, not `bool`, and takes a `nonce` out-param), `RoomCode_GenerateNonce` `:215`, `RoomCode_NormalizeInput` `:251`. `ROOM_CODE_RAW_LEN` was deleted; the payload is **10 bytes** — `ip[4] ‖ port_be[2] ‖ nonce_be[4]` (`room_code_pack_payload`, `room_code.c:251`; `REND_KEY_PAYLOAD_LEN 10`, `rendezvous.c:48`). The rest of this section's line numbers were verified against the tree as it stood at review time and have drifted similarly.]*
 - **Netplay API**: `Netplay_SetStunSocket(struct NET_DatagramSocket*)` at `netplay.h:43`, `Netplay_SetParams(int, const char*)` at `:24`, `Netplay_SetSessionTeardownCallback(void (*)(void))` at `:49`, `Netplay_SetRemotePort(unsigned short)` at `:29`. All match plan's assumptions.
@@ -149,8 +149,8 @@
 - **Success-criteria automatability (spot-check)**: Step 2's `grep -n 'netplay-direct-p2p-disable-bilateral\|...' src/port/config/config.{c,h}` — concrete, runnable, will return non-empty once the keys are added. Step 3's `grep -n 'Rendezvous_DeriveSessionKey\|...' src/netplay/rendezvous.h` — concrete. Step 4's `grep -n 'try_handle_deliver\|0x33535852' src/netplay/direct_p2p.c` — concrete. Step 6's `--test-bilateral-punch` exit-0 check — concrete. Step 7's `grep -n 'Bilateral smoke\|FALLBACK_SIGNALING' docs/direct-p2p-smoke-plan.md` — concrete. Automatability is good across the plan.
 - **No scope creep detected**: Plan explicitly excludes TURN, ICE, DTLS, port prediction, matchmaking, 3sxtra lobby integration, cross-arch crossplay, telemetry, bracket play, leaderboards, RmlUi UI changes, `netplay_screen.c` changes, wrapper (`build-hps.sh`) changes, and UPnP changes. All those exclusions are internally consistent. No step sneaks in any excluded capability.
 - **Scenario matrix accuracy**: §Rollout matrix is internally consistent. The "New host + Old joiner" row ("host's rendezvous thread REGISTERs but never gets a peer; after 8 s rendezvous exits, host stays on HOST_WAITING forever") matches the code's current HOST_WAITING behavior (no timeout on the passive receive loop). "Graceful degradation" is genuinely graceful — no session that works today would break.
-- **Kill-switch behavior with direct-punch failure**: When the kill switch is on and the direct punch fails, the joiner transitions to FAILED_SYMMETRIC (plan §Step 5 explicit), which matches today's behavior exactly (direct_p2p.c:429-436). On the host side, no rendezvous thread spawned, so host stays on HOST_WAITING same as today. Requirement satisfied.
-- **Socket handoff timing**: §Hard requirement 4 ("No long-lived daemon") is honored: all new threads exit after the orchestrator transitions to HANDOFF or FAILED_BILATERAL. `direct_p2p_on_teardown` at `direct_p2p.c:466-478` already resets state to IDLE on session end, which the plan correctly extends to also cancel the rendezvous/bilateral threads.
+- **Kill-switch behavior with direct-punch failure**: When the kill switch is on and the direct punch fails, the joiner transitions to FAILED_SYMMETRIC (plan §Step 5 explicit), which matches today's behavior exactly (direct_p2p.c:550-557). On the host side, no rendezvous thread spawned, so host stays on HOST_WAITING same as today. Requirement satisfied.
+- **Socket handoff timing**: §Hard requirement 4 ("No long-lived daemon") is honored: all new threads exit after the orchestrator transitions to HANDOFF or FAILED_BILATERAL. `direct_p2p_on_teardown` at `direct_p2p.c:587-599` already resets state to IDLE on session end, which the plan correctly extends to also cancel the rendezvous/bilateral threads.
 
 **Correction (2026-04-26):** Two entries in this list — `/tmp/3sxtra/src/netplay/lobby_server.c exists and uses #include <curl/curl.h> at line 24` and `/tmp/3sxtra/src/netplay/sha256.{c,h} exists with public-domain header` (both within the "Upstream reference validity" bullet at line 141) — are no longer reproducible. The local 3sxtra checkout has been cleared (verified 2026-04-26: zero `.c`/`.h` files anywhere under `/tmp/3sxtra/`); these claims should be treated as historical artifacts of the original review pass, not as current verifications. The conclusions they supported (use in-tree `src/utils/sha256.h`; treat upstream as reference-only) remain correct on first-principles grounds.
 
@@ -205,9 +205,9 @@ The 16-byte `peer_ip` field with the IPv4-mapped-IPv6-OR-raw-IPv4 alternation is
 
 #### NEW-4 — Cancel semantics: `SDL_DetachThread` + spin-for-IDLE has a write-after-free race
 
-**Claim in plan (pre-revision):** Cancel-semantics changes were not specified; the plan inherited the existing `SDL_DetachThread(s_thread)` at `direct_p2p.c` line 644 and the spin-for-IDLE loop at lines 659-661. *[Those two line numbers are as this review found them and have no live equivalent: S5a removed the detach outright, and `DirectP2P_Cancel` now sets the three cancel atomics and `SDL_WaitThread`s every worker handle — `src/netplay/direct_p2p.c:4182-4203`.]*
+**Claim in plan (pre-revision):** Cancel-semantics changes were not specified; the plan inherited the existing `SDL_DetachThread(s_thread)` at `direct_p2p.c` line 644 and the spin-for-IDLE loop at lines 659-661. *[Those two line numbers are as this review found them and have no live equivalent: S5a removed the detach outright, and `DirectP2P_Cancel` now sets the three cancel atomics and `SDL_WaitThread`s every worker handle — `src/netplay/direct_p2p.c:4354-4375`.]*
 
-**Actual:** Today's `DirectP2P_Cancel` spins up to 500 ms for `get_state() == DIRECT_P2P_IDLE`, then unconditionally tears down `s_work` via `memset` (`direct_p2p.c:674`) and the STUN socket. If the worker is mid-`Stun_HolePunch` post-receive write at `stun.c:445-446` (the 3-punch follow-up after a successful receive) when the 500 ms grace expires, the worker writes freed memory after teardown. The bilateral path's worst-case 11-second worker lifetime makes this race more likely.
+**Actual:** Today's `DirectP2P_Cancel` spins up to 500 ms for `get_state() == DIRECT_P2P_IDLE`, then unconditionally tears down `s_work` via `memset` (`direct_p2p.c:795`) and the STUN socket. If the worker is mid-`Stun_HolePunch` post-receive write at `stun.c:445-446` (the 3-punch follow-up after a successful receive) when the 500 ms grace expires, the worker writes freed memory after teardown. The bilateral path's worst-case 11-second worker lifetime makes this race more likely.
 
 **Impact:** Pre-existing race that the bilateral feature aggravates. Worth fixing while we're in the file.
 
@@ -257,7 +257,7 @@ The 16-byte `peer_ip` field with the IPv4-mapped-IPv6-OR-raw-IPv4 alternation is
 
 **Claim in plan (pre-revision):** §Decision 9 status table used em-dashes (U+2014) in `"Symmetric NAT — coordinating via rendezvous..."` and `"Symmetric NAT — simultaneous hole punch..."`.
 
-**Actual:** Existing ASCII-only status strings at `direct_p2p.c:425, :434` set the precedent. The native game text path (`SSPutStrPro`) renders SF3's bespoke glyph table; em-dashes are not in the glyph set.
+**Actual:** Existing ASCII-only status strings at `direct_p2p.c:546, :434` set the precedent. The native game text path (`SSPutStrPro`) renders SF3's bespoke glyph table; em-dashes are not in the glyph set.
 
 **Impact:** Status text would render as missing-glyph boxes on the device.
 
@@ -281,7 +281,7 @@ The 16-byte `peer_ip` field with the IPv4-mapped-IPv6-OR-raw-IPv4 alternation is
 
 **Claim in plan (pre-revision):** §Step 3 `Rendezvous_DeriveSessionKey` signature was `(uint32_t ip_be, uint16_t public_port, uint8_t out_key[16])` with no specification of the 6-byte payload layout or input validation.
 
-**Actual:** `ipv4_str_to_be` at `direct_p2p.c:276-283` returns 0 on parse failure (and 0.0.0.0 isn't a routable public address either). If the caller passes `ip_be == 0`, every offline peer derives the same session key (`SHA-256(0x00000000:port)`), causing all of them to collide on the rendezvous server.
+**Actual:** `ipv4_str_to_be` at `direct_p2p.c:369-376` returns 0 on parse failure (and 0.0.0.0 isn't a routable public address either). If the caller passes `ip_be == 0`, every offline peer derives the same session key (`SHA-256(0x00000000:port)`), causing all of them to collide on the rendezvous server.
 
 **Impact:** Real cross-talk hazard if STUN fails silently; needs an explicit guard in the caller.
 
@@ -403,9 +403,9 @@ The plan's labels for host/join were swapped, and the three-thread cleanup model
 
 **Claim in plan (pre-round-2):** §Step 5 host_bilateral_punch_thread_fn bullet did not specify how peer_ip / peer_public_port are passed into `Stun_HolePunch`.
 
-**Actual:** `direct_p2p.c:418-420` already shows the join-side worker copies peer_ip / peer_port into stack-locals before calling `Stun_HolePunch` so the in-place overwrite at `stun.c:438,442` doesn't race with main-thread reads. The bilateral-punch thread on the host needs the same pattern.
+**Actual:** `direct_p2p.c:539-541` already shows the join-side worker copies peer_ip / peer_port into stack-locals before calling `Stun_HolePunch` so the in-place overwrite at `stun.c:438,442` doesn't race with main-thread reads. The bilateral-punch thread on the host needs the same pattern.
 
-**Disposition:** Addressed in §Step 5 (note added to mirror `direct_p2p.c:418-420`).
+**Disposition:** Addressed in §Step 5 (note added to mirror `direct_p2p.c:539-541`).
 
 ---
 
@@ -463,7 +463,7 @@ The plan's labels for host/join were swapped, and the three-thread cleanup model
 
 **Claim in plan (pre-round-2):** §Step 5 "Worker-lifetime note" only documented the join-side worker lifetime extension.
 
-**Disposition:** Addressed in §Step 5 (parallel sentence added for the host worker at `direct_p2p.c:288, exits at :361-365`; clarifies that rendezvous and bilateral-punch threads are independent of `s_thread`).
+**Disposition:** Addressed in §Step 5 (parallel sentence added for the host worker at `direct_p2p.c:381, exits at :361-365`; clarifies that rendezvous and bilateral-punch threads are independent of `s_thread`).
 
 ---
 

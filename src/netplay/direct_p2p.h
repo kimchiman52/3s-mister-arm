@@ -371,6 +371,38 @@ bool DirectP2P_TestHook_IpIsNonPublic(const char* ip);
  * still runs against the shipped constant. 1 (or less) disables. */
 void DirectP2P_TestHook_SetHostAdvisoryScale(int scale);
 
+/* --- #104: the S2 host STUN ladder, drivable and observable ------------
+ *
+ * SetHostLadder overrides HOST_STUN_MAX_RETRIES / HOST_STUN_RETRY_BACKOFF_MS
+ * so a test can walk the REAL ladder — real host_thread_fn spawns, real
+ * STUN failures, real FAILED_STUN transitions, real re-probes — at a
+ * chosen LENGTH and without sleeping 3 x 5 s. Nothing about a rung is
+ * faked: the same predicate, the same worker, the same accumulators, and
+ * the accumulator under test measures elapsed time, so it behaves
+ * identically at 250 ms and at 5000.
+ *
+ * The length override is what makes the #104 proof a COMPARISON rather
+ * than a single reading: the harness runs the identical failure at
+ * max_retries=3 and at max_retries=0 and shows the two FAIL lines differ
+ * in exactly the new fields. Pass (-1, 0) to restore both shipped
+ * constants; DirectP2P_TestHook_HostLadderLimits reports them so a test
+ * can assert against the real numbers instead of a drifting copy.
+ *
+ * HostLadderCounters reads back the five cumulative fields the FAIL
+ * line now carries. It exists so the harness can assert the COUNTERS
+ * and the RENDERED LINE independently: a test that only grepped the
+ * string could pass on a line built from the wrong variables, and a test
+ * that only read the counters would not notice a formatter that dropped
+ * them. Any pointer may be NULL. */
+void DirectP2P_TestHook_SetHostLadder(int max_retries, int backoff_ms);
+void DirectP2P_TestHook_HostLadderCounters(int* out_rungs, int* out_portmap_probes,
+                                           uint32_t* out_upnp_total_ms,
+                                           uint32_t* out_stun_total_ms,
+                                           uint32_t* out_backoff_ms);
+/* The shipped ladder shape, exported so a test asserts against the real
+ * constants rather than a copy that can silently drift. */
+void DirectP2P_TestHook_HostLadderLimits(int* out_max_retries, int* out_backoff_ms);
+
 /* Handoff observation seam. The assertion that matters is on
  * do_handoff's own arguments — not on internal state a rung could set
  * correctly while never reaching the handoff. `out_count` separates

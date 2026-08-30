@@ -1370,7 +1370,7 @@ async function testKeyBudgetCoversLegitimateSignalling(handle) {
     // `_keyRateLimit <= 4 * steadyPerSec` (<= 12), which looks like a
     // tight sizing guard but is really a hardcoded TWO-PEER model: the
     // session key IS the room code (derived from the host's public
-    // endpoint, src/netplay/direct_p2p.c:2809-2811), so a room's real
+    // endpoint, src/netplay/direct_p2p.c:2930-2932), so a room's real
     // traffic is 1 + 2N for N simultaneous dialers, and every dialer
     // charges this bucket whether or not the two-slot policy lets it in.
     // A guard that can only ever see N = 1 cannot distinguish a correctly
@@ -1386,18 +1386,18 @@ async function testKeyBudgetCoversMultiJoinerRoom(handle) {
     // cannot see: N people dialling ONE room code.
     //
     // Why they all share a bucket: the session key is derived from the
-    // HOST's public endpoint (src/netplay/direct_p2p.c:2809-2811), so the
+    // HOST's public endpoint (src/netplay/direct_p2p.c:2930-2932), so the
     // key IS the room code. Everyone who pastes that code hashes to the
     // same key, and each one starts its 500 ms REGISTER resend
-    // (direct_p2p.c:1356-1357 -> 2/s) the moment the code is entered,
-    // without waiting to be accepted (cfg.signal_leg, direct_p2p.c:2851,
+    // (direct_p2p.c:1477-1478 -> 2/s) the moment the code is entered,
+    // without waiting to be accepted (cfg.signal_leg, direct_p2p.c:2972,
     // keys only on "have signal URL + have session key"). The server's
     // two-slot policy silences dialers 2..N at DISPATCH -- but the per-key
     // gate runs UPSTREAM of dispatch (returnRoutabilityGate), so they have
     // already spent the budget by then.
     //
     // What must survive: the host's re-REGISTER liveness leg (floor
-    // 1000 ms, direct_p2p.c:2272-2274 -> 1/s). Its packets are what
+    // 1000 ms, direct_p2p.c:2393-2395 -> 1/s). Its packets are what
     // refresh entry.lastSeenA; if they are rate-dropped, lastSeenA goes
     // stale and SLOT_STALE_MS / SESSION_TTL_MS reclaim a room whose code
     // is still displayed on the host's screen. No attacker required.

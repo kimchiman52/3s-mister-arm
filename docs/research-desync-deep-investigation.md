@@ -673,7 +673,7 @@ Given the analysis above, candidate mechanisms that could produce a CHECKSUM MIS
 
 #### D.6.7 Heap allocations during rollback
 
-`grep -rn "malloc\|SDL_malloc\|SDL_calloc\|calloc" src/sf33rd/Source/Game/ src/netplay/` returns zero hits inside the sim path (all mallocs are in `sound3rd.c:224` [boot init] and `src/netplay/direct_p2p.c:2024,2372` / `src/netplay/sdl_net_adapter.c:322,325,329` / `src/netplay/stun.c:512` [transport, outside sim]). **No heap allocation during `step_game` → no memory-ordering rollback bugs.**
+`grep -rn "malloc\|SDL_malloc\|SDL_calloc\|calloc" src/sf33rd/Source/Game/ src/netplay/` returns zero hits inside the sim path (all mallocs are in `sound3rd.c:224` [boot init] and `src/netplay/direct_p2p.c:2145,2372` / `src/netplay/sdl_net_adapter.c:322,325,329` / `src/netplay/stun.c:512` [transport, outside sim]). **No heap allocation during `step_game` → no memory-ordering rollback bugs.**
 
 ## Section E — Upstream cross-reference
 

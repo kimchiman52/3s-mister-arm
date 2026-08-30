@@ -684,13 +684,13 @@ static void test3_confirm_not_nat(void) {
      * the harness:
      *
      *   - race_punch_confirmed() returns false the moment a leg is
-     *     finished (direct_p2p.c:1444-1450), and section 2's lifetime
+     *     finished (direct_p2p.c:1565-1571), and section 2's lifetime
      *     sweep `continue`s over any confirmed leg, so a confirmed leg is
      *     never finished by the budget.
      *   - The latest instant a leg can still be confirmed is therefore
      *     send_end + RACE_PUNCH_SETTLE_MS, i.e. at most
      *     budget + STUN_PUNCH_CONFIRM_MS (the two constants are asserted
-     *     equal at direct_p2p.c:1331).
+     *     equal at direct_p2p.c:1452).
      *   - A confirmed leg settles one tail later, and the loop's hard cap
      *     is budget + 2 * STUN_PUNCH_CONFIRM_MS (direct_p2p.c section 8).
      *     Settling therefore always precedes the cap, except at an exact
@@ -1142,6 +1142,291 @@ static void obs_rmtree_flat(const char* dir) {
 }
 
 /* ======================================================================
+ * Test 9 — a MULTI-RUNG host failure is distinguishable from a one-rung
+ *          one, in the tester report (#104)
+ * ======================================================================
+ *
+ * WHAT WAS WRONG. The S2 host ladder re-enters host_thread_fn up to
+ * 1 + HOST_STUN_MAX_RETRIES times, and every rung OVERWRITES t_upnp_ms /
+ * t_stun_ms. The FAIL line's only attempt counter, `attempts=`, is
+ * s_work.join_attempts — the JOINER's. So a host that burned four rungs
+ * (and, per ORCH_HOST_WORST_CASE_MS, can legitimately consume the whole
+ * derived nav deadline doing it: 4 port-map probes + 4 STUN budgets +
+ * 3 x HOST_STUN_RETRY_BACKOFF_MS) emitted a line identical in every
+ * field to a host that failed once, fast. Read literally, four slow
+ * failures reported as one fast failure — the H-1 misattribution shape,
+ * where bounded real work is discarded and the tester's network is
+ * blamed for it.
+ *
+ * WHY THIS IS NOT A FORMATTER TEST. Both readings below come from
+ * DRIVING THE REAL LADDER: DirectP2P_BeginHost spawns the real
+ * host_thread_fn, which takes the real WORKER_STARTUP_DELAY_MS, runs the
+ * real try_portmap, and calls the real STUN seam; the real
+ * DirectP2P_Tick observes FAILED_STUN, waits the real backoff, joins the
+ * dead worker and respawns. Only two things are dialled — the ladder's
+ * LENGTH (so the same induced failure yields a four-rung and a one-rung
+ * case to compare) and the backoff (so the suite does not sleep 15 s).
+ * The STUN failure itself is genuine: the seam returns false with the
+ * diagnostic counters a really-unanswered discovery leaves behind.
+ *
+ * The assertion is made TWICE over, on purpose. Once against the
+ * counters (a formatter built from the wrong variables would still print
+ * something), and once against the bytes actually in
+ * netplay-report.txt — the file a tester sends us, which is the whole
+ * subject of #104. A field that is right in memory and absent from the
+ * report is not observability.
+ *
+ * ORDERING: before test6, which freezes the shared session log. */
+
+/* A STUN seam that always fails, the way a really-unanswered discovery
+ * does: servers probed, sends went out, nothing came back, and no
+ * local-socket / CSPRNG fault (both of those would reclassify the
+ * failure INTERNAL and are not what this test is about). The small
+ * sleep gives every rung a non-zero, ACCUMULATING leg — a total that
+ * stayed 0 would prove nothing about summation. */
+#define OBS_LADDER_STUN_LEG_MS 25
+
+static SDL_AtomicInt g_obs_ladder_stun_calls;
+
+static bool obs_ladder_stun_always_fails(StunResult* result, uint16_t local_port,
+                                         int timeout_ms) {
+    (void)local_port;
+    (void)timeout_ms;
+    SDL_AddAtomicInt(&g_obs_ladder_stun_calls, 1);
+    if (result != NULL) {
+        memset(result, 0, sizeof(*result));
+        result->diag_servers_probed = 3;
+        result->diag_servers_answered = 0;
+        result->diag_sends_ok = 3;
+        result->diag_dns_all_failed = false;
+        result->diag_socket_fail = false;
+        result->diag_csprng_fail = false;
+    }
+    SDL_Delay(OBS_LADDER_STUN_LEG_MS);
+    return false;
+}
+
+typedef struct {
+    int      rungs;
+    int      portmap_probes;
+    uint32_t upnp_total_ms;
+    uint32_t stun_total_ms;
+    uint32_t backoff_ms;
+    bool     reached_terminal;
+    uint32_t wall_ms;
+} ObsLadderRun;
+
+/* Drive ONE hosting session to its terminal FAIL with the ladder dialled
+ * to `max_retries`, and read back what the counters and the clock say.
+ * The loop is the production main-loop shape — Tick once per frame —
+ * with a wall-clock guard that is a liveness net, not an assertion. */
+static void obs_drive_host_ladder(int max_retries, int backoff_ms, ObsLadderRun* out) {
+    memset(out, 0, sizeof(*out));
+
+    DirectP2P_TestHook_SetHostLadder(max_retries, backoff_ms);
+    DirectP2P_TestHook_SetStunDiscover(obs_ladder_stun_always_fails);
+    SDL_SetAtomicInt(&g_obs_ladder_stun_calls, 0);
+
+    const uint64_t t0 = SDL_GetTicks();
+    const uint64_t guard_ms = t0 + 30000u;
+
+    DirectP2P_BeginHost(30717);
+    while (SDL_GetTicks() < guard_ms) {
+        DirectP2P_Tick();
+        if (DirectP2P_GetState() == DIRECT_P2P_FAILED_STUN &&
+            !DirectP2P_HostStunRetryPending()) {
+            out->reached_terminal = true;
+            break;
+        }
+        SDL_Delay(5);
+    }
+    out->wall_ms = (uint32_t)(SDL_GetTicks() - t0);
+
+    DirectP2P_TestHook_HostLadderCounters(&out->rungs, &out->portmap_probes,
+                                          &out->upnp_total_ms, &out->stun_total_ms,
+                                          &out->backoff_ms);
+
+    /* Put the module back to IDLE so the next drive starts clean, and
+     * drop both seams. RunTeardown is the production teardown. */
+    DirectP2P_TestHook_RunTeardown();
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_SetHostLadder(-1, 0);
+}
+
+/* Pull the value of `key` out of a FAIL line, e.g. "host_rungs=" -> 4.
+ * Returns -1 when the key is absent, which is the failure this test
+ * exists to catch. */
+static long obs_field_of(const char* line, const char* key) {
+    const char* p = strstr(line, key);
+    if (p == NULL) {
+        return -1;
+    }
+    return strtol(p + strlen(key), NULL, 10);
+}
+
+/* The LAST "[netplay-connect] FAIL " line in the tester report. Copies
+ * into `out` because the caller frees the body. */
+static bool obs_last_fail_line(const char* body, char* out, size_t cap) {
+    const char* k = "[netplay-connect] FAIL ";
+    const char* best = NULL;
+    for (const char* p = strstr(body, k); p != NULL; p = strstr(p + 1, k)) {
+        best = p;
+    }
+    if (best == NULL) {
+        return false;
+    }
+    const char* end = strchr(best, '\n');
+    size_t n = (end != NULL) ? (size_t)(end - best) : strlen(best);
+    if (n >= cap) {
+        n = cap - 1;
+    }
+    memcpy(out, best, n);
+    out[n] = '\0';
+    return true;
+}
+
+static void test9_host_ladder_rungs(const char* report_dir) {
+    const char* tag = "test9-host-ladder-rungs";
+
+    char report[768];
+    SDL_snprintf(report, sizeof(report), "%s/netplay-report.txt", report_dir);
+
+    /* Assert against the SHIPPED ladder, read from the module, so this
+     * test starts failing if someone changes the constants without
+     * revisiting the derivation in ORCH_HOST_WORST_CASE_MS. */
+    int shipped_retries = -1;
+    int shipped_backoff = -1;
+    DirectP2P_TestHook_HostLadderLimits(&shipped_retries, &shipped_backoff);
+    EXPECT_TRUE(tag, shipped_retries == 3);
+    EXPECT_TRUE(tag, shipped_backoff == 5000);
+
+    const int k_backoff = 60; /* real backoff, dialled down; see the note */
+
+    /* ---- A: the full shipped-LENGTH ladder, every rung failing ---- */
+    ObsLadderRun multi;
+    obs_drive_host_ladder(shipped_retries, k_backoff, &multi);
+
+    EXPECT_TRUE(tag, multi.reached_terminal);
+    /* 1 initial attempt + shipped_retries retries, all of them real. */
+    EXPECT_TRUE(tag, multi.rungs == 1 + shipped_retries);
+    EXPECT_TRUE(tag, SDL_GetAtomicInt(&g_obs_ladder_stun_calls) == 1 + shipped_retries);
+    /* #96's evidence field, and the regression test for #96 itself.
+     *
+     * No mapping is ever live here — the harness build refuses both SSDP
+     * and gateway discovery — so this is exactly the FAILING-probe host
+     * #96 is about. Before #96 the re-probe skip fired only for a LIVE
+     * mapping, so every rung re-paid the probe and this read 4. With the
+     * failure verdict latched for the hosting session it must read 1,
+     * however long the ladder is: the shipped cost of a failing probe is
+     * PORTMAP_PROBE_BUDGET_MS (measured: 8033 ms of miniupnpc 2.2.1 SSDP
+     * plus 3510 ms of silent gateway overruns the 11250 ms outer
+     * deadline), so each extra probe here would be 11.25 s of a real
+     * user's time. Asserting == 1 rather than <= rungs is deliberate:
+     * "fewer than before" is not the property, "once per session" is. */
+    EXPECT_TRUE(tag, multi.portmap_probes == 1);
+    EXPECT_TRUE(tag, multi.rungs > multi.portmap_probes);
+    /* The summation is real, not a copy of the last rung. */
+    EXPECT_TRUE(tag, multi.stun_total_ms >=
+                         (uint32_t)(multi.rungs * OBS_LADDER_STUN_LEG_MS));
+    /* Backoff is charged once per RETRY, not once per rung, and it is
+     * measured rather than assumed — so it is at least the nominal sum.
+     * Upper bound is generous: this runs on a loaded suite machine. */
+    EXPECT_TRUE(tag, multi.backoff_ms >= (uint32_t)(shipped_retries * k_backoff));
+    EXPECT_TRUE(tag, multi.backoff_ms <= (uint32_t)(shipped_retries * k_backoff) + 5000u);
+
+    char multi_line[1400];
+    bool have_multi = false;
+    {
+        size_t len = 0;
+        char* body = obs_read_file(report, &len);
+        if (body == NULL) {
+            fail(tag, "the tester report does not exist after a host FAIL");
+        } else {
+            have_multi = obs_last_fail_line(body, multi_line, sizeof(multi_line));
+            free(body);
+        }
+    }
+    if (!have_multi) {
+        fail(tag, "no [netplay-connect] FAIL line reached the tester report");
+        return;
+    }
+    EXPECT_TRUE(tag, obs_field_of(multi_line, "host_rungs=") == 1 + shipped_retries);
+    /* #96 in the tester report: four rungs, ONE probe. */
+    EXPECT_TRUE(tag, obs_field_of(multi_line, "host_portmap_probes=") == 1);
+    EXPECT_TRUE(tag, obs_field_of(multi_line, "t_ms_total upnp=") >= 0);
+    EXPECT_TRUE(tag, obs_field_of(multi_line, "backoff=") == (long)multi.backoff_ms);
+    /* The line must be COMPLETE — a truncated report line is a silently
+     * degraded diagnostic, and these fields sit in the middle of it. */
+    EXPECT_TRUE(tag, strstr(multi_line, "attrib=") != NULL);
+    EXPECT_TRUE(tag, strstr(multi_line, "role=host") != NULL);
+
+    /* ---- B: the SAME induced failure, one rung ---- */
+    ObsLadderRun single;
+    obs_drive_host_ladder(0, k_backoff, &single);
+
+    EXPECT_TRUE(tag, single.reached_terminal);
+    EXPECT_TRUE(tag, single.rungs == 1);
+    EXPECT_TRUE(tag, single.portmap_probes == 1);
+    EXPECT_TRUE(tag, single.backoff_ms == 0u); /* never retried, never waited */
+
+    char single_line[1400];
+    bool have_single = false;
+    {
+        size_t len = 0;
+        char* body = obs_read_file(report, &len);
+        if (body == NULL) {
+            fail(tag, "the tester report vanished between the two drives");
+        } else {
+            have_single = obs_last_fail_line(body, single_line, sizeof(single_line));
+            free(body);
+        }
+    }
+    if (!have_single) {
+        fail(tag, "the one-rung failure produced no tester-report line");
+        return;
+    }
+    EXPECT_TRUE(tag, obs_field_of(single_line, "host_rungs=") == 1);
+    EXPECT_TRUE(tag, obs_field_of(single_line, "host_portmap_probes=") == 1);
+    EXPECT_TRUE(tag, obs_field_of(single_line, "backoff=") == 0);
+
+    /* ---- THE POINT: the two are distinguishable ---- */
+    /* Same code, same state, same role — that is what made the two
+     * indistinguishable before #104, and it must STILL be true, or the
+     * comparison below is proving something else. */
+    {
+        const char* a = strstr(multi_line, "code=");
+        const char* b = strstr(single_line, "code=");
+        EXPECT_TRUE(tag, a != NULL && b != NULL);
+        if (a != NULL && b != NULL) {
+            EXPECT_TRUE(tag, strncmp(a, b, 24) == 0);
+        }
+    }
+    if (strcmp(multi_line, single_line) == 0) {
+        fail(tag,
+             "a four-rung host failure and a one-rung host failure produced "
+             "identical report lines — #104 did not land");
+        return;
+    }
+    /* And the multi-rung run really did cost more wall clock, so the
+     * report is not merely different, it is TRUE. */
+    EXPECT_TRUE(tag, multi.wall_ms > single.wall_ms);
+    EXPECT_TRUE(tag, multi.stun_total_ms > single.stun_total_ms);
+
+    if (fail_count == 0) {
+        fprintf(stderr,
+                "[test_connect_observability] PASS: %s: multi-rung host FAIL reports "
+                "host_rungs=%d host_portmap_probes=%d backoff=%ums stun_total=%ums "
+                "(wall %ums); one-rung reports host_rungs=%d host_portmap_probes=%d "
+                "backoff=%ums stun_total=%ums (wall %ums) — distinguishable, and "
+                "#96 keeps the probe count at 1 across the whole ladder\n",
+                tag, multi.rungs, multi.portmap_probes, (unsigned)multi.backoff_ms,
+                (unsigned)multi.stun_total_ms, (unsigned)multi.wall_ms,
+                single.rungs, single.portmap_probes, (unsigned)single.backoff_ms,
+                (unsigned)single.stun_total_ms, (unsigned)single.wall_ms);
+    }
+}
+
+/* ======================================================================
  * Test 6 — the per-session byte budget actually stops the file growing
  * ======================================================================
  *
@@ -1541,6 +1826,10 @@ int Netplay_Test_ConnectObservability(void) {
     test3_confirm_not_nat();
     test4_mt_sink(before_ts);
     test5_attempt_evidence_reset();
+    /* #104: drives the real host ladder and reads the tester report
+     * back. Before test6 (which freezes the shared session log) and
+     * before test8 (which floods and rotates the tester report). */
+    test9_host_ladder_rungs(report_dir);
     /* test6 freezes the shared session log; 1-4 read it back, so it runs
      * after them by construction. See the note above test6. */
     test6_byte_budget(before_ts);

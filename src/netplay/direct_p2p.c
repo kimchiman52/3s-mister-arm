@@ -204,6 +204,52 @@ typedef struct {
      * the HOST-ADVERTISING loop's cadence (host_rendezvous_thread_fn),
      * a different loop that this counter never observes. */
     uint32_t ev_deliver_gap_max_ms;
+
+    /* --- #104 HOST LADDER RUNGS ------------------------------------
+     *
+     * WHY THESE EXIST. The S2 host ladder runs host_thread_fn up to
+     * 1 + HOST_STUN_MAX_RETRIES times per hosting session, and every
+     * rung OVERWRITES t_upnp_ms / t_stun_ms above. #36's report line
+     * therefore showed only the LAST rung, and its `attempts=` field is
+     * s_work.join_attempts — joiner-only, never incremented on the host
+     * path. So a host that burned all four rungs (and, per
+     * ORCH_HOST_WORST_CASE_MS, legitimately consumed the derived nav
+     * deadline doing it) reported as ONE fast failure. That is the
+     * misattribution class #36 exists to prevent — the H-1 shape, where
+     * evidence of slow-but-real work is discarded and the user's network
+     * gets the blame.
+     *
+     * These are CUMULATIVE across the ladder and sit alongside the
+     * per-rung t_*_ms fields rather than replacing them: the last rung's
+     * cost is still the interesting one when the ladder is one rung
+     * long, and the totals are what distinguish four slow failures from
+     * one fast one.
+     *
+     * BOUNDED, per #36's constraints: the two counts are structurally
+     * capped at 1 + HOST_STUN_MAX_RETRIES (and saturate anyway), and the
+     * three ms totals are bounded by ORCH_HOST_WORST_CASE_MS. Nothing
+     * here is per-datagram and nothing here is a secret.
+     *
+     * LIFETIME: zeroed with the rest of s_work at BeginHost / Cancel /
+     * Reset, i.e. once per attempt SET, which is exactly the scope of
+     * one ladder. Deliberately NOT cleared per rung — accumulating is
+     * the whole point.
+     *
+     * THREADING: host_rungs / host_portmap_probes / t_upnp_total_ms /
+     * t_stun_total_ms are written by host_thread_fn (worker);
+     * t_host_backoff_ms is written by DirectP2P_Tick (main). Those two
+     * writers are strictly serialised by the ladder itself — the worker
+     * publishes FAILED_STUN as its LAST act and has exited before Tick's
+     * FAILED_STUN case observes that state and arms the backoff, and
+     * Tick joins the dead worker before spawning the next rung. No two
+     * of these fields are ever written concurrently, and they are read
+     * only by report_connect_outcome on the main thread after a terminal
+     * state. */
+    uint8_t  host_rungs;           /* host_thread_fn entries this session */
+    uint8_t  host_portmap_probes;  /* rungs that actually ran try_portmap */
+    uint32_t t_upnp_total_ms;      /* sum of every rung's port-map leg */
+    uint32_t t_stun_total_ms;      /* sum of every rung's STUN leg */
+    uint32_t t_host_backoff_ms;    /* sum of the ladder backoffs waited */
 } Work;
 
 static SDL_AtomicInt s_state = { DIRECT_P2P_IDLE };
@@ -263,6 +309,53 @@ static char s_status[128] = { 0 };
  * call so re-entering Init doesn't double-release. */
 static UpnpMapping s_upnp_mapping = { 0 };
 
+/* #96: the OTHER half of the re-probe decision — the port whose probe
+ * came back with NO mapping, or 0 for "no verdict yet this session".
+ *
+ * s_upnp_mapping above records a SUCCESS and lets host_thread_fn skip a
+ * pointless re-probe on an S2 retry. That skip was one-sided, and the
+ * side it optimised is the side that did not need it: a host that GOT a
+ * mapping is not the host having a bad time. A host whose probe FAILS
+ * re-paid PORTMAP_PROBE_BUDGET_MS on every one of the ladder's
+ * 1 + HOST_STUN_MAX_RETRIES rungs — 45,000 of the 76,200 ms host bound
+ * at shipped defaults, 59% of it, spent re-asking a question that was
+ * answered the first time.
+ *
+ * And that budget is REACHED, not merely provisioned. Measured against
+ * the shipping backends, on a host with a working default route and no
+ * IGD:
+ *   - the UPnP half: upnpDiscover(UPNP_DISCOVER_TIMEOUT_MS=2000) costs
+ *     8033 ms with miniupnpc 2.2.1 (MINIUPNPC_API_VERSION 17 — the
+ *     libminiupnpc.so.17 CMakeLists.txt:651 ships to the MiSTer), and
+ *     8008 ms with 2.3.3. It is NOT one 2000 ms wait; miniupnpc walks a
+ *     device-type list and waits the timeout per search target. Note
+ *     this already exceeds UPNP_PROBE_BUDGET_MS, which is a nominal
+ *     share and not enforced anywhere.
+ *   - the NAT-PMP half: a wholly silent gateway costs 3510 ms, exactly
+ *     the two phases natpmp.h documents.
+ * 8033 + 3510 = 11543 > PORTMAP_PROBE_BUDGET_MS (11250), so the outer
+ * deadline fires and the probe costs its FULL budget every time.
+ *
+ * The 1-38 ms figure the netns rig reports for try_portmap does NOT
+ * contradict this and must not be read as field evidence: a build with
+ * NETPLAY_TEST_HOOKS *and* ENABLE_NETPLAY_TESTS refuses to reach the
+ * network at all — upnp.c's guard above upnpDiscover and natpmp.c's
+ * guard in discover_gateway both return false without sending anything.
+ * The rig measures the refusal, not a probe.
+ *
+ * SCOPE, and it is deliberately NARROWER than the success latch.
+ * s_upnp_mapping survives across BeginHost (the router-side lease
+ * outlives the attempt); this does not. It is cleared by BeginHost, so
+ * the automatic ladder trusts the verdict while any USER action — back
+ * out, fix the router, press Host again — re-probes from scratch. The
+ * ladder exists to ride out a transient STUN failure, and skipping a
+ * re-probe costs at most "no port mapping this session", which is
+ * already the non-fatal path host_thread_fn falls through to.
+ *
+ * Keyed by port for the same reason the success side is: a verdict is
+ * about a specific (internal port) probe, not about the session. */
+static uint16_t s_portmap_failed_port = 0;
+
 /* R-1: latched by DirectP2P_NotifySessionRejected (game thread) when the
  * post-handoff MIST handshake rejects the peer. Consumed by
  * direct_p2p_on_teardown, which then parks in FAILED_HANDSHAKE instead
@@ -309,6 +402,34 @@ static int s_host_stun_retry_count = 0;
 static uint64_t s_host_stun_retry_at_ms = 0;
 #define HOST_STUN_MAX_RETRIES 3
 #define HOST_STUN_RETRY_BACKOFF_MS 5000
+
+/* #104: the ladder LENGTH and BACKOFF the retry path actually uses.
+ * Identical to HOST_STUN_MAX_RETRIES / HOST_STUN_RETRY_BACKOFF_MS in
+ * every shipped build — the overrides are NETPLAY_TEST_HOOKS-only and
+ * exist so the #104 harness can drive the REAL state machine (real
+ * worker spawns, real STUN failures, real FAILED_STUN transitions, real
+ * re-probes) at a chosen ladder length, and without spending
+ * 3 x 5000 ms of suite wall-clock asleep. Only the length and the sleep
+ * are dialled; every rung that runs is genuine.
+ *
+ * DELIBERATELY NOT used by ORCH_HOST_WORST_CASE_MS, which must keep
+ * summing the shipped constants: the nav deadline is a property of the
+ * shipped build, not of whatever a harness dialled in. */
+#ifdef NETPLAY_TEST_HOOKS
+static int s_host_retry_backoff_override_ms = 0;
+static int s_host_max_retries_override = -1;
+static int host_stun_retry_backoff_ms(void) {
+    return s_host_retry_backoff_override_ms > 0 ? s_host_retry_backoff_override_ms
+                                                : HOST_STUN_RETRY_BACKOFF_MS;
+}
+static int host_stun_max_retries(void) {
+    return s_host_max_retries_override >= 0 ? s_host_max_retries_override
+                                            : HOST_STUN_MAX_RETRIES;
+}
+#else
+#define host_stun_retry_backoff_ms() (HOST_STUN_RETRY_BACKOFF_MS)
+#define host_stun_max_retries() (HOST_STUN_MAX_RETRIES)
+#endif
 
 /* Pre-NET_Init settle delay both workers take before touching SDL_net
  * (see host_thread_fn for the segfault rationale). Named for task #76 so
@@ -2969,6 +3090,16 @@ static int SDLCALL host_thread_fn(void* data) {
 
     const uint16_t local_port = (uint16_t)s_work.preferred_port;
 
+    /* #104: one more rung of the S2 ladder. Counted HERE — past the
+     * startup delay, before any leg — so the count is "rungs entered",
+     * which is what the report's t_*_total_ms fields are the sum over.
+     * Saturating: structurally this can only reach
+     * 1 + HOST_STUN_MAX_RETRIES, but a counter that can wrap is a
+     * counter that can lie. */
+    if (s_work.host_rungs < 255u) {
+        s_work.host_rungs++;
+    }
+
     /* 1) Port-mapping probe: UPnP IGD first, then NAT-PMP/PCP (S7).
      * Non-fatal if it fails — we fall through to STUN. Request external
      * == internal so the router doesn't have to invent an external port
@@ -2998,28 +3129,68 @@ static int SDLCALL host_thread_fn(void* data) {
                 portmap_backend_name(s_upnp_mapping.backend),
                 s_upnp_mapping.external_port, s_upnp_mapping.internal_port);
         upnp_ok = true;
+    } else if (s_portmap_failed_port == local_port) {
+        /* #96: the SAME skip, for the other verdict. An earlier rung of
+         * THIS ladder already asked the LAN for a mapping on this port
+         * and was told no — by a full PORTMAP_PROBE_BUDGET_MS of
+         * silence, which is measured, not provisioned (see
+         * s_portmap_failed_port). Nothing between two rungs of an
+         * automatic retry changes the answer: the ladder's own trigger
+         * is a STUN failure, which says nothing about whether the LAN
+         * has an IGD or a NAT-PMP gateway. Asking again costs the user
+         * 11,250 ms and cannot inform anything.
+         *
+         * upnp_ok stays false, which is the path host_thread_fn already
+         * takes on a fresh failure — the room code carries the
+         * STUN-observed endpoint. No new outcome is introduced here;
+         * only the repetition is removed. */
+        SDL_Log("[direct_p2p] retry: the port-map probe for internal port %u already "
+                "failed this hosting session — skipping the re-probe (it would cost "
+                "another %u ms and cannot change its answer); advertising the "
+                "STUN-observed endpoint",
+                local_port, (unsigned)PORTMAP_PROBE_BUDGET_MS);
+        upnp_ok = false;
     } else {
+        /* #104: the rung that actually PAYS the probe. Since #96 this is
+         * at most ONE rung per hosting session — a report showing
+         * host_portmap_probes=1 alongside host_rungs=4 is the fix
+         * working; host_portmap_probes==host_rungs would mean a verdict
+         * is not being latched. */
+        if (s_work.host_portmap_probes < 255u) {
+            s_work.host_portmap_probes++;
+        }
         upnp_ok = try_portmap(local_port, local_port);
+        if (!upnp_ok) {
+            s_portmap_failed_port = local_port;
+        }
     }
     s_work.t_upnp_ms = SDL_GetTicks() - stage_t0;
+    s_work.t_upnp_total_ms += s_work.t_upnp_ms;
     /* #96 / #36 — portmap leg visibility. Recorded at the CALL SITE, not
      * inside try_portmap: the probe's cost and its verdict are a property
-     * of this stage, and the whole cost is re-paid on every host STUN
-     * retry (the retry re-enters this block). Worker thread => the MT
-     * sink, which tees to SDL_Log. */
+     * of this stage. Worker thread => the MT sink, which tees to SDL_Log.
+     *
+     * The trailing note used to read "this whole cost is paid again on
+     * every host STUN retry". Since #96 it is not: the verdict — either
+     * one — is latched for the hosting session, so `probes=1` next to a
+     * four-rung ladder is the expected shape and the note says so. */
     s_work.portmap_backend = (uint8_t)s_upnp_mapping.backend;
     s_work.portmap_active = s_upnp_mapping.active;
     {
         char pm_line[256];
         SDL_snprintf(pm_line, sizeof(pm_line),
-                     "[netplay-connect] PORTMAP backend=%s active=%d ms=%u — %s",
+                     "[netplay-connect] PORTMAP backend=%s active=%d ms=%u probes=%u "
+                     "rung=%u — %s",
                      portmap_backend_name(s_upnp_mapping.backend),
                      (int)s_upnp_mapping.active,
                      (unsigned)s_work.t_upnp_ms,
+                     (unsigned)s_work.host_portmap_probes,
+                     (unsigned)s_work.host_rungs,
                      s_upnp_mapping.active
                          ? "mapped"
-                         : "probe found no IGD; this whole cost is paid again on "
-                           "every host STUN retry");
+                         : "probe found no IGD and no NAT-PMP/PCP gateway; the verdict "
+                           "is latched for this hosting session, so the ladder's "
+                           "remaining rungs skip it");
         Netplay_LogConnectEventMT(pm_line);
     }
     if (cancel_requested()) {
@@ -3050,6 +3221,7 @@ static int SDLCALL host_thread_fn(void* data) {
     stage_t0 = SDL_GetTicks();
     bool stun_ok = STUN_DISCOVER(&s_work.stun, local_port, stun_budget_ms());
     s_work.t_stun_ms = SDL_GetTicks() - stage_t0;
+    s_work.t_stun_total_ms += s_work.t_stun_ms; /* #104: across the ladder */
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
         set_status("Cancelled.");
@@ -4357,6 +4529,10 @@ void DirectP2P_Init(void) {
     s_bilateral_fail_count = 0; /* M1: fresh retry budget per hosting session */
     s_host_stun_retry_count = 0; /* S2: fresh host STUN-retry budget */
     s_host_stun_retry_at_ms = 0;
+    /* #96: the port-map FAILURE verdict has exactly the ladder's own
+     * lifetime — same reset sites as the retry counter above. Narrower
+     * than s_upnp_mapping on purpose: a user action re-probes. */
+    s_portmap_failed_port = 0;
     SDL_SetAtomicInt(&s_q_head, 0);
     SDL_SetAtomicInt(&s_q_tail, 0);
     SDL_SetAtomicInt(&s_q_drops, 0);
@@ -4408,6 +4584,10 @@ void DirectP2P_BeginHost(int preferred_port) {
     s_bilateral_fail_count = 0; /* M1: fresh retry budget per hosting session */
     s_host_stun_retry_count = 0; /* S2: fresh host STUN-retry budget */
     s_host_stun_retry_at_ms = 0;
+    /* #96: the port-map FAILURE verdict has exactly the ladder's own
+     * lifetime — same reset sites as the retry counter above. Narrower
+     * than s_upnp_mapping on purpose: a user action re-probes. */
+    s_portmap_failed_port = 0;
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     /* R-1: a reject latched during a session whose teardown never ran the
@@ -4537,6 +4717,10 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     s_bilateral_fail_count = 0; /* M1: fresh retry budget per hosting session */
     s_host_stun_retry_count = 0; /* S2: fresh host STUN-retry budget */
     s_host_stun_retry_at_ms = 0;
+    /* #96: the port-map FAILURE verdict has exactly the ladder's own
+     * lifetime — same reset sites as the retry counter above. Narrower
+     * than s_upnp_mapping on purpose: a user action re-probes. */
+    s_portmap_failed_port = 0;
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     s_handshake_reject_latched = false; /* R-1: see BeginHost */
@@ -4622,6 +4806,10 @@ void DirectP2P_Cancel(void) {
     s_handshake_reject_latched = false; /* R-1: drop any pending reject latch */
     s_host_stun_retry_count = 0; /* S2: drop any pending host STUN retry */
     s_host_stun_retry_at_ms = 0;
+    /* #96: the port-map FAILURE verdict has exactly the ladder's own
+     * lifetime — same reset sites as the retry counter above. Narrower
+     * than s_upnp_mapping on purpose: a user action re-probes. */
+    s_portmap_failed_port = 0;
     s_outcome_reported = false;  /* S3 */
     s_host_deliver_seen = false; /* S3 */
     s_host_waiting_since_ms = 0; /* S3 */
@@ -4771,15 +4959,25 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
      * rather than sitting just under. (The relay's `via_relay=` /
      * `relay_fail=` / `relay=` fields were dropped with the rung.) */
     /* #36 widened this from 640: the FAIL branch now carries the portmap
-     * leg, the confirm witness and the four frame counters. */
-    char line[900];
+     * leg, the confirm witness and the four frame counters. #104 widened
+     * it again to 1024 for the five host-ladder fields — the ARM build
+     * treats -Wformat-truncation as an error (see the netplay_nav.c
+     * nav-deadline buffer widening), so headroom here is a build gate,
+     * not a style preference. */
+    char line[1024];
     if (success) {
+        /* #104: `attempts=` is s_work.join_attempts and is JOINER-ONLY —
+         * nothing on the host path ever increments it, so a host line has
+         * always read attempts=0. `host_rungs=` is the host's equivalent,
+         * and printing both (rather than overloading `attempts=`) keeps
+         * every existing parser and every archived report line valid. */
         SDL_snprintf(line, sizeof(line),
-                     "[netplay-connect] OK role=%s attempts=%d "
+                     "[netplay-connect] OK role=%s attempts=%d host_rungs=%u/%d "
                      "t_ms upnp=%u stun=%u race=%u punch=%u signal=%u bilateral=%u "
                      "stun=%d/%d portdis=%d",
                      s_work.role == ROLE_HOST ? "host" : "join",
                      s_work.join_attempts,
+                     (unsigned)s_work.host_rungs, 1 + host_stun_max_retries(),
                      s_work.t_upnp_ms, s_work.t_stun_ms, s_work.t_race_ms, s_work.t_punch_ms,
                      s_work.t_signal_ms, s_work.t_bilateral_ms,
                      s_work.stun.diag_servers_answered,
@@ -4802,10 +5000,30 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
          * delivered"; with the race_ prefix the two fields visibly
          * measure different things. The struct fields keep their names —
          * this is a log-format decision, not a data-model one. */
+        /* #104 — THE HOST LADDER, WHICH THIS LINE COULD NOT SHOW.
+         *
+         * Every t_ms field above is the LAST rung: host_thread_fn
+         * overwrites t_upnp_ms / t_stun_ms on each of its 1 +
+         * HOST_STUN_MAX_RETRIES entries, and `attempts=` counts joiner
+         * attempts only. So four slow host failures and one fast host
+         * failure printed the SAME line — and the four-rung case can
+         * legitimately consume the whole derived nav deadline
+         * (ORCH_HOST_WORST_CASE_MS sums 4 port-map probes, 4 STUN
+         * budgets and 3 x HOST_STUN_RETRY_BACKOFF_MS). Reading that as
+         * one fast failure is the H-1 misattribution shape: real, slow,
+         * bounded work discarded and the tester's network blamed.
+         *
+         * host_rungs= disambiguates the two. The three *_total= sums say
+         * where the time went. host_portmap_probes= is the #96 evidence
+         * field: it equals host_rungs exactly when the re-probe skip did
+         * NOT fire, i.e. when the probe was failing — the case that pays
+         * PORTMAP_PROBE_BUDGET_MS every rung. All four are zero on a
+         * joiner line, which is correct: the joiner has no ladder. */
         SDL_snprintf(line, sizeof(line),
                      "[netplay-connect] FAIL code=%s state=%d role=%s msg=\"%s\" "
-                     "attempts=%d "
+                     "attempts=%d host_rungs=%u/%d host_portmap_probes=%u "
                      "t_ms upnp=%u stun=%u race=%u punch=%u signal=%u bilateral=%u "
+                     "t_ms_total upnp=%u stun=%u backoff=%u "
                      "stun=%d/%d sends_ok=%d dns_all_failed=%d portdis=%d "
                      "deliver=any:%d,real:%d "
                      "portmap=%s/%d confirm=%d@%ums race_deliver_n=%u "
@@ -4816,8 +5034,12 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
                      : s_work.role == ROLE_JOIN ? "join" : "none",
                      s_status,
                      s_work.join_attempts,
+                     (unsigned)s_work.host_rungs, 1 + host_stun_max_retries(),
+                     (unsigned)s_work.host_portmap_probes,
                      s_work.t_upnp_ms, s_work.t_stun_ms, s_work.t_race_ms, s_work.t_punch_ms,
                      s_work.t_signal_ms, s_work.t_bilateral_ms,
+                     s_work.t_upnp_total_ms, s_work.t_stun_total_ms,
+                     s_work.t_host_backoff_ms,
                      s_work.stun.diag_servers_answered,
                      s_work.stun.diag_servers_probed,
                      s_work.stun.diag_sends_ok,
@@ -4941,18 +5163,30 @@ void DirectP2P_Tick(void) {
          * s_upnp_mapping.active); with no live mapping it probes
          * fresh. The JOINER already retried inside join_thread_fn and
          * stays terminal here. */
-        if (s_work.role == ROLE_HOST && s_host_stun_retry_count < HOST_STUN_MAX_RETRIES) {
+        if (s_work.role == ROLE_HOST && s_host_stun_retry_count < host_stun_max_retries()) {
             uint64_t now = SDL_GetTicks();
+            const int backoff_ms = host_stun_retry_backoff_ms();
             if (s_host_stun_retry_at_ms == 0) {
-                s_host_stun_retry_at_ms = now + HOST_STUN_RETRY_BACKOFF_MS;
+                s_host_stun_retry_at_ms = now + (uint64_t)backoff_ms;
                 SDL_Log("[direct_p2p] host STUN discovery failed — auto-retry %d/%d in %u ms",
-                        s_host_stun_retry_count + 1, HOST_STUN_MAX_RETRIES,
-                        (unsigned)HOST_STUN_RETRY_BACKOFF_MS);
+                        s_host_stun_retry_count + 1, host_stun_max_retries(),
+                        (unsigned)backoff_ms);
                 set_status("Connection failed. Retrying...");
                 return;
             }
             if (now < s_host_stun_retry_at_ms) {
                 return; /* backoff in progress */
+            }
+            /* #104: charge the backoff we ACTUALLY slept, not the nominal
+             * constant. The arm instant is recoverable from the deadline
+             * (it was set to arm + backoff_ms one branch up), so this
+             * needs no extra state, and measuring rather than assuming
+             * means a Tick starved by a long frame shows up as the larger
+             * number it really was. This is the 15,000 ms term
+             * ORCH_HOST_WORST_CASE_MS sums and #36 had no field for. */
+            {
+                const uint64_t armed_at = s_host_stun_retry_at_ms - (uint64_t)backoff_ms;
+                s_work.t_host_backoff_ms += (uint32_t)(now - armed_at);
             }
             s_host_stun_retry_at_ms = 0;
             s_host_stun_retry_count++;
@@ -4963,7 +5197,7 @@ void DirectP2P_Tick(void) {
                 s_thread = NULL;
             }
             SDL_Log("[direct_p2p] host STUN auto-retry %d/%d starting",
-                    s_host_stun_retry_count, HOST_STUN_MAX_RETRIES);
+                    s_host_stun_retry_count, host_stun_max_retries());
             set_status("Preparing...");
             /* Publish the intermediate state BEFORE spawning so a Tick
              * racing the worker's own set_state never re-enters this
@@ -5132,7 +5366,7 @@ bool DirectP2P_HostStunRetryPending(void) {
      * only, like the retry bookkeeping it reads. */
     return get_state() == DIRECT_P2P_FAILED_STUN &&
            s_work.role == ROLE_HOST &&
-           s_host_stun_retry_count < HOST_STUN_MAX_RETRIES;
+           s_host_stun_retry_count < host_stun_max_retries();
 }
 
 /* ======================================================================
@@ -5189,9 +5423,13 @@ bool DirectP2P_HostStunRetryPending(void) {
  *   - HOST_WAITING. Unbounded BY DESIGN (a host advertises until a joiner
  *     arrives), so nav re-arms its counter every frame while the
  *     orchestrator sits there; it is excluded rather than estimated.
- *   - The host's post-HOST_WAITING race. Bounded, and asserted below to
- *     be dominated by the ladder term at every legal config, so it never
- *     needs a term of its own.
+ *   - The host's post-HOST_WAITING race. It DOES have a term of its own
+ *     now (ORCH_HOST_POSTWAIT_MS) — but as the other arm of a MAX, not
+ *     as an addend, because HOST_WAITING sits between the two phases and
+ *     re-arms nav. Until task #96 the ladder dominated it at every legal
+ *     config and assert [C] pinned that, so the term could be omitted;
+ *     #96 removed 3 of the ladder's 4 port-map probes and inverted the
+ *     comparison at one corner. See ORCH_HOST_WORST_CASE_MS.
  *   - The host's bilateral RETRY loop (HOST_BILATERAL_MAX_FAILURES).
  *     Each failure returns to HOST_WAITING, which re-arms nav, so the
  *     deadline only ever has to cover ONE race — not the loop.
@@ -5211,13 +5449,49 @@ bool DirectP2P_HostStunRetryPending(void) {
     (WORKER_STARTUP_DELAY_MS +                    \
      JOIN_MAX_ATTEMPTS * ORCH_JOIN_ATTEMPT_MS(stun_ms, race_ms))
 
-/* The host's ladder: port-map probe then STUN, once per attempt, across
- * 1 initial attempt + HOST_STUN_MAX_RETRIES retries, with a backoff
- * between each. */
-#define ORCH_HOST_WORST_CASE_MS(stun_ms, race_ms)                        \
-    (WORKER_STARTUP_DELAY_MS +                                           \
-     (1 + HOST_STUN_MAX_RETRIES) * (PORTMAP_PROBE_BUDGET_MS + (stun_ms)) \
-     + HOST_STUN_MAX_RETRIES * HOST_STUN_RETRY_BACKOFF_MS)
+/* The host's ladder: STUN once per attempt across 1 initial attempt +
+ * HOST_STUN_MAX_RETRIES retries with a backoff between each, plus the
+ * port-map probe — which task #96 made a ONE-TIME cost.
+ *
+ * #96 MOVED PORTMAP_PROBE_BUDGET_MS OUT OF THE MULTIPLIER, and that is
+ * the whole of the arithmetic change. host_thread_fn now latches the
+ * probe's verdict for the hosting session in BOTH directions: success
+ * into s_upnp_mapping (which it always did) and failure into
+ * s_portmap_failed_port (which it did not). local_port is constant
+ * across a ladder, so at most ONE rung can reach try_portmap. Four
+ * probes was not a bound that had gone slack — it was work the code
+ * genuinely did, 45,000 ms of it at shipped defaults, and the code no
+ * longer does it.
+ *
+ * Shipped defaults: 200 + 11250 + 4 * 4000 + 3 * 5000 = 42,450 ms,
+ * down from 76,200.
+ *
+ * AND THE HOST BOUND IS NOW A MAX, NOT JUST THE LADDER. The two host
+ * phases — the ladder, and the post-HOST_WAITING race — are separated by
+ * HOST_WAITING, which re-arms nav's counter every frame. So nav needs
+ * the LARGER of them, never the sum. Before #96 the ladder was larger at
+ * every legal config and assert [C] pinned exactly that, which is why
+ * the bound could be written as the ladder alone. #96 shortens the
+ * ladder enough to invert that at one corner (STUN at its floor, race at
+ * its ceiling: 30,450 vs 31,300), so the max is now load-bearing rather
+ * than decorative. Writing it out is strictly more correct than the
+ * previous form, which was only correct because [C] happened to hold —
+ * and [C] below now guards the max itself. */
+#define ORCH_HOST_LADDER_MS(stun_ms)                          \
+    (WORKER_STARTUP_DELAY_MS + PORTMAP_PROBE_BUDGET_MS +      \
+     (1 + HOST_STUN_MAX_RETRIES) * (stun_ms) +                \
+     HOST_STUN_MAX_RETRIES * HOST_STUN_RETRY_BACKOFF_MS)
+
+/* The host's ONE post-HOST_WAITING race: the same resolve poll + whole
+ * race (both H-1 confirmation tails) the joiner's per-attempt term uses.
+ * No worker startup delay — that worker has long since run. */
+#define ORCH_HOST_POSTWAIT_MS(race_ms) \
+    (RESOLVE_POLL_MAX_MS + RACE_HARD_CAP_MS(race_ms))
+
+#define ORCH_HOST_WORST_CASE_MS(stun_ms, race_ms)          \
+    (ORCH_HOST_LADDER_MS(stun_ms) >= ORCH_HOST_POSTWAIT_MS(race_ms) \
+         ? ORCH_HOST_LADDER_MS(stun_ms)                    \
+         : ORCH_HOST_POSTWAIT_MS(race_ms))
 
 /* ---- the compile-time checks -----------------------------------------
  *
@@ -5272,34 +5546,80 @@ _Static_assert(ORCH_JOIN_ATTEMPT_MS(STUN_BUDGET_MIN_MS, RACE_BUDGET_MAX_MS) >=
                "task #76: the joiner bound no longer contains one full race "
                "including both H-1 confirmation tails");
 
-/* [C] The host ladder DOMINATES one post-HOST_WAITING race, at every legal
- * config — the ladder at its shortest still exceeds a race at its longest.
- * This is what lets the host term omit a post-wait race leg entirely
- * (nav re-arms in HOST_WAITING, so the host's punch starts from a fresh
- * deadline and only has to fit one race). If a future change inverts
- * this, the host bound would silently become too short for the very phase
- * the deadline is enforced across. */
-_Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MIN_MS, RACE_BUDGET_MIN_MS) >=
+/* [C] The host bound COVERS one whole post-HOST_WAITING race, at every
+ * legal config.
+ *
+ * This is the same property task #76 pinned, re-pointed at what now
+ * delivers it. #76 could assert the stronger form — "the LADDER alone
+ * dominates a race at its longest" — and did, because that was true then
+ * and it justified writing the host bound as the ladder term only. Task
+ * #96 removed 3 of the ladder's 4 PORTMAP_PROBE_BUDGET_MS legs (they
+ * were repeated work; see ORCH_HOST_LADDER_MS) and the stronger form
+ * stopped holding at one corner:
+ *
+ *     STUN at its floor, race at its ceiling
+ *     ladder   = 200 + 11250 + 4*1000 + 3*5000 = 30,450 ms
+ *     postwait = 100 + 30000 + 2*600           = 31,300 ms
+ *
+ * The response is NOT to weaken the guarantee — it is to stop relying on
+ * a coincidence for it. ORCH_HOST_WORST_CASE_MS is now the max of the
+ * two phases (they are separated by HOST_WAITING, which re-arms nav
+ * every frame, so nav needs the larger and never the sum), and this
+ * assert checks the property the deadline actually has to have. It is
+ * not a tautology: delete the max and revert the bound to the bare
+ * ladder, and this fails at exactly the corner above — which is the
+ * regression it exists to catch.
+ *
+ * Checked at both race extremes; every term is monotone in stun and
+ * race, so the interior is bounded by them. */
+_Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MIN_MS, RACE_BUDGET_MAX_MS) >=
                    RESOLVE_POLL_MAX_MS + RACE_HARD_CAP_MS(RACE_BUDGET_MAX_MS),
-               "task #76: the host STUN ladder no longer dominates a single "
-               "post-HOST_WAITING race; the host bound needs an explicit race term");
+               "task #76/#96: the host bound no longer covers one full "
+               "post-HOST_WAITING race at the STUN floor / race ceiling corner — "
+               "nav would cut inside a punch the host had already started");
+_Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MIN_MS, RACE_BUDGET_MIN_MS) >=
+                   RESOLVE_POLL_MAX_MS + RACE_HARD_CAP_MS(RACE_BUDGET_MIN_MS),
+               "task #76/#96: the host bound no longer covers one full "
+               "post-HOST_WAITING race at the minimum-config corner");
 
 /* [D] Both role bounds must still COVER the measured worst-case cascades
  * this task was sized against, at the CONFIG CEILING — cutting below them
  * turns a slow-but-successful join into a spurious failure, which is a
  * worse bug than the one being fixed. Recomputed at current tip:
  *   joiner ceiling 200 + 2*(15000 + 100 + 30000 + 1200) = 92800 ms
- *   host   ceiling 200 + 4*(11250 + 15000) + 3*5000     = 120200 ms
+ *   host   ceiling 200 + 11250 + 4*15000 + 3*5000       = 86450 ms
  * These are lower bounds on the derivation, so they fail if a leg is
- * DROPPED from the sum as well as if the sum is capped. */
+ * DROPPED from the sum as well as if the sum is capped.
+ *
+ * THE HOST NUMBER MOVED, 120200 -> 86450, AND THAT IS NOT A CAP.
+ * [D] guards against shortening the bound below work the code still
+ * does. Task #96 did the opposite: it deleted the work. 120,200 was
+ * 4 x PORTMAP_PROBE_BUDGET_MS because host_thread_fn really did re-run
+ * the probe on all four rungs of the ladder — 45,000 ms of it, measured
+ * (a failing probe reaches its full 11,250 ms budget in the field; see
+ * s_portmap_failed_port for the numbers and for why the netns rig's
+ * 1-38 ms says nothing about it). With the failure verdict latched, at
+ * most one rung can reach try_portmap, so no legal maximal config can
+ * spend the missing 33,750 ms and nothing slow-but-successful gets cut.
+ * Re-derived here rather than re-asserted, per this block's own rule:
+ * the number must be COMPUTED from the legs the code enforces. */
 _Static_assert(ORCH_JOIN_WORST_CASE_MS(STUN_BUDGET_MAX_MS, RACE_BUDGET_MAX_MS) >= 92800,
                "task #76: the joiner bound fell below the measured 92800 ms "
                "config-ceiling cascade — a legal maximal config would now be "
                "aborted mid-attempt");
-_Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MAX_MS, RACE_BUDGET_MAX_MS) >= 120200,
-               "task #76: the host bound fell below the measured 120200 ms "
+_Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MAX_MS, RACE_BUDGET_MAX_MS) >= 86450,
+               "task #76/#96: the host bound fell below the 86450 ms "
                "config-ceiling cascade — a legal maximal config would now be "
                "aborted mid-ladder");
+/* And the #96 saving is itself pinned: if a future change puts the
+ * port-map probe back inside the ladder's multiplier (or adds a second
+ * one-time leg of that size), the host bound climbs back over the old
+ * 120,200 ms and this fails. That is the direction #96 exists to
+ * prevent, so it gets a check of its own rather than a comment. */
+_Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MAX_MS, RACE_BUDGET_MAX_MS) < 120200,
+               "task #96: the host bound is back at its pre-#96 size — the "
+               "port-map probe is being paid more than once per hosting session "
+               "again. Latch the verdict, do not re-derive the ceiling.");
 
 int DirectP2P_OrchWorstCaseMsForRole(Role role) {
     const int stun = stun_budget_ms();
@@ -5344,6 +5664,27 @@ void DirectP2P_TestHook_RunTeardown(void) {
 /* S4-review HIGH-1b: punch-gate throttle seams (see direct_p2p.h). */
 void DirectP2P_TestHook_SetHostAdvisoryScale(int scale) {
     s_host_advisory_scale = (scale > 1) ? scale : 1;
+}
+
+void DirectP2P_TestHook_SetHostLadder(int max_retries, int backoff_ms) {
+    s_host_max_retries_override = (max_retries >= 0) ? max_retries : -1;
+    s_host_retry_backoff_override_ms = (backoff_ms > 0) ? backoff_ms : 0;
+}
+
+void DirectP2P_TestHook_HostLadderCounters(int* out_rungs, int* out_portmap_probes,
+                                           uint32_t* out_upnp_total_ms,
+                                           uint32_t* out_stun_total_ms,
+                                           uint32_t* out_backoff_ms) {
+    if (out_rungs != NULL) *out_rungs = (int)s_work.host_rungs;
+    if (out_portmap_probes != NULL) *out_portmap_probes = (int)s_work.host_portmap_probes;
+    if (out_upnp_total_ms != NULL) *out_upnp_total_ms = s_work.t_upnp_total_ms;
+    if (out_stun_total_ms != NULL) *out_stun_total_ms = s_work.t_stun_total_ms;
+    if (out_backoff_ms != NULL) *out_backoff_ms = s_work.t_host_backoff_ms;
+}
+
+void DirectP2P_TestHook_HostLadderLimits(int* out_max_retries, int* out_backoff_ms) {
+    if (out_max_retries != NULL) *out_max_retries = HOST_STUN_MAX_RETRIES;
+    if (out_backoff_ms != NULL) *out_backoff_ms = HOST_STUN_RETRY_BACKOFF_MS;
 }
 
 void DirectP2P_TestHook_PunchGateReset(void) {
