@@ -583,7 +583,9 @@ static void test4_foreign_ip_no_answer(void) {
     check_eq_int(tag, (long)peek().prompt, 0,
                  "a foreign IP on the peer's own port is still foreign");
 
-    /* Near-miss IPs. The compare is strcmp (late_punch.c:115), so a
+    /* Near-miss IPs. The compare is strcmp on the peer IP inside
+     * LatePunch_HandleDatagram (late_punch.c:212; the two compare
+     * sites are at lines 229 and 280), so a
      * source whose text merely EXTENDS or PREFIXES the peer's must not
      * match — "10.0.0.50" is not "10.0.0.5". A compare that used
      * strncmp with the peer's length would accept the first of these and
