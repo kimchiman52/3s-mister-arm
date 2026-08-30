@@ -45,9 +45,9 @@ stage baseline ${PIPESTATUS[0]}
 echo
 echo "################ 2. DELIVER LOSS = 100% toward the HOST ################"
 # The server's unsolicited DELIVER push is a bare socket.send with no retransmit
-# (rendezvous-server.js:719). Dropping it forces the host to learn the peer only
+# (rendezvous-server.js:1252). Dropping it forces the host to learn the peer only
 # from the reply to its OWN next REGISTER -- a full register interval later
-# (direct_p2p.c:3239). This is the mechanism that manufactures the start skew
+# (direct_p2p.c:3242). This is the mechanism that manufactures the start skew
 # behind the residual split-brain band.
 "$HERE/run_matrix.sh" --probe "$PROBE" --reps "$REPS" --label deliverloss100 \
     --types "port-restricted" --deliver-loss 100 \
@@ -64,7 +64,7 @@ stage deliverloss50 ${PIPESTATUS[0]}
 echo
 echo "################ 4. HIGH ONE-WAY DELAY (asymmetric) ################"
 # G >= 2d is the split-brain convergence condition, G = RACE_PUNCH_SETTLE_MS =
-# 600 ms (direct_p2p.c:1505). d > 300 ms opens the band. 400/250 ms one-way is
+# 600 ms (direct_p2p.c:1508). d > 300 ms opens the band. 400/250 ms one-way is
 # past that threshold on the A->B leg.
 "$HERE/run_matrix.sh" --probe "$PROBE" --reps "$REPS" --label owd_asym \
     --types "port-restricted symmetric" --owd-a 400 --owd-b 250 \
