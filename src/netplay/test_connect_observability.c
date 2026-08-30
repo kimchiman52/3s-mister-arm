@@ -684,13 +684,13 @@ static void test3_confirm_not_nat(void) {
      * the harness:
      *
      *   - race_punch_confirmed() returns false the moment a leg is
-     *     finished (direct_p2p.c:1627-1633), and section 2's lifetime
+     *     finished (direct_p2p.c:1694-1700), and section 2's lifetime
      *     sweep `continue`s over any confirmed leg, so a confirmed leg is
      *     never finished by the budget.
      *   - The latest instant a leg can still be confirmed is therefore
      *     send_end + RACE_PUNCH_SETTLE_MS, i.e. at most
      *     budget + STUN_PUNCH_CONFIRM_MS (the two constants are asserted
-     *     equal at direct_p2p.c:1447).
+     *     equal at direct_p2p.c:1514).
      *   - A confirmed leg settles one tail later, and the loop's hard cap
      *     is budget + 2 * STUN_PUNCH_CONFIRM_MS (direct_p2p.c section 8).
      *     Settling therefore always precedes the cap, except at an exact

@@ -53,9 +53,23 @@ wait $HOST_PID; HOST_RC=$?
 echo "--- host (rc=$HOST_RC) ---"; cat "$WORK/host.json"
 echo "--- join (rc=$JOIN_RC) ---"; cat "$WORK/join.json"
 
-if [ "$HOST_RC" = 0 ] && [ "$JOIN_RC" = 0 ]; then
+# rc 0 alone is not proof the cascade ran: an rc is also 0 for a binary that
+# exec'd and returned before doing anything. Require the "ran":true marker and a
+# HANDOFF final state in BOTH json lines. A positive control that can pass
+# vacuously is not a control.
+HRAN=0; JRAN=0
+grep -q '"ran":true' "$WORK/host.json" 2>/dev/null && \
+  grep -q '"final_state":"HANDOFF"' "$WORK/host.json" 2>/dev/null && HRAN=1
+grep -q '"ran":true' "$WORK/join.json" 2>/dev/null && \
+  grep -q '"final_state":"HANDOFF"' "$WORK/join.json" 2>/dev/null && JRAN=1
+
+if [ "$HOST_RC" = 0 ] && [ "$JOIN_RC" = 0 ] && [ "$HRAN" = 1 ] && [ "$JRAN" = 1 ]; then
     echo "SMOKE: PASS (both peers reached HANDOFF)"
     exit 0
+fi
+if [ "$HOST_RC" = 0 ] && [ "$JOIN_RC" = 0 ]; then
+    echo "SMOKE: FAIL -- both exited 0 but the evidence is missing"
+    echo "  host ran+HANDOFF=$HRAN  join ran+HANDOFF=$JRAN"
 fi
 echo "SMOKE: FAIL (host rc=$HOST_RC join rc=$JOIN_RC)"
 echo "--- host.err ---"; tail -20 "$WORK/host.err"

@@ -19,6 +19,7 @@
 #   natns.sh up   <natA_type> <natB_type>
 #   natns.sh down
 #   natns.sh netem <side:A|B|both> <delay_ms> <jitter_ms> <loss_pct>   # asymmetric-capable
+#   natns.sh portmap <A|B|both> <up|down> [natpmp_mock.py args...]
 #   natns.sh exec  <hA|hB|srv|nA|nB|wan> <cmd...>
 #
 # NAT types: fullcone | addr-restricted | port-restricted | symmetric | none
@@ -123,9 +124,18 @@ apply_nat() { # apply_nat <ns> <wif> <ext_ip> <inner_ip> <type>
         # filtering.
         #
         # Deliberately NOT keyed to a fixed port: only the HOST binds a chosen port.
-        # The JOINER binds local_port 0 and gets an OS-assigned ephemeral port
-        # (src/netplay/direct_p2p.c:3398), so a fixed-port map would silently fail
-        # to emulate full cone on the joiner side and would corrupt that column.
+        # The JOINER passes bind_port to STUN_DISCOVER
+        # (src/netplay/direct_p2p.c:3819) and that is 0 on every first attempt,
+        # so it gets an OS-assigned ephemeral port; a fixed-port map would
+        # silently fail to emulate full cone on the joiner side and would
+        # corrupt that column.
+        #
+        # Task #121 note: bind_port is no longer ALWAYS 0. A joiner whose
+        # background port-map probe returned a mapping binds that mapping's
+        # internal port on its retry. The blanket DNAT above is unaffected --
+        # it forwards every inbound UDP port to the single inner host, so it
+        # emulates full cone for whichever port the joiner ends up on. The
+        # reason this rule is portless is now stronger, not weaker.
         ipns "$ns" iptables -t nat -A POSTROUTING -o "$wif" -j SNAT --to-source "$ext"
         ipns "$ns" iptables -t nat -A PREROUTING  -i "$wif" -p udp \
              -j DNAT --to-destination "$inner"
@@ -231,7 +241,7 @@ netem() { # netem <A|B|both> <delay_ms> <jitter_ms> <loss_pct>
 # This models the real mechanism: the server's unsolicited push to the host at
 # rendezvous-server.js:719 is a bare socket.send with NO retransmit, so when it is
 # lost the host learns the peer endpoint only from the reply to its OWN next
-# REGISTER -- a full register-interval later (direct_p2p.c:2664).
+# REGISTER -- a full register-interval later (direct_p2p.c:3239).
 #
 # The drop is installed at the RECEIVING side's NAT ingress (mangle PREROUTING on
 # its WAN interface), NOT in the server's OUTPUT chain. That distinction matters:
@@ -259,10 +269,100 @@ deliverloss() { # deliverloss <pct 0-100> <A|B|both>
     esac
 }
 
+# ---------------------------------------------------------------------------
+# NAT-PMP / PCP gateway mock (rig/natpmp_mock.py), one per NAT namespace.
+#
+# Task #121 gives the JOINER a port-mapping probe. The netns had no gateway at
+# all, which is why probe/p2p_probe.c:123-124 disables UPnP and NAT-PMP in every
+# cell's config. This starts a gateway that speaks the real protocol on
+# 10.x.0.1:5351 and, on a granted mapping, installs static DNAT/SNAT rules at
+# the HEAD of the nat chains -- so the mapping actually overrides the dynamic
+# rules apply_nat() installed above, including symmetric's
+# MASQUERADE --random-fully.
+#
+# Point the production client at it with Natpmp_TestHook_SetGateway(<lan>.1,
+# 5351) (src/netplay/natpmp.h:345); that hook is consulted at natpmp.c:757-763,
+# BEFORE the test-build refusal to read the real default route at :764-785.
+#
+# TEARDOWN. `natns.sh down` is deliberately left untouched (other lanes depend
+# on it byte-for-byte), so it does NOT stop these daemons. Call
+# `natns.sh portmap both down` before `natns.sh down`, or the python process
+# lingers -- harmlessly, in a namespace that no longer exists, but it lingers.
+#
+# RIG NOTE, measured while building this. A NAT namespace OWNS its WAN address,
+# and for symmetric/port-restricted (which install no inbound DNAT) a datagram
+# aimed at ext_ip:P is delivered LOCALLY to the NAT namespace instead of being
+# dropped. That still creates a conntrack entry occupying ext_ip:P, and nf_nat
+# will then refuse to hand that same port to the inner host's own outbound flow
+# -- so a peer punching at an UNMAPPED port on the far side can push that side's
+# port-preserving SNAT off its expected external port. It is pre-existing
+# behaviour of apply_nat(), not of this daemon, but it will confuse any test that
+# assumes "port-restricted side keeps its internal port on the outside". Giving
+# the far side a mapping (portmap both up) removes the confound, because then the
+# packet is DNATed inward instead of landing on the namespace itself.
+#
+# Killing a backgrounded `sudo ip netns exec ...` reaps only the sudo wrapper;
+# the python child survives and keeps UDP 5351 bound (same hazard run_matrix.sh
+# documents for the STUN/rendezvous mocks). So `down` also pkills the child by
+# its full, lane-private command line -- never an unscoped pkill.
+PORTMAP_MOCK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/rig/natpmp_mock.py"
+PORTMAP_RUNDIR="${PORTMAP_RUNDIR:-/tmp/s8-portmap}"
+
+portmap() { # portmap <A|B|both> <up|down> [extra natpmp_mock.py args...]
+    local side="$1" act="$2"; shift 2 || true
+    if [ "$side" = "both" ]; then
+        portmap A "$act" "$@"; portmap B "$act" "$@"; return 0
+    fi
+    local ns wif ext inner lan
+    case "$side" in
+      A) ns="$NA"; wif=nAo; ext="$EXT_A"; inner="${LAN_A}.2"; lan="${LAN_A}.1" ;;
+      B) ns="$NB"; wif=nBo; ext="$EXT_B"; inner="${LAN_B}.2"; lan="${LAN_B}.1" ;;
+      *) echo "natns.sh portmap: side must be A|B|both" >&2; return 2 ;;
+    esac
+    mkdir -p "$PORTMAP_RUNDIR"
+    local log="$PORTMAP_RUNDIR/$side.log" pidf="$PORTMAP_RUNDIR/$side.pid"
+    # The --listen address is unique per side, so this pattern matches this
+    # side's daemon and nothing else in the VM.
+    local pat="natpmp_mock.py --listen $lan"
+
+    case "$act" in
+      up)
+        portmap "$side" down >/dev/null 2>&1 || true
+        : > "$log"
+        $SUDO ip netns exec "$ns" python3 "$PORTMAP_MOCK" \
+            --listen "$lan" --external-ip "$ext" --inner-ip "$inner" \
+            --wan-if "$wif" "$@" >>"$log" 2>&1 &
+        echo $! > "$pidf"
+        # The daemon prints "ready on <ip>:5351 ..." once its socket is bound.
+        # Waiting on that rather than on a fixed sleep means a slow VM cannot
+        # produce a cell whose first NAT-PMP request hit a closed port.
+        local i
+        for i in $(seq 1 100); do
+            grep -q 'ready on' "$log" 2>/dev/null && return 0
+            kill -0 "$(cat "$pidf")" 2>/dev/null || break
+            sleep 0.1
+        done
+        echo "natns.sh portmap $side up: mock did not become ready; log:" >&2
+        cat "$log" >&2
+        return 1
+        ;;
+      down)
+        if [ -f "$pidf" ]; then
+            kill "$(cat "$pidf")" 2>/dev/null || true
+            rm -f "$pidf"
+        fi
+        $SUDO pkill -f "$pat" 2>/dev/null || true
+        return 0
+        ;;
+      *) echo "natns.sh portmap: action must be up|down" >&2; return 2 ;;
+    esac
+}
+
 case "${1:-}" in
   up)    shift; up "${1:?natA type}" "${2:?natB type}" ;;
   down)  down ;;
   netem) shift; netem "$@" ;;
+  portmap) shift; portmap "${1:?side A|B|both}" "${2:?up|down}" "${@:3}" ;;
   deliverloss) shift; deliverloss "$@" ;;
   exec)  shift; ns="$1"; shift
          case "$ns" in
@@ -270,5 +370,5 @@ case "${1:-}" in
            nA) ns="$NA";; nB) ns="$NB";; wan) ns="$WAN";;
          esac
          exec $SUDO ip netns exec "$ns" "$@" ;;
-  *) sed -n '2,30p' "$0"; exit 2 ;;
+  *) sed -n '2,31p' "$0"; exit 2 ;;
 esac

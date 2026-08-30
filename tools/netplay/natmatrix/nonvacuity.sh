@@ -146,7 +146,13 @@ CA=$(ns s8-hA timeout 40 python3 "$HERE/rig/nat_classify.py" prober --json \
      --ip1 "$SRV_IP" --ip2 "$SRV_IP2" --p1 19401 --p2 19402 2>/dev/null | tail -1)
 CB=$(ns s8-hB timeout 40 python3 "$HERE/rig/nat_classify.py" prober --json \
      --ip1 "$SRV_IP" --ip2 "$SRV_IP2" --p1 19401 --p2 19402 2>/dev/null | tail -1)
-kill $CPID 2>/dev/null; wait $CPID 2>/dev/null
+# Same hazard as stop_servers: `wait` on a backgrounded `sudo ip netns exec`
+# blocks forever because killing the wrapper leaves the python observer alive
+# holding the redirected fd. Kill the wrapper, then pkill the child by its FULL
+# lane-private path, and never wait. (Measured: this line hung the script.)
+kill $CPID 2>/dev/null
+sudo -n pkill -f "$HERE/rig/nat_classify.py observer" 2>/dev/null
+sleep 0.3
 say "  measured A: $CA"
 say "  measured B: $CB"
 case "$CA" in *'"nat_type": "symmetric"'*) r=0;; *) r=1;; esac

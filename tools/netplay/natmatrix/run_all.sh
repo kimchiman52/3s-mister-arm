@@ -21,55 +21,81 @@ done
 [ -x "$PROBE" ] || { echo "run_all.sh: --probe must be executable" >&2; exit 2; }
 mkdir -p "$OUT"
 
+# This script used to run off the end and exit 0 no matter what -- including
+# when every run_matrix.sh call had reported a vacuous or contaminated run. Each
+# stage's rc is now recorded and the worst one is propagated at the bottom.
+STAGE_RCS=""
+stage() { # stage <name> <rc>
+    STAGE_RCS="$STAGE_RCS $1=$2"
+    [ "$2" = 0 ] || echo "run_all.sh: stage $1 exited $2" >&2
+}
+
 echo "################ 0. NON-VACUITY ################"
 "$HERE/nonvacuity.sh" --probe "$PROBE" --work "$OUT/nonvac" 2>&1 | tee "$OUT/nonvacuity.txt"
 NV=${PIPESTATUS[0]}
+stage nonvacuity "$NV"
 echo "nonvacuity rc=$NV"
 
 echo
 echo "################ 1. BASELINE MATRIX (no impairment) ################"
 "$HERE/run_matrix.sh" --probe "$PROBE" --reps "$REPS" --label baseline \
     --out "$OUT/baseline.jsonl" 2>&1 | tail -60
+stage baseline ${PIPESTATUS[0]}
 
 echo
 echo "################ 2. DELIVER LOSS = 100% toward the HOST ################"
 # The server's unsolicited DELIVER push is a bare socket.send with no retransmit
 # (rendezvous-server.js:719). Dropping it forces the host to learn the peer only
 # from the reply to its OWN next REGISTER -- a full register interval later
-# (direct_p2p.c:2664). This is the mechanism that manufactures the start skew
+# (direct_p2p.c:3239). This is the mechanism that manufactures the start skew
 # behind the residual split-brain band.
 "$HERE/run_matrix.sh" --probe "$PROBE" --reps "$REPS" --label deliverloss100 \
     --types "port-restricted" --deliver-loss 100 \
     --out "$OUT/deliverloss100.jsonl" 2>&1 | tail -30
+stage deliverloss100 ${PIPESTATUS[0]}
 
 echo
 echo "################ 3. DELIVER LOSS = 50% ################"
 "$HERE/run_matrix.sh" --probe "$PROBE" --reps "$REPS" --label deliverloss50 \
     --types "port-restricted" --deliver-loss 50 \
     --out "$OUT/deliverloss50.jsonl" 2>&1 | tail -30
+stage deliverloss50 ${PIPESTATUS[0]}
 
 echo
 echo "################ 4. HIGH ONE-WAY DELAY (asymmetric) ################"
 # G >= 2d is the split-brain convergence condition, G = RACE_PUNCH_SETTLE_MS =
-# 600 ms (direct_p2p.c:1348). d > 300 ms opens the band. 400/250 ms one-way is
+# 600 ms (direct_p2p.c:1505). d > 300 ms opens the band. 400/250 ms one-way is
 # past that threshold on the A->B leg.
 "$HERE/run_matrix.sh" --probe "$PROBE" --reps "$REPS" --label owd_asym \
     --types "port-restricted symmetric" --owd-a 400 --owd-b 250 \
     --out "$OUT/owd_asym.jsonl" 2>&1 | tail -40
+stage owd_asym ${PIPESTATUS[0]}
 
 echo
 echo "################ 5. DELIVER LOSS + HIGH DELAY (band hunt) ################"
 "$HERE/run_matrix.sh" --probe "$PROBE" --reps "$REPS" --label band_hunt \
     --types "port-restricted" --owd-a 400 --owd-b 400 --deliver-loss 100 \
     --out "$OUT/band_hunt.jsonl" 2>&1 | tail -30
+stage band_hunt ${PIPESTATUS[0]}
 
 echo
 echo "################ 6. UNIFORM PACKET LOSS 10% ################"
 "$HERE/run_matrix.sh" --probe "$PROBE" --reps "$REPS" --label loss10 \
     --types "port-restricted symmetric" --loss 10 \
     --out "$OUT/loss10.jsonl" 2>&1 | tail -40
+stage loss10 ${PIPESTATUS[0]}
 
 echo
 echo "################ SUMMARY ################"
 python3 "$HERE/summarize.py" "$OUT"/*.jsonl 2>&1 | tee "$OUT/summary.md"
-echo "RUN_ALL_DONE nonvacuity_rc=$NV"
+stage summarize ${PIPESTATUS[0]}
+echo "RUN_ALL_DONE nonvacuity_rc=$NV stages:$STAGE_RCS"
+
+# Propagate. Exit 0 ONLY if every stage -- non-vacuity, all six matrices and the
+# summariser -- returned 0. Anything else and this run is not evidence.
+RC=0
+for kv in $STAGE_RCS; do
+    [ "${kv#*=}" = 0 ] || RC=1
+done
+[ "$RC" = 0 ] || echo "run_all.sh: FAILED --$STAGE_RCS" >&2
+exit "$RC"

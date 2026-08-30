@@ -43,6 +43,33 @@ void Netplay_LogConnectEvent(const char* line) {
     if (line) fprintf(stderr, "[probe][connect] %s\n", line);
 }
 
+/* The MT sink and its initialiser. NOT optional and NOT new behaviour to
+ * model -- production direct_p2p.c calls these from p2p_race,
+ * host_thread_fn, DirectP2P_BeginHost and DirectP2P_BeginJoin, so without
+ * them the probe does not LINK and the whole matrix is unrunnable.
+ *
+ * That is not hypothetical: it is the state this file was in when task
+ * #121 found it. The stub stopped tracking direct_p2p.c the moment a
+ * concurrent lane added the MT sink, and because nothing in the harness
+ * builds the probe as part of a gate, the breakage sat here silently
+ * while `run_matrix.sh` and `run_all.sh` kept exiting 0 on runs where no
+ * cell had executed at all.
+ *
+ * Deliberately routed to the SAME stderr stream as the non-MT sink above
+ * rather than to a file: the probe is a single-shot process whose stdout
+ * is parsed as JSON by run_matrix.sh, and stderr is where every other
+ * witness line already goes, so a matrix run's transcript keeps one
+ * ordering for both sinks. Thread-safety comes from stderr being
+ * unbuffered, which is what the production MT sink's callers assume of
+ * whatever they are teed into. */
+void Netplay_LogConnectEventMT(const char* line) {
+    if (line) fprintf(stderr, "[probe][connect-mt] %s\n", line);
+}
+
+void Netplay_LogSinkInit(void) {
+    fprintf(stderr, "[probe] Netplay_LogSinkInit\n");
+}
+
 /* Never called: the probe stops at the handoff and does not enter the game
  * loop. If it ever is called, say so loudly rather than silently spinning. */
 void Netplay_Run(void) {
