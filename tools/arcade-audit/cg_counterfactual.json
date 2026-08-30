@@ -1,0 +1,37 @@
+{
+ "baseline": {
+  "class_a_total": 66,
+  "class_a_by_char": {
+   "ELENA": 66
+  },
+  "class_c_total": 1694
+ },
+ "PRE-#290  (drop elena 0x9C88-0x9CC1)": {
+  "class_a_total": 304,
+  "class_a_by_char": {
+   "ELENA": 304
+  },
+  "class_c_total": 1694
+ },
+ "PRE-#359  (drop sean 0x70F4-0x70FF)": {
+  "class_a_total": 66,
+  "class_a_by_char": {
+   "ELENA": 66
+  },
+  "class_c_total": 1740
+ },
+ "PRE-#360  (drop every 0x7070-0x714B transition range)": {
+  "class_a_total": 66,
+  "class_a_by_char": {
+   "ELENA": 66
+  },
+  "class_c_total": 2530
+ },
+ "PRE-#290+#359+#360 (all three fixes reverted)": {
+  "class_a_total": 304,
+  "class_a_by_char": {
+   "ELENA": 304
+  },
+  "class_c_total": 2530
+ }
+}

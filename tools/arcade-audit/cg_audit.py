@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+"""
+Exhaustive arcade-vs-PS2 CG/index audit for all 20 characters.
+
+Constants are PARSED FROM SOURCE (no hand-copied tables):
+  src/arcade/arcade_char_data.c            location_data[], cg_maps[], remap_cg_number()
+  src/sf33rd/Source/Game/rendering/texgroup.c   texgrpdat[100] (num_of_1st, apfn, to_chd)
+  src/sf33rd/Source/Game/rendering/chren3rd.c   obj_group_table[37664]
+  src/sf33rd/Source/Game/effect/effxx.c         effinitjptbl[59]
+  src/sf33rd/Source/Game/engine/charset.c       decode_chcmd[125]
+  src/sf33rd/Source/Game/effect/eff13.c         tama_data[243]
+  src/sf33rd/Source/Game/effect/eff41.c         sa_sign_data[69]
+  src/sf33rd/Source/Game/sound/se_data.c        sound_effect_request[1024]
+Data sources:
+  rom.bin                     decrypted CPS3 sfiii3nr1 (decrypt.py; SIMM sha256 == rom_load.c:41-45)
+  SF33RD.AFS                  PS2 game data (AFS entry apfn, tail at to_chd)
+"""
+import json, re, struct, sys, os
+
+import os as _os
+
+_HERE = _os.path.dirname(_os.path.abspath(__file__))
+# Repo root = <repo>/tools/arcade-audit/.. /.. — works in any worktree.
+REPO = _os.environ.get("ARCADE_AUDIT_REPO") or _os.path.abspath(_os.path.join(_HERE, "..", ".."))
+AFS_PATH = _os.environ.get("ARCADE_AUDIT_AFS") or _os.path.expanduser(
+    "~/Library/Application Support/CrowdedStreet/3S-ARM/resources/SF33RD.AFS")
+ROM_PATH = _os.environ.get("ARCADE_AUDIT_ROM") or _os.path.join(_HERE, "rom.bin")
+ZIP_PATH = _os.environ.get("ARCADE_AUDIT_ROMZIP") or _os.path.expanduser(
+    "~/Library/Application Support/CrowdedStreet/3S-ARM/resources/sfiii3nr1.zip")
+HERE = _HERE
+ROM = open(ROM_PATH, "rb").read()
+BASE_OFFSET = 0x6000000
+
+NAMES = ["GILL","ALEX","RYU","YUN","DUDLEY","NECRO","HUGO","IBUKI","ELENA","ORO",
+         "YANG","KEN","SEAN","URIEN","AKUMA","CHUNLI","MAKOTO","Q","TWELVE","REMY"]
+SECTIONS = ['nmca','dmca','btca','caca','cuca','atca','saca','exca','cbca','yuca','stxy','mvxy',
+            'sernd','ovct','ovix','rict','hiit','boda','hana','cata','caua','atta','hosa','atit','prot']
+# charid.c:87-96  wk->char_table[koc] = <section>
+KOC2SEC = {0:'nmca',1:'dmca',2:'caca',3:'cuca',4:'atca',5:'saca',6:'btca',7:'exca',8:'cbca',9:'yuca'}
+
+def src(p): return open(os.path.join(REPO, p)).read()
+
+# ---------------------------------------------------------------- constants
+def parse_location_data():
+    s = src("src/arcade/arcade_char_data.c")
+    body = s[s.index("static const LocationData location_data[NUM_CHARS] = {"):]
+    pairs = re.findall(r'\.(\w+)\s*=\s*\{\s*\.offset\s*=\s*(0x[0-9A-Fa-f]+),\s*\.size\s*=\s*(0x[0-9A-Fa-f]+)\s*\}', body)
+    out, cur = [], {}
+    for k, o, z in pairs:
+        if k in cur: out.append(cur); cur = {}
+        cur[k] = (int(o, 16), int(z, 16))
+    out.append(cur)
+    assert len(out) == 20, len(out)
+    return out
+
+def parse_cg_maps():
+    s = src("src/arcade/arcade_char_data.c")
+    ranges = {}
+    for m in re.finditer(r'static const CgRemapRange (\w+)\[\]\s*=\s*\{(.*?)\};', s, re.S):
+        rs = []
+        for r in re.finditer(r'\{\s*\.first\s*=\s*(\w+),\s*\.last\s*=\s*(\w+),\s*\.delta\s*=\s*(-?\w+)\s*\}', m.group(2)):
+            def num(t):
+                if t == 'UINT16_MAX': return 0xFFFF
+                neg = t.startswith('-'); t2 = t.lstrip('-')
+                v = int(t2, 16) if t2.lower().startswith('0x') else int(t2)
+                return -v if neg else v
+            rs.append((num(r.group(1)), num(r.group(2)), num(r.group(3))))
+        ranges[m.group(1)] = rs
+    blk = re.search(r'static const CharacterCgMap cg_maps\[NUM_CHARS\]\s*=\s*\{(.*?)\n\};', s, re.S).group(1)
+    maps = {}
+    for m in re.finditer(r'\[CHAR_(\w+)\]\s*=\s*\{(.*?)\}\s*,\s*\n', blk + "\n", re.S):
+        name, b = m.group(1), m.group(2)
+        d = re.search(r'\.default_delta\s*=\s*(-?\w+)', b).group(1)
+        neg = d.startswith('-'); d2 = d.lstrip('-')
+        dd = (int(d2, 16) if d2.lower().startswith('0x') else int(d2)) * (-1 if neg else 1)
+        rr = re.search(r'\.ranges\s*=\s*(\w+)', b)
+        maps[name] = {'default_delta': dd, 'ranges': ranges.get(rr.group(1), []) if rr else []}
+    assert len(maps) == 20, sorted(maps)
+    return [maps[n] for n in NAMES]
+
+def parse_texgrpdat():
+    s = src("src/sf33rd/Source/Game/rendering/texgroup.c")
+    body = s[s.index("const TexGroupData texgrpdat[100] = {"):]
+    body = body[:body.index("};", body.index("texgrpdat[100]"))]
+    rows = []
+    for m in re.finditer(r'\{\s*(-?\d+)\s*,\s*(-?\d+)[^,]*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(0x[0-9A-Fa-f]+|-?\d+)\s*\}', body):
+        g = m.groups()
+        rows.append(dict(num_of_1st=int(g[0]), apfn=int(g[1]), conv=int(g[2]), ix1st=int(g[3]),
+                         use=int(g[4]), to_tex=int(g[5]),
+                         to_chd=int(g[6], 16) if g[6].lower().startswith('0x') else int(g[6])))
+    return rows
+
+def parse_obj_group_table():
+    s = src("src/sf33rd/Source/Game/rendering/chren3rd.c")
+    i = s.index("const u8 obj_group_table[37664]"); j = s.index("{", i); k = s.index("};", j)
+    v = [int(x) for x in re.findall(r'\d+', s[j+1:k])]
+    assert len(v) == 37664, len(v)
+    return v
+
+def count_fnptr_table(path, decl):
+    s = src(path); i = s.index(decl); j = s.index("{", i)
+    d, k = 0, j
+    while True:
+        if s[k] == '{': d += 1
+        elif s[k] == '}':
+            d -= 1
+            if d == 0: break
+        k += 1
+    return len([x for x in s[j+1:k].split(',') if x.strip()])
+
+LOC   = parse_location_data()
+CGMAP = parse_cg_maps()
+TGD   = parse_texgrpdat()
+OGT   = parse_obj_group_table()
+N_EFFINIT = count_fnptr_table("src/sf33rd/Source/Game/effect/effxx.c", "const s32 (*effinitjptbl[59])() = {")
+N_CHCMD   = count_fnptr_table("src/sf33rd/Source/Game/engine/charset.c", "s32 (*const decode_chcmd[125])() = {")
+N_SE      = count_fnptr_table("src/sf33rd/Source/Game/sound/se_data.c", "const se_request sound_effect_request[1024] = {")
+N_TAMA    = int(re.search(r'const TAMA tama_data\[(\d+)\]', src("src/sf33rd/Source/Game/effect/eff13.c")).group(1))
+N_SASIGN  = int(re.search(r'const s16 sa_sign_data\[(\d+)\]\[5\]', src("src/sf33rd/Source/Game/effect/eff41.c")).group(1))
+OGT_N     = len(OGT)
+
+# ---------------------------------------------------------------- remap (mirrors arcade_char_data.c:85-109)
+def remap(value, ci):
+    if value < 0x400: return value
+    m = CGMAP[ci]; delta = m['default_delta']
+    for (f, l, d) in m['ranges']:
+        if f <= value <= l: delta = d; break
+    adj = value + delta
+    return value if (adj < 0 or adj > 0xFFFF) else adj
+
+# Commands whose handler transfers control and never falls through to the next
+# cell in linear order (charset.c: check_cm_extended_code breaks when the handler
+# returns 0; comm_end rewrites cg_ix). Used ONLY to bound the LAST script of a
+# table, whose end offset is location.size and is over-declared for some
+# characters (see the "over-declared section size" finding).
+TERMINATORS = {1, 2, 3, 4, 6, 17, 19, 21, 23, 25, 27, 29, 31, 69, 102, 115}
+
+# ---------------------------------------------------------------- arcade parsing (mirrors read_char_table)
+def arc_offsets(off, size):
+    e, p = [], off
+    while True:
+        v = struct.unpack_from('>I', ROM, p)[0]; p += 4
+        if v == 0: break
+        e.append(v - BASE_OFFSET - off)
+        if len(e) > 4000: raise RuntimeError("runaway offset table")
+    return e
+
+def arc_parse(ci, sec, idx, tabs):
+    off, size = LOC[ci][sec]; ents = tabs[sec]
+    so = sorted(set(ents)); start = ents[idx] - 8
+    nxt = [o for o in so if o > ents[idx]]
+    last = not nxt
+    end = (nxt[0] - 8) if nxt else size
+    if start < 0 or off + end > len(ROM) or end <= start: return None, []
+    p = off + start
+    cgd = struct.unpack_from('>h', ROM, p)[0]
+    if cgd not in (1, 2, 4, 6): return cgd, []
+    out, q, lim = [], p + 8, off + end
+    while q + 8 <= lim:
+        code = struct.unpack_from('>H', ROM, q)[0]
+        if code < 0x100:
+            koc, ix, pat = struct.unpack_from('>hhh', ROM, q + 2)
+            out.append(('C', code, koc, ix, pat)); q += 8 + max(cgd * 4 - 8, 0)
+            if last and code in TERMINATORS: break
+        else:
+            se, olc, num = struct.unpack_from('>HHH', ROM, q + 2)
+            r = dict(type=code & 0xFF, ctr=code >> 8, se=se, olc=olc, num=num)
+            q2 = q + 8
+            if cgd >= 4:
+                att, hit = struct.unpack_from('>hH', ROM, q2)
+                ext, canc, eff, eft = ROM[q2+4], ROM[q2+5], ROM[q2+6], ROM[q2+7]
+                r.update(att=att, hit=hit, eff=eff, eftype=eft); q2 += 8
+            if cgd == 6: q2 += 8
+            out.append(('L', r)); q = q2
+    return cgd, out
+
+# ---------------------------------------------------------------- PS2 parsing (AFS tail + 25-offset header)
+AFS = open(AFS_PATH, 'rb')
+assert AFS.read(4) == b'AFS\x00'
+_cnt = struct.unpack('<I', AFS.read(4))[0]
+AFS_ENT = [struct.unpack('<II', AFS.read(8)) for _ in range(_cnt)]
+
+def ps2_tail(ci):
+    bsd = TGD[ci + 1]
+    off, size = AFS_ENT[bsd['apfn']]
+    AFS.seek(off + bsd['to_chd'])
+    return AFS.read(size - bsd['to_chd']), bsd
+
+def ps2_spans(blob):
+    n = 25; offs = list(struct.unpack_from('<25I', blob, 0)); L = len(blob); sp = []
+    for s in range(n):
+        st = offs[s]; en = L
+        for i in range(n):
+            if offs[i] > st and offs[i] < en: en = offs[i]
+        sp.append((st, en - st))
+    return offs, sp
+
+def ps2_offsets(blob, base):
+    e, p = [], base
+    while True:
+        v = struct.unpack_from('<I', blob, p)[0]; p += 4
+        if v == 0: break
+        e.append(v)
+        if len(e) > 4000: raise RuntimeError("runaway")
+    return e
+
+def ps2_parse(blob, base, size, ents, idx):
+    so = sorted(set(ents)); start = ents[idx] - 8
+    nxt = [o for o in so if o > ents[idx]]
+    last = not nxt
+    end = (nxt[0] - 8) if nxt else size
+    if start < 0 or end <= start or base + end > len(blob): return None, []
+    p = base + start
+    cgd = struct.unpack_from('<h', blob, p)[0]
+    if cgd not in (1, 2, 4, 6): return cgd, []
+    out, q, lim = [], p + 8, base + end
+    while q + 8 <= lim:
+        code = struct.unpack_from('<H', blob, q)[0]
+        if code < 0x100:
+            koc, ix, pat = struct.unpack_from('<hhh', blob, q + 2)
+            out.append(('C', code, koc, ix, pat)); q += 8 + max(cgd * 4 - 8, 0)
+            if last and code in TERMINATORS: break
+        else:
+            se, olc, num = struct.unpack_from('<HHH', blob, q + 2)
+            r = dict(type=code & 0xFF, ctr=code >> 8, se=se, olc=olc, num=num)
+            q2 = q + 8
+            if cgd >= 4:
+                hit, att = struct.unpack_from('<Hh', blob, q2)
+                ext, canc, eff, eft = blob[q2+4], blob[q2+5], blob[q2+6], blob[q2+7]
+                r.update(att=att, hit=hit, eff=eff, eftype=eft); q2 += 8
+            if cgd == 6: q2 += 8
+            out.append(('L', r)); q = q2
+    return cgd, out
+
+# ---------------------------------------------------------------- SA naming for saca scripts
+def sa_labels(ci):
+    """map saca script index -> list of SA-table slots that select it (asstbl.c 9900_g/_a arcade rows)."""
+    s = src("src/bin2obj/asstbl.c")
+    lab = {}
+    arcade_ci = ci + 1 if ci > 14 else ci   # CHAR_3SX_TO_ARCADE, constants.h:62 (CHAR_AKUMA=14)
+    for tname, tag in (("asstbl_lv_9900_g_arcade", "g"), ("asstbl_lv_9900_a_arcade", "a")):
+        i = s.index("const AS %s[21][72] = {" % tname); j = s.index("{", i)
+        d, k = 0, j
+        while True:
+            if s[k] == '{': d += 1
+            elif s[k] == '}':
+                d -= 1
+                if d == 0: break
+            k += 1
+        body = s[j+1:k]; rows, depth, st = [], 0, None
+        for p, ch in enumerate(body):
+            if ch == '{':
+                if depth == 0: st = p
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0: rows.append(body[st+1:p])
+        row = rows[arcade_ci]
+        for n, e in enumerate(re.findall(r'\{([^{}]*)\}', row)):
+            nums = re.findall(r'=\s*(-?\d+)', e)
+            if len(nums) == 3:
+                lab.setdefault(int(nums[1]), []).append("9900_%s[%d]" % (tag, n))
+    return lab
+
+# ---------------------------------------------------------------- audit
+def audit(cgmap_override=None, quiet=False):
+    global CGMAP
+    saved = CGMAP
+    if cgmap_override is not None: CGMAP = cgmap_override
+    result = {}
+    for ci in range(20):
+        rec = dict(name=NAMES[ci], own_group=ci + 1, violations=[], stats={})
+        arc_tabs = {}
+        for koc, sec in KOC2SEC.items():
+            arc_tabs[sec] = arc_offsets(*LOC[ci][sec])
+        blob, bsd = ps2_tail(ci)
+        offs, sp = ps2_spans(blob)
+        ps2_tabs = {}
+        for koc, sec in KOC2SEC.items():
+            b, z = sp[SECTIONS.index(sec)]
+            ps2_tabs[sec] = (b, z, ps2_offsets(blob, b))
+        salab = sa_labels(ci)
+        cells_seen = 0
+        cls = dict(a_oob=0, b_gap=0, c_wrong_group=0, c_same_group=0, needs_manual=0,
+                   se_oob=0, eff_oob=0, tama_oob=0, sasign_oob=0, code_oob=0, koc_oob=0, idx_oob=0)
+        for koc, sec in KOC2SEC.items():
+            an, pn = len(arc_tabs[sec]), len(ps2_tabs[sec][2])
+            for si in range(an):
+                acgd, acells = arc_parse(ci, sec, si, arc_tabs)
+                pcells = None
+                if si < pn:
+                    pcgd, pcells = ps2_parse(blob, ps2_tabs[sec][0], ps2_tabs[sec][1], ps2_tabs[sec][2], si)
+                shape_ok = (pcells is not None and len(pcells) == len(acells)
+                            and all(a[0] == p[0] for a, p in zip(acells, pcells)))
+                if pcells is not None and not shape_ok and acells:
+                    cls['needs_manual'] += 1
+                    rec['violations'].append(dict(cls='needs_manual_diff', table=sec, script=si,
+                                                  arc_cells=len(acells),
+                                                  ps2_cells=(len(pcells) if pcells is not None else None),
+                                                  sa=salab.get(si) if sec == 'saca' else None))
+                for cidx, c in enumerate(acells):
+                    pcell = pcells[cidx] if (shape_ok) else None
+                    # A value identical on both sides is a PRE-EXISTING property of the
+                    # shipped PS2 data, not an arcade-adaptation defect; only divergences
+                    # are in scope. `same` == True -> skip.
+                    def same(field, idx=None):
+                        if pcell is None: return False
+                        if pcell[0] == 'C' and idx is not None: return pcell[idx] == field
+                        if pcell[0] == 'L' and isinstance(idx, str): return pcell[1].get(idx) == field
+                        return False
+                    if c[0] == 'C':
+                        code, kc, ix, pat = c[1], c[2], c[3], c[4]
+                        pre = (pcell is not None and pcell[0] == 'C'
+                               and pcell[1] == code and pcell[2] == kc and pcell[3] == ix)
+                        if pre: continue
+                        if code >= N_CHCMD:
+                            cls['code_oob'] += 1
+                            rec['violations'].append(dict(cls='a_code_oob', table=sec, script=si, cell=cidx, code=code))
+                        if code in (3, 4, 5):   # jmp/jpss/jsr
+                            if kc < 0 or kc >= 12:
+                                cls['koc_oob'] += 1
+                                rec['violations'].append(dict(cls='a_koc_oob', table=sec, script=si, cell=cidx, koc=kc, ix=ix))
+                            elif kc in KOC2SEC:
+                                nn = len(arc_tabs[KOC2SEC[kc]])
+                                if ix < 0 or ix >= nn:
+                                    cls['idx_oob'] += 1
+                                    rec['violations'].append(dict(cls='a_script_idx_oob', table=sec, script=si, cell=cidx,
+                                                                  dest=KOC2SEC[kc], ix=ix, dest_entries=nn))
+                            else:
+                                cls['koc_oob'] += 1
+                                rec['violations'].append(dict(cls='a_koc_unset', table=sec, script=si, cell=cidx, koc=kc))
+                        if code == 43:          # comm_exec
+                            if kc < 0 or kc >= N_EFFINIT:
+                                cls['eff_oob'] += 1
+                                rec['violations'].append(dict(cls='a_effinit_oob', table=sec, script=si, cell=cidx, eff=kc, data=ix))
+                            elif kc == 2 and ix >= N_TAMA:
+                                cls['tama_oob'] += 1
+                                rec['violations'].append(dict(cls='a_tama_oob', table=sec, script=si, cell=cidx, tama=ix))
+                            elif kc == 13 and ix >= N_SASIGN:
+                                cls['sasign_oob'] += 1
+                                rec['violations'].append(dict(cls='a_sasign_oob', table=sec, script=si, cell=cidx, idx=ix))
+                        continue
+                    r = c[1]; cells_seen += 1
+                    pr = pcell[1] if (pcell is not None and pcell[0] == 'L') else None
+                    se = r['se'] >> 4
+                    # cg_se >>= 4 then bit 0x800 selects the per-character random-SE
+                    # table (charset.c:2721-2727); only the non-random path indexes
+                    # sound_effect_request[] directly.
+                    if (se & 0x800) == 0 and se >= N_SE and not (pr and pr['se'] == r['se']):
+                        cls['se_oob'] += 1
+                        rec['violations'].append(dict(cls='a_se_oob', table=sec, script=si, cell=cidx, se=se))
+                    ef, eft = r.get('eff', 0), r.get('eftype', 0)
+                    if ef and not (pr and pr.get('eff') == ef and pr.get('eftype') == eft):
+                        if ef >= N_EFFINIT:
+                            cls['eff_oob'] += 1
+                            rec['violations'].append(dict(cls='a_effinit_oob', table=sec, script=si, cell=cidx, eff=ef, data=eft))
+                        elif ef == 2 and eft >= N_TAMA:
+                            cls['tama_oob'] += 1
+                            rec['violations'].append(dict(cls='a_tama_oob', table=sec, script=si, cell=cidx, tama=eft))
+                        elif ef == 13 and eft >= N_SASIGN:
+                            cls['sasign_oob'] += 1
+                            rec['violations'].append(dict(cls='a_sasign_oob', table=sec, script=si, cell=cidx, idx=eft))
+                    raw = r['num']; rm = remap(raw, ci)
+                    grp = OGT[rm] if rm < OGT_N else None
+                    ps2num = pcells[cidx][1]['num'] if (shape_ok and pcells[cidx][0] == 'L') else None
+                    v = dict(table=sec, script=si, cell=cidx, raw=raw, remapped=rm, group=grp,
+                             ps2=ps2num, ps2_group=(OGT[ps2num] if (ps2num is not None and ps2num < OGT_N) else None),
+                             confidence=('high' if shape_ok else 'low-shape-differs'),
+                             sa=salab.get(si) if sec == 'saca' else None)
+                    if rm >= OGT_N:
+                        cls['a_oob'] += 1; v['cls'] = 'a_ogt_oob'; rec['violations'].append(v)
+                    elif grp == 0 and rm != 0:
+                        cls['b_gap'] += 1; v['cls'] = 'b_group_gap'; rec['violations'].append(v)
+                    elif ps2num is not None and ps2num != rm:
+                        if grp != ci + 1:
+                            cls['c_wrong_group'] += 1; v['cls'] = 'c_mismatch_other_group'
+                        else:
+                            cls['c_same_group'] += 1; v['cls'] = 'c_mismatch_own_group'
+                        rec['violations'].append(v)
+        # OVCT / OVIX counts
+        a_ovct = LOC[ci]['ovct'][1] // 16; a_ovix = LOC[ci]['ovix'][1] // 8
+        p_ovct = sp[SECTIONS.index('ovct')][1] // 16; p_ovix = sp[SECTIONS.index('ovix')][1] // 8
+        over = []
+        for koc2, sec2 in KOC2SEC.items():
+            off2, size2 = LOC[ci][sec2]; mx = max(arc_tabs[sec2])
+            if size2 - mx > 0x400:
+                over.append(dict(table=sec2, declared=size2, max_script_offset=mx, slack=size2 - mx,
+                                 ps2_span=sp[SECTIONS.index(sec2)][1]))
+        rec['over_declared_sections'] = over
+        rec['stats'] = dict(cells=cells_seen, ovct_arcade=a_ovct, ovct_ps2=p_ovct,
+                            ovix_arcade=a_ovix, ovix_ps2=p_ovix,
+                            ovct_unpatched_tail=max(0, a_ovct - p_ovct),
+                            ovix_arcade_shorter_by=max(0, p_ovix - a_ovix), **cls)
+        result[NAMES[ci]] = rec
+    CGMAP = saved
+    return result
+
+if __name__ == "__main__":
+    print("constants: obj_group_table=%d effinitjptbl=%d decode_chcmd=%d sound_effect_request=%d tama_data=%d sa_sign_data=%d"
+          % (OGT_N, N_EFFINIT, N_CHCMD, N_SE, N_TAMA, N_SASIGN))
+    res = audit()
+    json.dump(res, open(os.path.join(HERE, "cg_audit.json"), "w"), indent=1)
+    hdr = ("%-7s %5s | %4s %4s %5s %5s %5s | %5s %5s %5s %5s %5s %5s %5s | %s"
+           % ("char","cells","(a)","(b)","(c)wg","(c)og","manu","se","eff","tama","sasi","code","koc","sidx","ovct a/p  ovix a/p"))
+    print(hdr); print("-"*len(hdr))
+    T = {}
+    for n in NAMES:
+        r = res[n]; s = r['stats']
+        for k, v in s.items(): T[k] = T.get(k, 0) + (v if isinstance(v, int) else 0)
+        print("%-7s %5d | %4d %4d %5d %5d %5d | %5d %5d %5d %5d %5d %5d %5d | %d/%d %s  %d/%d %s"
+              % (n, s['cells'], s['a_oob'], s['b_gap'], s['c_wrong_group'], s['c_same_group'], s['needs_manual'],
+                 s['se_oob'], s['eff_oob'], s['tama_oob'], s['sasign_oob'], s['code_oob'], s['koc_oob'], s['idx_oob'],
+                 s['ovct_arcade'], s['ovct_ps2'], "UNPATCHED-TAIL!" if s['ovct_unpatched_tail'] else "ok",
+                 s['ovix_arcade'], s['ovix_ps2'], "short" if s['ovix_arcade_shorter_by'] else "ok"))
+    print("-"*len(hdr))
+    print("TOTAL         | %4d %4d %5d %5d %5d | %5d %5d %5d %5d %5d %5d %5d"
+          % (T['a_oob'], T['b_gap'], T['c_wrong_group'], T['c_same_group'], T['needs_manual'],
+             T['se_oob'], T['eff_oob'], T['tama_oob'], T['sasign_oob'], T['code_oob'], T['koc_oob'], T['idx_oob']))
+    print("cells audited:", T['cells'])

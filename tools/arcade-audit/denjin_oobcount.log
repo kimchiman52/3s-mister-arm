@@ -1,0 +1,51 @@
+(lldb) target create "/private/tmp/claude-501/-Users-sb-Developer-3sx-mister/677e8288-677d-4893-b3af-dafcec750a4a/scratchpad/denjin/src-upstream/build-statcheck-plain/3SX.app/Contents/MacOS/3SX"
+Current executable set to '/private/tmp/claude-501/-Users-sb-Developer-3sx-mister/677e8288-677d-4893-b3af-dafcec750a4a/scratchpad/denjin/src-upstream/build-statcheck-plain/3SX.app/Contents/MacOS/3SX' (arm64).
+(lldb) settings set -- target.run-args  "--ram-archive" "/private/tmp/claude-501/-Users-sb-Developer-3sx-mister/677e8288-677d-4893-b3af-dafcec750a4a/scratchpad/denjin/../game_2.scrd" "--headless"
+(lldb) br set -f mtrans.c -l 400 -c "wk->cg_number > 37663" -G true -C "p wk->cg_number"
+Breakpoint 1: where = 3SX`mlt_obj_trans_ext + 44 at mtrans.c:400:9, address = 0x000000010015efc0
+(lldb) run
+2026-08-29 13:59:32.125569-0400 3SX[1162:16731203] Failed to create audio stream: Audio subsystem is not initialized; continuing without sound
+2026-08-29 13:59:32.128515-0400 3SX[1162:16731203] Couldn't create SDL audio stream: Audio subsystem is not initialized
+2026-08-29 13:59:32.134548-0400 3SX[1162:16731203] flFileRead: failed to read file at path /private/tmp/claude-501/-Users-sb-Developer-3sx-mister/677e8288-677d-4893-b3af-dafcec750a4a/scratchpad/denjin/src-upstream/build-statcheck-plain/3SX.app/Contents/Resources//assets/xbox_buttons.bmp - Couldn't open /private/tmp/claude-501/-Users-sb-Developer-3sx-mister/677e8288-677d-4893-b3af-dafcec750a4a/scratchpad/denjin/src-upstream/build-statcheck-plain/3SX.app/Contents/Resources//assets/xbox_buttons.bmp: No such file or directory
+2026-08-29 13:59:32.137467-0400 3SX[1162:16731203] flFileRead: failed to read file at path /private/tmp/claude-501/-Users-sb-Developer-3sx-mister/677e8288-677d-4893-b3af-dafcec750a4a/scratchpad/denjin/src-upstream/build-statcheck-plain/3SX.app/Contents/Resources//assets/glyphs.bmp - Couldn't open /private/tmp/claude-501/-Users-sb-Developer-3sx-mister/677e8288-677d-4893-b3af-dafcec750a4a/scratchpad/denjin/src-upstream/build-statcheck-plain/3SX.app/Contents/Resources//assets/glyphs.bmp: No such file or directory
+(lldb)  p wk->cg_number
+(u16) 38146
+(lldb)  p wk->cg_number
+(u16) 38146
+(lldb)  p wk->cg_number
+(u16) 38146
+(lldb)  p wk->cg_number
+(u16) 38147
+(lldb)  p wk->cg_number
+(u16) 38147
+(lldb)  p wk->cg_number
+(u16) 38148
+(lldb)  p wk->cg_number
+(u16) 38148
+(lldb)  p wk->cg_number
+(u16) 38146
+(lldb)  p wk->cg_number
+(u16) 38146
+(lldb)  p wk->cg_number
+(u16) 38146
+(lldb)  p wk->cg_number
+(u16) 38147
+(lldb)  p wk->cg_number
+(u16) 38147
+(lldb)  p wk->cg_number
+(u16) 38148
+(lldb)  p wk->cg_number
+(u16) 38146
+(lldb)  p wk->cg_number
+(u16) 38146
+(lldb)  p wk->cg_number
+(u16) 38146
+(lldb)  p wk->cg_number
+(u16) 38147
+(lldb)  p wk->cg_number
+(u16) 38147
+(lldb)  p wk->cg_number
+(u16) 38148
+Process 1162 launched: '/private/tmp/claude-501/-Users-sb-Developer-3sx-mister/677e8288-677d-4893-b3af-dafcec750a4a/scratchpad/denjin/src-upstream/build-statcheck-plain/3SX.app/Contents/MacOS/3SX' (arm64)
+Process 1162 exited with status = 0 (0x00000000)
+(lldb) quit
