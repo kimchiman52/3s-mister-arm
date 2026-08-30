@@ -66,6 +66,40 @@ directions.
 
 ---
 
+## #129 — ROM search trim + a legible miss — CLOSED
+
+Candidate set cut from 19 directories x 2 basenames (38) to 5 x 2 (10):
+`src/arcade/arcade_char_data.c`. Kept `/media/fat/games/mame` (update_all's
+default, and the only path ever exercised), `/media/fat/mame`,
+`/media/fat/_Arcade/mame` (Main's own fallback) and both `/media/usb0`
+layouts. Dropped `usb1`–`usb5`, `/media/network`, `/media/fat/cifs` — on the
+target device `/media/network` and `/media/fat/cifs` do not exist even as
+mount points, while `/media/usb0`..`/media/usb7` do. Nothing was kept against
+the brief.
+
+Upstream order re-verified against Main_MiSTer @ `915ca339`, and **three
+citations in the pre-existing comment were wrong**: the order list is
+`file_io.cpp:1048-1056` (not `:1048-1055`, which cut off
+`/media/fat/<prefix>/<dir>` — the one path that actually works), the bare
+`/media/fat/mame` check is `file_io.cpp:1118-1122` (not `:1124-1127`, which is
+the `games/` branch), and `findPrefixDir` ends at `:1133` (not `:1132`).
+
+A miss now reads differently in each of the three cases — no directory
+existed / a directory existed but held neither basename / a zip was found and
+**rejected by content verification** (the wrong-revision case, previously
+indistinguishable from having no ROM). Bounded: a normal miss is one line.
+`rom_load.c` untouched — the classification is done by `SDL_GetPathInfo` in
+`arcade_char_data.c` and never gates a `Rom_Load` call, so what gets FOUND is
+unchanged.
+
+Induced, not asserted: the no-directory case and the found-and-rejected case
+were each provoked against the real binary and print different text (a
+valid-zip-with-wrong-contents drives the second). The directory-exists-but-no-
+basename case needs a writable `/media`, so it is induced on the device under a
+tmpfs overlay rather than on the host.
+
+---
+
 ## #131 — review batch (five items) — CLOSED
 
 All five landed as separate commits; full gate set GREEN including ARM.
@@ -268,7 +302,6 @@ All interaction bugs, where a mocked unit passes vacuously.
 
 ## Smaller open items
 
-- **#129** — ROM search trim + a legible miss message.
 - **#125** — `--test-connect-observability` flakes **only under concurrent gate
   runs**, always at `test6-byte-budget`; shared logs directory.
 - **#128** — five reproducible file-load failures (file numbers 9, 10, 1454,

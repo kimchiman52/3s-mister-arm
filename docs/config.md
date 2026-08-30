@@ -60,13 +60,32 @@ No ROM ships with 3S-ARM and none is looked for anywhere in the program's own
 install directory. ROM discovery tries, in order: the `THIRDSARM_CPS3_ZIP`
 env override (dev-only, not a player-facing setting — how CI-style and
 cross-arch runs point at a romset outside a MiSTer arcade install entirely),
-then every MiSTer arcade ROM directory a MiSTer arcade core itself would read
-— USB drives, network, CIFS, the SD card, and finally the MRA's own fallback
-folder — in the same order MiSTer Main's own `findGamesDir("mame")`
-resolution walks them (19 directories in all), checking both `sfiii3nr1.zip`
-and `sfiii3.zip` in each. Entries are matched by content hash (stored-CRC32
-pre-filter + SHA-256 confirmation), so flat, merged, and subdirectory-variant
-packagings all work regardless of which directory or basename supplied them.
+then five MiSTer arcade ROM directories, in the same relative order MiSTer
+Main's own `findGamesDir("mame")` resolution walks them:
+
+| Directory | Why it is searched |
+| --- | --- |
+| `/media/usb0/mame` | first USB storage slot, bare layout |
+| `/media/usb0/games/mame` | first USB storage slot, `games/` layout |
+| `/media/fat/mame` | where a hand-assembled set commonly lands |
+| `/media/fat/games/mame` | update_all's default, and the verified path |
+| `/media/fat/_Arcade/mame` | Main's own last-resort fallback |
+
+Both `sfiii3nr1.zip` and `sfiii3.zip` are checked in each — the two basenames
+the shipped jtcps3 MRA itself declares. Entries are matched by content hash
+(stored-CRC32 pre-filter + SHA-256 confirmation), so flat, merged, and
+subdirectory-variant packagings all work regardless of which directory or
+basename supplied them.
+
+This list is deliberately shorter than Main's own 19-directory walk, which
+also covers `usb1`–`usb5`, `/media/network` and `/media/fat/cifs`. Those 14
+were never exercised by any test or any run, so a typo in one was
+indistinguishable from the directory being absent. A miss is no longer
+silent, which is what makes the shorter list safe: when no ROM is found the
+log now says which of the three things went wrong — no directory existed, a
+directory existed but held neither basename, or **a zip was found and
+rejected by content verification** (a wrong-revision romset, which
+previously produced the same message as having no romset at all).
 
 Notes:
 - Replaces the removed `arcade-balance` bool toggle; stale `arcade-balance`

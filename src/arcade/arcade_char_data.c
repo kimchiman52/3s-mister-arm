@@ -450,18 +450,52 @@ static void dump_data(CharInitData* data, Character character) {
 }
 #endif
 
-/* The romset directories a MiSTer arcade core reads, in MiSTer Main's own
- * resolution order.
+/* The romset directories we probe -- a deliberately SHORT subset of the
+ * ones a MiSTer arcade core reads, in MiSTer Main's own resolution order.
  *
  * Main resolves the arcade ROM directory ONCE per MRA, via
  * findGamesDir("mame") -> findPrefixDir(GAMES_DIR, no_prefix_check=true,
- * "mame") -- Main_MiSTer file_io.cpp:1135-1138 and :1046-1132 @ 915ca339.
- * The in-source order comment there (file_io.cpp:1048-1055) and the code
+ * "mame") -- Main_MiSTer file_io.cpp:1135-1138 and :1046-1133 @ 915ca339.
+ * The in-source order comment there (file_io.cpp:1048-1056) and the code
  * below it agree: USB first, then network, then CIFS, then the SD card,
  * with the bare `<root>/mame` checked before `<root>/games/mame` at every
  * root. Relative paths are resolved against the storage root by
  * make_fullpath (file_io.cpp:215-227), so "../usb0/mame" is
- * /media/usb0/mame.
+ * /media/usb0/mame. That walk spans 19 directories, and this list used to
+ * mirror all 19.
+ *
+ * WHY IT NO LONGER DOES. Exactly one of those 19 has ever been exercised
+ * anywhere -- /media/fat/games/mame, on the target device. The other 18
+ * were string literals no test and no run had ever reached, so a typo in
+ * one of them was indistinguishable from the directory merely being
+ * absent: the search failed the same silent way either case. Untested
+ * paths bought no coverage, only the appearance of it.
+ *
+ * The trim is conservative, because the cost of dropping a path someone
+ * really uses is a silent fall back to PS2 balance -- worse than a wasted
+ * open(). Kept:
+ *
+ *   /media/fat/games/mame     update_all's default arcade ROM directory,
+ *                             and the only path verified on real hardware
+ *   /media/fat/mame           where a hand-assembled set commonly lands
+ *   /media/fat/_Arcade/mame   Main's own last-resort fallback
+ *   /media/usb0/{,games/}mame a 79 MB romset on external storage is a
+ *                             real install, and usb0 is the first (often
+ *                             only) USB storage slot Main numbers
+ *
+ * Dropped: usb1..usb5, /media/network, /media/fat/cifs. On the target
+ * device /media/network and /media/fat/cifs do not exist at all, not even
+ * as empty mount points, whereas /media/usb0../media/usb7 all do -- so a
+ * second USB slot is the only dropped case with a mount point behind it,
+ * and reaching it needs a player with two storage devices attached who
+ * put the romset on the second. That player is no longer dropped into PS2
+ * balance without a word: the miss summary in ArcadeCharData_Init names
+ * every directory it looked in, which is the whole point of trimming to a
+ * list short enough to print.
+ *
+ * (Main itself only searches usb0..usb5 -- file_io.cpp:1049-1050 -- even
+ * though the rootfs provisions usb0..usb7, so usb6/usb7 were never in
+ * scope for either of us.)
  *
  * The last entry is Main's fallback rather than part of that list: when
  * findGamesDir finds no `mame` directory anywhere, set_arcade_root falls
@@ -470,8 +504,9 @@ static void dump_data(CharInitData* data, Character character) {
  * when every directory above is absent, which is why it is probed last.
  *
  * /media/fat/mame is listed for a different reason. Main does check it
- * (file_io.cpp:1124-1127), but a hit there leaves mame_root empty
- * (mra_loader.cpp:172-174) and the part path is then built as
+ * (file_io.cpp:1118-1122), but that branch returns with `dir` still the
+ * bare "mame", so the strrchr in set_arcade_root finds no '/' and leaves
+ * mame_root empty (mra_loader.cpp:171-174); the part path is then built as
  * "%s/mame/%s/%s" (mra_loader.cpp:895) -> the absolute "/mame/<zip>/<part>",
  * so Main itself misreads that case. We still look, because it is where
  * such a user actually put the romset and one failed open costs nothing.
@@ -482,15 +517,8 @@ static void dump_data(CharInitData* data, Character character) {
  * acceptance is by content digest, not by presence -- a decoy or
  * wrong-revision zip in an earlier directory cannot mask a good one later. */
 static const char* const cps3_rom_dirs[] = {
-    "/media/usb0/mame",       "/media/usb0/games/mame",
-    "/media/usb1/mame",       "/media/usb1/games/mame",
-    "/media/usb2/mame",       "/media/usb2/games/mame",
-    "/media/usb3/mame",       "/media/usb3/games/mame",
-    "/media/usb4/mame",       "/media/usb4/games/mame",
-    "/media/usb5/mame",       "/media/usb5/games/mame",
-    "/media/network/mame",    "/media/network/games/mame",
-    "/media/fat/cifs/mame",   "/media/fat/cifs/games/mame",
-    "/media/fat/mame",        "/media/fat/games/mame",
+    "/media/usb0/mame", "/media/usb0/games/mame",
+    "/media/fat/mame",  "/media/fat/games/mame",
     "/media/fat/_Arcade/mame",
 };
 
@@ -515,6 +543,47 @@ static const char* const cps3_rom_zip_names[] = {
 #define CPS3_ROM_DIR_COUNT (sizeof(cps3_rom_dirs) / sizeof(cps3_rom_dirs[0]))
 #define CPS3_ROM_ZIP_NAME_COUNT (sizeof(cps3_rom_zip_names) / sizeof(cps3_rom_zip_names[0]))
 
+/* Is this path a directory / a regular file right now? Used ONLY to
+ * classify a miss for the log — never to decide what to open, so a
+ * filesystem that answers oddly costs a vaguer message and never a ROM
+ * that would otherwise have loaded. */
+static bool path_is(const char* path, SDL_PathType want) {
+    SDL_PathInfo info;
+    return SDL_GetPathInfo(path, &info) && info.type == want;
+}
+
+/* Joins the probed directory names into `out` for the miss summary:
+ * every one of them, or only the ones that are really there. Runs on the
+ * failure path only. Truncation would be harmless, and CPS3_ROM_DIR_COUNT
+ * is small enough (see the trim rationale above) that it cannot happen at
+ * the 256-byte call site. */
+static void join_rom_dirs(char* out, size_t out_size, bool only_existing) {
+    size_t used = 0;
+    out[0] = '\0';
+
+    for (size_t d = 0; d < CPS3_ROM_DIR_COUNT && used + 1 < out_size; d++) {
+        if (only_existing && !path_is(cps3_rom_dirs[d], SDL_PATHTYPE_DIRECTORY)) {
+            continue;
+        }
+
+        /* SDL_snprintf returns what it WOULD have written, so clamp
+         * before it is used as an offset again. */
+        const int written = SDL_snprintf(out + used, out_size - used, "%s%s",
+                                         (used > 0) ? ", " : "", cps3_rom_dirs[d]);
+
+        if (written <= 0) {
+            break;
+        }
+
+        used += (size_t)written;
+
+        if (used >= out_size) {
+            used = out_size - 1;
+            break;
+        }
+    }
+}
+
 void ArcadeCharData_Init() {
     /* CPS3 ROM search path.
      *
@@ -526,56 +595,141 @@ void ArcadeCharData_Init() {
      * Within each zip the required slices are matched by CONTENT --
      * stored-CRC32 pre-filter then SHA-256 (rom_load.c) -- never by entry
      * name or path, so a flat minimal set, update_all's merged set and
-     * subdirectory-variant packagings all load identically. A path that
-     * does not exist costs one failed open and nothing else: Rom_Load
-     * returns NULL without logging when mz_stream_open fails
-     * (rom_load.c:120-126). */
+     * subdirectory-variant packagings all load identically.
+     *
+     * MAKING A MISS LEGIBLE. Rom_Load answers NULL to three quite
+     * different questions: "the file is not there" (rom_load.c:123-126,
+     * silently), "it is there but will not open as a zip"
+     * (rom_load.c:131-136, silently) and "the zip opened and nothing
+     * inside it matched the pinned digests" (rom_load.c:230-239, one line
+     * per unmatched SIMM). The third is a player holding the WRONG
+     * REVISION of the romset, and it used to end in exactly the same
+     * final message as a player holding no romset at all -- followed by a
+     * silently different game, because total failure falls back to PS2
+     * balance without further comment.
+     *
+     * So the walk below stats each directory and each candidate file
+     * itself, purely to classify the outcome. Rom_Load is still called
+     * for every candidate exactly as before and no stat result gates it,
+     * so what gets FOUND is unchanged; only the logging is new.
+     *
+     * Bounded on purpose. A normal "no romset installed" boot prints ONE
+     * line, because nothing existed to report on. Only a zip we actually
+     * found and then refused earns a line of its own. */
     size_t rom_size = 0;
     const void* rom = NULL;
     int probed = 0;
+    int dirs_present = 0;
+    int zips_found = 0;
 
     /* DEV/TEST ONLY. Not a supported player knob and never set on a real
      * install: it is how CI-style and cross-arch runs point at a romset
      * that lives outside a MiSTer arcade install at all. */
     const char* env_path = SDL_getenv("THIRDSARM_CPS3_ZIP");
+    const bool env_set = env_path != NULL && env_path[0] != '\0';
 
-    if (env_path != NULL && env_path[0] != '\0') {
+    if (env_set) {
+        const bool env_found = path_is(env_path, SDL_PATHTYPE_FILE);
+
         probed++;
         rom = Rom_Load(env_path, &rom_size);
 
         if (rom != NULL) {
             SDL_Log("ArcadeCharData: CPS3 ROM load satisfied by %s ($THIRDSARM_CPS3_ZIP)", env_path);
+        } else if (env_found) {
+            zips_found++;
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "ArcadeCharData: $THIRDSARM_CPS3_ZIP=%s exists but FAILED CONTENT "
+                        "VERIFICATION -- wrong romset revision, not a missing file",
+                        env_path);
+        } else {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "ArcadeCharData: $THIRDSARM_CPS3_ZIP=%s does not exist", env_path);
         }
     }
 
-    /* One flat walk over dirs x names so the loop has a single exit and
-     * the per-candidate string is freed on every path. */
-    for (size_t i = 0; rom == NULL && i < CPS3_ROM_DIR_COUNT * CPS3_ROM_ZIP_NAME_COUNT; i++) {
-        char* path = NULL;
-        SDL_asprintf(&path, "%s/%s", cps3_rom_dirs[i / CPS3_ROM_ZIP_NAME_COUNT],
-                     cps3_rom_zip_names[i % CPS3_ROM_ZIP_NAME_COUNT]);
-
-        if (path == NULL) {
-            continue;
+    /* dirs x names, outer loop over directories so the directory stat is
+     * paid once per directory instead of once per candidate. Both loops
+     * carry the `rom == NULL` guard, so the walk still has a single exit
+     * and the per-candidate string is freed on every path. */
+    for (size_t d = 0; rom == NULL && d < CPS3_ROM_DIR_COUNT; d++) {
+        if (path_is(cps3_rom_dirs[d], SDL_PATHTYPE_DIRECTORY)) {
+            dirs_present++;
         }
 
-        probed++;
-        rom = Rom_Load(path, &rom_size);
+        for (size_t n = 0; rom == NULL && n < CPS3_ROM_ZIP_NAME_COUNT; n++) {
+            char* path = NULL;
+            SDL_asprintf(&path, "%s/%s", cps3_rom_dirs[d], cps3_rom_zip_names[n]);
 
-        if (rom != NULL) {
-            SDL_Log("ArcadeCharData: CPS3 ROM load satisfied by %s", path);
+            if (path == NULL) {
+                continue;
+            }
+
+            const bool zip_found = path_is(path, SDL_PATHTYPE_FILE);
+
+            probed++;
+            rom = Rom_Load(path, &rom_size);
+
+            if (rom != NULL) {
+                SDL_Log("ArcadeCharData: CPS3 ROM load satisfied by %s", path);
+            } else if (zip_found) {
+                /* The one miss worth a line of its own: a file with a
+                 * romset's name, in a directory romsets really live in,
+                 * that we nevertheless refused. Rom_Load's own "no entry
+                 * matched" lines sit directly above this one and name the
+                 * slices that were missing. */
+                zips_found++;
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "ArcadeCharData: %s exists but FAILED CONTENT VERIFICATION "
+                            "-- wrong romset revision, not a missing ROM",
+                            path);
+            }
+
+            SDL_free(path);
         }
-
-        SDL_free(path);
     }
 
     if (rom == NULL) {
-        SDL_Log("ArcadeCharData: no CPS3 ROM source matched the pinned content digests "
-                "in %d probed location(s); install a CPS3 arcade core romset "
-                "(%s or %s under a MiSTer arcade ROM directory such as "
-                "/media/fat/games/mame)%s",
-                probed, cps3_rom_zip_names[0], cps3_rom_zip_names[1],
-                (env_path != NULL && env_path[0] != '\0') ? ", $THIRDSARM_CPS3_ZIP included" : "");
+        char dir_list[256];
+
+        /* Three misses, three answers. They used to share one message, so
+         * "you have the wrong romset" and "you have no romset" arrived in
+         * a bug report indistinguishable from each other. */
+        if (zips_found > 0) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "ArcadeCharData: no CPS3 ROM -- %d candidate zip(s) were FOUND and "
+                        "REJECTED by content verification (each named above), out of %d "
+                        "probed location(s). A romset IS installed; it is the WRONG "
+                        "REVISION. Arcade balance needs the sfiii3nr1 SIMM1 slices, which "
+                        "in update_all's merged set live under sfiii3nar1/. Falling back "
+                        "to PS2 balance.",
+                        zips_found, probed);
+        } else if (dirs_present > 0) {
+            join_rom_dirs(dir_list, sizeof(dir_list), true);
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "ArcadeCharData: no CPS3 ROM -- %d of the %d arcade ROM directories "
+                        "searched exist (%s), but none of them holds %s or %s. Falling back "
+                        "to PS2 balance.",
+                        dirs_present, (int)CPS3_ROM_DIR_COUNT, dir_list,
+                        cps3_rom_zip_names[0], cps3_rom_zip_names[1]);
+        } else {
+            join_rom_dirs(dir_list, sizeof(dir_list), false);
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "ArcadeCharData: no CPS3 ROM -- none of the %d arcade ROM directories "
+                        "searched exist on this system (%s), so no CPS3 arcade core romset is "
+                        "installed anywhere we look. Install one (%s or %s) and retry. "
+                        "Falling back to PS2 balance.",
+                        (int)CPS3_ROM_DIR_COUNT, dir_list,
+                        cps3_rom_zip_names[0], cps3_rom_zip_names[1]);
+        }
+
+        if (env_set) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "ArcadeCharData: $THIRDSARM_CPS3_ZIP was set and is counted in the "
+                        "%d probed location(s) above",
+                        probed);
+        }
+
         return;
     }
 
