@@ -87,14 +87,24 @@
 # detection for all 96 corpora to fix one, and that trade was not this task's
 # to make.
 #
-# DUMMY GUARD, DELIBERATELY UNUSED
-# --------------------------------
-# Every entry is `dummy: none`. Under arcade balance the port's
-# check_illegal_lever_data() lever normalization is skipped (plmain.c:52-55),
-# and a `dummy: stand` entry that BLOCKs under PS2 was observed to HIT under
-# arcade instead. That divergence is real and unexplained; per
-# CORPUS-AUTHORING.md Phase 6 it is a STOP, not an xfail, so no BLOCK entry is
-# authored here at all. Recorded in docs/queue.md under #108.
+# DUMMY GUARD, NOT USED HERE
+# --------------------------
+# Every entry is `dummy: none`, which is the right shape for this corpus
+# regardless: it exists to pin the install-super STOCK machine, and a blocking
+# dummy adds nothing to that.
+#
+# The original reason given here was different and is now obsolete. It read
+# that a `dummy: stand` entry which BLOCKs under PS2 was observed to HIT under
+# arcade, that the divergence was "real and unexplained", and that per
+# CORPUS-AUTHORING.md Phase 6 that made BLOCK entries a STOP. Task #133
+# isolated it: the training ALL-GUARD DIP only makes the dummy block through
+# PS2's `ags` term (hitcheck.c:1365-1366/:1496), which defense_ground_cps3()
+# does not have, so an arcade dummy needs `auto_guard` set instead. The harness
+# now sets it (input_script_apply_guard_mode(), src/test/input_script.c, which
+# carries the derivation), corpus-q-arcade.yaml's 22 BLOCK entries are restored
+# and all pass, and corpus-hugo-arcade.yaml adds 8 more. Arcade BLOCK coverage
+# is no longer blocked. The lever-normalization skip (plmain.c:52-55) named in
+# the old text was a guess and was not the cause.
 character: yun
 oracle: yun.json
 balance: arcade

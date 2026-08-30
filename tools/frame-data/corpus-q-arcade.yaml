@@ -1,4 +1,4 @@
-# Q under ARCADE (CPS3) balance -- task #108.
+# Q under ARCADE (CPS3) balance -- task #108, completed by task #133.
 #
 # WHAT THIS IS
 # ------------
@@ -21,31 +21,52 @@
 # PS2 corpus's, and the question this corpus asks is whether the shipping
 # engine agrees with them.
 #
-# It mostly does. Measured this session, 51 entries: 49 PASS, 2 XFAIL.
+# It does, on all 73 of them. Measured 2026-08-30: 73 PASS, 0 XFAIL, and the
+# parsed table is row-for-row identical in content to tools/frame-data/
+# golden/q.tsv -- same outcome, same S/A/R/adv/kd on every label.
 #
-# WHAT WAS LEFT OUT, AND WHY
-# --------------------------
-# All 22 of corpus-q.yaml's `outcome: BLOCK` entries are omitted. Under arcade
-# balance the port's check_illegal_lever_data() lever normalization is skipped
-# (src/sf33rd/Source/Game/engine/plmain.c:52-55), and a dummy that BLOCKs
-# under PS2 was observed to take the HIT instead -- reproduced on
-# corpus-smoke.yaml's own `close-lp-block-vs-stand`, which reads
-# `outcome=BLOCK` on PS2 and `outcome=HIT` on arcade with every numeric field
-# unchanged. That is a training-dummy behaviour divergence, not a frame-data
-# one, and it is not yet understood; per CORPUS-AUTHORING.md Phase 6 an
-# unexplained divergence is a STOP, not something to paper over with 22
-# xfails. So arcade BLOCK coverage is NOT claimed here. Omitted labels:
+# THE THREE DELIBERATE DEVIATIONS FROM corpus-q.yaml
+# --------------------------------------------------
+# All three are marked inline at their entries. None of them touches an
+# `expect:` field; two change a `setup.dummy`, one changes entry ORDER.
 #
-#   q-far-jab-block, q-jab-block, q-strong-block
-#   q-fierce-block, q-short-block, q-forward-block
-#   q-far-forward-block, q-roundhouse-block, q-crlk-block
-#   q-crmk-block, q-crhk-block, q-crhp-block
-#   q-backhp-block, q-backhk-block, q-dla-rh-block
-#   q-hsb-jab-block, q-hsb-strong-block, q-hsb-fierce-block
-#   q-uoh-samef-block, q-uoh-1f-block, q-uoh-chain-retrigger
-#   q-crmk-multimove-merge
+#  1/2. `q-dla-rh-block` and `q-crmk-multimove-merge` say `dummy: crouch`
+#       where corpus-q.yaml says `dummy: stand`. Both attacks are LOWS, and
+#       arcade requires the dummy to actually be crouching to block a low
+#       where the PS2 port does not. This is a REAL engine difference, not a
+#       harness workaround -- see the note at entry 1 for the code.
 #
-# The two XFAILs are marked inline at their entries (q-crmp-hit-capture-a/b).
+#    3. `q-crmk-multimove-merge` is moved to sit AFTER the two
+#       `q-crmp-hit-capture-*` entries instead of before them, because a
+#       `dummy: crouch` entry leaves the dummy crouching into the FIRST entry
+#       that follows it. That carryover is balance-INDEPENDENT (measured on
+#       both engines, see the note at that entry); it only becomes visible
+#       here because deviation 2 introduced a crouch entry the PS2 ordering
+#       never had.
+#
+# WHAT MAKES THE BLOCK ENTRIES RUN AT ALL (history)
+# -------------------------------------------------
+# This corpus originally shipped with all 22 of corpus-q.yaml's `outcome:
+# BLOCK` entries OMITTED, because a `dummy: stand` entry that BLOCKs under PS2
+# was observed to HIT under arcade and the cause was not isolated. It is now:
+# the training ALL-GUARD DIP only makes the dummy block through PS2's `ags`
+# term (hitcheck.c:1365-1366/:1496), which defense_ground_cps3() does not
+# have. The harness now sets the dummy's `auto_guard` -- the field CPS3's own
+# defense path provides for exactly this -- in src/test/input_script.c's
+# input_script_apply_guard_mode(), which carries the full derivation. All 22
+# BLOCK entries are restored below and all 22 pass.
+#
+# WHAT MAKES q-crmp-hit-capture-a/b PASS (history)
+# ------------------------------------------------
+# Those two carried an ARCADE-VS-PORT-DIVERGENCE xfail for measuring adv=-2
+# against an oracle of -1. Cause: arcade skips check_omop_vital()
+# (plmain.c:335-337), so the training dummy is never healed and reaches 0
+# vitality partway through a 73-entry corpus, at which point same_dm_stop()'s
+# nearly-dead branch (hitcheck.c:1023-1039) shortens the defender hitstop by
+# one frame. att.dipsw/hs_me/hs_you are IDENTICAL across the two engines
+# there. The harness now restores the dummy's vitality at each entry
+# (input_script_restore_vitality(), src/test/input_script.c), and both entries
+# read the oracle's -1. Not an engine divergence -- a dead dummy.
 #
 # `inter_entry_wait: 90` and `oracle: q.json` are corpus-q.yaml's own values,
 # unchanged.
@@ -54,6 +75,61 @@ oracle: q.json
 balance: arcade
 inter_entry_wait: 90
 entries:
+- label: q-far-jab-block
+  setup: { dist: 100, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Far Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: q-jab-block
+  setup: { dist: close, dummy: stand }
+  input: "press LP"
+  qjson: { name: "Jab" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: q-strong-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP"
+  qjson: { name: "Strong" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: q-fierce-block
+  setup: { dist: close, dummy: stand }
+  input: "press HP"
+  qjson: { name: "Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: q-short-block
+  setup: { dist: close, dummy: stand }
+  input: "press LK"
+  qjson: { name: "Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: q-forward-block
+  setup: { dist: close, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: q-far-forward-block
+  setup: { dist: 100, dummy: stand }
+  input: "press MK"
+  qjson: { name: "Far Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: q-roundhouse-block
+  setup: { dist: close, dummy: stand }
+  input: "press HK"
+  qjson: { name: "Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
 
 - label: q-lp-whiff
   setup: { dist: 250, dummy: none }
@@ -96,6 +172,42 @@ entries:
   qjson: { name: "Roundhouse" }
   outcome: WHIFF
   expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# cr.LK vs. a guarding dummy - issue #14, SHIPPED 2026-07-07. Was: never
+# registered BLOCK (fell through to WHIFF) regardless of dummy stance/
+# distance/pre-crouch timing. Root cause: on contact, P2.dm_stop (frame_trace.c
+# column P2.dstop) transitions 0 -> +7 (positive) - a genuine block exchange
+# (P1/P2 both take real hitstop) - but the old event-edge predicate required
+# `dn->dm_stop < 0`, so a *positive* dm_stop transition was silently dropped.
+# dm_stop = att.hs_you (hitcheck.c dm_status_copy, hit :544 and guard :603
+# paths alike); hs_you is a signed s8 per-move data byte (structs.h:115) whose
+# sign selects hitstop *style* (positive = frozen, negative = animation
+# advances during the stop - plmain.c check_hit_stop), not the event kind.
+# Q/Ryu cr.LK carry hs_you=+7; their cr.MK/cr.HK carry -9/-11. Fix: widened
+# frame_data_overlay.c's event-edge predicate to `dn->dm_stop != 0`
+# (frame_data_overlay.c ~line 929) - no non-contact engine code writes
+# dm_stop, so the widened edge is contact-only in both signs; parries
+# (always -15) are unaffected.
+- label: q-crlk-block
+  setup: { dist: close, dummy: crouch }
+  input: "press DOWN+LK"
+  qjson: { name: "Crouching Short" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: q-crmk-block
+  setup: { dist: close, dummy: crouch }
+  input: "press DOWN+MK"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+- label: q-crhk-block
+  setup: { dist: close, dummy: crouch }
+  input: "press DOWN+HK"
+  qjson: { name: "Crouching Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
 
 - label: q-crlk-whiff
   setup: { dist: 250, dummy: none }
@@ -215,6 +327,17 @@ entries:
   outcome: HIT
   expect: { S: from-qjson, A: from-qjson, R: from-qjson, kd: 1 }
 
+# cr.HP: plan section 1.8 item 4 lists it alongside cr.LK/MK/HK for the
+# documented +2 BLOCK-advantage issue (synthesis section 13.8's OPEN table).
+# Empirically it does NOT reproduce here (see q-crmk-block/q-crhk-block
+# comment below for the same result on MK/HK) - adv matches q.json exactly.
+- label: q-crhp-block
+  setup: { dist: close, dummy: crouch }
+  input: "press DOWN+HP"
+  qjson: { name: "Crouching Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
 - label: q-crhp-whiff
   setup: { dist: 250, dummy: none }
   input: "press DOWN+HP"
@@ -242,6 +365,13 @@ entries:
   outcome: WHIFF
   expect: { S: from-qjson, A: from-qjson, R: from-qjson }
 
+- label: q-backhp-block
+  setup: { dist: close, dummy: stand }
+  input: "press LEFT+HP"
+  qjson: { name: "Back + Fierce" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
 - label: q-backhp-hit
   setup: { dist: close, dummy: none }
   input: "press LEFT+HP"
@@ -255,6 +385,13 @@ entries:
   qjson: { name: "Back + Roundhouse" }
   outcome: WHIFF
   expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: q-backhk-block
+  setup: { dist: close, dummy: stand }
+  input: "press LEFT+HK"
+  qjson: { name: "Back + Roundhouse" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
 
 - label: q-backhk-hit
   setup: { dist: close, dummy: none }
@@ -337,6 +474,33 @@ entries:
   outcome: HIT
   expect: { S: from-qjson, A: from-qjson, R: from-qjson }
 
+# ARCADE DEVIATION 1 of 3 (task #133): corpus-q.yaml says `dummy: stand` here.
+# Dashing Leg Attack is a LOW (its att.guard & 0x18 selects case 8), and
+# defense_ground_cps3() requires the crouch bit to be held to guard a low --
+# `case 8: if (!(ds->cp->sw_lvbt & 2)) return 2;`, hitcheck.c:1320-1321.
+# defense_ground_ps2()'s same case carries an `&& ags == 0` escape
+# (hitcheck.c:1508) which lets a STANDING training ALL-GUARD dummy block a low,
+# so the PS2 twin never had to say `crouch`. Measured verbatim-with-`stand`
+# under arcade: outcome=HIT, adv=+35, kd=1 instead of BLOCK adv=-15. The
+# numbers below are unchanged from corpus-q.yaml and are met exactly once the
+# dummy actually crouches.
+# DLA RH BLOCK: new Step 5 diagnosis anchor entry (2026-07-07,
+# docs/frame-data-synthesis.md §13.10) - first-ever clean BLOCK capture
+# for this move (also a third always-connecting entry alongside Fierce
+# Head/RH Leg's HIT variants below, per the ORDERING NOTE above - a
+# corrupted P1 teleport from the preceding entry cannot break this one
+# since DLA RH connects at any distance up to DIST_MAX=300 regardless of
+# outcome). Matches q.json exactly on all four fields (31/2/31, adv -15,
+# zero residual) - anchors §13.10 Class 1's claim that the block/whiff
+# chain is arcade-exact for every strike-subfamily member; only the HIT
+# path plays a different (shorter) hit-branch recovery chain.
+- label: q-dla-rh-block
+  setup: { dist: 300, dummy: crouch }
+  input: "motion charge-back 45 then-forward HK; wait 100"
+  qjson: { name: "Dashing Leg Attack (RH)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
 # RH's dash travels far enough to connect even at DIST_MAX=300 (same
 # situation as Dashing Head Fierce above) - HIT entry instead of WHIFF.
 # R=24 on HIT vs q.json's documented 31 (the whiff/block-range figure,
@@ -355,6 +519,36 @@ entries:
   outcome: HIT
   expect: { S: from-qjson, A: from-qjson, R: 24 }
 
+# High Speed Barrage (hcb+P), continued. BLOCK recovery matches q.json
+# exactly for all three strengths; HIT recovery is a flat 21 for every
+# strength (differs from the WHIFF/BLOCK-matching q.json figure) - the
+# §13.10 HIT-R display convention (Class 1, hit-branch recovery chain,
+# docs/frame-data-synthesis.md), same mechanism as q-dla-rh-hit above.
+# CORRECTION (2026-07-06): the "not affected by teleport
+# corruption" claim previously here was false. This section sits directly
+# after q-dla-rh-hit (a connecting dash special), and the trace shows
+# every one of these six entries actually starts at a shorter range than
+# the requested dist=100: q-hsb-jab-block dist=41, q-hsb-jab-hit dist=60,
+# q-hsb-strong-block/hit dist=71/70, q-hsb-fierce-block/hit dist=71/70 (P2
+# teleports to the requested 524 correctly every time - it is P1/atk_x
+# that lands short, and only partially re-converges over several entries
+# rather than fully recovering in just the one entry immediately after
+# the dash, contrary to the ORDERING NOTE above). Plausible cause, not
+# chased further: Dashing Leg RH's own forward-dash carries momentum that
+# the following entries' `P` teleport pokes P1's position but doesn't
+# reset, so residual motion keeps nudging P1 forward for a few more
+# entries before it bleeds off - a corpus-ordering/engine-momentum
+# artifact, not a walk-back caused by hcb's own directional holds. HSB's
+# real reach is long enough that all six entries still connect and match
+# q.json's S/A/R regardless, so the PASS/XFAIL verdicts below are
+# unaffected - only the "not affected" claim itself was wrong.
+- label: q-hsb-jab-block
+  setup: { dist: 100, dummy: stand }
+  input: "motion hcb LP"
+  qjson: { name: "High Speed Barrage (Jab)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
 # HIT-R convention per docs/frame-data-synthesis.md §13.10 (Class 1,
 # hit-branch recovery chain) - R=21 is the actually-played post-active
 # recovery chain on HIT, not the WHIFF/BLOCK-matching arcade figure (26);
@@ -366,6 +560,13 @@ entries:
   outcome: HIT
   expect: { S: from-qjson, A: from-qjson, R: 21 }
 
+- label: q-hsb-strong-block
+  setup: { dist: 100, dummy: stand }
+  input: "motion hcb MP; wait 60"
+  qjson: { name: "High Speed Barrage (Strong)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
 # HIT-R convention per §13.10 (Class 1, hit-branch recovery chain) - same
 # mechanism as q-hsb-jab-hit above; R=21 vs arcade 28.
 - label: q-hsb-strong-hit
@@ -374,6 +575,13 @@ entries:
   qjson: { name: "High Speed Barrage (Strong)" }
   outcome: HIT
   expect: { S: from-qjson, A: from-qjson, R: 21 }
+
+- label: q-hsb-fierce-block
+  setup: { dist: 100, dummy: stand }
+  input: "motion hcb HP; wait 60"
+  qjson: { name: "High Speed Barrage (Fierce)" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
 
 # HIT-R convention per §13.10 (Class 1, hit-branch recovery chain) - same
 # mechanism as q-hsb-jab-hit/q-hsb-strong-hit above; R=21 vs arcade 28.
@@ -448,6 +656,51 @@ entries:
   qjson: { name: "Capture and Deadly Blow (RH)" }
   outcome: WHIFF
   expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+# UOH (press MP+MK). q.json's Universal Overhead entry has non-numeric
+# Block_advantage/Hit_advantage ("-"), so no expect.adv anywhere below.
+# BLOCK: S/R match q.json exactly for both the same-frame and 1-frame-apart
+# timing variants (synthesis section 13.7.2's S=15-vs-16 distinction).
+# A: asserted as an explicit 11, NOT from-qjson (from-qjson resolves to the
+# arcade-table 10). §13.11's declared-truth displayed-A convention (adopted
+# 2026-07-07, user decision on the issue #17 Step-1 escalation) restores the
+# §13.7.4 revoke's subtraction (gated, charset.c
+# fd_restore_revoked_declared_credit - mutation lever F), so displayed A is
+# always the engine's declared active credit (this move's cells sum
+# 1+2+2+3+3=11), path-independently across WHIFF/BLOCK/HIT - see
+# docs/frame-data-synthesis.md §13.11. (History: this comment previously
+# read "the section 13.7.4 A+1 residual does NOT reproduce here" - that was
+# accurate for the pre-restore gate state, where the revoke's subtraction
+# left A=10 matching from-qjson; the §13.11 census this session confirmed
+# the revoke fires in all 5 UOH windows, and post-restore the displayed
+# value is the convention's 11, not the arcade 10.) Plain PASS regression
+# guard, now asserting the convention value.
+# CORRECTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20 SESSION 11 branch A; <sp>/zero/arcade-s11/session-report.md):
+# from-qjson (R=5, whiff-canonical) was a coincidental match - session 8's
+# original BLOCK capture at this value was retroactively proven a WHIFF
+# (dummy walked back out of range pre-contact; whiff-shaped raw-box-length
+# + zero-freeze signature, §13.20 §2.2). Session 11 re-captured this leg
+# with the dummy cornered (walkback impossible) and a mandatory in-tape
+# contact witness (attacker frz 8->0 overlapping a freeze-extended 20-raw
+# box window, vs the 10-raw whiff-canonical signature): real arcade R=6,
+# matching this engine's own busy-edge/lever-R construction exactly (lever
+# T). Re-literaled to the arcade value; probe-confirmed actionable at fc
+# 262853, zero early acceptance. A stays 11 (§13.11 declared-truth,
+# unaffected - A does not change, design §5).
+- label: q-uoh-samef-block
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 11, R: 6 }
+
+- label: q-uoh-1f-block
+  setup: { dist: close, dummy: stand }
+  input: "press1f MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: 16, A: 11, R: from-qjson }
 
 # WHIFF anchor for the §13.11 declared-truth A convention: the shipped build
 # has ALWAYS displayed A=11 here (Step 1 finding F3 measured it as a latent,
@@ -531,6 +784,92 @@ entries:
   outcome: HIT
   expect: { S: 16, A: 11, R: 3 }
 
+# Stage 4: remaining section 13.8 reproducer xfails not already covered above
+# (q-crlk-block/hit above now PASS - issue #14 SHIPPED 2026-07-07;
+# q-cndb-*-hit above already cover CnDB R+1; q-crmk-block/q-crhk-block/
+# q-crhp-block above already cover the cr.* +2-adv item, which does NOT
+# currently reproduce).
+#
+# UOH chain (synthesis section 13.7.1/13.9.2/13.9.4, "same-r1=4 retrigger").
+# CORRECTION (2026-07-06): the original 1-frame-gap triple-press recipe
+# does NOT exercise this bug - rapid presses land during the first UOH's
+# own startup and are simply eaten (single clean FINAL, correct A=10);
+# the previous "did not reproduce" comment described that null result but
+# wrongly concluded the bug itself doesn't reproduce. It DOES reproduce
+# with proper timing: a second MP+MK press ~38 frames after the first.
+# Verified across wait=37/38/39 (all three land the retrigger while
+# attacker r1 is still 4, i.e. before the r1:0->!=0 MOVE_START edge the
+# overlay resets fd_engine_active_count[atk] on); wait<=36 or wait>=40
+# miss the window - the second press is either fully absorbed with no
+# effect, or lands after the first FINAL already emitted and opens a
+# distinct second window instead of merging. At wait=38 (picked for
+# margin in the middle of the 37-39 hit range): before the fix, a single
+# FINAL merged both taps' engine_a (A=20, timing-dependent - the doc's
+# own F=1339 case reports A=22 for the same mechanism at a different
+# retrigger offset).
+#
+# FIXED (§13.9.4, shipped 2026-07-07 on `frame-data-on-mister`): overlay-only gated anchor-time engine_a
+# snapshot in frame_data_overlay.c. §13.7.5's original recommendation
+# (override A with the trimmed-raw[] ACTIVE/CONTACT count, "active_pf")
+# was tested and FALSIFIED during the fix's diagnosis: active_pf=13 for
+# this retrigger AND for both clean-UOH BLOCK entries above (raw_len-S-R:
+# 33-15-5, 34-16-5) - arcade A=10 nowhere in that quantity. active_pf
+# (visible on-screen ticks) and engine_a (cg_ctr accumulator lump sum)
+# are structurally different countings even in the passing case; see
+# frame_data_overlay.c's engine_a_at_cut_anchor comment and synthesis
+# §13.7.5/§13.9.4 for the falsification detail. The shipped fix instead
+# snapshots fd_engine_active_count[atk] at the first cghi=1 frame after
+# the cgix-reset (the same anchor §13.5.1 already cuts recovery at), and
+# uses that snapshot as the displayed A only when the cut actually
+# committed (cghi1_count>=3) AND the cghi=1 dwell was interrupted by a
+# second press (cghi1_dwell_broken) - the retrigger's specific signature.
+# Trace-verified (both arithmetic: 20 total - 10 per-tap = 10; and a
+# direct charset.c [CM]-log replay of the accumulator: net sum of adds
+# with Game_timer <= the anchor's GT is exactly 10, and the first add
+# after the anchor lands at tap-2's first active cell) that the anchor
+# snapshot equals tap-1's total = arcade's A=10 for this reproducer.
+#
+# Accepted residual (NOT fixed by this change, out of scope): a retrigger
+# landing BEFORE any cghi=1 dwell forms (anchor set only after both taps)
+# leaves cghi1_dwell_broken false, so the gate stays off and A is still
+# inflated - no worse than before, just not improved. This reproducer's
+# wait=38 timing has the anchor-first shape (anchor precedes the second
+# press), so it exercises the fixed path.
+#
+# UPDATE (2026-07-07, §13.11 declared-truth displayed-A convention): the
+# "arcade's A=10" language two paragraphs above is now pre-convention
+# history, not current truth. The §13.9.4 anchor snapshot reads the live
+# fd_engine_active_count accumulator, and that accumulator now automatically
+# inherits the §13.11 gated restore (charset.c
+# fd_restore_revoked_declared_credit) with zero overlay changes - tap-1's
+# declared total is 11, not 10, so the anchor now snapshots 11. `A: 11` below
+# is exactly tap-1's declared credit, path-independent with the clean UOH
+# BLOCK/HIT entries above. The §13.9.4 fix itself stays fully load-bearing:
+# without it the display would be the merged live accumulator, 22 (11 per
+# tap - see mutation lever B, which now expects FAIL A=22, not 20).
+# CORRECTED 2026-07-13 (UOH-CLOSURE lever T, docs/frame-data-synthesis.md
+# §13.20 SESSION 11 branch A; <sp>/zero/arcade-s11/session-report.md): the
+# design's own risk register (R8) flagged this scenario as a candidate for
+# "by-extension" citation (never itself hardware-run) if a direct capture
+# proved impractical - it proved practical: session 11 directly captured
+# this exact chain-retrigger recipe (corrected DSL offset, see the
+# session's own finding 7 - a `press` token compiles to 2 held + 1 release
+# frame BEFORE the wait timer starts, so a raw Lua second press needs
+# `pressoff1+41` not `pressoff1+38` to land at the same logical "wait 38"
+# point this corpus's own `compile_corpus.py` already computes correctly)
+# with both taps independently contact-witnessed (frz 8->0 in-box on each).
+# Result: real arcade R=6 (merged FINAL), matching this engine's own
+# busy-edge/lever-R construction exactly (lever T) - a DIRECT measurement,
+# not by-extension. Re-literaled to the arcade value; probe-confirmed
+# actionable at fc 262894 (= busy768 exactly), zero early acceptance. A
+# stays 11 (unaffected, design §5).
+- label: q-uoh-chain-retrigger
+  setup: { dist: close, dummy: stand }
+  input: "press MP+MK; wait 38; press MP+MK"
+  qjson: { name: "Universal Overhead" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: 11, R: 6 }
+
 # cr.MP HIT variance (synthesis section 13.2 / 13.8): two independent
 # captures of the identical setup, both against a pinned RNG. Both produced
 # byte-identical numbers - the variance documented in section 13.8 does not
@@ -542,14 +881,66 @@ entries:
   input: "press DOWN+MP"
   qjson: { name: "Crouching Strong" }
   outcome: HIT
-  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "arcade balance measures adv=-2 where the PS2 port measures -1 (everything else -- outcome, S, A, R -- identical). A one-frame defender-recovery divergence, cause NOT isolated; candidates are the arcade-only skips in plmain.c (check_illegal_lever_data at :52-55, check_omop_vital at :335-337, the about_gauge_process calls at :246-249/:274-277/:293-295/:305-307). Task #108, docs/queue.md. REOPEN CONDITION: this XPASSes the moment the two engines agree -- do not silence it, investigate it."}
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
 
 - label: q-crmp-hit-capture-b
   setup: { dist: close, dummy: none }
   input: "press DOWN+MP"
   qjson: { name: "Crouching Strong" }
   outcome: HIT
-  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson, xfail: "arcade balance measures adv=-2 where the PS2 port measures -1 (everything else -- outcome, S, A, R -- identical). A one-frame defender-recovery divergence, cause NOT isolated; candidates are the arcade-only skips in plmain.c (check_illegal_lever_data at :52-55, check_omop_vital at :335-337, the about_gauge_process calls at :246-249/:274-277/:293-295/:305-307). Task #108, docs/queue.md. REOPEN CONDITION: this XPASSes the moment the two engines agree -- do not silence it, investigate it."}
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
+
+# ARCADE DEVIATIONS 2 and 3 of 3 (task #133).
+#
+# 2: `dummy: crouch`, where corpus-q.yaml says `dummy: stand`. cr.MK is a LOW;
+#    same rule as ARCADE DEVIATION 1 above (hitcheck.c:1320-1321 vs :1508).
+#    Verbatim-with-`stand` under arcade this reads HIT adv=-2 instead of BLOCK
+#    adv=-3.
+#
+# 3: this entry sits AFTER q-crmp-hit-capture-a/b here, where corpus-q.yaml has
+#    it before them. Forcing the dummy to crouch leaves it crouching into the
+#    FIRST following entry -- long enough that a cr.MP landing ~10 frames into
+#    the next entry connects as a CROUCHING hit, reading q.json's
+#    Crouch_hit_advantage (0) rather than its Hit_advantage (-1). That is not
+#    an arcade property: a 3-entry control corpus [this entry, crmp-a, crmp-b]
+#    measured adv=+0 for crmp-a and -1 for crmp-b under BOTH --test-balance
+#    arcade AND --test-balance ps2, and -1/-1 under both when this entry is
+#    `dummy: stand` or absent. The PS2 corpus is unaffected only because it has
+#    no crouch entry in this position. Moving the entry past the pair is the
+#    smallest change that keeps every `expect:` in this file byte-identical to
+#    corpus-q.yaml's.
+# cr.MK multi-move merge (section 13.7.7/13.9.1, engine_a accumulates
+# across moves). Retimed 2026-07-06 to land the second press (LP) inside
+# the dummy's actual blockstun window, read directly from this move's own
+# trace: P2.r1 (dummy) is 1 from local F=7 through F=28 inclusive,
+# returning to 0 at F=29. `wait 10` puts the LP press at local F=13-14,
+# comfortably inside that window (checked wait=5/7/10/14/20/24 - all land
+# inside F=7-28 and give an identical result). Result: still NO merge, and
+# in fact no effect at all - P1.r1/P2.r1 timelines and the FINAL's
+# S/A/R/finals-count are byte-identical to plain cr.MK with no second
+# press whatsoever, for every wait value tried. Root cause: cr.MK's own
+# r1=4 state runs until its own Recovery elapses (S=7+A=3+R=14=24,
+# attacker idle at local F=32) - a full 3 frames AFTER the dummy already
+# exits blockstun (F=29, consistent with cr.MK's -3 block advantage), so
+# there is no "attacker already idle, dummy still blockstunned" window for
+# a fresh second move-start the way the doc's F=4940 case had. And since
+# Crouching Forward isn't chain/special/self-cancelable (q.json Cancel:
+# all false), a press arriving while P1 is still mid-cr.MK is simply
+# dropped, not merged. The §13.7.7/13.9.1 F=4940 merge needs an attacker
+# move with non-negative block advantage (so attacker recovers before
+# defender); cr.MK's -3 adv makes that precondition structurally
+# unreachable for this move. Kept as a plain PASS regression guard with an
+# honest comment (not xfail - nothing here currently fails) rather than
+# forcing a merge this move can't produce; a positive-advantage move
+# (e.g. Jab, adv +2) would be needed to actually hit the F=4940-style
+# window, which is out of scope for this entry (label/qjson stay cr.MK
+# per this finding's scope).
+- label: q-crmk-multimove-merge
+  setup: { dist: close, dummy: crouch }
+  input: "press DOWN+MK; wait 10; press LP"
+  qjson: { name: "Crouching Forward" }
+  outcome: BLOCK
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson, adv: from-qjson }
 
 # Stage 5: negative controls (plan section 1.8 item 5).
 #
@@ -621,4 +1012,3 @@ entries:
   setup: { dist: 250, dummy: none }
   input: "press UP"
   outcome: NONE
-
