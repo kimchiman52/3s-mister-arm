@@ -15,30 +15,54 @@ Findings and citations only. No narrative, no status prose.
 
 ---
 
-## #130 — slot-reclaim staleness (MEDIUM, auth)
+## #130 — slot-reclaim staleness — CLOSED
 
-Both port-reclaim arms fire on same-IP **plus** `portReclaims < MAX_PORT_RECLAIMS`
-with **no staleness precondition**, so they repoint a *live* slot — the host's
-included:
+Both port-reclaim arms now carry a staleness precondition:
+`tools/rendezvous-server/rendezvous-server.js:1348` (slot B) and `:1365` (slot A).
 
-- slot B arm — `tools/rendezvous-server/rendezvous-server.js:1184-1186`
-- slot A arm — `tools/rendezvous-server/rendezvous-server.js:1198-1200`
-- the cap — `tools/rendezvous-server/rendezvous-server.js:171` (`MAX_PORT_RECLAIMS = 8`)
+The threshold is a multiple of the slot's **own observed cadence**, not a fixed
+window — `slotReclaimIdleMs` (`rendezvous-server.js:739`), measured by
+`touchSlot` (`:692`), reset on repoint by `seatSlot` (`:713`).
 
-What a reclaimer actually proves: same public IP, knowledge of the session key,
-and return-routability at **its own new endpoint**. `cookieForSlot`
-(`rendezvous-server.js:612`) does **not** mix the session key — stated in the
-file's own comment at `:154` and `:449` — so it does **not** prove
-original-party identity.
+**No fixed window exists.** Protecting a live host slot with one missed-refresh
+of margin needs `W > 10000` (host advertise default 5000 ms,
+`src/port/config/config.c:111`); preserving #105 needs `W < 8000` (the
+attempt-2 signalling leg, `src/port/config/config.c:105`, ended at
+`src/netplay/direct_p2p.c:1958-1959`). The interval is empty.
 
-The comment at `rendezvous-server.js:160-164` understates this: it says the cap
-"bounds the churn rather than carrying a security property" and frames the
-residual as denial-of-room, not slot steering.
+`PORT_RECLAIM_MISSED_REFRESHES = 6` (`rendezvous-server.js:262`) is not a new
+constant: it is `SLOT_STALE_MS / host cadence` = 30000/5000, i.e. the "six
+missed refreshes" standard `SLOT_STALE_MS` (`:109`) already encodes, re-expressed
+in units of the slot that is actually being reclaimed. Yields:
 
-Off-path attackers stay fully blocked. Composed with late-punch's own
-8-relearn cap, a CGNAT-co-located room-code holder can steer both halves —
-inside the trust boundary the room code already defines, but the two caps are
-**independent counters, neither gating the other**.
+- joiner-cadence slot (~500 ms) → 3000 ms; fits the 8000 ms retry leg
+- host-cadence slot (~5000 ms) → 30000 ms = `SLOT_STALE_MS`; the arms grant
+  nothing over host-cadence slots that the pre-existing stale arm did not
+- unobserved cadence → `SLOT_STALE_MS` (never 0)
+
+Enforced, not asserted in prose: `tools/rendezvous-server/check_reclaim_window.py`,
+gate `reclaim-window` in `tools/gates/run-gates.sh`. Client and server deploy
+independently, so no `_Static_assert` or JS assertion can see both sides — same
+coupling and same remedy as #123's `check_key_rate_budget.py`.
+
+The understated comment at the old `:160-164` is replaced by
+`rendezvous-server.js:160-188` ("THE RESIDUAL, CORRECTED").
+
+**The two 8-caps were NOT linked, with evidence.** `MAX_PORT_RECLAIMS`
+(`rendezvous-server.js:194`) and `LATE_PUNCH_MAX_RELEARNS`
+(`src/netplay/late_punch.h:98`) cannot compose: a rendezvous DELIVER cannot
+reach the late-punch layer at all. `src/netplay/sdl_net_adapter.c:368-373`
+destroys every `Rendezvous_HasMagic` datagram before the late-punch call at
+`:387-389`, and `LatePunch_HandleDatagram` itself returns false for anything
+failing `Stun_HasPunchPrefix` (`src/netplay/late_punch.c:101-102`). A relearn
+requires an authenticated `3SX_PUNCH` datagram from the established peer IP on
+a new port (`late_punch.c:132-134`). Linking them would couple two counters
+that share no state and no path.
+
+Coverage: `__test_protocol.js` 39 tests (was 36) — `liveHostSlotNotHijackable`,
+`unobservedSlotMaximallyProtected`, `portReclaimBudgetExhausted`;
+`joinerPortReclaimSameIp` and `portReclaimSlotA` reworked to assert both
+directions.
 
 ---
 
