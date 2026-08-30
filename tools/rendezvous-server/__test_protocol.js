@@ -29,12 +29,33 @@ const TYPE_REGISTER = 1;
 const TYPE_DELIVER = 2;
 const TYPE_POLL = 3;
 const TYPE_CHALLENGE = 4;
+// Task #122: type 5 is NACK, a typed server refusal.
+const TYPE_NACK = 5;
 const REGISTER_LEN = 36;
 const POLL_LEN = 36;
 const DELIVER_LEN = 32;
 const CHALLENGE_LEN = 32;
+const NACK_LEN = 28;
 const COOKIE_LEN = 8;
 const V1_REGISTER_LEN = 28;
+
+// Task #122 reason codes, restated as literals for the same reason every
+// other wire constant in this file is: a duplicate catches an encoding bug
+// on either side. testNackPerReason ALSO asserts this table equals the
+// server's own _nackReasons hook, which is what catches a RENUMBER — the
+// failure mode that matters, since the server and the C client deploy
+// independently and a renumber is a silent misattribution.
+const NACK = {
+    BAD_VERSION: 1,
+    BAD_LENGTH: 2,
+    BAD_TYPE: 3,
+    RATE_IP: 4,
+    RATE_KEY: 5,
+    RATE_PREGATE: 6,
+    KEY_QUOTA: 7,
+    TABLE_FULL: 8,
+    SESSION_FULL: 9,
+};
 
 // --- Local encoders ---------------------------------------------------------
 
@@ -105,6 +126,40 @@ function isChallenge(buf) {
         buf.readUInt32BE(0) === MAGIC &&
         buf.readUInt8(4) === VERSION &&
         buf.readUInt8(5) === TYPE_CHALLENGE;
+}
+
+function isNack(buf) {
+    return buf.length === NACK_LEN &&
+        buf.readUInt32BE(0) === MAGIC &&
+        buf.readUInt8(4) === VERSION &&
+        buf.readUInt8(5) === TYPE_NACK;
+}
+
+function decodeNack(buf) {
+    if (!isNack(buf)) {
+        throw new Error(`not a NACK (len=${buf.length} ver=${buf.length >= 5 ? buf.readUInt8(4) : '?'} type=${buf.length >= 6 ? buf.readUInt8(5) : '?'})`);
+    }
+    return {
+        reason: buf.readUInt8(6),
+        sessionKey: Buffer.from(buf.subarray(8, 24)),
+    };
+}
+
+// The per-reason proof depends on reading the reason off a captured send,
+// so "nothing was sent" has to fail cleanly and name the reason we were
+// inducing rather than throwing out of the test body.
+function assertNackReason(sent, wantReason, msg) {
+    if (!sent) {
+        assert(false, `${msg} (no packet emitted at all)`);
+        return null;
+    }
+    if (!isNack(sent.buf)) {
+        assert(false, `${msg} (emitted a non-NACK: len=${sent.buf.length} type=${sent.buf.length >= 6 ? sent.buf.readUInt8(5) : '?'})`);
+        return null;
+    }
+    const dec = decodeNack(sent.buf);
+    assertEq(dec.reason, wantReason, msg);
+    return dec;
 }
 
 function decodeChallenge(buf) {
@@ -303,11 +358,26 @@ async function testVersionReject(serverPort) {
     const sessionKey = crypto.randomBytes(16);
     const c = await makeClient();
     try {
-        // A FUTURE version (v3) must be dropped, not guessed at.
+        // A FUTURE version (v3) must never be GUESSED AT — no slot, no
+        // state, no DELIVER. Task #122 changed what the sender is told,
+        // not what the server does: it is still refused, but now it is
+        // refused OUT LOUD. Before #122 this was total silence, which is
+        // byte-identical to an unreachable server (#87: prod ran a v1
+        // server that dropped every v2 REGISTER exactly this way and
+        // nobody could tell).
         const bad = regLocal(sessionKey, c, { version: 3 });
         await c.send(bad, serverPort);
-        const reply = await c.tryRecv(200);
-        assert(reply === null, 'bad version produces no reply');
+        const reply = await c.tryRecv(300);
+        assert(reply !== null, 'bad version draws a reply (a NACK, not silence)');
+        if (reply) {
+            assertNackReason({ buf: reply.buf }, NACK.BAD_VERSION, 'bad version -> NACK BAD_VERSION');
+            // The reply is stamped with OUR version, not the sender's.
+            // That is what makes it readable as protocol skew by a client
+            // newer than us (direct_p2p.c badver_n).
+            assertEq(reply.buf.readUInt8(4), VERSION, 'BAD_VERSION NACK carries the SERVER version byte');
+        }
+        // Still binds nothing.
+        assert(!H._sessionMap.has(sessionKey.toString('hex')), 'bad version binds no session');
     } finally {
         await c.close();
     }
@@ -317,10 +387,31 @@ async function testLengthReject(serverPort) {
     const sessionKey = crypto.randomBytes(16);
     const c = await makeClient();
     try {
-        const bad = regLocal(sessionKey, c, { length: 16 });
+        // A wrong-length REGISTER that is still big enough to answer
+        // without amplifying (30 >= NACK_LEN) IS told what is wrong.
+        const bad = regLocal(sessionKey, c, { length: 30 });
         await c.send(bad, serverPort);
-        const reply = await c.tryRecv(200);
-        assert(reply === null, 'truncated REGISTER produces no reply');
+        const reply = await c.tryRecv(300);
+        assert(reply !== null, 'wrong-length REGISTER draws a reply (a NACK, not silence)');
+        if (reply) {
+            assertNackReason({ buf: reply.buf }, NACK.BAD_LENGTH, 'wrong-length REGISTER -> NACK BAD_LENGTH');
+            const dec = decodeNack(reply.buf);
+            assert(dec.sessionKey.equals(sessionKey),
+                'the BAD_LENGTH NACK echoes the sender\'s own session key');
+        }
+        assert(!H._sessionMap.has(sessionKey.toString('hex')), 'wrong-length REGISTER binds no session');
+
+        // A SHORT one gets nothing, and that is the amplification rule
+        // rather than an oversight: a 16-byte request must never draw a
+        // 28-byte reply. This is the same class of frame the old test used,
+        // kept here so the silent-drop half of the rule is covered too.
+        H._resetRate(); // fresh cooldown, so silence means the LENGTH rule
+        const tiny = regLocal(sessionKey, c, { length: 16 });
+        await c.send(tiny, serverPort);
+        const tinyReply = await c.tryRecv(250);
+        assert(tinyReply === null,
+            'a 16-byte REGISTER draws NOTHING — a reply must never be larger than the request');
+        assert(!H._sessionMap.has(sessionKey.toString('hex')), 'truncated REGISTER binds no session');
     } finally {
         await c.close();
     }
@@ -357,11 +448,25 @@ async function testRateLimit(serverPort) {
         }
         // Drain incoming for 300ms.
         const replies = await c.drain(300);
+        // #122: count the frames this limiter is ABOUT — the DELIVERs.
+        // Over-budget requests now also draw a NACK, and folding those into
+        // the same total made this assertion pass on arithmetic rather than
+        // on intent (10 DELIVERs + 1 NACK == the old "<= 11" ceiling
+        // exactly), so it would have gone green with the cap raised to 11.
+        // NACK volume has its own, tighter bound and its own test.
+        const delivers = replies.filter((r) => !isNack(r.buf));
+        const nacks = replies.filter((r) => isNack(r.buf));
         // With a sliding window and a fresh state, the first RATE_LIMIT_PER_WINDOW
         // (=10) packets pass and the rest are dropped. Allow +1 slack for clock
         // jitter at the boundary.
-        assert(replies.length >= 1, `rate-limit: at least 1 reply (got ${replies.length})`);
-        assert(replies.length <= 11, `rate-limit: <=11 replies (got ${replies.length})`);
+        assert(delivers.length >= 1, `rate-limit: at least 1 DELIVER (got ${delivers.length})`);
+        assert(delivers.length <= 11, `rate-limit: <=11 DELIVERs (got ${delivers.length})`);
+        // The refusals are bounded far more tightly than the drops that
+        // caused them: 10 dropped REGISTERs, at most a couple of NACKs.
+        assert(nacks.length <= 2,
+            `rate-limit: the ${N - delivers.length} dropped REGISTERs drew at most 2 NACKs (got ${nacks.length}) — the cooldown, not one reply per drop`);
+        assert(nacks.every((r) => decodeNack(r.buf).reason === NACK.RATE_IP),
+            'rate-limit: refusals name the per-IP cookied cap');
     } finally {
         await c.close();
     }
@@ -463,8 +568,14 @@ async function testSessionCap(handle, serverPort) {
         // already owns keys here) is not the reason for the drop.
         const stub = makeStubSocket();
         handle._onMessage(regFrom(blockedKey, 3333, '198.51.100.99', 3333), { address: '198.51.100.99', port: 3333 }, stub);
-        assertEq(stub.sent.length, 0, 'cap: new key dropped when table is all paired (no reply)');
+        // #122: still DROPPED — no session, no DELIVER — but the sender is
+        // now told WHY. It passed the cookie gate to get here, so this is a
+        // return-routable source being told one bit of global operational
+        // state, not a spoofable reflection.
+        assertEq(stub.sent.length, 1, 'cap: all-paired drop answers with exactly one frame');
+        assertNackReason(stub.sent[0], NACK.TABLE_FULL, 'cap: all-paired drop -> NACK TABLE_FULL');
         assert(!handle._sessionMap.has(blockedKey.toString('hex')), 'cap: paired sessions were not evicted');
+        assert(!isChallenge(stub.sent[0].buf), 'cap: the all-paired reply is a NACK, never a DELIVER or CHALLENGE');
 
         handle._resetSessions(); // drop synthetic state for later tests
     } finally {
@@ -492,8 +603,13 @@ async function testPerIpQuota(handle, serverPort) {
 
         const overKey = crypto.randomBytes(16);
         await c.send(regLocal(overKey, c), serverPort);
-        const over = await c.tryRecv(200);
-        assert(over === null, 'quota: key over quota dropped (no reply)');
+        const over = await c.tryRecv(300);
+        // #122: still DROPPED (asserted below by the table size), but the
+        // sender is now told which of the server's nine refusals it hit.
+        assert(over !== null, 'quota: key over quota draws a NACK rather than silence');
+        if (over) {
+            assertNackReason({ buf: over.buf }, NACK.KEY_QUOTA, 'quota: over-quota key -> NACK KEY_QUOTA');
+        }
         assertEq(handle._sessionMap.size, quota, 'quota: table did not grow');
 
         // Existing keys still serviced while at quota.
@@ -737,7 +853,11 @@ async function testStaleJoinerSlotReplaced(handle) {
     stub.sent.length = 0;
     handle._onMessage(regFrom(key, 5555, '198.51.100.31', 5555), { address: '198.51.100.31', port: 5555 }, stub);
     assertEq(entry.endpointB.address, '198.51.100.30', 'stale-joiner: LIVE slot B not replaced by third party');
-    assertEq(stub.sent.length, 0, 'stale-joiner: third party got no reply');
+    // #122: the third party is REFUSED exactly as before -- slot B did not
+    // move, asserted above -- and is now told why instead of being left to
+    // report "matchmaking server down" for a room that is simply taken.
+    assertEq(stub.sent.length, 1, 'stale-joiner: third party gets exactly one frame');
+    assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'stale-joiner: third party -> NACK SESSION_FULL');
 }
 
 async function testJoinerPortReclaimSameIp(handle) {
@@ -772,7 +892,8 @@ async function testJoinerPortReclaimSameIp(handle) {
     stub.sent.length = 0;
     handle._onMessage(regFrom(key, 4444, '198.51.100.42', 4444), { address: '198.51.100.42', port: 4444 }, stub);
     assertEq(entry.endpointB.port, 3333, 'joiner-port: different-IP third party did NOT take live slot B');
-    assertEq(stub.sent.length, 0, 'joiner-port: different-IP third party got no reply');
+    assertEq(stub.sent.length, 1, 'joiner-port: different-IP third party gets exactly one frame');
+    assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'joiner-port: different-IP third party -> NACK SESSION_FULL');
 
     // The reclaim is budgeted, so a co-located peer cannot flap the slot
     // forever. Spend the remainder, then prove the next one is refused
@@ -788,7 +909,9 @@ async function testJoinerPortReclaimSameIp(handle) {
     stub.sent.length = 0;
     handle._onMessage(regFrom(key, 6000, '198.51.100.41', 6000), { address: '198.51.100.41', port: 6000 }, stub);
     assertEq(entry.endpointB.port, heldPort, 'joiner-port: reclaim refused once the budget is spent');
-    assertEq(stub.sent.length, 0, 'joiner-port: over-budget reclaim got no reply');
+    // Budget spent, so this falls through to the third-party arm.
+    assertEq(stub.sent.length, 1, 'joiner-port: over-budget reclaim gets exactly one frame');
+    assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'joiner-port: over-budget reclaim -> NACK SESSION_FULL');
 }
 
 async function testPortReclaimSlotA(handle) {
@@ -824,7 +947,8 @@ async function testPortReclaimSlotA(handle) {
     handle._onMessage(regFrom(key, 4444, '198.51.100.52', 4444), { address: '198.51.100.52', port: 4444 }, stub);
     assertEq(entry.endpointA.port, 3333, 'slotA-reclaim: different-IP third party did NOT take live slot A');
     assertEq(entry.endpointB.port, 2222, 'slotA-reclaim: different-IP third party did NOT take live slot B');
-    assertEq(stub.sent.length, 0, 'slotA-reclaim: different-IP third party got no reply');
+    assertEq(stub.sent.length, 1, 'slotA-reclaim: different-IP third party gets exactly one frame');
+    assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'slotA-reclaim: different-IP third party -> NACK SESSION_FULL');
 }
 
 // --- S4c: return-routability (challenge cookie) ------------------------------
@@ -1011,9 +1135,22 @@ async function testPerKeyRateCap(handle) {
         handle._onMessage(makePoll(victimKey, { cookie: cookieFor(addr, port) }),
             { address: addr, port }, stub);
     }
+    // #122: count only the frames the cap is ABOUT — the DELIVERs the
+    // server would otherwise have to produce. An over-budget request now
+    // also draws a NACK, but a NACK is 28 B and is separately capped at one
+    // per source per 250 ms (testNackAmplificationBound), so it is not the
+    // work this limiter exists to bound. Counting them here would make the
+    // test measure the wrong thing and go green against a server with the
+    // per-key cap removed.
+    const delivers = stub.sent.filter((s) => !isNack(s.buf));
     // +1 slack for a sliding-window boundary landing mid-loop.
-    assert(stub.sent.length <= limit + 1,
-        `per-key cap: <= ${limit + 1} replies for ONE key across ${shots} distinct source IPs (got ${stub.sent.length})`);
+    assert(delivers.length <= limit + 1,
+        `per-key cap: <= ${limit + 1} DELIVER replies for ONE key across ${shots} distinct source IPs (got ${delivers.length})`);
+    // The refusals that replaced them must all be the per-KEY reason.
+    const refusals = stub.sent.filter((s) => isNack(s.buf));
+    assert(refusals.length > 0, 'per-key cap: the over-budget sources were told they were refused');
+    assert(refusals.every((s) => decodeNack(s.buf).reason === NACK.RATE_KEY),
+        'per-key cap: every refusal names the per-KEY cap, not some other reason');
     assert(stub.sent.length >= 1, 'per-key cap: at least one reply got through');
     assert(handle._keyRateMap.has(victimKey.toString('hex')), 'per-key cap: the key has a rate bucket');
 
@@ -1073,9 +1210,18 @@ async function testCookieRotationWindow(handle) {
 
 async function testV1ClientInterlock(handle, serverPort) {
     // Version interlock: a pre-S4c (v1) client sends a 28-byte REGISTER
-    // with version=1. Required behavior is REJECT CLEANLY — no reply, no
-    // state, and above all no hang: the server must still serve the very
-    // next valid v2 exchange normally.
+    // with version=1. Required behavior is REJECT CLEANLY — no state, no
+    // CHALLENGE, and above all no hang: the server must still serve the
+    // very next valid v2 exchange normally.
+    //
+    // #122 changes ONE thing here, and it is the whole point of the task.
+    // The reply used to be nothing at all, which is byte-identical to an
+    // unreachable server — and that is not hypothetical: #87 is a
+    // production incident where the deployed April v1 server dropped every
+    // v2 REGISTER in exactly this silence, so every client reported
+    // "matchmaking server down" and the real cause went unfound. A v1
+    // client now gets a NACK stamped with the version this server DOES
+    // speak. It still binds nothing and it is still not a CHALLENGE.
     handle._resetSessions();
     handle._resetRate();
     assertEq(handle._version, 2, 'interlock: server advertises protocol v2');
@@ -1086,15 +1232,36 @@ async function testV1ClientInterlock(handle, serverPort) {
         const v1 = makeRegister(v1Key, c.port, { version: V1_VERSION, length: V1_REGISTER_LEN });
         assertEq(v1.length, 28, 'interlock: v1 REGISTER is 28 bytes');
         await c.send(v1, serverPort);
-        assert((await c.tryRecv(150)) === null, 'interlock: v1 REGISTER gets NO reply (not even a CHALLENGE)');
+        const v1Reply = await c.tryRecv(300);
+        assert(v1Reply !== null, 'interlock: v1 REGISTER draws a NACK rather than #87-style silence');
+        if (v1Reply) {
+            assert(!isChallenge(v1Reply.buf), 'interlock: v1 REGISTER gets NO CHALLENGE');
+            assertNackReason({ buf: v1Reply.buf }, NACK.BAD_VERSION, 'interlock: v1 REGISTER -> NACK BAD_VERSION');
+            assertEq(v1Reply.buf.readUInt8(4), VERSION,
+                'interlock: the NACK carries the version this server speaks, so a skewed client can read it');
+        }
         assert(!handle._sessionMap.has(v1Key.toString('hex')), 'interlock: v1 REGISTER bound no session');
         assertEq(handle._creatorCounts.size, 0, 'interlock: v1 REGISTER consumed no key quota');
 
         // Also: a v2-length packet still carrying version=1 is dropped
         // by the same check, before the cookie gate.
+        // Judge this probe on its own: without clearing the NACK cooldown
+        // the first v1 REGISTER above has already spent this source's
+        // budget, and the silence that followed would be the COOLDOWN
+        // talking, not the version check. That would have made this
+        // assertion pass even against a server whose version gate was
+        // removed entirely.
+        handle._resetRate();
         const v1Long = makeRegister(v1Key, c.port, { version: V1_VERSION });
         await c.send(v1Long, serverPort);
-        assert((await c.tryRecv(150)) === null, 'interlock: v1 version byte at v2 length also dropped');
+        const longReply = await c.tryRecv(300);
+        assert(longReply !== null, 'interlock: v1 version byte at v2 length also answered');
+        if (longReply) {
+            assertNackReason({ buf: longReply.buf }, NACK.BAD_VERSION,
+                'interlock: v1 version at v2 length -> NACK BAD_VERSION (the VERSION check, not the length check)');
+        }
+        assert(!handle._sessionMap.has(v1Key.toString('hex')),
+            'interlock: v1 version byte at v2 length still bound no session');
         assert(!handle._sessionMap.has(v1Key.toString('hex')), 'interlock: still no session');
 
         // Liveness: the server did not wedge on any of that.
@@ -1194,9 +1361,22 @@ async function testPreGateBudgetBoundsChallenges(handle) {
     for (let i = 0; i < shots; i++) {
         handle._onMessage(makeRegister(crypto.randomBytes(16), 4000), { address: SRC, port: 4000 }, stub);
     }
+    // #122: count CHALLENGEs, not "everything the server sent". This
+    // budget bounds CHALLENGE emission and nothing else; an over-budget
+    // request now also draws a NACK, and folding those in made the old
+    // total (100 CHALLENGEs + 1 NACK) sit exactly on the "<= limit + 1"
+    // ceiling — green by coincidence rather than by measurement.
+    const challenges = stub.sent.filter((s) => isChallenge(s.buf));
+    const nacks = stub.sent.filter((s) => isNack(s.buf));
     // +1 slack for a sliding-window boundary landing mid-loop.
-    assert(stub.sent.length <= limit + 1,
-        `pre-gate: <= ${limit + 1} CHALLENGEs emitted for ${shots} uncookied requests from one IP (got ${stub.sent.length})`);
+    assert(challenges.length <= limit + 1,
+        `pre-gate: <= ${limit + 1} CHALLENGEs emitted for ${shots} uncookied requests from one IP (got ${challenges.length})`);
+    assertEq(challenges.length + nacks.length, stub.sent.length,
+        'pre-gate: the server emitted only CHALLENGEs and NACKs');
+    assert(nacks.length <= 2,
+        `pre-gate: the ${shots - challenges.length} over-budget requests drew at most 2 NACKs (got ${nacks.length}) — the NACK cooldown is tighter than the budget it reports on`);
+    assert(nacks.every((s) => decodeNack(s.buf).reason === NACK.RATE_PREGATE),
+        'pre-gate: refusals name the pre-gate budget');
     assert(stub.sent.length >= 1, 'pre-gate: at least one CHALLENGE got through');
     for (const s of stub.sent) {
         if (s.address !== SRC) {
@@ -1236,22 +1416,55 @@ async function testRateMapBounded(handle) {
     handle._resetRate();
     const stub = makeStubSocket();
 
-    // (a) Junk that never passes validation allocates nothing at all.
+    // (a) TRUE junk -- a frame that cannot even be shown to claim our
+    // protocol -- still allocates nothing and draws nothing, at any rate.
+    // #122 keeps this class exactly as it was: a NACK is never sent for a
+    // short packet or a bad magic, because answering those would make the
+    // server a reflector for ARBITRARY UDP rather than merely for frames
+    // that claim to be ours.
     const JUNK_SOURCES = 5000;
     for (let i = 0; i < JUNK_SOURCES; i++) {
         const addr = `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`;
         handle._onMessage(Buffer.alloc(1), { address: addr, port: 1 }, stub);           // too short
         handle._onMessage(makeRegister(crypto.randomBytes(16), 1, { magic: 0xdeadbeef }),
             { address: addr, port: 2 }, stub);                                          // bad magic
-        handle._onMessage(makeRegister(crypto.randomBytes(16), 1, { version: 3 }),
-            { address: addr, port: 3 }, stub);                                          // bad version
-        handle._onMessage(makeRegister(crypto.randomBytes(16), 1, { length: 16 }),
-            { address: addr, port: 4 }, stub);                                          // bad length
     }
-    assertEq(stub.sent.length, 0, 'bounded: pre-validation junk produced no replies');
+    assertEq(stub.sent.length, 0, 'bounded: short/bad-magic junk produced no replies');
+    assertEq(handle._nackMap.size, 0, `bounded: ${JUNK_SOURCES} short/bad-magic sources allocated NO nack-cooldown entries`);
     assertEq(handle._rateMap.size, 0, `bounded: ${JUNK_SOURCES} junk sources allocated NO cookied rate entries`);
     assertEq(handle._preGateMap.size, 0, `bounded: ${JUNK_SOURCES} junk sources allocated NO pre-gate entries`);
     assertEq(handle._keyRateMap.size, 0, `bounded: ${JUNK_SOURCES} junk sources allocated NO per-key entries`);
+
+    // (a2) #122: magic-bearing frames that fail version/length DO now draw
+    // a NACK, so they allocate in the cooldown map -- and that map must be
+    // bounded by the same cap and the same LRU as every other one. An
+    // attacker must spend four correct magic bytes per entry, and gets
+    // nowhere: the map stops growing.
+    handle._resetRate();
+    stub.sent.length = 0;
+    const nackCap = handle._maxRateEntries;
+    const nackSources = nackCap + 500;
+    let nackFirstAddr = null;
+    let nackLastAddr = null;
+    for (let i = 0; i < nackSources; i++) {
+        const addr = `192.0.${(i >> 8) & 255}.${i & 255}`;
+        if (i === 0) nackFirstAddr = addr;
+        nackLastAddr = addr;
+        handle._onMessage(makeRegister(crypto.randomBytes(16), 1, { version: 3 }),
+            { address: addr, port: 3 }, stub);
+    }
+    assert(handle._nackMap.size <= nackCap,
+        `bounded: nack-cooldown map stayed <= ${nackCap} across ${nackSources} distinct spoofed sources (got ${handle._nackMap.size})`);
+    assert(!handle._nackMap.has(nackFirstAddr), 'bounded: nack cooldown evicts least-recently-used');
+    assert(handle._nackMap.has(nackLastAddr), 'bounded: nack cooldown retains the most recent source');
+    // Still allocates nothing in the REQUEST-PATH buckets: a bad-version
+    // frame never reaches the cookie gate, so it cannot touch the budgets
+    // a real client depends on (review HIGH-2 / MEDIUM-3 both intact).
+    assertEq(handle._rateMap.size, 0, 'bounded: bad-version frames allocate NO cookied rate entries');
+    assertEq(handle._preGateMap.size, 0, 'bounded: bad-version frames allocate NO pre-gate entries');
+    assertEq(handle._keyRateMap.size, 0, 'bounded: bad-version frames allocate NO per-key entries');
+    handle._resetRate();
+    stub.sent.length = 0;
 
     // (b) Well-formed uncookied REGISTERs DO allocate — from more distinct
     // spoofed sources than the cap allows. The map must stop growing.
@@ -1522,12 +1735,26 @@ async function testKeyBudgetCoversMultiJoinerRoom(handle) {
 
 async function testRetiredRelayTypesAreUnknown(handle) {
     // Types 5/6/7/8 were RELAY_REQ / RELAY_GRANT / RELAY_PIN /
-    // RELAY_PIN_ACK. With the relay deleted they are unallocated, and the
-    // requirement is that they die in onMessage's `drop: unknown type`
-    // branch: no reply of ANY kind (a reply would make the server a
-    // reflector for a frame nothing owns), no state bound, no crash --
-    // including for a type-5 frame that is still perfectly cookied for its
-    // own source, which is exactly what a stale relay-era client emits.
+    // RELAY_PIN_ACK. The relay is deleted. Type 5 has since been
+    // RE-ALLOCATED as NACK (task #122); 6/7/8 remain unallocated.
+    //
+    // The invariants that must hold for ALL of them are the state ones,
+    // and they are unchanged: no session bound, and the frame never even
+    // reaches the per-key rate bucket.
+    //
+    // What #122 DID change is the reply rule, deliberately. This test used
+    // to require "no reply of ANY kind, because a reply would make the
+    // server a reflector for a frame nothing owns". That objection was
+    // sound when there was no bounded reply mechanism; there is one now
+    // (28 B answering >= 36 B, and at most one per source IP per 250 ms
+    // regardless of inbound rate -- see testNackAmplificationBound), so a
+    // stale relay-era build gets told "BAD_TYPE" instead of being left to
+    // report "matchmaking server down". Two classes now:
+    //   * UNALLOCATED types -> exactly one NACK, reason BAD_TYPE.
+    //   * SERVER -> CLIENT types (DELIVER 2, CHALLENGE 4, NACK 5) -> still
+    //     absolutely no reply, which is what keeps the feature loop-free:
+    //     no frame this server emits can elicit a reply from another
+    //     instance of it. Covered in full by testNackNeverAnswersOwnFrames.
     handle._resetSessions();
     handle._resetRate();
     const key = crypto.randomBytes(16);
@@ -1539,8 +1766,10 @@ async function testRetiredRelayTypesAreUnknown(handle) {
         // Reset per iteration so each type is judged on its own: without
         // this, one type that DOES bind state makes every later type's
         // assertion fail too and the failure names the wrong frame.
+        // _resetRate() also clears the NACK cooldown, so each iteration
+        // gets a fresh budget and a missing NACK means a missing NACK.
         handle._resetSessions();
-        handle._resetKeyRate();
+        handle._resetRate();
         stub.sent.length = 0;
         // Correctly shaped AND correctly cookied for this source: the only
         // thing wrong with the frame is its type byte, so anything that
@@ -1548,7 +1777,13 @@ async function testRetiredRelayTypesAreUnknown(handle) {
         const buf = makeRegister(key, SRC.port,
             { type, cookie: cookieFor(SRC.address, SRC.port) });
         handle._onMessage(buf, SRC, stub);
-        assertEq(stub.sent.length, 0, `retired-types: type ${type} draws no reply at all`);
+        if (type === TYPE_NACK) {
+            assertEq(stub.sent.length, 0,
+                'retired-types: type 5 is now NACK (server->client) and draws no reply -- no NACK ping-pong');
+        } else {
+            assertEq(stub.sent.length, 1, `retired-types: unallocated type ${type} draws exactly one frame`);
+            assertNackReason(stub.sent[0], NACK.BAD_TYPE, `retired-types: type ${type} -> NACK BAD_TYPE`);
+        }
         assertEq(handle._sessionMap.size, 0, `retired-types: type ${type} binds no session state`);
         assert(!handle._keyRateMap.has(hexKey),
             `retired-types: type ${type} never even reaches the per-key rate bucket`);
@@ -1565,6 +1800,573 @@ async function testRetiredRelayTypesAreUnknown(handle) {
 
     handle._resetSessions();
     handle._resetRate();
+}
+
+// --- Task #122: typed refusals + the two field metrics -----------------------
+
+async function testNackPerReason(handle) {
+    // THE CORE PROOF. Nine server conditions used to be byte-identical on
+    // the wire (silence) and were all reported to the user as
+    // P2P_FAIL_RENDEZVOUS_DOWN. Each one is INDUCED here for real -- by
+    // driving the server into the actual condition, never by calling the
+    // encoder -- and the reply's reason byte is checked to be the RIGHT
+    // one. A NACK that says the wrong thing is worse than silence (H-1),
+    // so "a NACK arrived" is not the assertion; "the correct NACK arrived"
+    // is.
+    const seen = new Set();
+
+    // Wire values are shared with src/netplay/rendezvous.h and the two
+    // deploy independently, so a renumber is a silent misattribution.
+    // Pin this file's literals against the server's own table.
+    for (const [name, value] of Object.entries(NACK)) {
+        assertEq(handle._nackReasons[name], value,
+            `nack: reason ${name} has the same wire value in the test and the server`);
+    }
+    assertEq(Object.keys(handle._nackReasons).length, Object.keys(NACK).length,
+        'nack: the server defines exactly the reason set this test knows about');
+
+    // ...and against the C CLIENT's copy, which is the one that actually
+    // matters. The check above is JS-vs-JS and cannot see a drift between
+    // this server and src/netplay/rendezvous.h -- and those two DEPLOY
+    // INDEPENDENTLY (the server is a long-lived VPS process, the client
+    // ships in a release ZIP), so nothing at build time links them. This
+    // is the same hazard check_key_rate_budget.py exists for on the
+    // cadence side: a renumber on either side would not break a build, it
+    // would silently make the client report the WRONG REASON, which is
+    // strictly worse than the silence #122 replaced.
+    {
+        const headerPath = require('path').join(__dirname, '..', '..', 'src', 'netplay', 'rendezvous.h');
+        let header = null;
+        try {
+            header = require('fs').readFileSync(headerPath, 'utf8');
+        } catch (err) {
+            assert(false, `nack/C-parity: cannot read ${headerPath}: ${err.message}`);
+        }
+        if (header !== null) {
+            const cValues = new Map();
+            const re = /^\s*REND_NACK_([A-Z_]+)\s*=\s*(\d+)\s*,?/gm;
+            let m;
+            while ((m = re.exec(header)) !== null) {
+                if (m[1] !== 'NONE') cValues.set(m[1], Number(m[2]));
+            }
+            assertEq(cValues.size, Object.keys(NACK).length,
+                `nack/C-parity: rendezvous.h defines ${cValues.size} reasons, the server defines ${Object.keys(NACK).length}`);
+            for (const [name, value] of Object.entries(NACK)) {
+                assertEq(cValues.get(name), value,
+                    `nack/C-parity: REND_NACK_${name} is ${cValues.get(name)} in rendezvous.h and ${value} in the server`);
+            }
+            // The frame length is the amplification bound; a C client that
+            // disagrees about it would reject every NACK on the length test.
+            const lenM = /#define\s+REND_NACK_LEN\s+(\d+)/.exec(header);
+            assert(lenM !== null, 'nack/C-parity: rendezvous.h defines REND_NACK_LEN');
+            if (lenM) {
+                assertEq(Number(lenM[1]), handle._nackLen,
+                    'nack/C-parity: REND_NACK_LEN agrees with the server NACK_LEN');
+            }
+            const typeM = /#define\s+REND_FRAME_NACK\s+(\d+)/.exec(header);
+            assert(typeM !== null, 'nack/C-parity: rendezvous.h defines REND_FRAME_NACK');
+            if (typeM) {
+                assertEq(Number(typeM[1]), handle._typeNack,
+                    'nack/C-parity: REND_FRAME_NACK agrees with the server TYPE_NACK');
+            }
+        }
+    }
+
+    const stub = makeStubSocket();
+    const fresh = () => { handle._resetSessions(); handle._resetRate(); stub.sent.length = 0; };
+    const record = (want) => { seen.add(want); };
+
+    // --- 1. BAD_VERSION: a version byte we do not speak. ------------------
+    fresh();
+    handle._onMessage(makeRegister(crypto.randomBytes(16), 5000, { version: 3 }),
+        { address: '198.18.1.1', port: 5000 }, stub);
+    assertEq(stub.sent.length, 1, 'nack/BAD_VERSION: exactly one reply');
+    assertNackReason(stub.sent[0], NACK.BAD_VERSION, 'nack/BAD_VERSION: correct reason');
+    record(NACK.BAD_VERSION);
+
+    // --- 2. BAD_LENGTH: right version, wrong REGISTER size. ---------------
+    fresh();
+    handle._onMessage(makeRegister(crypto.randomBytes(16), 5000, { length: 30 }),
+        { address: '198.18.1.2', port: 5000 }, stub);
+    assertEq(stub.sent.length, 1, 'nack/BAD_LENGTH: exactly one reply');
+    assertNackReason(stub.sent[0], NACK.BAD_LENGTH, 'nack/BAD_LENGTH: correct reason');
+    record(NACK.BAD_LENGTH);
+
+    // --- 3. BAD_TYPE: an unallocated type byte (a relay-era build). -------
+    fresh();
+    handle._onMessage(makeRegister(crypto.randomBytes(16), 5000, { type: 7, cookie: cookieFor('198.18.1.3', 5000) }),
+        { address: '198.18.1.3', port: 5000 }, stub);
+    assertEq(stub.sent.length, 1, 'nack/BAD_TYPE: exactly one reply');
+    assertNackReason(stub.sent[0], NACK.BAD_TYPE, 'nack/BAD_TYPE: correct reason');
+    record(NACK.BAD_TYPE);
+
+    // --- 4. RATE_PREGATE: uncookied first-contact budget. -----------------
+    // The first PREGATE_LIMIT uncookied requests are answered with
+    // CHALLENGEs; the one after that is over budget.
+    fresh();
+    {
+        const SRC = { address: '198.18.2.1', port: 6000 };
+        const key = crypto.randomBytes(16);
+        for (let i = 0; i < handle._preGateLimit; i++) {
+            handle._onMessage(makeRegister(key, SRC.port), SRC, stub); // uncookied
+        }
+        assertEq(stub.sent.length, handle._preGateLimit,
+            'nack/RATE_PREGATE: the in-budget requests were all answered (with CHALLENGEs)');
+        assert(stub.sent.every((s) => isChallenge(s.buf)),
+            'nack/RATE_PREGATE: in-budget uncookied requests get CHALLENGEs, not NACKs');
+        stub.sent.length = 0;
+        handle._onMessage(makeRegister(key, SRC.port), SRC, stub); // over budget
+        assertEq(stub.sent.length, 1, 'nack/RATE_PREGATE: the over-budget request draws exactly one reply');
+        assertNackReason(stub.sent[0], NACK.RATE_PREGATE, 'nack/RATE_PREGATE: correct reason');
+        record(NACK.RATE_PREGATE);
+    }
+
+    // --- 5. RATE_IP: the per-IP COOKIED budget. ---------------------------
+    fresh();
+    {
+        const SRC = { address: '198.18.2.2', port: 6100 };
+        const key = crypto.randomBytes(16); // ONE key: avoids the creator quota
+        const reg = () => handle._onMessage(regFrom(key, SRC.port, SRC.address, SRC.port), SRC, stub);
+        for (let i = 0; i < handle._rateLimit; i++) reg();
+        assertEq(stub.sent.length, handle._rateLimit,
+            'nack/RATE_IP: the in-budget cookied requests were all answered (with DELIVERs)');
+        stub.sent.length = 0;
+        reg(); // over budget
+        assertEq(stub.sent.length, 1, 'nack/RATE_IP: the over-budget request draws exactly one reply');
+        assertNackReason(stub.sent[0], NACK.RATE_IP, 'nack/RATE_IP: correct reason');
+        record(NACK.RATE_IP);
+    }
+
+    // --- 6. RATE_KEY: the per-SESSION-KEY budget. -------------------------
+    // Must NOT be reachable by tripping the per-IP budget instead, so the
+    // key budget is spent across SEVERAL source IPs, each staying inside
+    // its own per-IP allowance. That is exactly the attacker model the
+    // per-key cap exists for (many real cookie-capable addresses, one
+    // room), and it is why the assertion is meaningful.
+    fresh();
+    {
+        const key = crypto.randomBytes(16);
+        const perIp = handle._rateLimit;
+        const nIps = Math.ceil(handle._keyRateLimit / perIp);
+        let spent = 0;
+        for (let i = 0; i < nIps && spent < handle._keyRateLimit; i++) {
+            const SRC = { address: `198.18.3.${10 + i}`, port: 6200 + i };
+            for (let j = 0; j < perIp && spent < handle._keyRateLimit; j++) {
+                handle._onMessage(regFrom(key, SRC.port, SRC.address, SRC.port), SRC, stub);
+                spent += 1;
+            }
+        }
+        assertEq(spent, handle._keyRateLimit, 'nack/RATE_KEY: the key budget was spent exactly, not overrun');
+        stub.sent.length = 0;
+        const LATE = { address: '198.18.3.99', port: 6299 };
+        handle._onMessage(regFrom(key, LATE.port, LATE.address, LATE.port), LATE, stub);
+        assertEq(stub.sent.length, 1, 'nack/RATE_KEY: the over-budget request draws exactly one reply');
+        assertNackReason(stub.sent[0], NACK.RATE_KEY, 'nack/RATE_KEY: correct reason');
+        // The late sender has spent NONE of its own per-IP budget, which
+        // proves the refusal came from the per-KEY limiter and not the
+        // per-IP one -- i.e. the reason byte is not merely plausible.
+        assert(!handle._rateMap.has(LATE.address) || handle._rateMap.get(LATE.address).timestamps.length <= 1,
+            'nack/RATE_KEY: the refusal was the per-KEY cap, not the per-IP cap');
+        record(NACK.RATE_KEY);
+    }
+
+    // --- 7. KEY_QUOTA: MAX_NEW_KEYS_PER_IP live created keys. -------------
+    fresh();
+    {
+        const SRC = { address: '198.18.4.1', port: 6300 };
+        for (let i = 0; i < handle._maxNewKeysPerIp; i++) {
+            handle._onMessage(regFrom(crypto.randomBytes(16), SRC.port, SRC.address, SRC.port), SRC, stub);
+        }
+        assertEq(handle._sessionMap.size, handle._maxNewKeysPerIp, 'nack/KEY_QUOTA: quota filled with real keys');
+        stub.sent.length = 0;
+        handle._onMessage(regFrom(crypto.randomBytes(16), SRC.port, SRC.address, SRC.port), SRC, stub);
+        assertEq(stub.sent.length, 1, 'nack/KEY_QUOTA: the quota-exceeding request draws exactly one reply');
+        assertNackReason(stub.sent[0], NACK.KEY_QUOTA, 'nack/KEY_QUOTA: correct reason');
+        assertEq(handle._sessionMap.size, handle._maxNewKeysPerIp, 'nack/KEY_QUOTA: no extra key was bound');
+        record(NACK.KEY_QUOTA);
+    }
+
+    // --- 8. TABLE_FULL: the table is full and every entry is PAIRED. ------
+    fresh();
+    {
+        for (let i = 0; i < handle._maxSessions; i++) {
+            handle._sessionMap.set(`full${i}`, {
+                endpointA: { address: '203.0.113.1', port: 1000 + (i % 60000) },
+                endpointB: { address: '203.0.113.2', port: 2000 + (i % 60000) },
+                lastTouch: 1 + i, lastSeenA: 1 + i, lastSeenB: 1 + i,
+                pushTo: null, pushAtMs: 0,
+            });
+        }
+        const SRC = { address: '198.18.5.1', port: 6400 };
+        stub.sent.length = 0;
+        handle._onMessage(regFrom(crypto.randomBytes(16), SRC.port, SRC.address, SRC.port), SRC, stub);
+        assertEq(stub.sent.length, 1, 'nack/TABLE_FULL: the refused request draws exactly one reply');
+        assertNackReason(stub.sent[0], NACK.TABLE_FULL, 'nack/TABLE_FULL: correct reason');
+        record(NACK.TABLE_FULL);
+    }
+
+    // --- 9. SESSION_FULL: both slots live, and you are neither. -----------
+    fresh();
+    {
+        const key = crypto.randomBytes(16);
+        const A = { address: '198.18.6.1', port: 6500 };
+        const B = { address: '198.18.6.2', port: 6501 };
+        const C = { address: '198.18.6.3', port: 6502 };
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+        handle._onMessage(regFrom(key, B.port, B.address, B.port), B, stub);
+        stub.sent.length = 0;
+        handle._onMessage(regFrom(key, C.port, C.address, C.port), C, stub);
+        assertEq(stub.sent.length, 1, 'nack/SESSION_FULL: the third party draws exactly one reply');
+        assertNackReason(stub.sent[0], NACK.SESSION_FULL, 'nack/SESSION_FULL: correct reason');
+        // And it is still a REFUSAL: neither slot moved.
+        const entry = handle._sessionMap.get(key.toString('hex'));
+        assertEq(entry.endpointA.address, A.address, 'nack/SESSION_FULL: slot A untouched');
+        assertEq(entry.endpointB.address, B.address, 'nack/SESSION_FULL: slot B untouched');
+        record(NACK.SESSION_FULL);
+    }
+
+    // Distinguishability is the whole point: nine conditions, nine
+    // different bytes on the wire.
+    assertEq(seen.size, 9, 'nack: all nine refusal conditions produced DISTINCT reason codes');
+
+    // Every NACK echoes the sender's own session key and nothing else --
+    // the anti-leak invariant. Re-proved on a fully-paired room, which is
+    // the only reason whose fact is even arguably session-derived.
+    {
+        fresh();
+        const key = crypto.randomBytes(16);
+        const A = { address: '198.18.9.1', port: 7000 };
+        const B = { address: '198.18.9.2', port: 7001 };
+        const C = { address: '198.18.9.3', port: 7002 };
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+        handle._onMessage(regFrom(key, B.port, B.address, B.port), B, stub);
+        stub.sent.length = 0;
+        handle._onMessage(regFrom(key, C.port, C.address, C.port), C, stub);
+        const dec = decodeNack(stub.sent[0].buf);
+        assert(dec.sessionKey.equals(key), 'nack: the frame echoes the SENDER-SUPPLIED session key');
+        // Bytes [24..27] are reserved and must stay zero: this is where a
+        // careless implementation would helpfully leak the occupying
+        // endpoint back to a party that is not in the room.
+        assert(stub.sent[0].buf.subarray(24, 28).equals(Buffer.alloc(4)),
+            'nack: the reserved tail is zero -- no endpoint is disclosed to a non-member');
+        assertEq(stub.sent[0].buf.readUInt8(7), 0, 'nack: reserved byte 7 is zero');
+        // Nothing in the frame matches either occupant's address/port.
+        const aPortBe = Buffer.alloc(2); aPortBe.writeUInt16BE(A.port);
+        assertEq(stub.sent[0].buf.indexOf(aPortBe), -1,
+            'nack: the occupying endpoint\'s port does not appear anywhere in the frame');
+    }
+
+    handle._resetSessions();
+    handle._resetRate();
+}
+
+async function testNackAmplificationBound(handle) {
+    // A NACK is an UNAUTHENTICATED reply to an UNAUTHENTICATED request, so
+    // it is a reflector surface by construction and has to be bounded by
+    // construction. Two INDEPENDENT bounds, proved separately.
+    handle._resetSessions();
+    handle._resetRate();
+    const stub = makeStubSocket();
+
+    // BOUND 1 -- PER FRAME: the response is strictly SMALLER than the
+    // request, so the server is a net ATTENUATOR on every single frame and
+    // no spray across any number of victims can amplify anything.
+    assert(handle._nackLen < REGISTER_LEN,
+        `amplification: NACK (${handle._nackLen} B) is smaller than the REGISTER it answers (${REGISTER_LEN} B)`);
+    assert(handle._nackLen < POLL_LEN,
+        `amplification: NACK (${handle._nackLen} B) is smaller than the POLL it answers (${POLL_LEN} B)`);
+    // Tighter than the CHALLENGE, the only other unauthenticated reply.
+    assert(handle._nackLen < CHALLENGE_LEN,
+        `amplification: NACK (${handle._nackLen} B) attenuates harder than CHALLENGE (${CHALLENGE_LEN} B)`);
+    // And measured on the wire, not just asserted about the constant.
+    {
+        const req = makeRegister(crypto.randomBytes(16), 5000, { version: 3 });
+        handle._onMessage(req, { address: '198.18.20.1', port: 5000 }, stub);
+        assertEq(stub.sent.length, 1, 'amplification: the probe drew exactly one frame');
+        assert(stub.sent[0].buf.length < req.length,
+            `amplification: measured reply ${stub.sent[0].buf.length} B < request ${req.length} B`);
+    }
+
+    // THE SHORT-REQUEST HOLE, which this test did not catch until it was
+    // looked for. The smallest frame that reaches the BAD_TYPE branch is 8
+    // bytes: onMessage's minimum length, our magic, a v2 version byte and
+    // an unallocated type. Answering it with a 28-byte NACK is a 3.5x
+    // AMPLIFIER — measured, not hypothetical. sendNack must refuse.
+    //
+    // Swept across every length below NACK_LEN so the guard cannot be
+    // satisfied by a single special case, and each length is judged with a
+    // fresh cooldown so a refusal is the LENGTH rule talking and not
+    // BOUND 2 masking it.
+    for (let len = 8; len < handle._nackLen; len++) {
+        handle._resetRate();
+        stub.sent.length = 0;
+        const runt = Buffer.alloc(len);
+        runt.writeUInt32BE(MAGIC, 0);
+        runt.writeUInt8(VERSION, 4);
+        runt.writeUInt8(99, 5); // unallocated type -> the BAD_TYPE branch
+        handle._onMessage(runt, { address: '198.18.22.1', port: 5002 }, stub);
+        const out = stub.sent.reduce((n, s) => n + s.buf.length, 0);
+        assert(out <= len,
+            `amplification: a ${len} B frame drew ${out} B — a reply must never exceed the request that caused it`);
+    }
+
+    // The boundary case is admitted, because it is the one the feature
+    // exists for: a v1 REGISTER is exactly NACK_LEN bytes, so it still gets
+    // its BAD_VERSION NACK (#87) at a gain of exactly 1.0 — which buys an
+    // attacker nothing over sending the packet to the victim itself.
+    handle._resetRate();
+    stub.sent.length = 0;
+    {
+        const v1 = makeRegister(crypto.randomBytes(16), 5003,
+            { version: V1_VERSION, length: V1_REGISTER_LEN });
+        assertEq(v1.length, handle._nackLen, 'amplification: a v1 REGISTER is exactly NACK_LEN bytes');
+        handle._onMessage(v1, { address: '198.18.23.1', port: 5003 }, stub);
+        assertEq(stub.sent.length, 1, 'amplification: the v1 boundary case is still answered');
+        assertNackReason(stub.sent[0], NACK.BAD_VERSION, 'amplification: v1 boundary -> NACK BAD_VERSION');
+        assertEq(stub.sent[0].buf.length, v1.length,
+            'amplification: the v1 boundary reply is exactly as large as the request, never larger');
+    }
+
+    // BOUND 2 -- PER VICTIM: aggregate egress toward ONE address is capped
+    // at 1 NACK per NACK_MIN_INTERVAL_MS no matter how hard the attacker
+    // pushes. This is the bound that matters, because concentrating
+    // traffic on a chosen victim is the only thing a reflector is USEFUL
+    // for. Bound 1 degrades gracefully under load; bound 2 does not
+    // degrade at all.
+    // Fresh cooldown AND fresh counters: BOUND 1's probe above already
+    // spent one NACK, and the counts below are exact, not approximate.
+    handle._resetRate();
+    handle._resetMetrics();
+    stub.sent.length = 0;
+    const FLOOD = 2000;
+    const VICTIM = { address: '198.18.21.7', port: 5001 };
+    let reqBytes = 0;
+    for (let i = 0; i < FLOOD; i++) {
+        const req = makeRegister(crypto.randomBytes(16), VICTIM.port, { version: 3 });
+        reqBytes += req.length;
+        handle._onMessage(req, VICTIM, stub);
+    }
+    assertEq(stub.sent.length, 1,
+        `amplification: ${FLOOD} spoofed requests produced ONE NACK toward the victim (cooldown holds)`);
+    const respBytes = stub.sent.reduce((n, s) => n + s.buf.length, 0);
+    assert(respBytes * 100 < reqBytes,
+        `amplification: ${respBytes} B out for ${reqBytes} B in -- egress collapses under flood, it does not scale`);
+    assertEq(handle._nackStats.sent, 1, 'amplification: the server counted exactly one NACK sent');
+    assertEq(handle._nackStats.suppressed, FLOOD - 1,
+        'amplification: every other refusal was suppressed by the cooldown and counted as such');
+
+    // The cooldown is DELIBERATELY tighter than every request-path budget,
+    // which is the only non-self-contradictory reading of "rate-limit the
+    // NACK on the same budget as the request path": a rate-limit NACK
+    // cannot draw the very bucket whose exhaustion caused it, so instead
+    // the NACK budget is DOMINATED BY all three request budgets.
+    const nacksPerSec = 1000 / handle._nackMinIntervalMs;
+    assert(nacksPerSec < handle._rateLimit,
+        `amplification: NACK rate ${nacksPerSec}/s is under the cookied per-IP budget ${handle._rateLimit}/s`);
+    assert(nacksPerSec < handle._preGateLimit,
+        `amplification: NACK rate ${nacksPerSec}/s is under the pre-gate budget ${handle._preGateLimit}/s`);
+    assert(nacksPerSec < handle._keyRateLimit,
+        `amplification: NACK rate ${nacksPerSec}/s is under the per-key budget ${handle._keyRateLimit}/s`);
+
+    // A suppressed NACK must degrade to SILENCE -- i.e. exactly the
+    // behaviour that shipped before #122 -- and never to some other frame.
+    assert(stub.sent.every((s) => isNack(s.buf)),
+        'amplification: nothing but NACKs came out; suppression degrades to silence, not to another frame type');
+
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetMetrics();
+}
+
+async function testNackNeverAnswersOwnFrames(handle) {
+    // Loop-freedom. The three SERVER -> CLIENT types are exactly the
+    // frames this server EMITS, so answering one is the single shape that
+    // could put two instances (or a server and a reflected copy of its own
+    // output) into a ping-pong. They must draw NOTHING -- not a bounded
+    // reply, nothing.
+    handle._resetSessions();
+    handle._resetRate();
+    const stub = makeStubSocket();
+    const SRC = { address: '198.18.30.1', port: 8000 };
+
+    for (const [type, name] of [[TYPE_DELIVER, 'DELIVER'], [TYPE_CHALLENGE, 'CHALLENGE'], [TYPE_NACK, 'NACK']]) {
+        handle._resetRate(); // fresh cooldown, so silence means silence
+        stub.sent.length = 0;
+        handle._onMessage(makeRegister(crypto.randomBytes(16), SRC.port,
+            { type, cookie: cookieFor(SRC.address, SRC.port) }), SRC, stub);
+        assertEq(stub.sent.length, 0, `loop-free: an inbound ${name} draws no reply of any kind`);
+        assertEq(handle._sessionMap.size, 0, `loop-free: an inbound ${name} binds no state`);
+    }
+
+    // The decisive case: feed the server a REAL NACK of its own making.
+    // If this ever draws a reply, two servers pointed at each other
+    // ping-pong forever.
+    handle._resetRate();
+    stub.sent.length = 0;
+    handle._onMessage(makeRegister(crypto.randomBytes(16), SRC.port, { version: 3 }), SRC, stub);
+    assertEq(stub.sent.length, 1, 'loop-free: produced a genuine NACK to feed back');
+    const realNack = stub.sent[0].buf;
+    assert(isNack(realNack), 'loop-free: the captured frame really is a NACK');
+    handle._resetRate();
+    stub.sent.length = 0;
+    handle._onMessage(realNack, SRC, stub);
+    assertEq(stub.sent.length, 0,
+        'loop-free: the server\'s own NACK, replayed at it, draws nothing -- no ping-pong is possible');
+
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetMetrics();
+}
+
+async function testLostPairingPushObserved(handle) {
+    // METRIC 1. When the second party fills a room, the server pushes an
+    // UNSOLICITED DELIVER to the party already there. That push is
+    // unacknowledged -- this protocol has no ACK, and the client only ever
+    // emits REGISTER (Rendezvous_BuildPoll has zero production call sites)
+    // -- so its loss was completely invisible.
+    //
+    // It is observable after all, because of one measured property of the
+    // shipped client: A CLIENT STOPS RE-REGISTERING THE INSTANT A
+    // REAL-ENDPOINT DELIVER LANDS (src/netplay/direct_p2p.c:4343-4344 for
+    // the host, :2000-2001 for the joiner). So a REGISTER arriving from a
+    // peer we already pushed to is that peer still behaving as UNPAIRED:
+    // direct evidence the push was lost, not an inference.
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetMetrics();
+    const stub = makeStubSocket();
+
+    // --- the push LANDS: the pushed-to peer goes quiet. -------------------
+    {
+        const key = crypto.randomBytes(16);
+        const A = { address: '198.18.40.1', port: 9000 };
+        const B = { address: '198.18.40.2', port: 9001 };
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+        handle._onMessage(regFrom(key, B.port, B.address, B.port), B, stub);
+        assertEq(handle._pushStats.pushed, 1, 'push: one pairing push was emitted and armed for measurement');
+        assertEq(handle._pushStats.lost, 0, 'push: a peer that goes quiet is NOT counted as a lost push');
+    }
+
+    // --- the push is LOST: the pushed-to peer keeps REGISTERing. ---------
+    {
+        const key = crypto.randomBytes(16);
+        const A = { address: '198.18.41.1', port: 9100 };
+        const B = { address: '198.18.41.2', port: 9101 };
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+        handle._onMessage(regFrom(key, B.port, B.address, B.port), B, stub);
+        assertEq(handle._pushStats.pushed, 2, 'push: second pairing push armed');
+        // A -- the peer we pushed to -- comes back asking. A client that
+        // received the push would have cancelled its resender.
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+        assertEq(handle._pushStats.lost, 1, 'push: the pushed-to peer re-REGISTERing IS a lost push');
+
+        // One push yields exactly ONE sample: a peer that keeps hammering
+        // must not inflate the loss rate.
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+        assertEq(handle._pushStats.lost, 1, 'push: further REGISTERs from the same peer do not double-count');
+    }
+
+    // --- a DIFFERENT peer's REGISTER is not evidence about our push. -----
+    {
+        const key = crypto.randomBytes(16);
+        const A = { address: '198.18.42.1', port: 9200 };
+        const B = { address: '198.18.42.2', port: 9201 };
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+        handle._onMessage(regFrom(key, B.port, B.address, B.port), B, stub);
+        const lostBefore = handle._pushStats.lost;
+        // B was NOT the pushed-to peer (A was). B re-REGISTERing says
+        // nothing about whether A got its push.
+        handle._onMessage(regFrom(key, B.port, B.address, B.port), B, stub);
+        assertEq(handle._pushStats.lost, lostBefore,
+            'push: a REGISTER from the peer we did NOT push to is not counted');
+    }
+
+    // --- HAIRPIN EXCLUSION, and it is correctness, not tidiness. ---------
+    // When the pushed endpoint carries the recipient's OWN address, the
+    // client's self-DELIVER gate (direct_p2p.c:4336-4341 host,
+    // :1978-1982 joiner) deliberately does NOT cancel the resender. Such a
+    // peer keeps REGISTERing whether or not the push arrived, so counting
+    // it would manufacture loss that did not happen -- the H-1 shape.
+    {
+        const key = crypto.randomBytes(16);
+        const A = { address: '198.18.43.1', port: 9300 };
+        const B = { address: '198.18.43.1', port: 9301 }; // SAME address
+        const pushedBefore = handle._pushStats.pushed;
+        const lostBefore = handle._pushStats.lost;
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+        handle._onMessage(regFrom(key, B.port, B.address, B.port), B, stub);
+        assertEq(handle._pushStats.pushed, pushedBefore, 'push: a hairpin push is not counted as measurable');
+        assert(handle._pushStats.excluded > 0, 'push: the hairpin push was counted as EXCLUDED, visibly');
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+        assertEq(handle._pushStats.lost, lostBefore,
+            'push: a hairpin peer that keeps REGISTERing is NOT reported as a lost push');
+    }
+
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetMetrics();
+}
+
+async function testPairingToPunchHistogram(handle) {
+    // METRIC 2. On the host, the DELIVER that cancels the resender is the
+    // SAME DELIVER that spawns the punch: src/netplay/direct_p2p.c:4364
+    // sets FALLBACK_BILATERAL_PUNCH and :4372 spawns the punch thread, in
+    // the same function, off the same frame. So
+    //
+    //   time(pairing -> the pushed-to peer's re-REGISTER)
+    //     == time(pairing -> that peer starts punching)
+    //
+    // exactly. A landed push makes it 0 ms; a LOST push makes it one whole
+    // re-REGISTER interval, and the host's interval DEFAULTS TO 5000 ms
+    // (src/port/config/config.c:111, floor 1000 ms at direct_p2p.c:2983).
+    // One lost datagram therefore costs up to five seconds of connect
+    // latency, invisibly. That is the distribution this histogram exists
+    // to expose, and why a single mean would not do.
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetMetrics();
+    const stub = makeStubSocket();
+    const buckets = handle._pushHistBucketsMs;
+    assert(Array.isArray(buckets) && buckets.length > 0, 'hist: the server exposes its bucket edges');
+
+    // Drive one sample into each bucket by ageing the recorded push time,
+    // which is the same technique the stale-slot tests use for lastSeen.
+    const wanted = [];
+    for (let i = 0; i < buckets.length; i++) {
+        wanted.push(i === 0 ? Math.floor(buckets[0] / 2)
+                            : Math.floor((buckets[i - 1] + buckets[i]) / 2));
+    }
+    wanted.push(buckets[buckets.length - 1] + 5000); // the overflow bucket
+
+    for (let i = 0; i < wanted.length; i++) {
+        const delay = wanted[i];
+        const key = crypto.randomBytes(16);
+        const hexKey = key.toString('hex');
+        const A = { address: `198.18.50.${i + 1}`, port: 9400 + i };
+        const B = { address: `198.18.51.${i + 1}`, port: 9500 + i };
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+        handle._onMessage(regFrom(key, B.port, B.address, B.port), B, stub);
+        const entry = handle._sessionMap.get(hexKey);
+        assert(entry && entry.pushTo, `hist: sample ${i} armed a push`);
+        entry.pushAtMs -= delay; // age the push by `delay` ms
+        handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+    }
+
+    assertEq(handle._pushStats.lost, wanted.length, 'hist: every sample was recorded');
+    // One sample landed in each bucket, in order -- so the histogram
+    // actually discriminates rather than dumping everything in one cell.
+    for (let i = 0; i < handle._pushStats.hist.length; i++) {
+        assertEq(handle._pushStats.hist[i], 1, `hist: bucket ${i} holds exactly its one sample`);
+    }
+    assertEq(handle._pushStats.hist.length, buckets.length + 1,
+        'hist: there is an overflow bucket above the largest edge');
+    assert(handle._pushStats.maxMs >= buckets[buckets.length - 1],
+        'hist: the max tracks the slowest observed pairing->punch delay');
+
+    handle._resetSessions();
+    handle._resetRate();
+    handle._resetMetrics();
 }
 
 async function testSweepHook(handle) {
@@ -1603,7 +2405,10 @@ async function testSweepHook(handle) {
 // EXPECTED_TESTS is deliberately a literal, NOT TESTS.length: the point is
 // to catch a test vanishing from the registry, and deriving it from the
 // registry would make that undetectable.
-const EXPECTED_TESTS = 31; // +2: joinerPortReclaimSameIp, portReclaimSlotA (task #105)
+// +5 (task #122): nackPerReason, nackAmplificationBound,
+// nackNeverAnswersOwnFrames, lostPairingPushObserved,
+// pairingToPunchHistogram.
+const EXPECTED_TESTS = 36; // +2: joinerPortReclaimSameIp, portReclaimSlotA (task #105)
 
 let testsRun = 0;
 let testsFailed = 0;
@@ -1625,6 +2430,11 @@ async function runTest(name, fn) {
     try {
         H._resetRate();
         H._resetSessions();
+        // #122: the metric counters are shared process state too. Without
+        // this, testRateMapBounded's thousands of induced NACKs leak into
+        // testNackAmplificationBound's counts and the amplification proof
+        // reads a number it did not produce.
+        H._resetMetrics();
     } catch (resetErr) {
         console.error(`TEST ERROR: ${name}: reset hook failed: ${resetErr && resetErr.stack ? resetErr.stack : resetErr}`);
         threw = threw || resetErr;
@@ -1693,6 +2503,13 @@ async function main() {
         await runTest('keyBudgetCoversLegitimateSignalling', () => testKeyBudgetCoversLegitimateSignalling(handle));
         await runTest('keyBudgetCoversMultiJoinerRoom', () => testKeyBudgetCoversMultiJoinerRoom(handle));
         await runTest('retiredRelayTypesAreUnknown', () => testRetiredRelayTypesAreUnknown(handle));
+
+        // --- #122: typed refusals, their amplification bound, the metrics ---
+        await runTest('nackPerReason', () => testNackPerReason(handle));
+        await runTest('nackAmplificationBound', () => testNackAmplificationBound(handle));
+        await runTest('nackNeverAnswersOwnFrames', () => testNackNeverAnswersOwnFrames(handle));
+        await runTest('lostPairingPushObserved', () => testLostPairingPushObserved(handle));
+        await runTest('pairingToPunchHistogram', () => testPairingToPunchHistogram(handle));
 
         await runTest('sweepHook', () => testSweepHook(handle));
     } catch (err) {

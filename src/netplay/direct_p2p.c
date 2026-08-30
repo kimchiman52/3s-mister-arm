@@ -1314,7 +1314,7 @@ void DirectP2P_TestHook_SetPunchOracle(DirectP2P_PunchOracle_fn fn) {
  * reaches NET_SUCCESS (stun.c:781-798). The only endpoint the race ever
  * RE-arms is slot 1, and slot 1's endpoint comes from a DELIVER, whose IP
  * string is produced by inet_ntop(AF_INET, ...) in
- * Rendezvous_ParseDeliverEx (rendezvous.c:250-252) — i.e. ALWAYS a
+ * Rendezvous_ParseDeliverEx (rendezvous.c:300-302) — i.e. ALWAYS a
  * well-formed dotted quad that always resolves. So the wire physically
  * cannot deliver an endpoint that reaches the validate/memset decision and
  * fails there. The seam supplies what the wire cannot.
@@ -2030,10 +2030,10 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                  *   Rendezvous_HasMagic(...) ? Rendezvous_FrameType(...) : -1
                  * so ft == 0 means the datagram DID carry the '3SXR' magic
                  * but Rendezvous_FrameType refused it. FrameType returns 0
-                 * for THREE reasons (rendezvous.c:290-300): len < 6, wrong
+                 * for THREE reasons (rendezvous.c:340-350): len < 6, wrong
                  * magic, and pkt[4] != REND_VERSION. The magic is already
                  * proven by Rendezvous_HasMagic — but HasMagic only needs
-                 * len >= 4 (rendezvous.c:281-287), so a 4- or 5-byte runt
+                 * len >= 4 (rendezvous.c:331-337), so a 4- or 5-byte runt
                  * reaches here too. Counting a runt as a version skew would
                  * be an attribution error of exactly the kind this whole
                  * change exists to prevent, so the version byte is tested

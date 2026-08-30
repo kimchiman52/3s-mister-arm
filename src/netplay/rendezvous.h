@@ -199,13 +199,95 @@ bool Rendezvous_ParseDeliver(const uint8_t* pkt, int len,
 /* Server->client frame types this client understands. REGISTER (1) and
  * POLL (3) are client->server.
  *
- * Types 5-8 (RELAY_REQ / RELAY_GRANT / RELAY_PIN / RELAY_PIN_ACK) were
- * the S5 relay rung and are GONE from this client. The '3SXR' wire
- * version deliberately stays 2: a client that never sends a RELAY_REQ
- * was always indistinguishable from a pre-S5 one, so ceasing to send it
- * is not a protocol change and no interlock row in §6.5 moves. */
+ * Types 6-8 (RELAY_GRANT / RELAY_PIN / RELAY_PIN_ACK) were the S5 relay
+ * rung and are GONE from this client. The '3SXR' wire version
+ * deliberately stays 2: a client that never sends a RELAY_REQ was always
+ * indistinguishable from a pre-S5 one, so ceasing to send it is not a
+ * protocol change and no interlock row in §6.5 moves.
+ *
+ * Task #122: type 5 (once RELAY_REQ) is re-allocated as NACK — a typed
+ * server refusal. Version still stays 2 for the same reason: every frame
+ * that existed before is byte-for-byte unchanged, and a build that does
+ * not know type 5 ignores it exactly as it ignored the relay types. */
 #define REND_FRAME_DELIVER      2
 #define REND_FRAME_CHALLENGE    4
+#define REND_FRAME_NACK         5
+
+/* Task #122: NACK wire length. 28 bytes, deliberately SMALLER than the
+ * 36-byte REGISTER/POLL it answers — the server must stay a net
+ * attenuator on every frame so it is never worth aiming at a victim.
+ * See the amplification note in tools/rendezvous-server/
+ * rendezvous-server.js. */
+#define REND_NACK_LEN 28
+
+/*
+ * Task #122 — why this enum exists.
+ *
+ * The rendezvous server refuses a request for NINE distinguishable
+ * reasons and, before #122, EVERY ONE of them looked identical on the
+ * wire: nothing at all. The client's own honesty note (connect_fail.h,
+ * CONNECT_FAIL_RENDEZVOUS_DOWN) lists four of them and says outright
+ * that separating them "needs a wire change — S4/S5 territory". This is
+ * that wire change; CHALLENGE used to be the only server condition a
+ * client could positively observe.
+ *
+ * WIRE VALUES ARE APPEND-ONLY. They are shared with
+ * tools/rendezvous-server/rendezvous-server.js (NACK_REASON_*) and the
+ * two files DEPLOY INDEPENDENTLY — the server is a long-lived VPS
+ * process, the client ships in a release ZIP — so a renumber on either
+ * side is a silent misattribution, which is the exact failure H-1 was
+ * about. Never renumber, never reuse; 0 is reserved so an all-zero byte
+ * is never a valid reason.
+ */
+/* The "pre"/"post" column is the return-routability class: a PRE-cookie
+ * reason describes only the sender's own frame or its own per-IP budget
+ * and carries no session-derived information, which is what makes it
+ * safe to send to a source that has not yet proven it receives at its
+ * claimed address. A POST-cookie reason is only ever sent to a source
+ * that has proven exactly that. */
+typedef enum RendezvousNackReason {
+    REND_NACK_NONE         = 0, /*      not a reason; reserved              */
+    REND_NACK_BAD_VERSION  = 1, /* pre  server speaks a different version   */
+    REND_NACK_BAD_LENGTH   = 2, /* pre  REGISTER/POLL was the wrong length  */
+    REND_NACK_BAD_TYPE     = 3, /* pre  unallocated type byte — e.g. a
+                                 *      relay-era build sending types 6-8   */
+    REND_NACK_RATE_IP      = 4, /* post our IP's cookied budget is spent —
+                                 *      typically a shared/CGNAT egress IP  */
+    REND_NACK_RATE_KEY     = 5, /* post this room's budget is spent         */
+    REND_NACK_RATE_PREGATE = 6, /* pre  our IP's uncookied first-contact
+                                 *      budget is spent                     */
+    REND_NACK_KEY_QUOTA    = 7, /* post our IP already holds the maximum
+                                 *      live keys — reachable by retrying
+                                 *      several stale room codes            */
+    REND_NACK_TABLE_FULL   = 8, /* post server session table saturated      */
+    REND_NACK_SESSION_FULL = 9  /* post the room code is already taken by
+                                 *      two other endpoints                 */
+} RendezvousNackReason;
+
+/*
+ * Parse a server NACK. Returns true and writes *out_reason only for a
+ * well-formed NACK of THIS protocol version carrying OUR session key.
+ *
+ * The session-key gate is the same one Rendezvous_ParseChallenge uses
+ * and it is load-bearing for the same reason: the key embeds the S4b
+ * nonce, so an off-path attacker that learns our port cannot forge a
+ * NACK we would believe. A NACK is diagnostic input, and a diagnosis an
+ * attacker can choose is worse than no diagnosis (H-1).
+ *
+ * The reason byte is NOT range-checked against the enum above: a server
+ * newer than us may send a reason we have no name for, and the honest
+ * handling is to surface the raw number rather than silently drop the
+ * frame or, worse, coerce it onto a name that is wrong.
+ * Rendezvous_NackReasonText renders those as "unknown".
+ */
+bool Rendezvous_ParseNack(const uint8_t* pkt, int len,
+                          const uint8_t expected_session_key[16],
+                          uint8_t* out_reason);
+
+/* Stable machine string for logs, e.g. "SESSION_FULL". Never NULL;
+ * unrecognised values render as "unknown". Log-grep anchors: append-only,
+ * never rename. */
+const char* Rendezvous_NackReasonText(uint8_t reason);
 
 /*
  * Cheap router for an inbound datagram: returns the '3SXR' frame type

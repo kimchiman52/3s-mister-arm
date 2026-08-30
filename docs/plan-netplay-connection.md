@@ -692,7 +692,7 @@ REGISTER resends are built on the rendezvous **worker** thread, so the
 8-byte cookie crosses via a seqlock (`signal_cookie_publish`, direct_p2p.c:717;
 `signal_cookie_snapshot`, direct_p2p.c:732) and the main thread also
 echoes immediately (`host_handle_challenge`, direct_p2p.c:4390).
-`Rendezvous_ParseChallenge` (rendezvous.c:193) validates magic, version,
+`Rendezvous_ParseChallenge` (rendezvous.c:196) validates magic, version,
 type **and** that the frame carries *our* session key (cross-talk +
 forgery gate — the key embeds the S4b nonce), and **zeroes its output on
 every reject**, so a caller that ignores the return value cannot echo
@@ -1520,7 +1520,7 @@ Four `NETPLAY_TEST_HOOKS`-only seams make that possible:
   failure mode past its up-front `ip`/`port` guard — `Stun_PunchBegin`
   (`stun.c:781-798`) — and the only slot the race ever RE-arms takes its IP
   from `Rendezvous_ParseDeliverEx`, which emits `inet_ntop` output and
-  therefore always a resolvable dotted quad (`rendezvous.c:250-253`). The
+  therefore always a resolvable dotted quad (`rendezvous.c:300-303`). The
   wire cannot produce the case M-2 half (i) is about; the seam can, and the
   failure it produces is the real `NET_ResolveHostname` one.
 - **`DirectP2P_TestHook_RaceRelayArmMs` / `..._RaceRelayGraceMs`** exposed the

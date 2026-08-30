@@ -30,9 +30,12 @@
 #define REND_TYPE_DELIVER     2
 #define REND_TYPE_POLL        3
 #define REND_TYPE_CHALLENGE   4
-/* Types 5-8 were the S5 relay rung (RELAY_REQ / RELAY_GRANT / RELAY_PIN
- * / RELAY_PIN_ACK). The rung was removed; this client neither sends nor
- * parses them. The version byte stays 2 — see rendezvous.h. */
+/* Task #122: type 5 is NACK, a typed server refusal (server->client
+ * only; this client never sends one). Types 6-8 were the rest of the S5
+ * relay rung (RELAY_GRANT / RELAY_PIN / RELAY_PIN_ACK); the rung was
+ * removed and this client neither sends nor parses them. The version
+ * byte stays 2 — see rendezvous.h. */
+#define REND_TYPE_NACK        5
 
 #define REND_REGISTER_LEN     36
 #define REND_POLL_LEN         36
@@ -217,6 +220,53 @@ bool Rendezvous_ParseChallenge(const uint8_t* pkt, int len,
     }
     memcpy(out_cookie, &pkt[24], REND_COOKIE_LEN);
     return true;
+}
+
+/* Task #122. Mirrors Rendezvous_ParseChallenge's shape and gates
+ * deliberately: same magic test, same version test, same session-key
+ * test. The key gate is what stops an off-path sender that has learned
+ * our port from choosing our diagnosis for us. */
+bool Rendezvous_ParseNack(const uint8_t* pkt, int len,
+                          const uint8_t expected_session_key[16],
+                          uint8_t* out_reason) {
+    if (out_reason) {
+        *out_reason = REND_NACK_NONE;
+    }
+    if (!pkt || len < REND_NACK_LEN || !expected_session_key || !out_reason) {
+        return false;
+    }
+    if (read_be32(&pkt[0]) != REND_MAGIC) {
+        return false;
+    }
+    if (pkt[4] != REND_VERSION) {
+        return false;
+    }
+    if (pkt[5] != REND_TYPE_NACK) {
+        return false;
+    }
+    /* The server echoes our own session key back at [8..24]. A NACK that
+     * does not carry it is cross-talk, a forgery, or a refusal aimed at
+     * a frame that was too short for the server to echo from. */
+    if (memcmp(&pkt[8], expected_session_key, REND_KEY_LEN) != 0) {
+        return false;
+    }
+    *out_reason = pkt[6];
+    return true;
+}
+
+const char* Rendezvous_NackReasonText(uint8_t reason) {
+    switch (reason) {
+        case REND_NACK_BAD_VERSION:  return "BAD_VERSION";
+        case REND_NACK_BAD_LENGTH:   return "BAD_LENGTH";
+        case REND_NACK_BAD_TYPE:     return "BAD_TYPE";
+        case REND_NACK_RATE_IP:      return "RATE_IP";
+        case REND_NACK_RATE_KEY:     return "RATE_KEY";
+        case REND_NACK_RATE_PREGATE: return "RATE_PREGATE";
+        case REND_NACK_KEY_QUOTA:    return "KEY_QUOTA";
+        case REND_NACK_TABLE_FULL:   return "TABLE_FULL";
+        case REND_NACK_SESSION_FULL: return "SESSION_FULL";
+        default:                     return "unknown";
+    }
 }
 
 RendezvousDeliverResult Rendezvous_ParseDeliverEx(const uint8_t* pkt, int len,
