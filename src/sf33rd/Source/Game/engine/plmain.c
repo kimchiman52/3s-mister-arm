@@ -152,9 +152,17 @@ void player_mv_0000(PLW* wk) { // 🟡
     wk->metamor_over = 0;
     wk->sa_healing = 0;
 
-    if (!ArcadeBalance_IsEnabled()) {
-        wk->resurrection_resv = 0;
-    }
+    /* [TM-06 follow-up] Un-gated deliberately. check_omop_vital() now reads
+     * resurrection_resv every frame in BOTH balance modes, and that read forces
+     * vital_new = -1 with an early return. Its only setter (plcnt.c,
+     * check_sa_resurrection) is still arcade-gated, so the field cannot become
+     * set under arcade today -- but leaving the round-init clear gated while
+     * the read is ungated is an asymmetry waiting to bite: relaxing the setter
+     * for arcade (the obvious next step for SA-III resurrection) would pin
+     * vital_new = -1 for the whole round with nothing to clear it.
+     * Clearing an already-zero field is a no-op, so this costs nothing now and
+     * removes the trap. */
+    wk->resurrection_resv = 0;
 
     wk->dm_hos_flag = 0;
     wk->kezurijini_flag = 0;
