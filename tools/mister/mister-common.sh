@@ -369,6 +369,7 @@ mister_require_target_idle() {
 MISTER_LOCK_HELD=0
 MISTER_LOCK_OWNER_FILE=""
 MISTER_LOCK_DIR_VALUE=""
+MISTER_LOCK_SUBSHELL=0
 
 # Seconds since a path was last modified, or empty if it cannot be determined.
 # BSD stat (macOS) and GNU stat (Linux) disagree on the flag, so try both.
@@ -429,7 +430,22 @@ mister_lock_status() {
 }
 
 mister_lock_release() {
+    local owner_pid
+
     if [ "${MISTER_LOCK_HELD}" -ne 1 ]; then
+        return 0
+    fi
+
+    # Only the shell that took the lock may drop it. A subshell inherits
+    # MISTER_LOCK_HELD and every other variable below, and "$$" does NOT change
+    # inside one, so without this guard a `( ... )`, a `$( ... )` or a pipeline
+    # segment that runs the release -- which the `trap` wrapper below can now
+    # arrange, by chaining onto an EXIT trap a caller installed inside a
+    # subshell -- would delete a lock its parent still holds and still believes
+    # it owns. BASH_SUBSHELL is the only spelling of "am I a subshell" that
+    # works here: $$ is identical in both, and BASHPID does not exist before
+    # bash 4.0 while macOS ships bash 3.2.
+    if [ "${BASH_SUBSHELL:-0}" -ne "${MISTER_LOCK_SUBSHELL:-0}" ]; then
         return 0
     fi
 
@@ -491,7 +507,94 @@ mister_lock_acquire() {
     } >"${lock_dir}/owner"
 
     MISTER_LOCK_HELD=1
-    trap 'mister_lock_release' EXIT INT TERM HUP
+    MISTER_LOCK_SUBSHELL="${BASH_SUBSHELL:-0}"
+    # `builtin` on purpose: the wrapper below is live from here on, and routing
+    # this call through it would chain the release onto itself.
+    builtin trap 'mister_lock_release' EXIT INT TERM HUP
+}
+
+# `trap` is shadowed by a function, deliberately, for the whole of any script
+# that sources this file. Bash has exactly one EXIT trap slot, so the perfectly
+# ordinary line
+#
+#     mister_lock_acquire
+#     trap 'my_cleanup' EXIT
+#
+# silently overwrote mister_lock_acquire's release and leaked the lock
+# directory. Reproduced 2026-08-30: `trap -p EXIT` after those two lines prints
+# only the caller's handler, and the lock dir outlives the process. It is not an
+# outage -- mister_lock_acquire reaps a dead owner with `kill -0` -- but it
+# leaves a stale lock whose owner is gone, makes `misterctl.sh lock-status`
+# answer `lock_state=held` for nobody, and means shared tooling's release path
+# can be switched off by a caller that did nothing wrong.
+#
+# Three fixes were possible. Chaining whatever EXIT trap already existed at
+# acquire time fixes nothing: the clobbering trap is installed *after* the
+# acquire, which is the only order that reads naturally. A watchdog process that
+# outlives the shell cannot be clobbered, but it leaves a stray process for the
+# life of the lock and races a later acquirer for the right to delete the
+# directory. A documented `mister_lock_trap_add` helper only works when every
+# lane remembers to call it, which is the same defect with more documentation.
+#
+# So the interposition happens at the one place the caller must pass through:
+# `trap` itself. The invariant is "while the lock is held, the EXIT trap ends
+# with mister_lock_release", and callers keep writing ordinary shell. Anything
+# that does not install or clear an EXIT handler while the lock is held --
+# `trap`, `trap -p`, `trap -l`, any non-EXIT signal, every call made before the
+# acquire or after the release -- reaches the builtin byte-for-byte unchanged.
+#
+# Residual, deliberately not closed: a caller whose own EXIT handler ends in
+# `exit` terminates the shell before the chained release runs, because bash does
+# not continue an EXIT trap past `exit`. That leaks exactly as today, so the
+# wrapper is never worse; perf-sampler.sh is the one in-tree caller shaped that
+# way and it already calls mister_lock_release itself (perf-sampler.sh:811).
+# The release is chained *after* the caller's handler, not before, so a handler
+# that tears down device state still runs while the lock is held.
+trap() {
+    local handler sig sigs="" has_exit=0
+
+    # Nothing to protect, or a query form: straight through.
+    if [ "${MISTER_LOCK_HELD:-0}" -ne 1 ] || [ "$#" -eq 0 ]; then
+        builtin trap "$@"
+        return
+    fi
+    case "$1" in
+        -p|-l) builtin trap "$@" ; return ;;
+    esac
+
+    handler="$1"
+    shift
+    if [ "$#" -eq 0 ]; then
+        builtin trap "${handler}"
+        return
+    fi
+
+    for sig in "$@"; do
+        case "${sig}" in
+            EXIT|exit|Exit|0) has_exit=1 ;;
+            *) sigs="${sigs} ${sig}" ;;
+        esac
+    done
+
+    if [ "${has_exit}" -eq 0 ]; then
+        # shellcheck disable=SC2086  # signal names never contain whitespace
+        builtin trap "${handler}" ${sigs}
+        return
+    fi
+
+    if [ -n "${sigs}" ]; then
+        # shellcheck disable=SC2086  # signal names never contain whitespace
+        builtin trap "${handler}" ${sigs} || return
+    fi
+
+    case "${handler}" in
+        # `trap - EXIT` and `trap '' EXIT` cannot take the release away either;
+        # they get the bare release back. Separated by a newline rather than a
+        # `;` so a handler ending in a comment cannot swallow it.
+        -|'') builtin trap 'mister_lock_release' EXIT ;;
+        *)    builtin trap "${handler}
+mister_lock_release" EXIT ;;
+    esac
 }
 
 mister_base64_encode_inline() {

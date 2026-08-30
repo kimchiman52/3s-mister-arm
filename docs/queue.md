@@ -2847,3 +2847,181 @@ Binary saved on-device before each round and restored after both; final
 identical to the pre-lane hash. `ls bin/ | grep task141` → no leftovers. Nothing
 was deleted, no `rsync --delete` was issued, `menu.rbf` was never touched, and
 no process was left running.
+
+## #142 — the lock release any caller could switch off — CLOSED
+
+`mister_lock_acquire` ended with `trap 'mister_lock_release' EXIT INT TERM HUP`
+(`tools/mister/mister-common.sh`). Bash has exactly one EXIT trap slot, so a
+caller writing the ordinary
+
+```sh
+mister_lock_acquire
+trap 'my_cleanup' EXIT
+```
+
+replaced the release outright. A lane hit this today with its own device script.
+
+### 1. Mechanism, reproduced rather than believed
+
+A caller script sourcing `mister-common.sh`, acquiring, then installing its own
+EXIT trap and exiting 0:
+
+```
+trap -- 'echo "CALLER-TRAP-RAN"' EXIT     <- trap -p EXIT inside the script
+CALLER-TRAP-RAN
+RESULT: LOCK LEAKED (dir still present)
+pid=60879
+```
+
+`trap -p EXIT` prints only the caller's handler; `mister_lock_release` is gone
+from the slot. `misterctl.sh lock-status` against that directory then answers
+
+```
+lock_state=held
+owner_pid=60879
+owner_live=0
+```
+
+Severity is bounded, and was checked rather than assumed: the owner *exits*, so
+`mister_lock_acquire`'s liveness reap (`kill -0` fails → `rm -rf` → retry) does
+free it for the next acquirer. This is not the 7h48m wedge of task #141's
+neighbour — that was a live-but-hung owner. It is a latent footgun: stale state,
+a `lock-status` that reports `held` for nobody, and a release path in shared
+tooling that any caller can disable by writing correct-looking shell.
+
+### 2. The fix, and the two that were rejected
+
+Rejected — **chain whatever EXIT trap already exists at acquire time**. It fixes
+nothing. The clobbering trap is installed *after* the acquire, which is the only
+order that reads naturally, and is the order the lane actually wrote.
+
+Rejected — **a watchdog process that outlives the shell**. Genuinely
+un-clobberable, but it leaves a stray process for the life of every lock and it
+races a later acquirer for the right to delete the directory: parent dies, a
+second lane reaps and re-acquires, the orphaned watchdog then deletes the *new*
+owner's lock. That trades a stale directory for two writers on the device.
+
+Rejected — **a documented `mister_lock_trap_add` helper**. The brief's constraint
+is that callers are ordinary shell scripts written by many different lanes and
+the fix must not require them to remember anything. A helper only works when
+everybody calls it, which is the same defect with more documentation.
+
+Shipped — **interpose at the one place the caller must pass through: `trap`
+itself.** `mister-common.sh` now defines a shell function named `trap` that
+shadows the builtin for any script that sources the file. The invariant is *while
+the lock is held, the EXIT trap ends with `mister_lock_release`*. Callers keep
+writing ordinary shell and nobody has to remember anything.
+
+It is deliberately narrow. Everything that is not an EXIT handler installed or
+cleared while the lock is held — a bare `trap`, `trap -p`, `trap -l`, any
+non-EXIT signal, and every call made before the acquire or after the release —
+reaches `builtin trap` byte-for-byte unchanged. `trap - EXIT` and `trap '' EXIT`
+get the bare release back rather than an empty slot. The release is chained
+*after* the caller's handler, never before, so a handler that tears down device
+state still runs while the lock is held.
+
+Two companion changes, both needed by the first:
+
+- `mister_lock_acquire` now calls `builtin trap` for its own install, so it does
+  not chain the release onto itself.
+- `mister_lock_release` grew a `BASH_SUBSHELL` guard. A subshell inherits
+  `MISTER_LOCK_HELD` and shares `$$` with its parent, so once a caller's
+  `( trap ... EXIT; ... )` gets the release chained onto it, the subshell's exit
+  would delete a lock the parent still holds. `BASH_SUBSHELL` is the only
+  workable spelling here: `$$` is identical in both, and `BASHPID` did not exist
+  before bash 4.0 while macOS ships 3.2.57. Verified present and correct on
+  3.2.57 (`top=0, sub=1, cmdsub=1, pipeseg=1`). `owner_pid` also became `local`;
+  it was leaking into caller scope.
+
+### 3. Proof
+
+`tools/mister/tests/lock-trap-test.sh`, 28 assertions, no device and no network.
+Every case asserts both halves — the lock is free afterwards **and** the caller's
+own handler ran, because a chain that drops the caller's cleanup would be a worse
+bug than the leak it fixes.
+
+- T1 the reported shape; T2 the same under `set -e` with the script dying on a
+  failed command (`status=1` reaches the handler); T3 `trap - EXIT`; T4 one
+  handler over `EXIT INT TERM HUP`, asserting the non-EXIT signals are installed
+  verbatim; T5 a non-EXIT trap leaves the release slot alone; T6 pre-acquire
+  calls are not chained; T7 the subshell guard (`STILL-HELD-AFTER-SUBSHELL`);
+  T8 post-release calls pass through; T10 the real in-tree caller shape —
+  perf-sampler.sh's four traps plus a handler that disarms all four and exits
+  (`perf-sampler.sh:787`, `:811`, `:904`), asserting no double release and no
+  re-entry.
+- **T9 is the negative control.** It rebuilds a copy of `mister-common.sh` with
+  the wrapper stripped out, runs T1's script against it, and requires
+  `lock_after=leaked`. Without it the other 26 assertions prove nothing.
+
+`28 passed, 0 failed`. Existing suites re-run green against the change:
+`deploy-prune-test.sh` 33/33, `osd-launcher-test.sh` 24/24.
+
+Residual, recorded not hidden: a caller whose own EXIT handler ends in `exit`
+terminates the shell before the chained release runs, because bash does not
+continue an EXIT trap past `exit`. That leaks exactly as it does today, so the
+wrapper is never worse. `perf-sampler.sh` is the one in-tree caller shaped that
+way and it already calls `mister_lock_release` itself.
+
+### 4. The other traps, audited
+
+`mister-common.sh` had exactly one trap, the one fixed. It is now the only
+`builtin trap` call in the file.
+
+`mister-common.sh` is also the only sourced *library* in `tools/` that installs
+a trap at all. The other one, `tools/mister/docker-host.sh` (sourced by
+`build-game.sh` and `setup-build-container.sh`), contains zero `trap`
+occurrences, so it has nothing a caller could clobber. Every other trap in
+`tools/` is in a leaf script that installs it for itself and is nobody's
+library: `package.sh`, `perf-sampler.sh`, `build-game.sh`, the netplay
+`natmatrix` scripts, `bench-rect-batching.sh`, `publish-release.sh`,
+`build-quartus-image.sh`, and the two test harnesses. The `trap cleanup EXIT`
+at `perf-sampler.sh:946` is inside a heredoc for the *remote* shell, not a
+local trap.
+
+### 5. Keepalives, re-confirmed after editing the same file
+
+Today's `182d473a` armed `ServerAliveInterval=15` / `ServerAliveCountMax=8`.
+Confirmed still present on all four vectors by evaluating the functions, not by
+reading them:
+
+- `mister_ssh_password_args` → `... -o ServerAliveInterval=15 -o ServerAliveCountMax=8 ...`
+- `mister_ssh_key_only_args` → same
+- `mister_rsync_ssh_password_command` → same, inside the rsync `-e` string
+- `mister_rsync_ssh_key_only_command` → same
+
+And observed live on the wire: the `health` run below spawned
+`ssh ... -o ServerAliveInterval=15 -o ServerAliveCountMax=8 ... root@192.168.1.171`.
+
+The recorded residual is untouched and still open: the ssh **authentication
+phase** is bounded by nothing, because keepalives are not armed until the
+session is established. Not trivial, so out of scope here.
+
+### 6. Device
+
+End-to-end on `192.168.1.171`, read-only throughout.
+
+`lock-status` → `lock_state=free`; `misterctl.sh health` → `__MISTER_HEALTH_OK__`,
+`Linux MiSTer 5.15.1-MiSTer #1 SMP Wed Apr 2 20:01:54 CST 2025 armv7l`,
+`__AFS_OK__`; `lock-status` → `lock_state=free`.
+
+Then the lane's own shape against the real device: a script that acquires,
+installs `trap my_cleanup EXIT`, confirms `lock_state=held` mid-run, runs a
+read-only `mister_ssh_exec`, and exits. Output: `held: lock_state=held`,
+`__READONLY_OK__`, `LANE-CLEANUP-RAN`, and `lock_state=free` afterwards — the
+release survived and the caller's handler ran, on hardware.
+
+No `rsync --delete`, `menu.rbf` untouched, nothing deleted, no process left
+running.
+
+### 7. Gates
+
+- `bash -n` on every `tools/mister/*.sh` and `tools/mister/tests/*.sh`: clean.
+- `tools/mister/tests/lock-trap-test.sh` 28/28 (new), `deploy-prune-test.sh`
+  33/33, `osd-launcher-test.sh` 24/24.
+- `shellcheck` **skipped — not installed on this machine** (`command -v
+  shellcheck` empty). The two `# shellcheck disable=SC2086` comments in the
+  wrapper are written for whoever runs it next; they are not claimed as verified.
+- Citation baselines run at the end.
+- **Frame-data, netplay harnesses, ARM cross-build and every build: skipped,
+  correctly.** This lane touches two shell files and reaches no compiled
+  artifact. Canon untouched: 99 corpora / 1,488 rows / 1,435 PASS / 53 XFAIL.
