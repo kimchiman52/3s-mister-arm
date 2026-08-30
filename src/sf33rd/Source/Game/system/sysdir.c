@@ -74,6 +74,16 @@ u32 sag_ikinari_max() {
 }
 
 u32 check_use_all_SA() {
+    /* [TM-07 follow-up] Must agree with cmd_sel, which is forced to 0 under
+     * arcade balance in init_omop() because the ROM-derived command tables
+     * have no all-super-arts variant. This function is read independently of
+     * cmd_sel (sel_pl.c uses it to SKIP the Super Art select screen), so
+     * leaving it ungated would have given an arcade player no SA choice AND
+     * only one usable SA -- swapping one inconsistency for another. */
+    if (ArcadeBalance_IsEnabled()) {
+        return 0;
+    }
+
     if (Direction_Working[Present_Mode] != 0) {
         return system_dir[Present_Mode].contents[9][0];
     }
