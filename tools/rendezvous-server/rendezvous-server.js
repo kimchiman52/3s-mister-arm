@@ -1203,7 +1203,15 @@ function notePushLost(hexKey, peer, delayMs) {
     pushStats.hist[pushHistBucket(delayMs)] += 1;
     pushStats.sumMs += delayMs;
     if (delayMs > pushStats.maxMs) pushStats.maxMs = delayMs;
-    logWarn(`[PUSH-LOST] key=${shortKey4(hexKey)}... ${peer.address}:${peer.port} re-REGISTERed ${Math.round(delayMs)} ms after its pairing DELIVER — it never received the push (a paired client stops re-REGISTERing: direct_p2p.c:4749 host / :2068 joiner)`);
+    // #131: aggregated like every other per-packet warn in this file. The
+    // COUNTERS above are the record; this line was only ever the sample,
+    // and reportPushStats already emits count/mean/max/histogram on its
+    // own interval, so nothing observable is lost. The reason string is a
+    // file-chosen constant (noteThrottled keys noteMap on it), and the
+    // per-event key/endpoint/delay move to the detail.
+    noteThrottled(logWarn,
+        '[PUSH-LOST] a paired peer re-REGISTERed after its pairing DELIVER — it never received the push (a paired client stops re-REGISTERing: direct_p2p.c:4749 host / :2068 joiner)',
+        `key=${shortKey4(hexKey)}... ${peer.address}:${peer.port} +${Math.round(delayMs)} ms`);
 }
 
 function reportPushStats(now) {
@@ -1234,7 +1242,13 @@ function handleRegister(socket, buf, rinfo) {
     const sessionKeyBuf = Buffer.from(buf.subarray(8, 24)); // copy out of receive buf
     const myPublicPort = buf.readUInt16BE(24);
     if (myPublicPort !== rinfo.port) {
-        logWarn(`REGISTER NAT mismatch: claimed my_public_port=${myPublicPort} but source port=${rinfo.port} (key=${shortKey4(sessionKeyBuf.toString('hex'))})`);
+        // #131: this is a PER-PACKET condition, not an event. A client
+        // behind a port-rewriting NAT trips it on every REGISTER, i.e. at
+        // its full resend cadence for the whole signalling leg, with no
+        // attacker involved. Aggregate it.
+        noteThrottled(logWarn,
+            'REGISTER NAT mismatch: claimed my_public_port != source port',
+            `claimed=${myPublicPort} source=${rinfo.port} key=${shortKey4(sessionKeyBuf.toString('hex'))}...`);
     }
     const hexKey = sessionKeyBuf.toString('hex');
     const source = { address: rinfo.address, port: rinfo.port };
@@ -1398,7 +1412,14 @@ function handleRegister(socket, buf, rinfo) {
         } else {
             // Both slots live with different endpoints; treat as a third party.
             // (Don't overwrite either slot. Don't DELIVER.)
-            logWarn(`REGISTER from ${source.address}:${source.port} for full session key=${shortKey4(hexKey)} — ignored`);
+            // #131: also per-packet. Dialers 3..N of a room each resend
+            // at the in-race cadence the per-key budget is sized for, so a
+            // full KEY_RATE_DESIGN_DIALERS room emits this several times a
+            // second for the whole signalling tail -- again with no
+            // attacker present. Aggregate it.
+            noteThrottled(logWarn,
+                'REGISTER for a full session — ignored',
+                `${source.address}:${source.port} key=${shortKey4(hexKey)}...`);
             // #122: post-cookie. This is the "the room you typed is
             // already taken" case, and it is the most USER-MEANINGFUL of
             // all nine reasons — today it is reported as "matchmaking
