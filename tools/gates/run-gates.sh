@@ -62,6 +62,7 @@ GATES=(
     "rendezvous-protocol|node tools/rendezvous-server/__test_protocol.js"
     "key-rate-budget|server per-key cap vs the CLIENT cadences it is derived from -- #123"
     "reclaim-window|slot-reclaim staleness vs the CLIENT cadences it is derived from -- #130"
+    "constant-time-compare|the punch-token compare's SHAPE, which no unit test can see -- #132"
     "host-diagnostic-parity|diagnostics the host's fortified libc headers hide -- #106"
     "doc-citation-baselines|tools/doc-citations/check_baselines.py (breach AND slack)"
     "arm-cross-build|cross-compile the shipped config for ARM -- #106 (needs --arm)"
@@ -215,6 +216,30 @@ echo
 # rate-dropped until the code on the host's screen stops working. Same shape,
 # and the same remedy, as tools/ldreq-timing/check_barrier_budget.py.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 4c. The punch-token compare's shape -- task #132.
+#
+# Stun_IsPunchPayload compares the room-code-derived token with an
+# accumulator so a wrong guess costs the same time wherever it goes wrong.
+# An early-exiting rewrite is BEHAVIOURALLY IDENTICAL -- same verdict for
+# every input -- so --test-punch-predicates stays green against it while the
+# token becomes recoverable byte by byte from off-path. A timing measurement
+# over a 17-byte compare is noise, and a flaky gate is worse than none, so the
+# property is checked where it is actually expressed: the shape of the loop.
+# ---------------------------------------------------------------------------
+echo "=== constant-time compare ==="
+python3 tools/gates/check_constant_time_compare.py \
+    > "${out_dir}/constant-time-compare.log" 2>&1
+rc=$?
+if [ $rc -eq 0 ]; then
+    record constant-time-compare GREEN
+elif [ $rc -eq 1 ]; then
+    record constant-time-compare RED; cat "${out_dir}/constant-time-compare.log"
+else
+    record constant-time-compare ERROR; cat "${out_dir}/constant-time-compare.log"
+fi
+echo
+
 echo "=== key-rate budget ==="
 python3 tools/rendezvous-server/check_key_rate_budget.py \
     > "${out_dir}/key-rate-budget.log" 2>&1
