@@ -2734,15 +2734,15 @@ void Netplay_SetStunSocket(struct NET_DatagramSocket* socket) {
         //
         // NO CALLER DOES THIS TODAY, and the attempt to build one failed
         // on a real structural guard rather than on luck: the only
-        // production caller is do_handoff (direct_p2p.c:4520), which
+        // production caller is do_handoff (direct_p2p.c:4522), which
         // nulls s_work.stun.socket immediately after
-        // (direct_p2p.c:4529), and Tick's HANDOFF case re-enters
+        // (direct_p2p.c:4532), and Tick's HANDOFF case re-enters
         // join_tick_handoff only while that field is non-NULL
-        // (direct_p2p.c:5782). So a second handoff inside one session --
+        // (direct_p2p.c:5783). So a second handoff inside one session --
         // the one ordering that would install a DIFFERENT socket while
         // late-punch is armed -- cannot be reached. Both terminal paths
         // are correct for the same reason and by explicit ordering:
-        // EXITING disarms (:2542) before the destroy below runs (:2562),
+        // EXITING disarms (:2543) before the destroy below runs (:2562),
         // and SessionStarted disarms at :1798.
         //
         // This is therefore a guard on the INVARIANT, not a fix for a

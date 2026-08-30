@@ -66,45 +66,86 @@ directions.
 
 ---
 
-## #131 — review batch (five items)
+## #131 — review batch (five items) — CLOSED
 
-1. **`ORCH_HOST_LADDER_MS` undercounts the ladder by 600 ms.**
-   It adds `WORKER_STARTUP_DELAY_MS` **once**
-   (`src/netplay/direct_p2p.c:6151`), but the S2 ladder **respawns**
-   `host_thread_fn` (`src/netplay/direct_p2p.c:5854`), whose first statement
-   is that same delay (`src/netplay/direct_p2p.c:3516`, definition at
-   `:3507`). Four spawns ⇒ **+600 ms**. Assert `[D]`'s `86450`
-   (`src/netplay/direct_p2p.c:6280`, derivation at `:6260`) should be
-   `87050`. Absorbed by the 5000 ms nav margin, so **not user-facing** — but
-   it contradicts the block's own charter, which says the number "must be
-   COMPUTED from the legs the code enforces"
-   (`src/netplay/direct_p2p.c:6033-6036`) and lists the delay as occurring at
-   "both sites" (`:6040-6041`).
-2. **Late-punch borrows a socket with no invalidation hook.**
-   `s_sock` is borrowed and never closed (`src/netplay/late_punch.c:26`, set
-   at `:63`, used at `:163` and `:178`). `Netplay_SetStunSocket`
-   (`src/netplay/netplay.c:2727-2733`) destroys the previous socket, which
-   could dangle it. **No trace was constructed — judgment only.** Cheap
-   defensive disarm.
-3. **`check_key_rate_budget.py` is looser than the prose it guards.**
-   It enforces `per-key cap >= 23`
-   (`tools/rendezvous-server/check_key_rate_budget.py:9`, constraint at
-   `:61-62`), while the server's own derivation claims a 3:1 design giving 30
-   (`tools/rendezvous-server/rendezvous-server.js:326-336`). Green for any cap
-   in [23, 29].
-4. **`notePushLost` logs unthrottled.**
-   `tools/rendezvous-server/rendezvous-server.js:1043` calls `logWarn`
-   directly, unlike every other hot path in the file, which routes through
-   `noteThrottled`.
-5. **Doc drift, three sites.**
-   - `src/netplay/netplay_nav.c:133` says "120.2 s"; the enforced host bound
-     is 86,450 ms (`src/netplay/direct_p2p.c:6260`).
-   - `src/netplay/direct_p2p.c:2643` says "10 s ceiling"; the enforced
-     `PORTMAP_PROBE_BUDGET_MS` is 11,250 ms (`:382`).
-   - `tools/netplay/gen_plw_canon_fields.py:21-24` inverts its own
-     descend/emit rule in the docstring.
+All five landed as separate commits; full gate set GREEN including ARM.
+Frame-data was **skipped deliberately**: nothing here reaches the simulation
+(orchestrator timing arithmetic, a socket-lifetime guard, a Python gate, JS
+logging, and comments).
 
----
+1. **Host ladder undercounted the worker startup delay — FIXED** (`dfae3c13`).
+   `ORCH_HOST_LADDER_MS` (`src/netplay/direct_p2p.c:6158`) now multiplies
+   `WORKER_STARTUP_DELAY_MS` by `1 + HOST_STUN_MAX_RETRIES`: the S2 ladder
+   respawns `host_thread_fn` (`:5856`) and the delay is that worker's first
+   statement (`:3518`), so it is paid per rung. Assert `[D]` re-derived
+   86450 → **87050** (`:6289`); shipped defaults 42,450 → 43,050; the `[C]`
+   inversion corner 30,450 → 31,050 (still under postwait's 31,300, so the
+   max stays load-bearing); the #96 upper guard 120,200 → 120,800.
+   The joiner term was already correct and is untouched — its delay is taken
+   once (`:4334`), OUTSIDE the `JOIN_MAX_ATTEMPTS` loop.
+   **Perturbed to confirm:** reverting the macro fails the build on `[D]`
+   with `200 + 11250 + 4*15000 + 3*5000 = 86450 >= 87050`.
+
+2. **Late-punch socket invalidation — GUARD ADDED, no live bug**
+   (`6b17dc73`). `Netplay_SetStunSocket` (`src/netplay/netplay.c:2727`) now
+   calls `LatePunch_Disarm()` on the destroy branch only.
+   **The failing case could NOT be constructed, and the attempt failed on a
+   real structural guard rather than on luck:** `do_handoff` (`direct_p2p.c:4522`)
+   is the only production caller, it nulls `s_work.stun.socket` immediately
+   after (`:4532`), and Tick's HANDOFF case re-enters `join_tick_handoff`
+   only while that field is non-NULL (`:5783`) — so a second in-session
+   handoff is unreachable. Both terminal paths disarm before the destroy by
+   explicit ordering (`netplay.c:2543` vs `:2562`; SessionStarted `:1798`).
+   What remains is that the invariant lives in a *different* TU, so it is now
+   pinned by `test_late_punch` A12 (`src/netplay/test_late_punch.c:334`),
+   which fails with the disarm removed.
+
+3. **Rate-cap gate vs its prose — GATE TIGHTENED, prose is authoritative**
+   (`15b7d40e`). `check_key_rate_budget.py:250` now solves for the smallest
+   INTEGER `k`: `k = max(MIN_KEY_TO_IP_RATIO, ceil(absorption/ip_cap))`,
+   giving **30** instead of 23.
+   Chosen over relaxing the prose because (a) the gate's own docstring
+   already quoted "the smallest integer k … is k = 3", so the file
+   contradicted itself and the prose half was right; (b) at 23 the
+   under-attack headroom is 13 of 13 — exactly zero — against the 1.5x the
+   derivation claims, so documenting 23 would have licensed a capless cap;
+   (c) `__test_protocol.js` already enforced the UPPER half (`cap <= 3 x`
+   per-IP) but also passed at 24, so nothing closed the band.
+   `docs/plan-netplay-connection.md` already said 30 and needed no edit.
+   **Falsified by sweep:** cap 22/23/24/29 → exit 1, cap 30 → exit 0. The
+   old gate passed 24.
+
+4. **Unthrottled WARNs — FIXED, and it was three sites not one** (`a1928795`).
+   `notePushLost` (`rendezvous-server.js:1212`) now routes through
+   `noteThrottled`. Auditing every `logWarn` found two *worse* post-cookie
+   per-packet sites, both of which fire with **no attacker present**:
+   "REGISTER NAT mismatch" (`:1249`, once per REGISTER for any
+   port-rewriting NAT) and "REGISTER … for full session" (`:1420`, once per
+   REGISTER from each of dialers 3..N). `notePushLost` was in fact the
+   quietest of the three — bounded by the cookied per-IP gate *and* by
+   single-observation clearing. All three converted; each keeps a
+   file-chosen CONSTANT reason (noteMap keys on it) with the variable parts
+   in `detail`. `pushStats` still increments unconditionally and
+   `reportPushStats` already emits the aggregate, so no data is lost.
+
+5. **Doc drift, three sites — FIXED** (`2ae601d4`).
+   - `netplay_nav.c:133` 120.2 s → **87.05 s**, with a note that it is prose
+     about a derived, `_Static_assert`-pinned number and has now rotted twice.
+   - `direct_p2p.c:2643` "10 s ceiling" → **11.25 s** (6000 + 3 x 1750 =
+     `PORTMAP_PROBE_BUDGET_MS`, which the loop below enforces).
+   - `gen_plw_canon_fields.py:21` stated its descend/emit rule exactly
+     BACKWARDS; `parse_plw` descends into non-unions and emits unions whole.
+     Generated output unaffected — `--check` passes either way (399 fields,
+     38 pointers, sizeof=1092/1304).
+   - 11 citations in `docs/plan-netplay-connection.md` follow the +2/+6 line
+     shift. Verified as a shift (the doc had 0 errors immediately prior), not
+     taken from the linter's suggestions — four of those point at a different
+     occurrence of the anchor. `--fix` was not run.
+
+**Gates:** `tools/gates/run-gates.sh --arm` → all 9 GREEN, exit 0. 11
+harnesses, every one exit 0, zero "not compiled in" in any log.
+`__test_protocol.js` 39/39. Doc-citation baselines 11 scopes, 0 breached,
+0 slack. ARM cross-build GREEN in the aarch64 container.
 
 ## #132 — coverage plan
 
