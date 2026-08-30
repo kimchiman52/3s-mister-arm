@@ -662,12 +662,59 @@ build_one() {
         hash_args=(-DMIST_BUILD_HASH_OVERRIDE="${git_short_sha}")
     fi
 
-    echo "cmake (final invocation): cmake -S . -B ${build_dir} -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=${telemetry_flag} ${cmake_target_args[*]-} ${hash_args[*]-} ${extra_args[*]-}"
+    # Task #116 -- restate ENABLE_DEBUG_HOOKS=OFF on every invocation.
+    #
+    # A cmake option()'s default applies only the FIRST time a build directory
+    # is configured; after that the value lives in that directory's
+    # CMakeCache.txt and an invocation that simply omits the flag INHERITS it.
+    # The lane workdir here is long-lived and shared across invocations, so one
+    # measurement build run as
+    #
+    #     EXTRA_CMAKE_ARGS="-DENABLE_DEBUG_HOOKS=ON" tools/mister/build-game.sh
+    #
+    # left ENABLE_DEBUG_HOOKS:BOOL=ON in /work-<lane>/build/mister-telemetry,
+    # and the NEXT ordinary `--flavor telemetry` build silently produced a
+    # -DDEBUG package with the ImGui sources linked in -- observed on
+    # 2026-08-29, where the tools/gates/run-gates.sh --arm "shipped config"
+    # gate compiled 30 .cpp objects and defined DEBUG while reporting itself as
+    # the shipped build. That is a MiSTer package that is not the one anybody
+    # asked for, produced with no diagnostic.
+    #
+    # Naming the OFF default explicitly makes the shipped value independent of
+    # whatever the previous invocation left behind. It stays ahead of
+    # "${extra_args[@]}", so an intentional EXTRA_CMAKE_ARGS override is the
+    # later -D on the command line and still wins.
+    local debug_hooks_args=(-DENABLE_DEBUG_HOOKS=OFF)
+
+    echo "cmake (final invocation): cmake -S . -B ${build_dir} -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON -DENABLE_PERF_TELEMETRY=${telemetry_flag} ${debug_hooks_args[*]-} ${cmake_target_args[*]-} ${hash_args[*]-} ${extra_args[*]-}"
     cmake -S . -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release -DPORT_MISTER=ON \
         -DENABLE_PERF_TELEMETRY="${telemetry_flag}" \
+        "${debug_hooks_args[@]}" \
         "${cmake_target_args[@]}" \
         "${hash_args[@]}" \
         "${extra_args[@]}"
+
+    # Task #116 -- assert the resolved value rather than trusting the flag.
+    # The point of the whole exercise above is that a stale cache can decide
+    # what gets compiled, so read back what cmake actually settled on. Unless
+    # the caller named ENABLE_DEBUG_HOOKS in EXTRA_CMAKE_ARGS, an ON here means
+    # the package is a DEBUG build with ImGui linked in, and it must not be
+    # handed back as a MiSTer package.
+    local resolved_debug_hooks
+    resolved_debug_hooks="$(sed -n 's/^ENABLE_DEBUG_HOOKS:BOOL=//p' "${build_dir}/CMakeCache.txt")"
+    echo "resolved ENABLE_DEBUG_HOOKS=${resolved_debug_hooks:-<unset>}"
+    case "${extra_cmake_args}" in
+    *ENABLE_DEBUG_HOOKS*) ;;
+    *)
+        if [ "${resolved_debug_hooks}" != "OFF" ]; then
+            echo "ERROR: ENABLE_DEBUG_HOOKS resolved to '${resolved_debug_hooks}' in ${build_dir}" >&2
+            echo "       but no caller asked for it. This build would ship a DEBUG" >&2
+            echo "       package (ImGui linked, #if DEBUG code compiled in)." >&2
+            exit 7
+        fi
+        ;;
+    esac
+
     cmake --build "${build_dir}" --parallel "${jobs}"
     cmake --install "${build_dir}" --prefix "${install_dir}"
     tools/mister/package.sh "${install_dir}" "${package_dir}"
