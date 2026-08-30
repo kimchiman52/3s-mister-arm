@@ -56,11 +56,17 @@ toggle. Values:
 - `ps2`: force PS2 balance even with a valid ROM (config-file-only knob for
   players who own the ROM but prefer PS2 balance).
 
-ROM discovery tries, in order: `resources/sfiii3nr1.zip`, the
-`THIRDSARM_CPS3_ZIP` env override, then `/media/fat/games/mame/sfiii3.zip`
-(the merged set update_all ships for the jtcps3 core). Entries are matched by
-content hash (stored-CRC32 pre-filter + SHA-256 confirmation), so flat,
-merged, and subdirectory-variant packagings all work.
+No ROM ships with 3S-ARM and none is looked for anywhere in the program's own
+install directory. ROM discovery tries, in order: the `THIRDSARM_CPS3_ZIP`
+env override (dev-only, not a player-facing setting — how CI-style and
+cross-arch runs point at a romset outside a MiSTer arcade install entirely),
+then every MiSTer arcade ROM directory a MiSTer arcade core itself would read
+— USB drives, network, CIFS, the SD card, and finally the MRA's own fallback
+folder — in the same order MiSTer Main's own `findGamesDir("mame")`
+resolution walks them (19 directories in all), checking both `sfiii3nr1.zip`
+and `sfiii3.zip` in each. Entries are matched by content hash (stored-CRC32
+pre-filter + SHA-256 confirmation), so flat, merged, and subdirectory-variant
+packagings all work regardless of which directory or basename supplied them.
 
 Notes:
 - Replaces the removed `arcade-balance` bool toggle; stale `arcade-balance`
