@@ -724,6 +724,15 @@ static const CgRemapRange ibuki_cg_ranges[] = {
 static const CgRemapRange elena_cg_ranges[] = {
     { .first = 0x70C8, .last = 0x70D2, .delta = -0x42E5 },
     { .first = 0x9C88, .last = 0x9CC1, .delta = -0x6F08 },
+    /* Fixes upstream #363 (Ryu's Denjin shocks Elena) and its btca[15]/exca
+       siblings. 0x9CC1 (end of #290's range) maps to 11705 under -0x6F08;
+       0x9CFC (this range's start) maps to 11706 under -0x6F42 -- the delta
+       step (0x3A = 58) equals the size of the intervening raw gap
+       0x9CC2-0x9CFB, which backs 0 cells in any of Elena's ten tables. So
+       0x9C88..0x9D24 maps onto one unbroken PS2 run 11648..11746, with 58
+       arcade-only sprites elided, and all 41 raw values in this range land
+       in group 9. See docs/research-arcade-cg-data-accuracy.md §8.A. */
+    { .first = 0x9CFC, .last = 0x9D24, .delta = -0x6F42 },
 };
 
 static const CgRemapRange oro_cg_ranges[] = {
