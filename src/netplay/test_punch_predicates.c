@@ -619,7 +619,7 @@ static void test5_relearn_cap(void) {
      * send target must remain the LEARNED port, NOT the source port of
      * the datagram we just read: a same-IP spoofer that could keep
      * moving the target past the cap would have an unbounded redirect,
-     * which is the whole reason the cap exists (late_punch.h:94-98).
+     * which is the whole reason the cap exists (late_punch.h:128-150).
      *
      * The prompt flag is NOT asserted false here, and that is a measured
      * choice rather than an omission. It is sticky: only LatePunch_Tick

@@ -46,15 +46,49 @@
  *      the MIST peer address and the adapter's send/present mapping.
  *      GekkoNet itself is never patched and never sees the change.
  *
- * AUTHENTICATION IS NOT WEAKENED. Every action above is gated on the
- * exact 17-byte payload check Stun_IsPunchPayload performs
- * (constant-time token compare, stun.c). The relearn is STRICTER than
- * the pre-handoff host gate: host_tick_receive captures a valid-token
- * punch from ANY source as the peer, while this module only retargets
- * within the peer IP that the race/handoff already established —
- * a recorded-payload replay from a third-party address is consumed,
- * counted, and ignored. S4c return-routability (rendezvous cookies) is
- * upstream of this layer and untouched.
+ * WHAT THE RELEARN GATE IS AND IS NOT (corrected, task #133). Every
+ * action above is gated on the exact 17-byte payload check
+ * Stun_IsPunchPayload performs (constant-time token compare, stun.c),
+ * and S4c return-routability (rendezvous cookies) is upstream of this
+ * layer and untouched. But the relearn gate is NOT simply "stricter
+ * than the pre-handoff host gate", which is what this comment used to
+ * claim. It is narrower on ONE axis and strictly wider on another, and
+ * the wider axis is the one that decides severity:
+ *
+ *   NARROWER ON SOURCE IP. classify_host_datagram (direct_p2p.c:1065)
+ *   accepts a valid-token punch from ANY source as the peer; the
+ *   relearn only fires when strcmp(src_ip, s_peer_ip) == 0
+ *   (late_punch.c:115), so a replay from a third-party ADDRESS is
+ *   consumed, counted, and ignored.
+ *
+ *   WIDER IN TIME, WHICH IS THE PROPERTY THAT MATTERS. The pre-handoff
+ *   gate is reachable only from DIRECT_P2P_HOST_WAITING
+ *   (direct_p2p.c:5748-5761), so once the host commits to a peer, a
+ *   losing racer normally gets NO second attempt. This module is the
+ *   only path that grants one, for the whole pre-session window (up to
+ *   40 x 500 ms of MIST retries, mist_handshake.h:250, plus
+ *   CONNECT_TIMEOUT_CONNECTING_MS = 15 s, connect_fail.h:359).
+ *
+ *   AND AN IP-STRING COMPARE CANNOT SEPARATE THE TWO CASES IT MUST.
+ *   "the peer's NAT mapping moved" and "a different host behind the
+ *   same public IP" are byte-identical to late_punch.c:115. The token
+ *   does not separate them either: it is derived from the room code
+ *   alone (SHA-256("3SXR-PT3" || ip || port || nonce)[0..7],
+ *   rendezvous.c:146-152, nonce carried in the code's low 32 bits,
+ *   room_code.h:231-236), so anyone holding the code can produce it
+ *   without observing a single packet.
+ *
+ * CONSEQUENCE: a same-public-IP party holding the room code can
+ * re-point an already-committed peer, and nothing downstream stops it.
+ * The MIST compat gate (classify_peer_payload, mist_handshake.c:314)
+ * checks only build/ROM constants — arch tag, platform tag, proto_ver,
+ * state_ver, and the ROM-derived balance digest (arcade_balance.c:152 /
+ * :179); build_hash is a warning, never a reject. None of those is
+ * session-bound, so a substitute running this same public build with
+ * the same CPS3 ROM passes by construction, and GekkoNet authenticates
+ * nothing beyond the address string the adapter already rewrote
+ * (sdl_net_adapter.c:288-290, :405). This is a session TAKEOVER
+ * capability, not merely a broken connect. See docs/queue.md #133.
  *
  * THE PROMISED LISTENING INTERVAL (direct_p2p.c) is not given a fifth
  * enforcement site by this module because this module cannot end,
@@ -93,8 +127,26 @@ struct NET_DatagramSocket;
 
 /* A flapping source could otherwise bounce the retarget every packet.
  * 8 covers every legitimate sequence (one S2 retry moves the port ONCE;
- * a NAT rebind mid-connect adds one more) with a wide margin, and caps
- * the damage of a same-IP replayer at 8 send-target moves per session. */
+ * a NAT rebind mid-connect adds one more) with a wide margin.
+ *
+ * WHAT THIS CAP DOES NOT DO (corrected, task #133). It does not "cap the
+ * damage of a same-IP replayer at 8 send-target moves", which is what
+ * this comment used to claim. The damage is ONE move: a single relearn
+ * retargets every outbound session datagram (sdl_net_adapter.c:288-290)
+ * and presents the new endpoint under the canonical string on the way in
+ * (:405), and it survives into the match — LatePunch_Disarm at
+ * GekkoSessionStarted (netplay.c:1798) clears this module's state but
+ * not the adapter's s_actual_peer / s_retarget_active. The cap bounds
+ * FLAPPING, not capability.
+ *
+ * Worse, the cap is what makes a same-IP capture DETERMINISTIC rather
+ * than a coin flip. Once s_relearn_count reaches this value the current
+ * endpoint is frozen and every later move is refused
+ * (late_punch.c:135-141), so a same-IP party that fires 8 token-valid
+ * punches from 8 different source ports locks the send target onto its
+ * own 8th port; the legitimate peer, still punching from its original
+ * mapping, can never be relearned back. Raising or lowering the number
+ * does not fix that — only a stronger relearn binding does. */
 #define LATE_PUNCH_MAX_RELEARNS 8
 
 /* Arm for the pre-session window. `sock` is BORROWED (owned by

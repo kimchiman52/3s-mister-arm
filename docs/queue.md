@@ -50,7 +50,7 @@ The understated comment at the old `:160-164` is replaced by
 
 **The two 8-caps were NOT linked, with evidence.** `MAX_PORT_RECLAIMS`
 (`rendezvous-server.js:194`) and `LATE_PUNCH_MAX_RELEARNS`
-(`src/netplay/late_punch.h:98`) cannot compose: a rendezvous DELIVER cannot
+(`src/netplay/late_punch.h:150`) cannot compose: a rendezvous DELIVER cannot
 reach the late-punch layer at all. `src/netplay/sdl_net_adapter.c:368-373`
 destroys every `Rendezvous_HasMagic` datagram before the late-punch call at
 `:387-389`, and `LatePunch_HandleDatagram` itself returns false for anything
@@ -69,14 +69,15 @@ See #133 below: it settles composition, not separate exercise.
 
 ---
 
-## #133 — both-caps, exercised SEPARATELY — OPEN, NEEDS A DESIGN DECISION
+## #133 — both-caps, exercised SEPARATELY — SEVERITY ANSWERED: **TAKEOVER**. Mitigation OPEN.
 
-**Do not treat this as documented-and-closed. It is not a fix, and nothing was
-changed for it.**
+**Do not treat this as documented-and-closed. The severity question below is
+settled; the two false comments are corrected; NO mitigation has been
+implemented.**
 
 The question: can a same-public-IP room-code holder exercise `MAX_PORT_RECLAIMS`
 (`rendezvous-server.js:194`) and `LATE_PUNCH_MAX_RELEARNS`
-(`src/netplay/late_punch.h:98`) **separately** in one session? #130 proved only
+(`src/netplay/late_punch.h:150`) **separately** in one session? #130 proved only
 that one datagram cannot drive both.
 
 **Answer: yes, and the relearn grants a capability a plain room-code join does
@@ -114,16 +115,154 @@ not.** Verified:
   the original expectation held.
 - **One relearn is enough; the cap of 8 bounds flapping, not capability.**
 
-Two comments are contradicted by the above and must NOT be left as-is if this
-area is touched: `late_punch.h:49-57` ("The relearn is STRICTER than the
-pre-handoff host gate" — it is narrower on source IP but strictly *wider in
-time*, being the only path that acts after commitment) and `late_punch.h:94-98`
-("caps the damage of a same-IP replayer at 8 send-target moves" — the damage is
-one move).
+Two comments were contradicted by the above. **Both corrected** (this commit):
+`late_punch.h` now states that the relearn gate is narrower on source IP but
+strictly *wider in time*, and that the relearn cap bounds flapping rather than
+capability.
 
-**Not verified:** whether a substituted attacker can complete the MIST
-handshake and drive a GekkoNet session (`netplay.c:1351` compat gate) — read but
-not exercised. The CGNAT premise itself is a network property, taken as given.
+### The severity question — SETTLED: takeover, not DoS
+
+Nothing on the path stops a substituted party that is running the same public
+build with the same CPS3 ROM. Each downstream gate, read and (where a harness
+exists) exercised:
+
+- **MIST compat gate — passes, by construction.** `classify_peer_payload`
+  (`src/netplay/mist_handshake.c:314`) accepts on exactly five fields: arch tag
+  `"armv7"`, platform tag `"mister"`, `proto_ver`, `state_ver`, and
+  `balance_digest`. `build_hash` is a **warning, never a reject**
+  (`mist_handshake.c:378-383`). Every one of those five is a compile-time or
+  ROM-derived constant of the shipped build; **none is derived from the room
+  code, the punch token, the nonce, or the session**. Exercised:
+  `--test-mist-compat-gate` `test1_accept` asserts "a different build_hash
+  warns, it does not reject" and accepts a payload assembled byte-by-byte from
+  public constants alone (`src/netplay/test_mist_compat_gate.c:225-259`).
+  Harness green at this tip: **9 tests, 1294 assertions, 0 failures**.
+- **Balance digest — derivable, not observed.** `ArcadeBalance_GetDigest()`
+  (`src/arcade/arcade_balance.c:179`) returns `ArcadeCharData_ComputeDigest()`
+  computed once at boot from the adapted CPS3 ROM data (`:152`). Same ROM
+  revision → same digest for every player. It is not a secret and not
+  session-bound.
+- **Nothing source-gates the ack that completes the handshake.** In
+  `mist_handshake_pump`, the `cls == 1` branch returns `MIST_PUMP_OK` with **no
+  `from_peer` test** (`src/netplay/mist_handshake.c:743-771`); `from_peer` gates
+  only the H-1 hello latch (`:835`) and implicit completion (`:854`). And after
+  a relearn the substitute *is* `from_peer` anyway — `late_punch_service` sets
+  `remote_port` (`netplay.c:1390`), which `mist_pump_start` copies into
+  `io->peer_port` (`netplay.c:1339`) after the `s_hs_peer_refetch` re-resolve
+  (`:1309-1314`).
+- **GekkoNet authenticates nothing about the remote.** The remote is registered
+  once by `"ip:port"` string (`netplay.c:1559-1561`) and matched by
+  `GetRemoteHandlesForAddress` (`third_party/GekkoNet/build/include/backend.h:157`).
+  The `u16 session magic` (`net.h:40`, `backend.h:76`, `:191`) is negotiated
+  **in band** via SyncRequest/SyncResponse (`backend.h:151-153`) toward whatever
+  endpoint we send to — which after a relearn is the substitute.
+- **The desync checksum does not save us.** `GekkoDesyncDetected` does terminate
+  the session (`netplay.c:1818-1851`) — but a substitute that is a real 3SX
+  instance simulates the same game and produces matching checksums. The
+  checksum only bites a substitute that *cannot* simulate; that variant is the
+  DoS floor, not the ceiling.
+
+**Two capture windows, both reachable.** `late_punch_service` runs in
+TRANSITIONING (`netplay.c:2290`) and CONNECTING (`:2403`):
+
+1. **Relearn in TRANSITIONING** — `remote_port` moves *before*
+   `configure_gekko`, so `SDLNetAdapter_SetCanonicalPeer` (`netplay.c:1570`)
+   registers **the substitute as the canonical peer outright**. The legitimate
+   peer's datagrams then arrive under a non-canonical address string and
+   GekkoNet ignores them. Clean substitution; MIST runs against the substitute.
+2. **Relearn in CONNECTING** — after `configure_gekko`, so
+   `SDLNetAdapter_RetargetPeer` sets `s_retarget_active`
+   (`sdl_net_adapter.c:67-85`): all outbound goes to the substitute
+   (`:288-290`) and its inbound is relabelled canonical (`:405`). The
+   legitimate peer stops receiving our inputs and times out, leaving the
+   substitute as the only live remote.
+
+**The relearn cap is anti-mitigation.** Once `s_relearn_count` reaches
+`LATE_PUNCH_MAX_RELEARNS` the endpoint is **frozen** and every later move is
+refused (`src/netplay/late_punch.c:135-141`). A same-IP party that fires 8
+token-valid punches from 8 different source ports therefore locks the send
+target onto its own 8th port, and the legitimate peer — still punching from its
+original mapping — can never be relearned back. The cap converts a flapping
+contest into a **deterministic** capture.
+
+**Window size:** up to `40 x 500 ms` of MIST retries
+(`src/netplay/mist_handshake.h:250`) plus `CONNECT_TIMEOUT_CONNECTING_MS =
+15000` (`src/netplay/connect_fail.h:359`) — roughly 35 s per session.
+
+**What the attacker gains.** With the room code alone, no wire observation, no
+server access, and no participation in the original race: they play the match
+as the peer. The host believes it is playing its friend; the attacker's inputs
+drive the host's rollback engine and the host's inputs are delivered to the
+attacker. If the attacker cannot simulate the game, the same primitive is a
+clean DoS — the room dies and the code is burned (the nonce re-rolls per
+hosting attempt, `direct_p2p.c:3740`). The attacker picks which.
+
+**Precondition, honestly stated.** The substitute's datagrams must reach the
+host from a *new* source port on the shared public IP. That requires the host's
+NAT to be full-cone or address-restricted; address-and-port-dependent filtering
+(`tools/netplay/natmatrix/natns.sh:86`) admits only the exact punched
+`ip:port`. **This is exactly the same precondition the feature itself needs** —
+the S2 retry's fresh socket also arrives from a new port — so the attack
+surface is coextensive with the relearn's working set. It cannot be narrowed by
+NAT assumptions without also disabling the rescue.
+
+### Could not verify
+
+- **`_session_magic`'s derivation.** `third_party/GekkoNet` ships headers plus
+  `build/lib/libGekkoNet.a` only (`find third_party/GekkoNet -type f` → 10
+  files, no `.cpp`), so the seeding of `MessageSystem::_session_magic`
+  (`backend.h:191`) could not be read. It cannot be a pre-shared secret with the
+  legitimate peer — that peer learns it over the same wire — but the exact
+  derivation is unread.
+- **No live two-host exercise.** The MiSTer device lock is held by another
+  session; nothing was run on hardware. The verdict is a code + unit-harness
+  reading, not a demonstrated capture.
+- The CGNAT / shared-NAT premise itself is a network property, taken as given.
+
+### Mitigation — PROPOSED, NOT IMPLEMENTED
+
+Weighed against the demonstrated availability win (late-punch converted a real
+`FAILED_HANDSHAKE` into a connect at +11.4 s):
+
+- **REJECTED — clear `s_actual_peer` / `s_retarget_active` in
+  `LatePunch_Disarm`.** This does not work and would break the feature. Disarm
+  fires at `GekkoSessionStarted` (`netplay.c:1798`); a window-2 relearn is
+  applied to the adapter but *not* to GekkoNet's registration, so clearing the
+  retarget at session start would send every packet back to the dead original
+  port and kill exactly the session the rescue just saved. It also does not
+  touch window 1, where the substitute is already canonical. Cross-session
+  hygiene is a non-issue: `SDLNetAdapter_SetCanonicalPeer` (`netplay.c:1570`)
+  re-seeds both fields on every `configure_gekko`.
+- **REJECTED — default the kill switch on.** `CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_LATE_PUNCH`
+  defaults to `false` (`src/port/config/config.c:122`). Flipping it trades a
+  measured, every-session availability win against a same-IP-only risk, and
+  restores the "15 s hang + dead room" failure the module exists to remove.
+  Keep it as the field-attributable escape hatch it is.
+- **RECOMMENDED — bind the relearn to something stronger than source IP, and
+  make it once-and-done.** Two changes, both inside `late_punch.c`:
+  1. **Lower `LATE_PUNCH_MAX_RELEARNS` to 1** (or gate the second and later
+     moves behind evidence the first endpoint went quiet). One relearn covers
+     the S2 retry, which is the only sequence the header claims as legitimate;
+     it removes the 8-port cap-burn that makes capture deterministic, and it
+     makes the *first* mover win rather than the last — the legitimate peer,
+     which is already punching, rather than a party that has to arrive later.
+  2. **Require the relearned endpoint to prove liveness before it becomes the
+     send target** — a challenge/response over the existing token
+     (nonce-in-punch, echoed) rather than accepting the first token-valid
+     datagram from the IP. The token is derivable from the room code, so this
+     does not authenticate identity; it does make capture require a live
+     round-trip at the exact moment of the move rather than a one-shot spray.
+  Neither weakens the rescue: a genuinely retrying joiner answers a challenge
+  and moves once.
+
+**The trade.** Keep late-punch on by default and keep its availability win; pay
+for it by shrinking the relearn from "8 moves, last one wins, frozen forever" to
+"one move, first one wins, liveness-checked". That preserves the +11.4 s rescue
+in full — it needs exactly one move — while removing the property that makes the
+same-IP capture deterministic rather than a coin flip. Full identity binding is
+not available at this layer: the punch token is room-code-derived by design
+(`room_code.h:221-236` calls the code key material), so a same-IP holder of the
+code is inside the token's trust boundary no matter what this module does.
 
 **No test distinguishes the two same-IP cases.** `src/netplay/test_punch_predicates.c`
 and `src/netplay/test_late_punch.c` cover the cap and the foreign-IP refusal;
