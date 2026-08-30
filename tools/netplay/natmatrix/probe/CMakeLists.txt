@@ -69,3 +69,29 @@ target_compile_definitions(p2p_probe PRIVATE
 )
 
 target_link_libraries(p2p_probe PRIVATE SDL3_net::SDL3_net SDL3::SDL3)
+
+# ---------------------------------------------------------------------------
+# natpmp_probe -- acceptance instrument for rig/natpmp_mock.py.
+#
+# Links the PRODUCTION NAT-PMP/PCP client (${SRC}/netplay/natpmp.c) unmodified
+# and aims it at a gateway address via Natpmp_TestHook_SetGateway. Used to prove
+# the mock speaks a dialect the shipped client actually accepts, without having
+# to stand up the whole cascade.
+#
+# No SDL3_net and no cascade sources, so it also builds standalone:
+#   cc -DNETPLAY_TEST_HOOKS -I<src> $(pkg-config --cflags sdl3) \
+#      natpmp_probe.c <src>/netplay/natpmp.c <src>/utils/csprng.c \
+#      $(pkg-config --libs sdl3) -o natpmp_probe
+# ---------------------------------------------------------------------------
+add_executable(natpmp_probe
+    natpmp_probe.c
+    ${SRC}/netplay/natpmp.c
+    ${SRC}/utils/csprng.c
+)
+target_include_directories(natpmp_probe PRIVATE ${SRC} ${SRC}/port)
+# NOTE: deliberately NOT ENABLE_NETPLAY_TESTS. With both defined, natpmp.c:764
+# refuses to fall back to the real default route when no hook is set -- which is
+# the right posture for the suite, but here it would hide a bug where the hook
+# silently failed to take. Only NETPLAY_TEST_HOOKS is needed for the hook itself.
+target_compile_definitions(natpmp_probe PRIVATE NETPLAY_TEST_HOOKS)
+target_link_libraries(natpmp_probe PRIVATE SDL3::SDL3)

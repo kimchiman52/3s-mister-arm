@@ -44,6 +44,7 @@
 #endif
 
 #include "netplay/direct_p2p.h"
+#include "netplay/natpmp.h"
 #include "netplay/stun.h"
 #include "port/config/config.h"
 #include "port/paths.h"
@@ -103,7 +104,7 @@ static bool is_terminal(DirectP2PState s) {
  * the file (config.c:349-375). This is also how the shipped game gets them. */
 static bool write_config(const char* signal_url, int punch_ms, int signal_ms,
                          int race_ms, int register_ms, int stun_ms,
-                         bool disable_bilateral) {
+                         bool disable_bilateral, bool enable_natpmp) {
     const char* pref = Paths_GetPrefPath();
     if (!pref) { fprintf(stderr, "p2p_probe: Paths_GetPrefPath() returned NULL\n"); return false; }
     char path[1024];
@@ -118,10 +119,20 @@ static bool write_config(const char* signal_url, int punch_ms, int signal_ms,
     fprintf(f, "netplay-direct-p2p-stun-timeout-ms = %d\n", stun_ms);
     fprintf(f, "netplay-direct-p2p-disable-bilateral = %s\n",
             disable_bilateral ? "true" : "false");
-    /* UPnP and NAT-PMP have no gateway in the netns; leaving them enabled just
-     * burns the discovery timeout in every single cell. */
+    /* UPnP has no gateway in the netns (no SSDP/IGD mock exists) and leaving it
+     * enabled just burns the discovery timeout in every single cell.
+     *
+     * NAT-PMP is now conditional. It stays off by default for exactly the same
+     * reason UPnP does, but `--natpmp-gateway` points the production client at
+     * rig/natpmp_mock.py running inside the NAT namespace, which is what lets a
+     * cell exercise the task #121 joiner port-map path. Note the kill switch has
+     * to be flipped here AND the test hook set below: natpmp.c refuses to
+     * consult the real default route in a test build (natpmp.c:764-785), so
+     * without the hook an enabled NAT-PMP would find nothing and merely waste
+     * the probe budget. */
     fprintf(f, "netplay-direct-p2p-disable-upnp = true\n");
-    fprintf(f, "netplay-direct-p2p-disable-natpmp = true\n");
+    fprintf(f, "netplay-direct-p2p-disable-natpmp = %s\n",
+            enable_natpmp ? "false" : "true");
     fclose(f);
     return true;
 }
@@ -131,7 +142,8 @@ static void usage(void) {
         "usage: p2p_probe --role host|join --stun IP:PORT[,IP:PORT...] \\\n"
         "                 --signal udp://IP:PORT --code-file PATH\n"
         "  [--port N] [--timeout-ms N] [--punch-ms N] [--signal-ms N]\n"
-        "  [--race-ms N] [--register-ms N] [--stun-ms N] [--disable-bilateral]\n");
+        "  [--race-ms N] [--register-ms N] [--stun-ms N] [--disable-bilateral]\n"
+        "  [--natpmp-gateway IP[:PORT]]\n");
 }
 
 int main(int argc, char** argv) {
@@ -143,6 +155,9 @@ int main(int argc, char** argv) {
     int punch_ms = 5000, signal_ms = 8000, race_ms = 8000;
     int register_ms = 5000, stun_ms = 4000;
     bool disable_bilateral = false;
+    /* #121: "IP" or "IP:PORT" of the NAT-PMP mock in this side's NAT
+     * namespace. NULL keeps the historical behaviour exactly. */
+    const char* natpmp_gw = NULL;
 
     for (int i = 1; i < argc; i++) {
         const char* a = argv[i];
@@ -159,6 +174,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(a, "--register-ms"))register_ms = atoi(NEXT());
         else if (!strcmp(a, "--stun-ms"))    stun_ms = atoi(NEXT());
         else if (!strcmp(a, "--disable-bilateral")) disable_bilateral = true;
+        else if (!strcmp(a, "--natpmp-gateway")) natpmp_gw = NEXT();
         else { fprintf(stderr, "p2p_probe: unknown arg %s\n", a); usage(); return EXIT_RIG_ERROR; }
         #undef NEXT
     }
@@ -189,11 +205,30 @@ int main(int argc, char** argv) {
     if (!NET_Init())  { fprintf(stderr, "p2p_probe: NET_Init failed: %s\n", SDL_GetError()); return EXIT_RIG_ERROR; }
 
     if (!write_config(signal_url, punch_ms, signal_ms, race_ms, register_ms,
-                      stun_ms, disable_bilateral))
+                      stun_ms, disable_bilateral, natpmp_gw != NULL))
         return EXIT_RIG_ERROR;
     Config_Init();
 
     Stun_TestHook_SetServers(servers, nstun);
+
+    /* #121: point the production NAT-PMP client at the mock gateway in this
+     * side's NAT namespace. natpmp.c:756-762 consults the hook BEFORE the
+     * ENABLE_NETPLAY_TESTS refusal, so this is the only way a test build can
+     * reach a gateway at all -- and it can still only reach THIS one, which is
+     * the safety property that refusal exists for. */
+    if (natpmp_gw != NULL) {
+        char gw_ip[64];
+        uint16_t gw_port = NATPMP_GATEWAY_PORT;
+        snprintf(gw_ip, sizeof(gw_ip), "%s", natpmp_gw);
+        char* colon = strrchr(gw_ip, ':');
+        if (colon != NULL) {
+            *colon = '\0';
+            gw_port = (uint16_t)atoi(colon + 1);
+        }
+        Natpmp_TestHook_SetGateway(gw_ip, gw_port);
+        fprintf(stderr, "[probe] NAT-PMP gateway hook set to %s:%u\n", gw_ip,
+                (unsigned)gw_port);
+    }
     DirectP2P_Init();
 
     Uint64 t0 = SDL_GetTicks();

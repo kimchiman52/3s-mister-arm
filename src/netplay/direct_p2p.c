@@ -356,6 +356,73 @@ static UpnpMapping s_upnp_mapping = { 0 };
  * about a specific (internal port) probe, not about the session. */
 static uint16_t s_portmap_failed_port = 0;
 
+/* #121: the JOINER's port-map probe — spawned, never waited on.
+ *
+ * WHY THE JOINER PROBES AT ALL. Until now try_portmap had exactly one
+ * call site, host_thread_fn. The S7 machinery underneath it is already
+ * role-agnostic (upnp_worker_fn, portmap_remove, the CGNAT gate, the S1
+ * renewal all key off s_upnp_mapping, not off a role), so the joiner was
+ * the only thing missing. A symmetric joiner that HOLDS an explicit
+ * mapping stops being symmetric for that one port: the gateway forwards
+ * the mapped external port to a fixed internal port regardless of who
+ * sends, which is endpoint-independent by construction. That converts
+ * the symmetric-joiner x port-dependent-host cell — the only cell the
+ * netns matrix still fails — with no protocol change and no server cost.
+ *
+ * WHY IT IS FIRE-AND-FORGET, AND WHY THAT IS NOT LAZINESS. A FAILING
+ * probe costs its full PORTMAP_PROBE_BUDGET_MS — 11,250 ms, measured,
+ * see s_portmap_failed_port above for the two backend numbers. The
+ * joiner's whole derived deadline is 31,800 ms at shipped defaults
+ * against a 35,000 ms UX ceiling (ORCH_JOIN_WORST_CASE_MS and assert [A]
+ * below), so a SERIAL joiner probe does not fit — not even a one-time
+ * latched one: 200 + 11250 + 2*13300 + 5000 = 43,050 ms. Assert [E]
+ * below pins exactly that arithmetic so this reasoning is checked by the
+ * compiler rather than trusted from this comment.
+ *
+ * So the probe is never waited on. join_attempt SPAWNS it after its STUN
+ * discover (which is what first reveals the socket's bound port) and
+ * immediately proceeds into the race. The verdict is collected at the
+ * top of the NEXT attempt with a ZERO-WAIT poll: complete means take the
+ * mapping, still running means detach and forget. The serial cost added
+ * to the joiner cascade is therefore 0 ms in every case, and
+ * ORCH_JOIN_ATTEMPT_MS is unchanged.
+ *
+ * That trade loses nothing real. The window the probe gets for free is
+ * attempt 1's race — RACE_HARD_CAP_MS, 9,200 ms at shipped defaults. A
+ * gateway that HAS a backend answers inside it (NAT-PMP replies in one
+ * LAN round trip; miniupnpc's SSDP discover is ~2 s), and a gateway that
+ * does not is precisely the case whose 11,250 ms answer is worthless.
+ * The expensive outcome and the useless outcome are the same outcome.
+ *
+ * SCOPE. One spawn per join session, gated on the STUN port_disagreement
+ * signal (stun.h:26-31) so only a joiner that STUN has already caught
+ * translating per-destination pays anything at all. The failure verdict
+ * latches into #96's s_portmap_failed_port — the same variable, the same
+ * session scope, the same reset sites — so the automatic retry does not
+ * re-ask and a user action does. */
+struct UpnpJob; /* defined with upnp_worker_fn below */
+static SDL_Thread*     s_join_portmap_thread = NULL;
+static struct UpnpJob* s_join_portmap_job = NULL;
+static bool            s_join_portmap_spawned = false;
+/* The internal port THIS join session probed for, or 0. Distinct from
+ * s_join_portmap_spawned: "we started a probe" is not "this mapping is
+ * ours". s_upnp_mapping deliberately outlives a HOSTING session, so
+ * without this a joiner could pin and reuse a mapping left behind by an
+ * earlier host attempt that no probe of this session ever asked for. */
+static uint16_t        s_join_portmap_port = 0;
+
+/* Set by the JOIN WORKER while it owns s_upnp_mapping; read by the MAIN
+ * thread in upnp_renew_tick.
+ *
+ * DirectP2P_Tick gates the renewal on state, which is enough for the
+ * HOST because the host transitions INTO a renewal-permitted state only
+ * after it has finished writing the mapping. The joiner has the opposite
+ * shape: it writes the mapping while transitioning OUT of a permitted
+ * state, and a main thread that already sampled FALLBACK_SIGNALING for
+ * this frame is not evicted by a later store. A bare state store cannot
+ * express mutual exclusion; this flag can. */
+static SDL_AtomicInt   s_join_portmap_busy;
+
 /* R-1: latched by DirectP2P_NotifySessionRejected (game thread) when the
  * post-handoff MIST handshake rejects the peer. Consumed by
  * direct_p2p_on_teardown, which then parks in FAILED_HANDSHAKE instead
@@ -2340,7 +2407,7 @@ bool DirectP2P_TestHook_RaceBudgetExpired(uint32_t now, uint32_t t0,
  * router reboots. Accepting that small leak is cheaper than forcing
  * a clean kill on a blocking socket call. */
 
-typedef struct {
+typedef struct UpnpJob {
     /* Inputs populated before SDL_CreateThread; never mutated after. */
     uint16_t internal_port;
     uint16_t preferred_external;
@@ -2518,6 +2585,191 @@ static bool try_portmap(uint16_t internal_port, uint16_t preferred_external) {
     }
     SDL_free(job);
     return ok;
+}
+
+/* --- #121: the joiner's non-blocking port-map probe --------------------- */
+
+/* Spawn the probe for `internal_port` and RETURN IMMEDIATELY. Runs on the
+ * join worker thread, from join_attempt, right after a successful STUN
+ * discover — which is the first moment the socket's OS-assigned port is
+ * known (StunResult.local_port, stun.h:16).
+ *
+ * Deliberately NOT try_portmap: try_portmap's contract is "block up to
+ * PORTMAP_PROBE_BUDGET_MS and return a verdict", and blocking is the one
+ * thing the joiner cannot afford (see s_join_portmap_thread). This shares
+ * the WORKER — upnp_worker_fn, the same code the host's probe runs, both
+ * backends, both kill switches enforced in that one place per S7 review
+ * H-7.4 — and differs only in that nobody waits for it.
+ *
+ * Every gate here is a reason NOT to spend a thread:
+ *   - already spawned: one probe per join session, full stop. This is the
+ *     structural half of #96's "pay it at most once"; the latch below is
+ *     the other half and covers the case where the verdict came back.
+ *   - a live mapping on this port: nothing to ask for.
+ *   - #96's failure latch already says no for this port.
+ *   - no port_disagreement: STUN saw a consistent mapped port across
+ *     servers, so this joiner is not symmetric and a mapping would buy
+ *     nothing the existing race does not already win. Cells other than
+ *     the symmetric row never reach this code at all, which is what keeps
+ *     #121 from being able to trade one quadrant for another. */
+static void join_portmap_spawn(uint16_t internal_port) {
+    if (s_join_portmap_spawned) return;
+    if (internal_port == 0) return;
+    if (s_upnp_mapping.active && s_upnp_mapping.internal_port == internal_port) return;
+    if (s_portmap_failed_port == internal_port) return;
+    if (!s_work.stun.port_disagreement) return;
+
+    struct UpnpJob* job = (struct UpnpJob*)SDL_calloc(1, sizeof(struct UpnpJob));
+    if (job == NULL) return;
+    job->internal_port = internal_port;
+    job->preferred_external = internal_port;
+    job->backend = PORTMAP_BACKEND_NONE; /* first probe: try both */
+    job->natpmp_budget_ms = NATPMP_PROBE_BUDGET_MS;
+
+    SDL_Thread* t = SDL_CreateThread(upnp_worker_fn, "JoinPortMapProbe", job);
+    if (t == NULL) {
+        SDL_free(job);
+        return;
+    }
+    s_join_portmap_thread = t;
+    s_join_portmap_job = job;
+    s_join_portmap_spawned = true;
+    s_join_portmap_port = internal_port;
+    SDL_Log("[direct_p2p] joiner: STUN reported per-destination port translation "
+            "(symmetric NAT) — asking the LAN for a mapping on internal port %u in the "
+            "background; the race is NOT waiting for it",
+            (unsigned)internal_port);
+}
+
+/* Zero-wait collection. Returns the internal port of a LIVE mapping, or 0.
+ *
+ * This function must never block, and the two branches below are the whole
+ * reason it cannot: a COMPLETE thread is joined (SDL_WaitThread on an
+ * already-complete thread returns without waiting), and anything else is
+ * DETACHED and forgotten — try_portmap's own timeout disposition, with
+ * the same accepted costs it documents: the job struct leaks until the
+ * thread exits, and a mapping the gateway grants after we stopped caring
+ * expires on its own 3600 s lease.
+ *
+ * A still-running probe does NOT latch a failure. #96's latch means "the
+ * LAN was asked and said no"; "we did not wait for the answer" is a
+ * different statement and recording it as the first one would suppress a
+ * later legitimate probe on evidence nobody gathered. */
+static uint16_t join_portmap_collect(void) {
+    /* Only ever report a mapping THIS join session asked for.
+     *
+     * Without this gate the function would hand back any live
+     * s_upnp_mapping, and s_upnp_mapping deliberately OUTLIVES a hosting
+     * session — the router-side lease does, so #96 keeps the success
+     * latch wider than the failure latch. A user who hosts (mapping on
+     * port 7000), backs out, and then JOINS would therefore have had
+     * attempt 2 pin port 7000 and advertise the host mapping's external
+     * port, with no probe having run and port_disagreement never
+     * consulted. That mapping is live and the path would probably even
+     * work, which is what makes it dangerous: it is a silent behaviour
+     * change on the retry of a joiner #121 has no business touching, and
+     * the netns matrix could never catch it because every cell there is
+     * a fresh process that has never hosted. */
+    if (!s_join_portmap_spawned) return 0;
+
+    if (s_join_portmap_thread == NULL) {
+        /* Already collected or already detached. Report a mapping only if
+         * it is the one THIS session probed for — `spawned` alone would
+         * also be true after the detach branch below, and at a bumped
+         * JOIN_MAX_ATTEMPTS a third attempt would then pin whatever
+         * s_upnp_mapping happened to hold. */
+        return (s_upnp_mapping.active && s_join_portmap_port != 0 &&
+                s_upnp_mapping.internal_port == s_join_portmap_port)
+                   ? s_upnp_mapping.internal_port
+                   : 0;
+    }
+
+    if (SDL_GetThreadState(s_join_portmap_thread) != SDL_THREAD_COMPLETE) {
+        SDL_Log("[direct_p2p] joiner: port-map probe still in flight at the retry "
+                "boundary — detaching it rather than paying up to %u ms to find out; "
+                "this attempt advertises the STUN-observed endpoint",
+                (unsigned)PORTMAP_PROBE_BUDGET_MS);
+        SDL_DetachThread(s_join_portmap_thread);
+        s_join_portmap_thread = NULL;
+        s_join_portmap_job = NULL; /* owned by the detached thread now */
+        return 0;
+    }
+
+    SDL_WaitThread(s_join_portmap_thread, NULL);
+    s_join_portmap_thread = NULL;
+
+    struct UpnpJob* job = s_join_portmap_job;
+    s_join_portmap_job = NULL;
+    if (job == NULL) return 0;
+
+    uint16_t mapped_internal = 0;
+    if (job->ok) {
+        /* Exclude upnp_renew_tick for the duration of the struct copy.
+         * See s_join_portmap_busy: the state gate DirectP2P_Tick applies
+         * is not sufficient on the joiner's transition shape, and a
+         * renewal that read a torn (internal, external, backend) triple
+         * would renew a port nobody asked for and then overwrite this
+         * mapping with its own result. */
+        SDL_SetAtomicInt(&s_join_portmap_busy, 1);
+        s_upnp_mapping = job->result;
+        SDL_SetAtomicInt(&s_join_portmap_busy, 0);
+        mapped_internal = s_upnp_mapping.internal_port;
+        SDL_Log("[direct_p2p] joiner: %s mapping OK (external %s:%u -> internal %u) — "
+                "this retry binds internal port %u and advertises the mapped port",
+                portmap_backend_name(s_upnp_mapping.backend),
+                s_upnp_mapping.external_ip[0] ? s_upnp_mapping.external_ip : "(unknown)",
+                (unsigned)s_upnp_mapping.external_port,
+                (unsigned)s_upnp_mapping.internal_port,
+                (unsigned)s_upnp_mapping.internal_port);
+    } else {
+        /* #96's latch, reused verbatim: a real verdict, session-scoped. */
+        s_portmap_failed_port = job->internal_port;
+        SDL_Log("[direct_p2p] joiner: no port mapping (UPnP and NAT-PMP/PCP both "
+                "unavailable or refused) — latched for this join session");
+    }
+    SDL_free(job);
+    return mapped_internal;
+}
+
+/* Teardown/reset disposition. Same zero-wait rule: a probe still running
+ * when the session ends is detached, never joined. Callers that hold the
+ * main thread (DirectP2P_Cancel, direct_p2p_on_teardown) have already
+ * joined the join worker, so this cannot race a spawn.
+ *
+ * RETURNS TRUE WHEN THE PORT-MAP BACKENDS ARE QUIESCENT — i.e. no probe
+ * was left running. This mirrors upnp_renew_join_and_discard's contract
+ * exactly, and for the identical reason: a DETACHED probe is still inside
+ * miniupnpc, which caches the IGD in process globals (upnp.c's
+ * s_cached_urls / s_cached_data / s_cache_valid), and NAT-PMP likewise
+ * keeps a PCP nonce and epoch in file statics. Calling portmap_remove
+ * while one of those is in flight has two threads walking the same cached
+ * controlURL, one of which may FreeUPNPUrls it.
+ *
+ * So a caller that is about to release the mapping MUST call this FIRST
+ * and skip the release when it returns false. The mapping then expires on
+ * its own 3600 s lease — the same trade the renewal path already makes,
+ * and strictly better than a use-after-free on a process global. */
+static bool join_portmap_reset(void) {
+    bool quiescent = true;
+    SDL_SetAtomicInt(&s_join_portmap_busy, 0);
+    if (s_join_portmap_thread != NULL) {
+        if (SDL_GetThreadState(s_join_portmap_thread) == SDL_THREAD_COMPLETE) {
+            /* Finished on its own: joinable for free, and then the
+             * backends really are idle. */
+            SDL_WaitThread(s_join_portmap_thread, NULL);
+            if (s_join_portmap_job != NULL) {
+                SDL_free(s_join_portmap_job);
+            }
+        } else {
+            SDL_DetachThread(s_join_portmap_thread);
+            quiescent = false; /* still inside miniupnpc / natpmp */
+        }
+        s_join_portmap_thread = NULL;
+        s_join_portmap_job = NULL;
+    }
+    s_join_portmap_spawned = false;
+    s_join_portmap_port = 0;
+    return quiescent;
 }
 
 /* --- S1 host liveness: UPnP lease renewal ------------------------------ */
@@ -2710,6 +2962,12 @@ static bool upnp_renew_join_and_discard(void) {
  * while the mapping is in use. Polls a completed renewal thread, or
  * spawns one when the half-lease deadline passes. */
 static void upnp_renew_tick(void) {
+    /* #121: the join worker owns s_upnp_mapping right now. Skipping a
+     * frame costs nothing — this is a half-lease timer with hours of
+     * slack — whereas reading the struct mid-copy does not. */
+    if (SDL_GetAtomicInt(&s_join_portmap_busy) != 0) {
+        return;
+    }
     if (s_upnp_renew_thread != NULL) {
         if (SDL_GetThreadState(s_upnp_renew_thread) != SDL_THREAD_COMPLETE) {
             return; /* renewal in flight */
@@ -3531,14 +3789,65 @@ void DirectP2P_TestHook_JoinAttemptEvidenceReset(const DirectP2PAttemptEvidence*
 }
 #endif
 
-static DirectP2PState join_attempt(void) {
+/* #121: `bind_port` is 0 for "let the OS choose", which is what every
+ * attempt did before this task and what attempt 1 still does. It is
+ * non-zero only when the previous attempt's background port-map probe
+ * came back with a live mapping, in which case this attempt MUST bind
+ * that mapping's internal port or the mapping addresses nothing.
+ *
+ * This is the one place #121 touches an attempt's socket, and the reason
+ * it is safe to do so is that it cannot happen to a joiner the matrix
+ * currently passes: join_portmap_spawn refuses to probe unless STUN
+ * reported port_disagreement, so a non-symmetric joiner never obtains a
+ * mapping and never reaches a non-zero bind_port. The retry's documented
+ * "freshly bound socket" property (see join_thread_fn) is preserved
+ * verbatim on that path.
+ *
+ * Residual, stated rather than hidden: binding a specific port can fail
+ * where port 0 could not. The port was ours microseconds earlier —
+ * join_attempt closes its socket on every failure path and UDP has no
+ * TIME_WAIT — so this is unlikely, and if it does happen the cost is the
+ * retry of a symmetric joiner that was failing anyway. It is not a cost
+ * any currently-passing cell can pay. */
+static DirectP2PState join_attempt(uint16_t bind_port) {
     join_reset_attempt_evidence();
     s_work.join_attempts++;
 
     set_state(DIRECT_P2P_STUN_DISCOVER);
     set_status("Preparing...");
     uint32_t stage_t0 = SDL_GetTicks();
-    bool stun_ok = STUN_DISCOVER(&s_work.stun, 0, stun_budget_ms());
+    bool stun_ok = STUN_DISCOVER(&s_work.stun, bind_port, stun_budget_ms());
+    /* #121: a PINNED port can fail to bind where port 0 could not, and
+     * before this task attempt 2 could not fail this way at all. Left
+     * alone it is a bad trade: Stun_Discover reports a local bind failure
+     * as diag_socket_fail, which classifies INTERNAL, so a symmetric
+     * joiner whose mapped port was taken in the interval would surface a
+     * spurious internal error INSTEAD of the NAT diagnosis it earned —
+     * and attempt 2 is the last attempt, so the race never runs.
+     *
+     * Retry once without the pin. The mapping is worth trying for; it is
+     * not worth losing the attempt over.
+     *
+     * The retry is charged to the SAME budget, deliberately. A second
+     * full stun_budget_ms() here would add a leg to the cascade and
+     * ORCH_JOIN_ATTEMPT_MS would have to grow to cover it — which assert
+     * [A] would then reject at shipped defaults (39,800 > 35,000). Paying
+     * it out of the remaining budget keeps the attempt's STUN leg bounded
+     * by exactly one stun_budget_ms(), so the derivation below is
+     * untouched and stays honest. In practice there is nearly the whole
+     * budget left: diag_socket_fail is a verdict reached BEFORE anything
+     * is sent, so the failed call consumed no network time. */
+    if (!stun_ok && bind_port != 0 && s_work.stun.diag_socket_fail) {
+        const int spent = (int)(SDL_GetTicks() - stage_t0);
+        const int left = stun_budget_ms() - spent;
+        SDL_Log("[direct_p2p] joiner: could not bind the mapped internal port %u "
+                "(%d ms spent); retrying this attempt on an OS-assigned port with "
+                "the remaining %d ms of the STUN budget",
+                (unsigned)bind_port, spent, left > 0 ? left : 0);
+        if (left > 0) {
+            stun_ok = STUN_DISCOVER(&s_work.stun, 0, left);
+        }
+    }
     s_work.t_stun_ms = SDL_GetTicks() - stage_t0;
     if (cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
@@ -3559,6 +3868,14 @@ static DirectP2PState join_attempt(void) {
                            s_work.stun.diag_dns_all_failed));
         return DIRECT_P2P_FAILED_STUN;
     }
+
+    /* #121: STUN has just told us two things this is the first moment to
+     * know — the socket's bound port, and whether this NAT translates
+     * per-destination. Spawn the port-map probe on both and DO NOT WAIT;
+     * the free window is the race that starts a few lines below. See
+     * s_join_portmap_thread for why waiting is the one thing the joiner
+     * budget cannot afford. */
+    join_portmap_spawn(s_work.stun.local_port);
 
     /* Hairpin detect: peer public IP == our public IP => same LAN.
      * The room code used to carry the peer's LAN local_port so we
@@ -3691,6 +4008,40 @@ static DirectP2PState join_attempt(void) {
     cfg.signal_addr = signal_addr;
     cfg.signal_port = signal_port;
     cfg.session_key = have_session_key ? session_key : NULL;
+    /* #121: this stays s_work.stun.public_port, and the mapped external
+     * port is DELIBERATELY not substituted here.
+     *
+     * A first cut of #121 did substitute it, on the reasoning that the
+     * mapped port is the endpoint-independent one and therefore the
+     * better thing to advertise. That reasoning is wrong about how the
+     * joiner's endpoint actually reaches the host, and the rule is
+     * already written down one screen away — see the host's cookied-echo
+     * REGISTER: `my_public_port` "must carry s_work.stun.public_port (the
+     * source port the server checks against rinfo.port) and NOT
+     * s_work.advertised_port, which differs whenever UPnP maps an
+     * external port the STUN probe never saw."
+     *
+     * The rendezvous server does not route on this field at all. It reads
+     * it, compares it to the observed source port, WARNS on a mismatch,
+     * and then stores the OBSERVED tuple as the slot endpoint
+     * (rendezvous-server.js:689-694). So substituting the mapped port
+     * changes nothing the host aims at, and instead makes every REGISTER
+     * of a mapped joiner trip an unthrottled server-side warning — at the
+     * race's REGISTER cadence, a steady log stream on a shared server,
+     * bought for no connectivity at all.
+     *
+     * #121 works through the OBSERVED port instead, which is the honest
+     * mechanism: pinning the socket to the mapping's internal port
+     * (bind_port) is what makes the gateway translate our outbound to the
+     * mapped external port, so rinfo.port BECOMES the mapped port and the
+     * server records it without anyone having to claim it. The mapping
+     * earns the endpoint; it does not assert it.
+     *
+     * That is also why there is no joiner CGNAT gate here. The host needs
+     * one because it PUBLISHES a (STUN ip, mapped port) tuple in the room
+     * code and a double NAT makes that pair incoherent. The joiner
+     * publishes nothing — the server observes it — so there is no
+     * mismatched pair to construct. */
     cfg.my_public_port = s_work.stun.public_port;
     cfg.cookie_in = NULL; /* the joiner starts uncookied; the race binds one */
     cfg.signal_leg = (signal_addr != NULL && have_session_key);
@@ -3853,7 +4204,37 @@ static int SDLCALL join_thread_fn(void* data) {
      * nav deadline sized for two. */
     DirectP2PState outcome = DIRECT_P2P_IDLE;
     for (int attempt = 1; attempt <= JOIN_MAX_ATTEMPTS; attempt++) {
-        outcome = join_attempt();
+        /* #121: the port-map probe attempt 1 spawned has had attempt 1's
+         * whole race to answer. Collect it with a ZERO-WAIT poll — this
+         * call cannot block, by construction (join_portmap_collect) — and
+         * bind its internal port if a mapping came back.
+         *
+         * Attempt 1 always passes 0, so its SOCKET is bound exactly as it
+         * was before this task. That is the property the twelve passing
+         * cells depend on: every one of them connects on attempt 1, and
+         * attempt 1 still discovers, punches and races on an
+         * OS-assigned ephemeral port. What attempt 1 does gain is a
+         * thread spawn (join_portmap_spawn, and only when STUN reported
+         * port_disagreement) — which touches no socket the race uses and
+         * costs no wall-clock the race waits on. Stated precisely rather
+         * than as "attempt 1 is unchanged", because it is not: it is
+         * unchanged in the two respects that matter and different in one
+         * that does not.
+         *
+         * This is the ONLY place the joiner cascade touches the probe on
+         * its critical path, and it adds 0 ms to the derived deadline.
+         * ORCH_JOIN_ATTEMPT_MS is unchanged and assert [E] below pins why
+         * it had to be. */
+        /* Publish the state attempt 2 is about to enter anyway. This is
+         * tidiness, NOT the thing that makes the collect safe: DirectP2P_Tick
+         * samples the state once per frame and a main thread that already
+         * sampled FALLBACK_SIGNALING is not evicted by a store here. The
+         * actual exclusion is s_join_portmap_busy, which
+         * join_portmap_collect raises around the struct copy. */
+        set_state(DIRECT_P2P_STUN_DISCOVER);
+        const uint16_t bind_port = (attempt > 1) ? join_portmap_collect() : 0;
+
+        outcome = join_attempt(bind_port);
         if (outcome == DIRECT_P2P_HANDOFF || outcome == DIRECT_P2P_IDLE) break;
         if (attempt < JOIN_MAX_ATTEMPTS) {
             SDL_Log("[direct_p2p] join attempt %d/%d failed (state %d) — one automatic "
@@ -3865,6 +4246,23 @@ static int SDLCALL join_thread_fn(void* data) {
                     (int)outcome);
         }
     }
+    /* #121: collect one last time, zero-wait, whatever the outcome.
+     *
+     * The loop above only collects at the TOP of attempt 2, so a probe
+     * spawned by attempt 1 that succeeds after attempt 1 HANDOFFs is
+     * never read — and by this design's own timing argument (a gateway
+     * with a backend answers inside attempt 1's race) that is the LIKELY
+     * case on the success path, not a corner. The gateway would be
+     * holding a real mapping while s_upnp_mapping.active stayed false, so
+     * direct_p2p_on_teardown would remove nothing and the user's router
+     * would keep a one-hour hole for every successful symmetric join.
+     *
+     * Installing it here costs nothing and hands teardown something it
+     * can actually clean up. Still zero-wait: a probe that has not
+     * finished is detached and forgotten exactly as before, which is the
+     * bounded leak the design already accepts. */
+    (void)join_portmap_collect();
+
     set_state(outcome);
     return 0;
 }
@@ -3887,6 +4285,13 @@ static void direct_p2p_on_teardown(void) {
     if (s_thread)                  { SDL_WaitThread(s_thread,                  NULL); s_thread                  = NULL; }
     if (s_rendezvous_thread)       { SDL_WaitThread(s_rendezvous_thread,       NULL); s_rendezvous_thread       = NULL; }
     if (s_bilateral_punch_thread)  { SDL_WaitThread(s_bilateral_punch_thread,  NULL); s_bilateral_punch_thread  = NULL; }
+    /* #121: the join worker is joined above, so no spawn can race this.
+     * Zero-wait, per join_portmap_collect's rule — teardown must not
+     * inherit the 11,250 ms wait the joiner path exists to avoid. The
+     * verdict feeds the removal decision below: a DETACHED probe is still
+     * inside miniupnpc's cached-IGD globals, so removing the mapping
+     * underneath it is a use-after-free, not merely untidy. */
+    const bool join_portmap_quiescent = join_portmap_reset();
 
     /* Producer threads are joined; release any pending NET_Address refs
      * still in the rendezvous send queue (consumer never gets to drain
@@ -3897,7 +4302,7 @@ static void direct_p2p_on_teardown(void) {
      * miniupnpc's cached-IGD statics are never used concurrently. Bounded
      * (review H3); on detach-timeout the router-side removal is skipped —
      * see upnp_renew_join_and_discard. */
-    bool upnp_quiescent = upnp_renew_join_and_discard();
+    bool upnp_quiescent = upnp_renew_join_and_discard() && join_portmap_quiescent;
 
     if (s_upnp_mapping.active) {
         if (upnp_quiescent) {
@@ -4595,6 +5000,11 @@ void DirectP2P_Init(void) {
      * lifetime — same reset sites as the retry counter above. Narrower
      * than s_upnp_mapping on purpose: a user action re-probes. */
     s_portmap_failed_port = 0;
+    /* #121: the joiner probe's one-spawn-per-session guard has exactly
+     * the same lifetime as the verdict above, and for the same reason —
+     * a user action is allowed to re-ask, the automatic retry is not.
+     * Detaches (never joins) any probe still in flight. */
+    join_portmap_reset();
     SDL_SetAtomicInt(&s_q_head, 0);
     SDL_SetAtomicInt(&s_q_tail, 0);
     SDL_SetAtomicInt(&s_q_drops, 0);
@@ -4650,6 +5060,11 @@ void DirectP2P_BeginHost(int preferred_port) {
      * lifetime — same reset sites as the retry counter above. Narrower
      * than s_upnp_mapping on purpose: a user action re-probes. */
     s_portmap_failed_port = 0;
+    /* #121: the joiner probe's one-spawn-per-session guard has exactly
+     * the same lifetime as the verdict above, and for the same reason —
+     * a user action is allowed to re-ask, the automatic retry is not.
+     * Detaches (never joins) any probe still in flight. */
+    join_portmap_reset();
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     /* R-1: a reject latched during a session whose teardown never ran the
@@ -4783,6 +5198,11 @@ void DirectP2P_BeginJoin(const char* peer_code) {
      * lifetime — same reset sites as the retry counter above. Narrower
      * than s_upnp_mapping on purpose: a user action re-probes. */
     s_portmap_failed_port = 0;
+    /* #121: the joiner probe's one-spawn-per-session guard has exactly
+     * the same lifetime as the verdict above, and for the same reason —
+     * a user action is allowed to re-ask, the automatic retry is not.
+     * Detaches (never joins) any probe still in flight. */
+    join_portmap_reset();
     SDL_SetAtomicInt(&s_q_drops, 0);
     SDL_SetAtomicInt(&s_q_drops_logged, 0);
     s_handshake_reject_latched = false; /* R-1: see BeginHost */
@@ -4857,7 +5277,16 @@ void DirectP2P_Cancel(void) {
     /* S1: reap any in-flight UPnP lease renewal before RemoveMapping —
      * bounded, and RemoveMapping is skipped when the worker had to be
      * detached (review H3; see upnp_renew_join_and_discard). */
-    if (upnp_renew_join_and_discard()) {
+    /* #121: this MUST run before the removal below, not with the other
+     * per-session resets further down. join_portmap_reset detaches a
+     * probe that is still executing inside miniupnpc, and portmap_remove
+     * walks the same cached controlURL and FreeUPNPUrls()es it. Ordered
+     * after the worker joins above (so no spawn can race) and before the
+     * release (so no removal can race a live probe). Its verdict gates
+     * the removal for the same reason upnp_renew_join_and_discard's
+     * does. */
+    const bool join_portmap_quiescent = join_portmap_reset();
+    if (upnp_renew_join_and_discard() && join_portmap_quiescent) {
         if (s_upnp_mapping.active) {
             portmap_remove(&s_upnp_mapping);
         }
@@ -4872,6 +5301,8 @@ void DirectP2P_Cancel(void) {
      * lifetime — same reset sites as the retry counter above. Narrower
      * than s_upnp_mapping on purpose: a user action re-probes. */
     s_portmap_failed_port = 0;
+    /* #121: already reset above, BEFORE the mapping release — see there
+     * for why the ordering is not free to move. */
     s_outcome_reported = false;  /* S3 */
     s_host_deliver_seen = false; /* S3 */
     s_host_waiting_since_ms = 0; /* S3 */
@@ -5504,8 +5935,31 @@ bool DirectP2P_HostStunRetryPending(void) {
  * the same expression the runtime path evaluates — a second, hand-copied
  * expression in an assert would just be a comment that happens to
  * compile. */
-#define ORCH_JOIN_ATTEMPT_MS(stun_ms, race_ms) \
-    ((stun_ms) + RESOLVE_POLL_MAX_MS + RACE_HARD_CAP_MS(race_ms))
+/* #121: the joiner's port-map probe, as a term in the cascade.
+ *
+ * It is ZERO, and the zero is the design, not an omission — which is
+ * exactly why it is written down as an addend instead of left out. A leg
+ * that is absent from this sum because nobody thought of it and a leg
+ * that is absent because it provably costs nothing look identical in a
+ * cascade you can only read; they do not look identical here.
+ *
+ * join_portmap_spawn is an SDL_CreateThread and returns. The collection
+ * point, join_portmap_collect, polls SDL_GetThreadState and takes one of
+ * two non-blocking branches: SDL_WaitThread on a thread already reported
+ * COMPLETE, or SDL_DetachThread. Neither waits on the network. The probe
+ * therefore runs entirely inside wall-clock the cascade was already
+ * spending (attempt 1's race) and contributes nothing to the deadline.
+ *
+ * Make the joiner probe BLOCKING and this constant becomes
+ * PORTMAP_PROBE_BUDGET_MS, at which point assert [A] fails with
+ * 200 + 2*(4000 + 100 + 11250 + 9200) + 5000 = 54,300 ms against a
+ * 35,000 ms ceiling. Assert [E] below pins the one-time variant too, so
+ * neither shape can land without re-arguing the ceiling. */
+#define ORCH_JOIN_PORTMAP_SERIAL_MS 0
+
+#define ORCH_JOIN_ATTEMPT_MS(stun_ms, race_ms)                       \
+    ((stun_ms) + RESOLVE_POLL_MAX_MS + ORCH_JOIN_PORTMAP_SERIAL_MS + \
+     RACE_HARD_CAP_MS(race_ms))
 
 #define ORCH_JOIN_WORST_CASE_MS(stun_ms, race_ms) \
     (WORKER_STARTUP_DELAY_MS +                    \
@@ -5682,6 +6136,80 @@ _Static_assert(ORCH_HOST_WORST_CASE_MS(STUN_BUDGET_MAX_MS, RACE_BUDGET_MAX_MS) <
                "task #96: the host bound is back at its pre-#96 size — the "
                "port-map probe is being paid more than once per hosting session "
                "again. Latch the verdict, do not re-derive the ceiling.");
+
+/* [E] THE JOINER'S PORT-MAP PROBE MUST NOT BECOME SERIAL. Task #121.
+ *
+ * #121 gave the joiner a port-map probe. Every assert above still holds
+ * with its original numbers, which is a claim that deserves more than
+ * "trust me": ORCH_JOIN_PORTMAP_SERIAL_MS is 0, so ORCH_JOIN_ATTEMPT_MS
+ * is arithmetically what it was, and the shipped-defaults derivation is
+ * still 200 + 2*(4000 + 100 + 0 + 9200) + 5000 = 31,800 ms against the
+ * 35,000 ms ceiling, with the same 3,200 ms of headroom [A] was written
+ * to protect. Nothing was weakened and no ceiling was raised.
+ *
+ * The reason the probe HAD to be non-blocking is the thing worth pinning,
+ * because it is the constraint a future change will unknowingly violate.
+ * Even the cheapest serial shape — ONE probe per join session, latched
+ * exactly as #96 latches the host's, placed outside the attempt
+ * multiplier — does not fit:
+ *
+ *     WORKER_STARTUP_DELAY_MS + PORTMAP_PROBE_BUDGET_MS
+ *         + JOIN_MAX_ATTEMPTS * ORCH_JOIN_ATTEMPT_MS(defaults)
+ *         + NAV_ORCH_TIMEOUT_MARGIN_MS
+ *     = 200 + 11250 + 2*13300 + 5000 = 43,050 ms  >  35,000 ms
+ *
+ * 8,050 ms over. That is the measured cost of a FAILING probe
+ * (s_portmap_failed_port: 8033 ms of UPnP plus 3510 ms of NAT-PMP, so
+ * the outer deadline fires and the full budget is spent), and a failing
+ * probe is the case a symmetric joiner with no IGD and no NAT-PMP
+ * gateway actually hits — the common case, not the corner.
+ *
+ * So this assert is deliberately the NEGATIVE form: it asserts that the
+ * serial shape does NOT fit. It fires in exactly two situations, and
+ * both are ones somebody needs to look at rather than a build that
+ * should quietly proceed:
+ *   - PORTMAP_PROBE_BUDGET_MS shrinks (or the ceiling legitimately
+ *     rises) far enough that a serial one-time probe WOULD fit. Then
+ *     #121's fire-and-forget machinery — the spawn/collect pair, the
+ *     detach disposition, the bind_port pinning on attempt 2 — is no
+ *     longer buying anything, and the honest move is to delete it and
+ *     call try_portmap from the joiner like the host does. This assert
+ *     is how that becomes visible instead of staying complexity nobody
+ *     revisits.
+ *   - somebody edits the arithmetic above without understanding it.
+ *
+ * It constrains no RUNTIME behaviour — but it is not free of the rest of
+ * the file, and saying otherwise would be the kind of overclaim this
+ * block exists to prevent. Both sides move: raising
+ * CONNECT_TIMEOUT_CONNECTING_MS past ~19,025 ms, or JOIN_MAX_ATTEMPTS to
+ * 7, lifts NAV_ORCH_UX_CEILING_MS far enough that a serial probe WOULD
+ * fit, and this fires even though [A] gained headroom. That is the
+ * intended reading, not a false positive: the condition #121's
+ * indirection exists to work around would have stopped being true, and
+ * somebody should decide whether to keep the indirection rather than
+ * inherit it. But the failure text points at #121 for a change made
+ * elsewhere, so read it as "re-decide", not "you broke something". */
+_Static_assert(WORKER_STARTUP_DELAY_MS + PORTMAP_PROBE_BUDGET_MS +
+                       JOIN_MAX_ATTEMPTS * ORCH_JOIN_ATTEMPT_MS(STUN_BUDGET_DEFAULT_MS,
+                                                                RACE_BUDGET_DEFAULT_MS) +
+                       NAV_ORCH_TIMEOUT_MARGIN_MS >
+                   NAV_ORCH_UX_CEILING_MS,
+               "task #121: a SERIAL one-time joiner port-map probe would now fit "
+               "under the UX ceiling. #121's fire-and-forget probe exists only "
+               "because it did not. Either re-check this derivation, or delete "
+               "join_portmap_spawn/join_portmap_collect and call try_portmap from "
+               "join_attempt the way host_thread_fn does — but do not leave the "
+               "indirection in place with its reason gone.");
+
+/* And the zero itself, so the two halves cannot drift: if the joiner
+ * probe is ever made to block, ORCH_JOIN_PORTMAP_SERIAL_MS must be set
+ * to what it really costs, and [A] must then be re-argued rather than
+ * silently satisfied by a stale 0. */
+_Static_assert(ORCH_JOIN_PORTMAP_SERIAL_MS == 0,
+               "task #121: the joiner port-map probe is no longer free. It was "
+               "fire-and-forget (spawn + zero-wait collect) precisely so the "
+               "joiner cascade did not grow. Re-derive assert [A] with the real "
+               "cost — do NOT raise NAV_ORCH_UX_CEILING_MS.");
 
 int DirectP2P_OrchWorstCaseMsForRole(Role role) {
     const int stun = stun_budget_ms();
