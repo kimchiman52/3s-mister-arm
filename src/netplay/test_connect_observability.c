@@ -271,7 +271,7 @@ static int obs_server_thread(void* arg) {
         } else {
             /* 5 bytes: passes Rendezvous_HasMagic (needs len >= 4) but
              * is rejected by Rendezvous_FrameType for being too short to
-             * carry a type (rendezvous.c:291-293) — the SAME ft == 0 the
+             * carry a type (rendezvous.c:341-343) — the SAME ft == 0 the
              * skew arm sees. This is the negative case: a runt must not
              * be miscounted as a protocol skew. */
             reply[4] = 1u;
@@ -418,7 +418,7 @@ static void test1_version_skew(unsigned long long before_ts) {
     } else {
         EXPECT_TRUE(tag, SDL_GetAtomicInt(&runt_ctx.replies) > 0);
         /* THE DISCRIMINATOR. Rendezvous_FrameType returns 0 for a runt
-         * AND for a version skew alike (rendezvous.c:291-300), so an arm
+         * AND for a version skew alike (rendezvous.c:341-350), so an arm
          * keyed on `ft == 0` alone would count these. Blaming "protocol
          * skew" for a truncated datagram is precisely the confident-but-
          * wrong attribution #36 exists to stop. */

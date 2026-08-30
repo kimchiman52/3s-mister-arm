@@ -2131,8 +2131,8 @@ static int test_rendezvous_cookie_codec(void) {
  * Rendezvous_HasMagic and Rendezvous_FrameType are two DIFFERENT tests
  * and the difference is load-bearing. Both still ship:
  *
- *   rendezvous.c:281  Rendezvous_HasMagic   — magic ONLY
- *   rendezvous.c:296  Rendezvous_FrameType  — magic AND version AND type
+ *   rendezvous.c:331  Rendezvous_HasMagic   — magic ONLY
+ *   rendezvous.c:346  Rendezvous_FrameType  — magic AND version AND type
  *   direct_p2p.c:1903-1905 — the race's one shared receive path routes
  *                            with HasMagic ? FrameType : -1
  *   sdl_net_adapter.c:291,298 — the GekkoNet straggler drop
@@ -2141,7 +2141,7 @@ static int test_rendezvous_cookie_codec(void) {
  * because a RELAY_GRANT happened to be the frame lying around to build
  * them on. The relay is gone; the property is not. The fixtures here are
  * a DELIVER and a CHALLENGE — REND_FRAME_DELIVER and REND_FRAME_CHALLENGE
- * (rendezvous.h:207-208), the only two server->client frames left.
+ * (rendezvous.h:212-213); #122's NACK is a third, needing no fixture here.
  *
  * THE REGRESSION THIS EXISTS TO CATCH. sdl_net_adapter.c's straggler
  * drop used to test `Rendezvous_FrameType(...) != 0`, which returns 0
@@ -6974,7 +6974,7 @@ static int SDLCALL hc_server_thread(void* arg) {
  * WHY THE ARM-FAIL SEAM. race_arm_punch's only failure mode past its
  * up-front ip/port guard is Stun_PunchBegin, which fails on an
  * unresolvable host (stun.c:781-798) — and slot 1's IP always comes from
- * inet_ntop in Rendezvous_ParseDeliverEx (rendezvous.c:250-252), so the
+ * inet_ntop in Rendezvous_ParseDeliverEx (rendezvous.c:300-302), so the
  * wire can only ever deliver a resolvable dotted quad. The seam swaps the
  * hostname STRING handed to the real Stun_PunchBegin for a 144-character
  * DNS label; the failure is produced by the real NET_ResolveHostname path.

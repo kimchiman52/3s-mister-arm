@@ -23,13 +23,17 @@ const TYPE_REGISTER = 1;
 const TYPE_DELIVER = 2;
 const TYPE_POLL = 3;
 const TYPE_CHALLENGE = 4;
-// Types 5..8 were the S5 relay extension (RELAY_REQ / RELAY_GRANT /
-// RELAY_PIN / RELAY_PIN_ACK). The relay was deleted — client and server —
-// so nothing here claims them any more and they fall through onMessage's
-// `drop: unknown type` branch like any other unallocated type: logged
-// under the shared throttle, no reply, no state. The version byte is
-// UNCHANGED at 2, because the frames that DO exist (REGISTER, POLL,
-// DELIVER, CHALLENGE) are byte-for-byte what v2 always was.
+// Task #122: type 5 is NACK — a server->client refusal carrying a reason
+// code. Types 5..8 were the S5 relay extension (RELAY_REQ / RELAY_GRANT /
+// RELAY_PIN / RELAY_PIN_ACK); the relay was deleted, which freed them, and
+// 5 is now claimed. 6..8 remain unallocated and still fall through
+// onMessage's `drop: unknown type` branch. The version byte is UNCHANGED
+// at 2: REGISTER, POLL, DELIVER and CHALLENGE are byte-for-byte what v2
+// always was, and a v2 client that does not know type 5 ignores it exactly
+// as it ignored types 5..8 before (an unrecognised type byte reaches no
+// branch of the client's race receive switch — see the compatibility note
+// on NACK_LEN below).
+const TYPE_NACK = 5;
 
 const REGISTER_LEN = 36;
 const POLL_LEN = 36;
@@ -381,6 +385,179 @@ const KEY_RATE_LIMIT_PER_WINDOW = 30;
 const COOKIE_ROTATE_MS = 60 * 1000;
 const cookieSecret = crypto.randomBytes(32);
 
+// --- Task #122: NACK (typed refusal) -----------------------------------------
+//
+// THE PROBLEM. Before this, a client that was refused saw BARE SILENCE, and
+// silence was produced by nine distinguishable server conditions: an
+// unsupported version byte, a bad REGISTER/POLL length, an unallocated type
+// byte, each of the THREE rate limiters (pre-gate, per-IP cookied,
+// per-key), the MAX_NEW_KEYS_PER_IP creator quota, an all-paired full
+// session table, and the third-party drop on a room whose two slots are
+// both live. The client collapses every one of them into
+// P2P_FAIL_RENDEZVOUS_DOWN — see the HONESTY NOTE in
+// src/netplay/connect_fail.h, which names four of them and states outright
+// that "a distinct NACK needs a wire change — S4/S5 territory". The relay
+// removal orphaned that work; this re-homes it.
+//
+// CHALLENGE was the only server condition a client could positively
+// observe. Now every refusal is a typed frame.
+//
+// --- WHY THIS IS NOT AN AMPLIFICATION / REFLECTION VECTOR ------------------
+//
+// A NACK is an UNAUTHENTICATED response to an UNAUTHENTICATED request, so
+// it is a reflector surface by construction and has to be bounded by
+// construction. Two INDEPENDENT bounds, each separately provable and each
+// sufficient on its own:
+//
+//   BOUND 1 — PER FRAME, the response is never LARGER than the request.
+//   NACK_LEN = 28 answering a 36-byte REGISTER/POLL: factor 28/36 = 0.778.
+//   (CHALLENGE, already shipped, is 32/36 = 0.889; the NACK is tighter.)
+//   This is ENFORCED in sendNack, not merely arranged: a NACK is suppressed
+//   outright when the request is shorter than NACK_LEN, because the
+//   BAD_TYPE branch is otherwise reachable by an 8-byte frame and was
+//   measured amplifying 3.5x. The worst case that can now occur is a
+//   28-byte v1 REGISTER answered by a 28-byte NACK — factor exactly 1.0,
+//   which yields an attacker nothing over sending the packet to the victim
+//   directly. So gain <= 1 on every frame, and no spray across any number
+//   of spoofed victims can amplify anything.
+//
+//   BOUND 2 — PER VICTIM, aggregate egress toward any ONE address is capped
+//   at 1 NACK per NACK_MIN_INTERVAL_MS regardless of inbound rate. This is
+//   the bound that actually matters, because concentrating traffic on a
+//   chosen victim is the only thing a reflector is USEFUL for. At 250 ms
+//   that is <= 4 x 28 B = 112 B/s toward any address, forever, no matter
+//   whether the attacker sends 10 pps or 10 Mpps. Bound 1 degrades
+//   gracefully; bound 2 does not degrade at all.
+//
+// The cooldown is DELIBERATELY TIGHTER THAN EVERY REQUEST-PATH BUDGET —
+// 4/s versus the pre-gate's 100/s, the cookied per-IP 10/s and the per-key
+// 30/s. So "rate-limited on the same budget as the request path" holds in
+// the only form that is not self-contradictory: a rate-limit NACK cannot
+// draw the very bucket whose exhaustion caused it, so instead the NACK
+// budget is DOMINATED BY all three request budgets. Whatever the request
+// path admits, the NACK path admits strictly less.
+//
+// --- WHY IT LEAKS NO SESSION STATE -----------------------------------------
+//
+// Invariant, and it is mechanical rather than a judgement call: THE ONLY
+// SERVER-ORIGINATED BYTES IN A NACK ARE magic, version, type AND THE REASON
+// CODE. Everything else is either zero or an echo of bytes the sender
+// itself just sent. There is no endpoint, no peer address, no port, no
+// slot, no cookie, no count and no timestamp anywhere in the frame.
+//
+// The reason code is then split by whether the sender has proven return
+// routability, because cookieForSlot() deliberately does not take the
+// session key and so a cookie proves an ENDPOINT, never a right to a room:
+//   * PRE-COOKIE reasons (BAD_VERSION, BAD_LENGTH, BAD_TYPE, RATE_PREGATE)
+//     describe THE SENDER'S OWN FRAME or THE SENDER'S OWN IP BUDGET. They
+//     say nothing whatsoever about any session, so an unproven sender —
+//     including a source-spoofing one — learns nothing it did not already
+//     know about itself.
+//   * POST-COOKIE reasons (RATE_IP, RATE_KEY, KEY_QUOTA, TABLE_FULL,
+//     SESSION_FULL) are emitted ONLY from inside or after
+//     returnRoutabilityGate, i.e. only to a sender that provably RECEIVES
+//     at its claimed endpoint. SESSION_FULL is the only one that is even
+//     arguably session-derived, and it discloses strictly less than the
+//     server already discloses today: a third party on a NOT-full key gets
+//     a DELIVER, so occupancy is ALREADY distinguishable from
+//     DELIVER-versus-silence. The NACK makes an existing signal explicit,
+//     it does not create one — and only for a return-routable holder of the
+//     room code, which is a capability that party already had.
+//
+// --- WHAT DOES *NOT* GET A NACK, AND WHY -----------------------------------
+//
+//   * MAGIC MISMATCH. Not our protocol at all. Replying would make this
+//     server a reflector for ARBITRARY UDP — any 4 bytes that are not
+//     '3SXR' — which is a categorically larger surface than replying to
+//     frames that at least claim to be ours. Still a silent drop; it now
+//     gets the log line it never had (see onMessage).
+//   * SHORT PACKET (< 8 bytes). Cannot even be shown to claim our magic
+//     and offsets; same reasoning.
+// Both remain allocation-free: nothing below is touched until a datagram
+// has proven it carries our magic.
+const NACK_LEN = 28;
+const NACK_MIN_INTERVAL_MS = 250;
+
+// Reason codes. Wire values: APPEND-ONLY, never renumber — they are a
+// client-facing enum (mirrored in src/netplay/rendezvous.h) and a log-grep
+// anchor. 0 is reserved so an all-zero byte is never a valid reason.
+const NACK_REASON_BAD_VERSION  = 1; // version byte is not VERSION
+const NACK_REASON_BAD_LENGTH   = 2; // v2 REGISTER/POLL of the wrong length
+const NACK_REASON_BAD_TYPE     = 3; // unallocated type, or a server->client type
+const NACK_REASON_RATE_IP      = 4; // per-IP COOKIED budget exhausted
+const NACK_REASON_RATE_KEY     = 5; // per-session-key budget exhausted
+const NACK_REASON_RATE_PREGATE = 6; // uncookied first-contact budget exhausted
+const NACK_REASON_KEY_QUOTA    = 7; // this IP already holds MAX_NEW_KEYS_PER_IP
+const NACK_REASON_TABLE_FULL   = 8; // session table full of PAIRED sessions
+const NACK_REASON_SESSION_FULL = 9; // both slots live and neither is yours
+
+const NACK_REASON_NAME = {
+    [NACK_REASON_BAD_VERSION]:  'BAD_VERSION',
+    [NACK_REASON_BAD_LENGTH]:   'BAD_LENGTH',
+    [NACK_REASON_BAD_TYPE]:     'BAD_TYPE',
+    [NACK_REASON_RATE_IP]:      'RATE_IP',
+    [NACK_REASON_RATE_KEY]:     'RATE_KEY',
+    [NACK_REASON_RATE_PREGATE]: 'RATE_PREGATE',
+    [NACK_REASON_KEY_QUOTA]:    'KEY_QUOTA',
+    [NACK_REASON_TABLE_FULL]:   'TABLE_FULL',
+    [NACK_REASON_SESSION_FULL]: 'SESSION_FULL',
+};
+
+// --- Task #122: lost-pairing-push + pairing-to-punch measurement -------------
+//
+// These are the two field quantities the netplay arc's residual risk rests
+// on, and neither had ANY server-side instrumentation. The client already
+// measures its half (confirm_ms, deliver_gap_max_ms). This is the other
+// half, and it is a DIRECT observation rather than an inference — which is
+// only possible because of one measured property of the shipped client:
+//
+//   A CLIENT STOPS RE-REGISTERING THE INSTANT A REAL-ENDPOINT DELIVER
+//   LANDS. Host: src/netplay/direct_p2p.c:4343-4344 sets
+//   s_rendezvous_cancel, breaking host_rendezvous_thread_fn's loop at
+//   :2989-2992. Joiner: direct_p2p.c:2000-2001 clears signal_active, and
+//   the race loop then exits at :2090-2092.
+//
+// So a REGISTER arriving from a peer we ALREADY pushed a real endpoint to
+// means that peer is still behaving as if UNPAIRED — it never got the
+// push. There is no ACK in this protocol (the client sends exactly one
+// frame type, REGISTER — Rendezvous_BuildPoll has zero production call
+// sites), so the CESSATION of REGISTERs is the only "I got it" signal the
+// wire carries, and its absence is the loss signal.
+//
+// The same client fact makes the second quantity fall out for free. On the
+// host, the DELIVER that cancels the resender is the SAME DELIVER that
+// spawns the punch: direct_p2p.c:4364 sets FALLBACK_BILATERAL_PUNCH and
+// :4372 spawns host_bilateral_punch_thread_fn, in the same function, off
+// the same frame. Therefore
+//
+//   time(pairing -> the pushed-to peer's LAST REGISTER) == time(pairing ->
+//   that peer starts punching)
+//
+// exactly, not approximately. A landed push makes it 0 ms. A LOST push
+// makes it one full re-REGISTER interval — and the host's interval
+// defaults to 5000 ms (src/port/config/config.c:111, floor 1000 ms at
+// direct_p2p.c:2983). One lost datagram therefore costs up to FIVE SECONDS
+// of connect latency, invisibly. That is the number this measures.
+//
+// TWO HONEST LIMITS, both of which bias the estimate DOWNWARD (it is a
+// lower bound on loss, never an over-count):
+//   1. CROSSING. A REGISTER already in flight when we paired arrives just
+//      after the push and is indistinguishable from a lost push. It is
+//      bounded by one RTT, while a genuine loss shows at the peer's own
+//      cadence — 500 ms for a joiner, defaulting to 5000 ms for a host —
+//      so the two populations barely overlap for the case that matters,
+//      and the HISTOGRAM (not a single number) is what is reported
+//      precisely so a crossing spike near 0 stays visible as itself.
+//   2. HAIRPIN. If the pushed endpoint carries the RECIPIENT'S OWN
+//      address, the client's self-DELIVER gate (direct_p2p.c:4336-4341
+//      host, :1978-1982 joiner) deliberately does NOT cancel the resender,
+//      so a later REGISTER is not evidence of anything. Those pushes are
+//      excluded from the metric outright.
+const PUSH_HIST_BUCKETS_MS = [250, 500, 1000, 2000, 5000, 10000];
+// Report cadence for the aggregate. Piggybacks the existing rate sweep
+// rather than adding a timer, so it costs no new wakeups.
+const PUSH_REPORT_INTERVAL_MS = 60 * 1000;
+
 // --- Logging -----------------------------------------------------------------
 
 function ts() {
@@ -484,6 +661,49 @@ function encodeDeliver(sessionKeyBuf, peerEndpoint) {
     return buf;
 }
 
+// Task #122. 28 bytes:
+//   [0..3]   magic '3SXR'
+//   [4]      version — ALWAYS this server's VERSION, including in the
+//            BAD_VERSION reply. That is the point: a client newer than us
+//            reads a version byte it cannot parse from the very endpoint it
+//            is REGISTERing to, which is exactly the source-gated evidence
+//            src/netplay/direct_p2p.c:2004-2062 counts as badver_n, turning
+//            RENDEZVOUS_DOWN into the DEFINITE CONNECT_ATTRIB_VERSION_SKEW
+//            verdict instead of the hedged AMBIG_VERSION one. Today that
+//            counter can never fire against this server, because the server
+//            answers a version mismatch with nothing at all.
+//   [5]      type = TYPE_NACK
+//   [6]      reason
+//   [7]      reserved (0)
+//   [8..23]  the sender's own session-key bytes, echoed
+//   [24..27] reserved (0)
+//
+// `srcBuf` is the REQUEST. Bytes [8..24] are echoed from it when it is long
+// enough, and zeroed otherwise. Echoing is what lets the client gate the
+// frame on its own session key (the key embeds the S4b nonce, so an
+// off-path forger cannot produce a matching one) — and it is safe by
+// construction because it returns the sender's bytes to the sender.
+//
+// For BAD_VERSION we are echoing from a frame whose version we do not
+// speak, so the [8..24] offset is a GUESS about a foreign layout. It is a
+// deliberate and harmless one: it has held across v1 and v2, and if a
+// future version moves the field the echo is simply wrong bytes, which
+// fails the client's key check and degrades to today's behaviour. It can
+// never leak, because every byte of it came from the sender.
+function encodeNack(reason, srcBuf) {
+    const buf = Buffer.alloc(NACK_LEN);
+    buf.writeUInt32BE(MAGIC, 0);
+    buf.writeUInt8(VERSION, 4);
+    buf.writeUInt8(TYPE_NACK, 5);
+    buf.writeUInt8(reason, 6);
+    buf.writeUInt8(0, 7); // reserved
+    if (srcBuf && srcBuf.length >= 24) {
+        srcBuf.copy(buf, 8, 8, 24);
+    }
+    // [24..27] reserved, already zero from Buffer.alloc.
+    return buf;
+}
+
 // --- State -------------------------------------------------------------------
 
 const sessionMap = new Map();
@@ -534,6 +754,42 @@ const keyRateMap = new Map();
 
 const warnedKeys = new Set();
 
+// Task #122: NACK emission cooldown. Same sliding-window shape as the rate
+// buckets, with limit = 1 over NACK_MIN_INTERVAL_MS, which is what makes
+// "at most one NACK per source IP per 250 ms" a property of the SAME
+// audited, MAX_RATE_ENTRIES-capped, O(1)-LRU machinery rather than a
+// second hand-rolled one.
+//
+// Bounded-allocation note (review MEDIUM-3 lineage): this map IS keyed on
+// an attacker-supplied value and IS allocated before the cookie gate, so a
+// magic-bearing flood from N distinct sources creates entries. It is capped
+// at MAX_RATE_ENTRIES with the same LRU eviction as the others (~1 stamp
+// per entry => ~200 B, so ~1.6 MB fully saturated, the same order as
+// rateMap). What MEDIUM-3 actually required is BOUNDEDNESS, and it holds.
+// The stronger "junk allocates literally nothing" property also still
+// holds for the two true junk classes: a short packet and a bad-magic
+// packet never reach this map, because nothing here is touched until a
+// datagram has proven it carries '3SXR'. An attacker must therefore spend
+// four correct magic bytes to allocate one capped entry.
+const nackMap = new Map();
+
+// Task #122 metrics. Plain counters; no unbounded keys anywhere.
+const pushStats = {
+    pushed: 0,        // pairing pushes emitted (excluding hairpin-excluded)
+    excluded: 0,      // hairpin pushes deliberately not measured
+    lost: 0,          // pushes followed by a REGISTER from the pushed-to peer
+    hist: new Array(PUSH_HIST_BUCKETS_MS.length + 1).fill(0),
+    sumMs: 0,
+    maxMs: 0,
+    lastReport: -Infinity,
+};
+
+const nackStats = {
+    sent: 0,
+    suppressed: 0,    // refused by the cooldown — the amplification bound working
+    byReason: new Map(), // reason(int) -> count. Fixed key set, cannot grow.
+};
+
 // --- Rate limiter ------------------------------------------------------------
 
 // Sliding-window token bucket over a SIZE-CAPPED Map (review MEDIUM-3).
@@ -576,14 +832,24 @@ function bucketAllow(map, warned, key, windowMs, limit) {
 }
 
 // Post-cookie per-IP budget.
+//
+// Task #122 (operator gap). The one-shot `warned` set means the FIRST drop
+// from an IP got a WARN and every later one was invisible until the bucket
+// was evicted — so an operator reading the log could see that throttling
+// started but never that it was still happening, still less how much of it
+// there was. The one-shot WARN is kept (it names the IP the instant it
+// starts) and a THROTTLED RUNNING COUNT is added underneath it. The count
+// is keyed on a FIXED reason string, never on the IP, so noteMap cannot be
+// grown by an attacker who rotates source addresses.
 function rateLimitAllow(ip) {
     if (bucketAllow(rateMap, warnedIps, ip, RATE_WINDOW_MS, RATE_LIMIT_PER_WINDOW)) {
         return true;
     }
     if (!warnedIps.has(ip)) {
         warnedIps.add(ip);
-        logWarn(`rate-limit: dropping COOKIED packets from ${ip} (further drops will be silent until this IP is quiet long enough to evict)`);
+        logWarn(`rate-limit: dropping COOKIED packets from ${ip} (running total follows under a ${NOTE_INTERVAL_MS / 1000}s throttle)`);
     }
+    noteThrottled(logWarn, 'drop: per-IP cookied rate limit', `latest ${ip}, cap ${RATE_LIMIT_PER_WINDOW}/${RATE_WINDOW_MS}ms`);
     return false;
 }
 
@@ -594,8 +860,9 @@ function preGateAllow(ip) {
     }
     if (!warnedPreGate.has(ip)) {
         warnedPreGate.add(ip);
-        logWarn(`pre-gate: dropping UNCOOKIED packets from ${ip} (challenge budget exhausted; cookied traffic from this IP is unaffected)`);
+        logWarn(`pre-gate: dropping UNCOOKIED packets from ${ip} (challenge budget exhausted; cookied traffic from this IP is unaffected; running total follows under a ${NOTE_INTERVAL_MS / 1000}s throttle)`);
     }
+    noteThrottled(logWarn, 'drop: pre-gate uncookied rate limit', `latest ${ip}, cap ${PREGATE_LIMIT_PER_WINDOW}/${PREGATE_WINDOW_MS}ms`);
     return false;
 }
 
@@ -606,9 +873,73 @@ function keyRateAllow(hexKey) {
     }
     if (!warnedKeys.has(hexKey)) {
         warnedKeys.add(hexKey);
-        logWarn(`key-rate-limit: dropping packets for key=${shortKey4(hexKey)}... (further drops silent until the key is quiet long enough to evict)`);
+        logWarn(`key-rate-limit: dropping packets for key=${shortKey4(hexKey)}... (running total follows under a ${NOTE_INTERVAL_MS / 1000}s throttle)`);
     }
+    noteThrottled(logWarn, 'drop: per-key rate limit', `latest key=${shortKey4(hexKey)}..., cap ${KEY_RATE_LIMIT_PER_WINDOW}/${KEY_RATE_WINDOW_MS}ms`);
     return false;
+}
+
+// Task #122: the single emission point for every NACK.
+//
+// Routing every reason through one function is what makes the two
+// amplification bounds auditable in one place instead of nine: BOUND 1 is
+// encodeNack's fixed NACK_LEN, BOUND 2 is the cooldown immediately below,
+// and there is no other path that can put a NACK on the wire.
+//
+// Returns true if a NACK was actually sent. Callers ignore it: a
+// suppressed NACK degrades to exactly the silence that shipped before this
+// change, which is the correct failure mode.
+function sendNack(socket, rinfo, reason, srcBuf) {
+    // BOUND 1, ENFORCED RATHER THAN ASSUMED. Never answer with more bytes
+    // than arrived.
+    //
+    // This guard is not theoretical. Without it the BAD_TYPE branch is a
+    // 3.5x AMPLIFIER: the smallest frame that reaches it is 8 bytes
+    // (onMessage's minimum, plus our magic and a v2 version byte, plus an
+    // unallocated type), and it drew a 28-byte reply. Measured, not
+    // reasoned about. BOUND 2 kept that from being a usable reflector, but
+    // "the reply is always smaller than the request" was simply FALSE as
+    // written, and a stated invariant that does not hold is worse than no
+    // invariant.
+    //
+    // >= rather than > is deliberate. A v1 REGISTER is exactly 28 bytes,
+    // the same as NACK_LEN, and that is THE case this whole feature exists
+    // for (#87). Equal size is not amplification — an attacker gains
+    // nothing over sending the packet to the victim itself — so the rule
+    // is "never LARGER than the request", which admits v1 while making
+    // gain impossible. Legitimate REGISTER/POLL are 36 bytes and clear it
+    // with room to spare; nothing shorter than 28 bytes is a frame this
+    // protocol has ever defined, so the silent drop is the right answer
+    // for it.
+    if (!srcBuf || srcBuf.length < NACK_LEN) {
+        nackStats.suppressed += 1;
+        noteThrottled(logInfo, 'nack: suppressed (request smaller than the reply)',
+            `latest ${rinfo.address}:${rinfo.port} len=${srcBuf ? srcBuf.length : 0} < ${NACK_LEN}`);
+        return false;
+    }
+    // BOUND 2. limit = 1 per NACK_MIN_INTERVAL_MS per source address.
+    // `null` for the warn-set: there is nothing to warn about, suppression
+    // is the design working, and it is counted in nackStats instead.
+    if (!bucketAllow(nackMap, null, rinfo.address, NACK_MIN_INTERVAL_MS, 1)) {
+        nackStats.suppressed += 1;
+        noteThrottled(logInfo, 'nack: suppressed by cooldown',
+            `latest ${rinfo.address} reason=${NACK_REASON_NAME[reason] || reason} (cap 1 per ${NACK_MIN_INTERVAL_MS}ms per source)`);
+        return false;
+    }
+    const frame = encodeNack(reason, srcBuf);
+    socket.send(frame, 0, NACK_LEN, rinfo.port, rinfo.address);
+    nackStats.sent += 1;
+    nackStats.byReason.set(reason, (nackStats.byReason.get(reason) || 0) + 1);
+    // noteThrottled's contract is that its key comes from a FIXED set
+    // chosen by this file, never from anything an attacker supplies —
+    // otherwise noteMap is an unbounded allocator. `reason` is always one
+    // of the nine NACK_REASON_* constants (it is chosen at the call site
+    // and never read out of a packet), so the lookup below is total; the
+    // fallback is a CONSTANT rather than an interpolation of `reason` so
+    // that the key set stays finite even if that ever stops being true.
+    noteThrottled(logInfo, `nack: ${NACK_REASON_NAME[reason] || 'unnamed'}`,
+        `${rinfo.address}:${rinfo.port} (${NACK_LEN}B answering ${srcBuf ? srcBuf.length : 0}B)`);
+    return true;
 }
 
 // Aggregated logging for PRE-VALIDATION events (review HIGH-2 side effect).
@@ -663,7 +994,7 @@ function sweepBucketMap(map, warned, windowMs, now) {
         const inWindow = entry.timestamps.length > 0 && entry.timestamps[entry.timestamps.length - 1] > cutoff;
         if (!inWindow && now - entry.lastSeen > windowMs * 60) {
             map.delete(k);
-            warned.delete(k);
+            if (warned) warned.delete(k); // #122: nackMap has no warn-set
             evicted += 1;
         }
     }
@@ -676,8 +1007,61 @@ function sweepRates() {
     const preEvicted = sweepBucketMap(preGateMap, warnedPreGate, PREGATE_WINDOW_MS, now);
     // S4c: same policy for the per-key buckets.
     const keyEvicted = sweepBucketMap(keyRateMap, warnedKeys, KEY_RATE_WINDOW_MS, now);
-    if (evicted > 0 || preEvicted > 0 || keyEvicted > 0) {
-        logInfo(`rate sweep: evicted ${evicted} ip(s) + ${preEvicted} pre-gate ip(s) + ${keyEvicted} key(s), live=${rateMap.size}/${preGateMap.size}/${keyRateMap.size}`);
+    // #122: the NACK cooldown map ages out on the same policy.
+    const nackEvicted = sweepBucketMap(nackMap, null, NACK_MIN_INTERVAL_MS, now);
+    if (evicted > 0 || preEvicted > 0 || keyEvicted > 0 || nackEvicted > 0) {
+        logInfo(`rate sweep: evicted ${evicted} ip(s) + ${preEvicted} pre-gate ip(s) + ${keyEvicted} key(s) + ${nackEvicted} nack-cooldown ip(s), live=${rateMap.size}/${preGateMap.size}/${keyRateMap.size}/${nackMap.size}`);
+    }
+    reportPushStats(now);
+}
+
+// --- Task #122: the two field quantities -------------------------------------
+
+function pushHistBucket(ms) {
+    for (let i = 0; i < PUSH_HIST_BUCKETS_MS.length; i++) {
+        if (ms < PUSH_HIST_BUCKETS_MS[i]) return i;
+    }
+    return PUSH_HIST_BUCKETS_MS.length;
+}
+
+function pushHistLabel(i) {
+    if (i < PUSH_HIST_BUCKETS_MS.length) {
+        const lo = i === 0 ? 0 : PUSH_HIST_BUCKETS_MS[i - 1];
+        return `${lo}-${PUSH_HIST_BUCKETS_MS[i]}ms`;
+    }
+    return `>=${PUSH_HIST_BUCKETS_MS[PUSH_HIST_BUCKETS_MS.length - 1]}ms`;
+}
+
+// Record one directly-observed lost push. `delayMs` is pairing -> the
+// pushed-to peer's re-REGISTER, which per the derivation above IS
+// pairing -> that peer starts punching.
+function notePushLost(hexKey, peer, delayMs) {
+    pushStats.lost += 1;
+    pushStats.hist[pushHistBucket(delayMs)] += 1;
+    pushStats.sumMs += delayMs;
+    if (delayMs > pushStats.maxMs) pushStats.maxMs = delayMs;
+    logWarn(`[PUSH-LOST] key=${shortKey4(hexKey)}... ${peer.address}:${peer.port} re-REGISTERed ${Math.round(delayMs)} ms after its pairing DELIVER — it never received the push (a paired client stops re-REGISTERing: direct_p2p.c:4344 host / :2001 joiner)`);
+}
+
+function reportPushStats(now) {
+    if (pushStats.pushed === 0 && pushStats.excluded === 0) return;
+    if (now - pushStats.lastReport < PUSH_REPORT_INTERVAL_MS) return;
+    pushStats.lastReport = now;
+    const landed = pushStats.pushed - pushStats.lost;
+    const pct = pushStats.pushed > 0
+        ? ((pushStats.lost / pushStats.pushed) * 100).toFixed(1) : '0.0';
+    const mean = pushStats.lost > 0 ? Math.round(pushStats.sumMs / pushStats.lost) : 0;
+    const hist = pushStats.hist
+        .map((n, i) => (n > 0 ? `${pushHistLabel(i)}=${n}` : null))
+        .filter((s) => s !== null)
+        .join(' ');
+    logInfo(`[PUSH-STATS] pairing pushes=${pushStats.pushed} landed=${landed} lost=${pushStats.lost} (${pct}%) hairpin-excluded=${pushStats.excluded}`);
+    logInfo(`[PUSH-STATS] pairing->first-punch for LOST pushes: mean=${mean}ms max=${Math.round(pushStats.maxMs)}ms hist[${hist || 'empty'}] (landed pushes are 0 ms by construction)`);
+    if (nackStats.sent > 0 || nackStats.suppressed > 0) {
+        const byReason = [...nackStats.byReason.entries()]
+            .map(([r, n]) => `${NACK_REASON_NAME[r] || r}=${n}`)
+            .join(' ');
+        logInfo(`[NACK-STATS] sent=${nackStats.sent} suppressed-by-cooldown=${nackStats.suppressed} [${byReason}]`);
     }
 }
 
@@ -695,12 +1079,29 @@ function handleRegister(socket, buf, rinfo) {
     let pairedPeer = null; // endpoint to receive an unsolicited DELIVER if we just paired
     const now = nowMs();
 
+    // #122 METRIC. A REGISTER from the exact endpoint we last pushed a real
+    // peer endpoint to. The shipped client cancels its resender the moment
+    // such a DELIVER lands (direct_p2p.c:4343-4344 host, :2000-2001
+    // joiner), so this frame is that peer still behaving as UNPAIRED: the
+    // push was lost. Checked BEFORE any branch mutates state so it holds
+    // for every path below (fresh pairing, reclaim, third-party drop).
+    // pushTo is cleared on observation so one push yields one sample.
+    if (entry && entry.pushTo && endpointEq(entry.pushTo, source)) {
+        notePushLost(hexKey, source, now - entry.pushAtMs);
+        entry.pushTo = null;
+    }
+
     if (!entry) {
         // Per-IP live-key quota (review H2 defense 1) — checked before the
         // cap so a quota-violating IP can never trigger evictions either.
         const created = creatorCounts.get(source.address) || 0;
         if (created >= MAX_NEW_KEYS_PER_IP) {
             logWarn(`REGISTER from ${source.address}:${source.port} dropped — IP already holds ${created}/${MAX_NEW_KEYS_PER_IP} live keys`);
+            // #122: post-cookie, so the sender is return-routable, and the
+            // fact disclosed is about the SENDER'S OWN IP. connect_fail.h
+            // names this as reachable in the field by one joiner retrying
+            // >= 5 distinct stale codes inside the TTL.
+            sendNack(socket, rinfo, NACK_REASON_KEY_QUOTA, buf);
             return;
         }
         if (sessionMap.size >= MAX_SESSIONS) {
@@ -717,12 +1118,21 @@ function handleRegister(socket, buf, rinfo) {
             }
             if (oldestKey === null) {
                 logWarn(`REGISTER from ${source.address}:${source.port} dropped — session table full of PAIRED sessions (${sessionMap.size}/${MAX_SESSIONS})`);
+                // #122: post-cookie. Discloses one bit of GLOBAL
+                // operational state ("the server is saturated"), no
+                // session state — and it is the difference between a user
+                // told "try again in a minute" and a user told the
+                // matchmaking server is down.
+                sendNack(socket, rinfo, NACK_REASON_TABLE_FULL, buf);
                 return;
             }
             releaseSession(oldestKey, oldestEntry);
             logWarn(`session table full — evicted oldest unpaired singleton key=${shortKey4(oldestKey)}... to admit ${source.address}:${source.port}`);
         }
-        entry = { endpointA: source, endpointB: null, lastTouch: now, lastSeenA: now, lastSeenB: 0, creatorIp: source.address, portReclaims: 0 };
+        // #122: pushTo/pushAtMs track the LAST pairing DELIVER we pushed
+        // (see the lost-push check at the top of this function). null =
+        // nothing outstanding to observe.
+        entry = { endpointA: source, endpointB: null, lastTouch: now, lastSeenA: now, lastSeenB: 0, creatorIp: source.address, portReclaims: 0, pushTo: null, pushAtMs: 0 };
         sessionMap.set(hexKey, entry);
         creatorCounts.set(source.address, created + 1);
     } else if (entry.endpointA && endpointEq(entry.endpointA, source)) {
@@ -816,9 +1226,16 @@ function handleRegister(socket, buf, rinfo) {
             entry.lastSeenB = now;
             pairedPeer = entry.endpointA;
         } else {
-            // Both slots live with different endpoints; treat as a third party — drop it.
-            // (Don't overwrite either slot. Don't reply.)
+            // Both slots live with different endpoints; treat as a third party.
+            // (Don't overwrite either slot. Don't DELIVER.)
             logWarn(`REGISTER from ${source.address}:${source.port} for full session key=${shortKey4(hexKey)} — ignored`);
+            // #122: post-cookie. This is the "the room you typed is
+            // already taken" case, and it is the most USER-MEANINGFUL of
+            // all nine reasons — today it is reported as "matchmaking
+            // server down". It discloses no more than the server already
+            // does: a third party on a NOT-full key gets a DELIVER, so
+            // occupancy was always readable as DELIVER-versus-silence.
+            sendNack(socket, rinfo, NACK_REASON_SESSION_FULL, buf);
             return;
         }
     }
@@ -833,6 +1250,25 @@ function handleRegister(socket, buf, rinfo) {
     if (pairedPeer) {
         const push = encodeDeliver(sessionKeyBuf, source);
         socket.send(push, 0, DELIVER_LEN, pairedPeer.port, pairedPeer.address);
+        // #122 METRIC. Arm the lost-push observation.
+        //
+        // HAIRPIN EXCLUSION, and it is required for correctness rather
+        // than tidiness: when the pushed endpoint carries the RECIPIENT'S
+        // OWN address, the client's self-DELIVER gate
+        // (direct_p2p.c:4336-4341 host, :1978-1982 joiner) deliberately
+        // does NOT cancel the resender. Such a peer keeps REGISTERing
+        // whether or not the push arrived, so counting it would
+        // manufacture loss that did not happen — the H-1 misattribution
+        // shape. Counted separately so the exclusion is visible rather
+        // than silent.
+        if (pairedPeer.address === source.address) {
+            entry.pushTo = null;
+            pushStats.excluded += 1;
+        } else {
+            entry.pushTo = { address: pairedPeer.address, port: pairedPeer.port };
+            entry.pushAtMs = now;
+            pushStats.pushed += 1;
+        }
     }
 
     const aStr = entry.endpointA ? 'set' : 'null';
@@ -908,6 +1344,12 @@ function returnRoutabilityGate(socket, buf, rinfo, what) {
         // A spoofing sender has the challenge delivered to the address it
         // is impersonating and therefore never learns the cookie.
         if (!preGateAllow(rinfo.address)) {
+            // #122: PRE-cookie, so this says nothing about any session —
+            // only "your IP's uncookied first-contact budget is spent",
+            // which is a fact about the sender's own address. Under the
+            // NACK cooldown, so a saturating source gets 4 NACKs/s, not
+            // one per dropped packet: the limiter keeps limiting.
+            sendNack(socket, rinfo, NACK_REASON_RATE_PREGATE, buf);
             return null;
         }
         const challenge = encodeChallenge(sessionKeyBuf, rinfo);
@@ -921,9 +1363,15 @@ function returnRoutabilityGate(socket, buf, rinfo, what) {
     }
 
     if (!rateLimitAllow(rinfo.address)) {
+        // #122: post-cookie. The sender is proven, and the fact is about
+        // its own budget.
+        sendNack(socket, rinfo, NACK_REASON_RATE_IP, buf);
         return null;
     }
     if (!keyRateAllow(hexKey)) {
+        // #122: post-cookie, and the key is the sender's own — it just
+        // sent it. This is the one that silently breaks a busy room.
+        sendNack(socket, rinfo, NACK_REASON_RATE_KEY, buf);
         return null;
     }
     return hexKey;
@@ -956,7 +1404,19 @@ function onMessage(socket, buf, rinfo) {
     }
     const magic = buf.readUInt32BE(0);
     if (magic !== MAGIC) {
-        // Magic mismatch — silent drop per spec ("if not 0x33535852, drop").
+        // Magic mismatch — silent drop per spec ("if not 0x33535852,
+        // drop"), and NO NACK: this is not our protocol, so replying would
+        // make the server a reflector for arbitrary UDP.
+        //
+        // #122 (operator gap). It used to drop with NO LOG LINE AT ALL, so
+        // the single most common thing that can arrive on a public UDP
+        // port — scanners, stray STUN, wrong-port traffic, a client
+        // pointed at the wrong host — was completely invisible to an
+        // operator. Aggregated under the shared throttle on a FIXED reason
+        // string, so a flood cannot turn this into an unbounded console
+        // write and noteMap cannot grow.
+        noteThrottled(logWarn, 'drop: magic mismatch',
+            `magic=0x${magic.toString(16).padStart(8, '0')} len=${buf.length} from ${rinfo.address}:${rinfo.port}`);
         return;
     }
     const version = buf.readUInt8(4);
@@ -969,6 +1429,18 @@ function onMessage(socket, buf, rinfo) {
         // §6 for the full mixed-version matrix.
         noteThrottled(logWarn, 'drop: unsupported version',
             `version=${version} from ${rinfo.address}:${rinfo.port} (this server speaks v${VERSION} only)`);
+        // #122. The most valuable NACK of the nine, and the one #87 is
+        // about: prod ran an April v1 server that dropped v2 REGISTERs in
+        // total silence, so every client saw "matchmaking server down" and
+        // nobody could tell the difference from an unreachable box. The
+        // reply is stamped with THIS server's version, which is precisely
+        // the source-gated evidence direct_p2p.c:2004-2062 counts as
+        // badver_n — promoting the client's verdict from the hedged
+        // CONNECT_ATTRIB_AMBIG_VERSION to the definite
+        // CONNECT_ATTRIB_VERSION_SKEW. Pre-cookie, but it carries no
+        // session state at all: only a version byte and the sender's own
+        // echoed bytes.
+        sendNack(socket, rinfo, NACK_REASON_BAD_VERSION, buf);
         return;
     }
     const type = buf.readUInt8(5);
@@ -982,6 +1454,10 @@ function onMessage(socket, buf, rinfo) {
         const wantLen = type === TYPE_REGISTER ? REGISTER_LEN : POLL_LEN;
         if (buf.length !== wantLen) {
             noteThrottled(logWarn, `drop: bad ${what} length`, `len=${buf.length} from ${rinfo.address}:${rinfo.port}`);
+            // #122. Pre-cookie; describes the sender's own frame only.
+            // A truncating middlebox and a broken build are both real
+            // field causes and neither is visible today.
+            sendNack(socket, rinfo, NACK_REASON_BAD_LENGTH, buf);
             return;
         }
         if (returnRoutabilityGate(socket, buf, rinfo, what) === null) {
@@ -992,17 +1468,31 @@ function onMessage(socket, buf, rinfo) {
         } else {
             handlePoll(socket, buf, rinfo);
         }
-    } else if (type === TYPE_CHALLENGE) {
-        // Server -> client only. A client sending us one is confused or
-        // hostile; never let it reach state.
-        noteThrottled(logWarn, 'drop: unexpected CHALLENGE', `from ${rinfo.address}:${rinfo.port}`);
-        return;
-    } else if (type === TYPE_DELIVER) {
-        // Server doesn't accept DELIVER from clients.
-        noteThrottled(logWarn, 'drop: unexpected DELIVER', `from ${rinfo.address}:${rinfo.port}`);
+    } else if (type === TYPE_CHALLENGE || type === TYPE_DELIVER || type === TYPE_NACK) {
+        // The three SERVER -> CLIENT types. A client sending one is
+        // confused or hostile; never let it reach state.
+        //
+        // #122 — DELIBERATELY NO NACK HERE, and this is the branch that
+        // keeps the whole feature loop-free. These are exactly the frames
+        // this server EMITS, so answering them is the one shape that could
+        // put two servers (or a server and a reflected copy of its own
+        // output) into a ping-pong. Refusing structurally means no
+        // '3SXR' frame this server sends can ever elicit a reply from
+        // another instance: a NACK is type 5 and lands right here, and it
+        // never reaches the length check because it is not REGISTER/POLL.
+        // The cooldown would have bounded such a loop anyway; not having
+        // one at all is better than a bounded one.
+        const name = type === TYPE_CHALLENGE ? 'CHALLENGE' : (type === TYPE_DELIVER ? 'DELIVER' : 'NACK');
+        noteThrottled(logWarn, `drop: unexpected ${name}`, `from ${rinfo.address}:${rinfo.port}`);
         return;
     } else {
+        // Unallocated type byte (6..8 are the freed relay types, plus
+        // everything else). No legitimate client emits one, but a STALE
+        // client does — relay-era builds emitted types 5..8 — and telling
+        // it so is the difference between "update your build" and
+        // "matchmaking is down".
         noteThrottled(logWarn, 'drop: unknown type', `type=${type} from ${rinfo.address}:${rinfo.port}`);
+        sendNack(socket, rinfo, NACK_REASON_BAD_TYPE, buf);
         return;
     }
 }
@@ -1070,6 +1560,9 @@ function start(port) {
         },
         // Clears ALL THREE rate buckets — most callers just want a clean
         // budget. _resetKeyRate() isolates the per-key one.
+        // Clears the NACK cooldown too (#122) — otherwise the 250 ms
+        // cooldown leaks across tests and a later test's NACK vanishes
+        // for reasons that have nothing to do with what it is asserting.
         _resetRate() {
             rateMap.clear();
             warnedIps.clear();
@@ -1077,6 +1570,7 @@ function start(port) {
             warnedPreGate.clear();
             keyRateMap.clear();
             warnedKeys.clear();
+            nackMap.clear();
         },
         _resetSessions() {
             sessionMap.clear();
@@ -1121,6 +1615,37 @@ function start(port) {
         // captures outbound sends instead of hitting the wire.
         _onMessage(buf, rinfo, fakeSocket) {
             onMessage(fakeSocket || socket, buf, rinfo);
+        },
+        // --- Task #122 hooks ---------------------------------------------
+        _typeNack: TYPE_NACK,
+        _nackLen: NACK_LEN,
+        _nackMinIntervalMs: NACK_MIN_INTERVAL_MS,
+        _nackMap: nackMap,
+        _nackStats: nackStats,
+        _nackReasons: {
+            BAD_VERSION: NACK_REASON_BAD_VERSION,
+            BAD_LENGTH: NACK_REASON_BAD_LENGTH,
+            BAD_TYPE: NACK_REASON_BAD_TYPE,
+            RATE_IP: NACK_REASON_RATE_IP,
+            RATE_KEY: NACK_REASON_RATE_KEY,
+            RATE_PREGATE: NACK_REASON_RATE_PREGATE,
+            KEY_QUOTA: NACK_REASON_KEY_QUOTA,
+            TABLE_FULL: NACK_REASON_TABLE_FULL,
+            SESSION_FULL: NACK_REASON_SESSION_FULL,
+        },
+        _pushStats: pushStats,
+        _pushHistBucketsMs: PUSH_HIST_BUCKETS_MS,
+        _resetMetrics() {
+            pushStats.pushed = 0;
+            pushStats.excluded = 0;
+            pushStats.lost = 0;
+            pushStats.hist.fill(0);
+            pushStats.sumMs = 0;
+            pushStats.maxMs = 0;
+            pushStats.lastReport = -Infinity;
+            nackStats.sent = 0;
+            nackStats.suppressed = 0;
+            nackStats.byReason.clear();
         },
         _shutdown: shutdown,
     };
