@@ -175,9 +175,17 @@ Two supporting details matter more than they look:
 **The caveat on `unanchored-citation`'s precision.** It reports that a citation
 makes no checkable claim, which is a fact about the prose, not a guess about
 the code. What it cannot tell you is whether the citation is *also* wrong. Of
-the 20 recorded in `baselines.txt`, measurement showed most were **never
-right** — authored against a working tree that a later squash removed, so they
-were internally consistent when written and match no commit in this repository.
+the 20 this class started at, measurement showed most were **never right** —
+authored against a working tree that a later squash removed, so they were
+internally consistent when written and match no commit in this repository.
 Repointing such a number would manufacture a citation nobody ever verified, so
 they are reported and left alone. `--fix` does not touch this code, and cannot:
 there is no anchor to derive a target from.
+
+Nineteen of them survive, and as of task #117 they are no longer under a
+ceiling: every one lives in an archived research or plan document, and holding
+those at an exact count made each unrelated lane re-audit citations that
+describe a tree their own commit replaced. The rule itself is still enforced —
+`baselines.txt` holds `src` at zero `unanchored-citation` findings, and the
+eight document ceilings are all-codes and so forbid the shape too. What was
+dropped is the archive, not the check.

@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Enforce the doc-citation error ceilings recorded in baselines.txt.
 
-Cleaning a scope's citations is easy to do and easy to lose. The two scopes in
+Cleaning a scope's citations is easy to do and easy to lose. The scopes in
 `baselines.txt` were each cleaned by hand and were then protected by nothing
 but a sentence in a task brief -- and a protection that lives in prose is a
 protection that stops being true without telling anybody.
+
+What belongs in that file is argued there, not here. Task #117 narrowed it to
+the documents a wrong line number actually misleads somebody through; this
+script is indifferent to which scopes it is handed.
 
 So the ceilings are checked instead of asserted. Exit 1 when a scope is over
 its ceiling; exit 1 as well when a scope is comfortably UNDER it, because a
