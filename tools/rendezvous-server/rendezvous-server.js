@@ -278,26 +278,26 @@ const MAX_RATE_ENTRIES = 2 * MAX_SESSIONS;
 //
 // What charges this bucket, from the shipped client:
 //   * joiner REGISTER resend inside the punch race — 500 ms
-//     (src/netplay/direct_p2p.c:1888, `(now - signal_last_send) >=
+//     (src/netplay/direct_p2p.c:1955, `(now - signal_last_send) >=
 //     500u`) => 2/s PER JOINER, for signal_budget_ms (8 s default,
-//     direct_p2p.c:3678-3679 / src/port/config/config.c:105).
+//     direct_p2p.c:3995-3996 / src/port/config/config.c:105).
 //   * host re-REGISTER worker — CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_
 //     INTERVAL_MS, default 5000 ms (config.c:111), floor 1000 ms
-//     (direct_p2p.c:2983) => 1/s worst case. This leg must NEVER be
+//     (direct_p2p.c:3241) => 1/s worst case. This leg must NEVER be
 //     starved: losing it is precisely what reclaims a live room. The host
-//     runs NO signalling leg inside the race (direct_p2p.c:3082 sets
+//     runs NO signalling leg inside the race (direct_p2p.c:3340 sets
 //     cfg.signal_leg = false for the host — the DELIVER that started that
 //     thread already proves it is paired).
 //   * one challenge-triggered immediate resend per side per cookie
 //     rotation (COOKIE_ROTATE_MS >= 60 s), since the client answers a
-//     CHALLENGE at once (direct_p2p.c:1907).
+//     CHALLENGE at once (direct_p2p.c:1974).
 //
 // N, the number of simultaneous dialers on ONE key. The session key is
-// derived from the HOST's public endpoint (direct_p2p.c:3655, via
+// derived from the HOST's public endpoint (direct_p2p.c:3972, via
 // Rendezvous_DeriveSessionKey), i.e. the key IS the room code — everyone
 // who pastes that code lands in the same bucket, and each one starts its
 // 2/s leg immediately, without waiting to be accepted (cfg.signal_leg at
-// direct_p2p.c:3696 keys only on "have signal URL + have session key", not
+// direct_p2p.c:4047 keys only on "have signal URL + have session key", not
 // on pairing). The server's two-slot policy silences dialers 2..N at
 // DISPATCH, but they have already charged this bucket — the gate runs
 // upstream of dispatch. Codes are pasted into a group chat and stay live
@@ -512,10 +512,10 @@ const NACK_REASON_NAME = {
 // only possible because of one measured property of the shipped client:
 //
 //   A CLIENT STOPS RE-REGISTERING THE INSTANT A REAL-ENDPOINT DELIVER
-//   LANDS. Host: src/netplay/direct_p2p.c:4343-4344 sets
+//   LANDS. Host: src/netplay/direct_p2p.c:4748-4749 sets
 //   s_rendezvous_cancel, breaking host_rendezvous_thread_fn's loop at
-//   :2989-2992. Joiner: direct_p2p.c:2000-2001 clears signal_active, and
-//   the race loop then exits at :2090-2092.
+//   :3247-3250. Joiner: direct_p2p.c:2067-2068 clears signal_active, and
+//   the race loop then exits at :2157-2159.
 //
 // So a REGISTER arriving from a peer we ALREADY pushed a real endpoint to
 // means that peer is still behaving as if UNPAIRED — it never got the
@@ -526,8 +526,8 @@ const NACK_REASON_NAME = {
 //
 // The same client fact makes the second quantity fall out for free. On the
 // host, the DELIVER that cancels the resender is the SAME DELIVER that
-// spawns the punch: direct_p2p.c:4364 sets FALLBACK_BILATERAL_PUNCH and
-// :4372 spawns host_bilateral_punch_thread_fn, in the same function, off
+// spawns the punch: direct_p2p.c:4769 sets FALLBACK_BILATERAL_PUNCH and
+// :4777 spawns host_bilateral_punch_thread_fn, in the same function, off
 // the same frame. Therefore
 //
 //   time(pairing -> the pushed-to peer's LAST REGISTER) == time(pairing ->
@@ -536,7 +536,7 @@ const NACK_REASON_NAME = {
 // exactly, not approximately. A landed push makes it 0 ms. A LOST push
 // makes it one full re-REGISTER interval — and the host's interval
 // defaults to 5000 ms (src/port/config/config.c:111, floor 1000 ms at
-// direct_p2p.c:2983). One lost datagram therefore costs up to FIVE SECONDS
+// direct_p2p.c:3241). One lost datagram therefore costs up to FIVE SECONDS
 // of connect latency, invisibly. That is the number this measures.
 //
 // TWO HONEST LIMITS, both of which bias the estimate DOWNWARD (it is a
@@ -549,8 +549,8 @@ const NACK_REASON_NAME = {
 //      and the HISTOGRAM (not a single number) is what is reported
 //      precisely so a crossing spike near 0 stays visible as itself.
 //   2. HAIRPIN. If the pushed endpoint carries the RECIPIENT'S OWN
-//      address, the client's self-DELIVER gate (direct_p2p.c:4336-4341
-//      host, :1978-1982 joiner) deliberately does NOT cancel the resender,
+//      address, the client's self-DELIVER gate (direct_p2p.c:4741-4746
+//      host, :2045-2049 joiner) deliberately does NOT cancel the resender,
 //      so a later REGISTER is not evidence of anything. Those pushes are
 //      excluded from the metric outright.
 const PUSH_HIST_BUCKETS_MS = [250, 500, 1000, 2000, 5000, 10000];
@@ -667,7 +667,7 @@ function encodeDeliver(sessionKeyBuf, peerEndpoint) {
 //            BAD_VERSION reply. That is the point: a client newer than us
 //            reads a version byte it cannot parse from the very endpoint it
 //            is REGISTERing to, which is exactly the source-gated evidence
-//            src/netplay/direct_p2p.c:2004-2062 counts as badver_n, turning
+//            src/netplay/direct_p2p.c:2071-2129 counts as badver_n, turning
 //            RENDEZVOUS_DOWN into the DEFINITE CONNECT_ATTRIB_VERSION_SKEW
 //            verdict instead of the hedged AMBIG_VERSION one. Today that
 //            counter can never fire against this server, because the server
@@ -1040,7 +1040,7 @@ function notePushLost(hexKey, peer, delayMs) {
     pushStats.hist[pushHistBucket(delayMs)] += 1;
     pushStats.sumMs += delayMs;
     if (delayMs > pushStats.maxMs) pushStats.maxMs = delayMs;
-    logWarn(`[PUSH-LOST] key=${shortKey4(hexKey)}... ${peer.address}:${peer.port} re-REGISTERed ${Math.round(delayMs)} ms after its pairing DELIVER — it never received the push (a paired client stops re-REGISTERing: direct_p2p.c:4344 host / :2001 joiner)`);
+    logWarn(`[PUSH-LOST] key=${shortKey4(hexKey)}... ${peer.address}:${peer.port} re-REGISTERed ${Math.round(delayMs)} ms after its pairing DELIVER — it never received the push (a paired client stops re-REGISTERing: direct_p2p.c:4749 host / :2068 joiner)`);
 }
 
 function reportPushStats(now) {
@@ -1081,7 +1081,7 @@ function handleRegister(socket, buf, rinfo) {
 
     // #122 METRIC. A REGISTER from the exact endpoint we last pushed a real
     // peer endpoint to. The shipped client cancels its resender the moment
-    // such a DELIVER lands (direct_p2p.c:4343-4344 host, :2000-2001
+    // such a DELIVER lands (direct_p2p.c:4748-4749 host, :2067-2068
     // joiner), so this frame is that peer still behaving as UNPAIRED: the
     // push was lost. Checked BEFORE any branch mutates state so it holds
     // for every path below (fresh pairing, reclaim, third-party drop).
@@ -1255,7 +1255,7 @@ function handleRegister(socket, buf, rinfo) {
         // HAIRPIN EXCLUSION, and it is required for correctness rather
         // than tidiness: when the pushed endpoint carries the RECIPIENT'S
         // OWN address, the client's self-DELIVER gate
-        // (direct_p2p.c:4336-4341 host, :1978-1982 joiner) deliberately
+        // (direct_p2p.c:4741-4746 host, :2045-2049 joiner) deliberately
         // does NOT cancel the resender. Such a peer keeps REGISTERing
         // whether or not the push arrived, so counting it would
         // manufacture loss that did not happen — the H-1 misattribution
@@ -1434,7 +1434,7 @@ function onMessage(socket, buf, rinfo) {
         // total silence, so every client saw "matchmaking server down" and
         // nobody could tell the difference from an unreachable box. The
         // reply is stamped with THIS server's version, which is precisely
-        // the source-gated evidence direct_p2p.c:2004-2062 counts as
+        // the source-gated evidence direct_p2p.c:2071-2129 counts as
         // badver_n — promoting the client's verdict from the hedged
         // CONNECT_ATTRIB_AMBIG_VERSION to the definite
         // CONNECT_ATTRIB_VERSION_SKEW. Pre-cookie, but it carries no
