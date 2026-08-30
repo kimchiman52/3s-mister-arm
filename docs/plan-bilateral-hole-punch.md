@@ -63,66 +63,87 @@ Add a hybrid bilateral hole-punching fallback to the existing direct-P2P orchest
 
 ### 2. Protocol for endpoint exchange
 
-**Server:** single UDP endpoint listening on port 3478 (same as STUN; memorable and not colliding with our 55438 or RetroArch's 55435). Running at a URL configured via `CFG_KEY_NETPLAY_BILATERAL_SIGNAL_URL` (see §6). Config-default hard-coded.
+**Server:** single UDP endpoint listening on port 3478 (same as STUN; memorable and not colliding with our 55438 or RetroArch's 55435) — `let port = 3478` in `tools/rendezvous-server/rendezvous-server.js`, overridable by `argv[2]`. Running at a URL configured via `CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL` (`src/port/config/config.h:74`, see §6), config-default hard-coded to `udp://46.62.244.55:3478` (`src/port/config/config.c:104`). *[This section originally named the key `CFG_KEY_NETPLAY_BILATERAL_SIGNAL_URL`; §6 and the shipped header both use the `DIRECT_P2P_` spelling, which is what exists.]*
+
+**Protocol version: 2.** *(Was 1 in the original draft below.)* S4c bumped it — `REND_VERSION` (`src/netplay/rendezvous.c:28`) and `VERSION` (`rendezvous-server.js`) both read 2, and the bump is deliberately breaking: REGISTER/POLL grew an 8-byte return-routability **cookie** tail (36 bytes, was 28) and the server answers an uncookied or stale-cookied request with a new server→client **CHALLENGE** frame (type 4) instead of binding any state. A v1 client is dropped on the version byte — logged, no reply, no state — see `docs/plan-netplay-connection.md` §6.4 (the S4c design) and §6.5 (the full mixed-version matrix). Types **5–8** were briefly claimed by the S5 relay rung (`RELAY_REQ` / `RELAY_GRANT` / `RELAY_PIN` / `RELAY_PIN_ACK`); that rung was **removed** from both client and server, the frames that remain are byte-for-byte what v2 always was, so the version byte stays 2 (`rendezvous.c:33-35`).
 
 **Wire format (binary, 4-byte aligned):** all multi-byte integer fields are network byte order (big-endian). Port fields come from `StunResult.public_port` which is host order (`stun.h:15-16`), so the encoder must apply a `htons`-equivalent byte swap when serializing; the decoder applies the reverse when populating host-order fields. IPv4 addresses are sent as 4 raw bytes in network byte order; IPv6 is out of scope (per `reference-mister-network-stack.md` — MiSTer kernel has IPv6 disabled).
 
 ```
-REGISTER (client -> server), 28 bytes:
-  offset  size  field
-  0       u32   magic           = 0x33535852  // '3SXR'
-  4       u8    version         = 1
-  5       u8    type            = 1 (REGISTER)
-  6       u16   reserved        = 0
-  8       u8[16] session_key                  // derived from room code (see below)
-  24      u16   my_public_port (BE)           // host's / joiner's STUN-observed public port
-  26      u16   reserved2       = 0
+REGISTER (client -> server), 36 bytes:        // v1 was 28: no cookie tail
+  offset  size   field
+  0       u32    magic           = 0x33535852  // '3SXR'
+  4       u8     version         = 2
+  5       u8     type            = 1 (REGISTER)
+  6       u16    reserved        = 0
+  8       u8[16] session_key                   // derived from room code (see below)
+  24      u16    my_public_port (BE)           // host's / joiner's STUN-observed public port
+  26      u16    reserved2       = 0
+  28      u8[8]  cookie                        // S4c return-routability cookie;
+                                               // all-zero = "no cookie yet"
   // NOTE: server reads source IP + source port from the UDP packet,
   // NOT from fields. This guarantees the endpoint the server records
   // is the one that actually reached it (post-NAT). my_public_port
   // is sent anyway as a sanity check; server logs a warning if they
-  // differ (indicates hairpin or weird NAT).
+  // differ (indicates hairpin or weird NAT) — "REGISTER NAT mismatch"
+  // in handleRegister.
 
-DELIVER (server -> client), 32 bytes:
-  offset  size  field
-  0       u32   magic           = 0x33535852
-  4       u8    version         = 1
-  5       u8    type            = 2 (DELIVER)
-  6       u16   reserved        = 0
+POLL (client -> server), 36 bytes:            // v1 was 28
+  offset  size   field
+  0       u32    magic           = 0x33535852
+  4       u8     version         = 2
+  5       u8     type            = 3 (POLL)
+  6       u16    reserved        = 0
   8       u8[16] session_key
-  24      u8[4] peer_ip                        // raw IPv4 in network byte order
-  28      u16   peer_public_port (BE)
-  30      u16   reserved2       = 0
+  24      u32    reserved3       = 0           // client zeroes it; server never reads it
+  28      u8[8]  cookie                        // same tail as REGISTER
 
-POLL (client -> server), 28 bytes:
-  offset  size  field
-  0       u32   magic           = 0x33535852
-  4       u8    version         = 1
-  5       u8    type            = 3 (POLL)
-  6       u16   reserved        = 0
+DELIVER (server -> client), 32 bytes:         // layout unchanged since v1
+  offset  size   field
+  0       u32    magic           = 0x33535852
+  4       u8     version         = 2
+  5       u8     type            = 2 (DELIVER)
+  6       u16    reserved        = 0
   8       u8[16] session_key
-  24      u32   reserved3       = 0
+  24      u8[4]  peer_ip                       // raw IPv4 in network byte order
+  28      u16    peer_public_port (BE)         // 0.0.0.0:0 = "peer not registered yet"
+  30      u16    reserved2       = 0
+
+CHALLENGE (server -> client), 32 bytes:       // NEW in v2 (S4c)
+  offset  size   field
+  0       u32    magic           = 0x33535852
+  4       u8     version         = 2
+  5       u8     type            = 4 (CHALLENGE)
+  6       u16    reserved        = 0
+  8       u8[16] session_key                   // echoed from the request that triggered it
+  24      u8[8]  cookie                        // bound to (source addr, source port,
+                                               // 60 s rotation slot)
 ```
 
-**Server state:** in-memory `map<session_key, {endpoint_A, endpoint_B, registered_at}>`. No disk. Entry expires 60 seconds after creation.
+Lengths and types are single-sourced on both ends: `REND_REGISTER_LEN` / `REND_POLL_LEN` = 36, `REND_DELIVER_MIN_LEN` / `REND_CHALLENGE_LEN` = 32, `REND_COOKIE_LEN` = 8, `REND_TYPE_REGISTER|DELIVER|POLL|CHALLENGE` = 1|2|3|4 (`src/netplay/rendezvous.c:29-42`, `src/netplay/rendezvous.h:101-102`) against `REGISTER_LEN` / `POLL_LEN` / `DELIVER_LEN` / `CHALLENGE_LEN` / `COOKIE_LEN` and `TYPE_*` in `rendezvous-server.js`. The server rejects a REGISTER or POLL whose length is not **exactly** `wantLen` (`onMessage`), so the 36-byte tail is mandatory, not optional padding.
+
+**The cookie, in one paragraph** (full treatment: `docs/plan-netplay-connection.md` §6.4). It is `SHA-256(secret ‖ "addr:port:slot")[0..7]` (`cookieForSlot`), where `secret` is 32 bytes drawn at process start and `slot = floor(Date.now() / COOKIE_ROTATE_MS)` with `COOKIE_ROTATE_MS` = 60 s; the current **and** previous slot validate, so a cookie lives 60–120 s (`cookieValid`, constant-time compare). `returnRoutabilityGate` runs between "the frame is well-formed" and "we touch any state", for both REGISTER and POLL: an uncookied or invalid-cookied request is answered with exactly one CHALLENGE and binds no session slot, no creator quota and no endpoint disclosure. Only the cookie **echo** binds. A source-spoofing sender has the CHALLENGE delivered to the address it is impersonating, so it never learns the cookie. Client side: `Rendezvous_ParseChallenge` (`rendezvous.c:193`) validates magic, version, type **and** that the frame carries *our* session key, and zeroes its output on every reject.
+
+**Server state:** in-memory `Map<session_key_hex, {endpointA, endpointB, lastTouch, lastSeenA, lastSeenB, creatorIp, portReclaims}>`. No disk. **An entry expires `SESSION_TTL_MS` = 10 minutes after its last touch**, swept every `SESSION_SWEEP_INTERVAL_MS` = 5 s (`sweepSessions`). *[Superseded: the original design above was 60 s **from creation**. S1 raised it to 10 minutes and moved the clock to last-touch — a host now re-REGISTERs every ~5 s for as long as it displays a room code, so `lastTouch` stays fresh regardless, but the TTL must also cover a host whose re-REGISTERs are lost, and it bounds how long a code shared over chat stays pair-able. See `docs/plan-netplay-connection.md` §3.3.]* The longer TTL is why the table needs explicit bounds that the 60 s design did not: `MAX_SESSIONS` = 4096 with evict-oldest-unpaired-singleton at the cap, `MAX_NEW_KEYS_PER_IP` = 4 live keys per creating IP, `SLOT_STALE_MS` = 30 s per-slot liveness, and `MAX_PORT_RECLAIMS` = 8 (all in `rendezvous-server.js`).
 
 **Server bind / address parsing:** server binds via `dgram.createSocket('udp4')` so `rinfo.address` is always dotted-quad (never `::ffff:a.b.c.d`). Server parses with `inet_pton(AF_INET, rinfo.address, ...)` (or Node equivalent) to populate the 4-byte `peer_ip` field. Clients reverse via `inet_ntop(AF_INET, ...)` to get a guaranteed dotted-quad string for the hairpin gate.
 
 **Flow:**
 
-1. **Derive session_key.** Both peers independently compute `SHA-256(room_code_payload)[0..16]` where `room_code_payload` is the 6-byte raw payload (`ip_be | public_port_be`) recovered from the 11-char display code. *[Superseded by S4b/v3: the code is 18 chars, the payload is 10 bytes (`ip[4] ‖ port_be[2] ‖ nonce_be[4]`), and the derivation is domain-separated — `SHA-256("3SXR-SK3" ‖ payload10)[0..15]`. See `docs/plan-netplay-connection.md` §6.3. The design intent below — derived, never typed, identical on both sides — is unchanged.]* Host has this from its own STUN discovery; joiner has it from `RoomCode_Decode`. Same input → same key, no extra user-typing, and the key is not transmissible-by-accident as a room code (it's 16 raw bytes, not typeable). **We use the existing in-tree SHA-256 at `src/utils/sha256.{c,h}`** (API: `sha256_init` / `sha256_append` / `sha256_finalize_bytes`), which is already linked against tf-psa-crypto and used today by `src/port/resources.c` for asset hashing. No new SHA implementation to vendor — tf-psa-crypto is already a shipped dep per `CMakeLists.txt:483`.
+1. **Derive session_key.** Both peers independently compute `SHA-256(room_code_payload)[0..16]` where `room_code_payload` is the 6-byte raw payload (`ip_be | public_port_be`) recovered from the 11-char display code. *[Superseded by S4b/v3: the code is 18 chars, the payload is 10 bytes (`ip[4] ‖ port_be[2] ‖ nonce_be[4]`), and the derivation is domain-separated — `SHA-256("3SXR-SK3" ‖ payload10)[0..15]`. See `docs/plan-netplay-connection.md` §6.3. The design intent below — derived, never typed, identical on both sides — is unchanged.]* Host has this from its own STUN discovery; joiner has it from `RoomCode_Decode`. Same input → same key, no extra user-typing, and the key is not transmissible-by-accident as a room code (it's 16 raw bytes, not typeable). **We use the existing in-tree SHA-256 at `src/utils/sha256.{c,h}`** (API: `sha256_init` / `sha256_append` / `sha256_finalize_bytes`), which is already linked against tf-psa-crypto and used today by `src/port/resources.c` for asset hashing. No new SHA implementation to vendor — tf-psa-crypto is already a shipped dep — `libtfpsacrypto.a` is on the link line at `CMakeLists.txt:509`, with `TF_PSA_CRYPTO_ROOT` set at `CMakeLists.txt:477`.
 2. **Host REGISTERs** when `Stun_HolePunch` has NOT yet been attempted by the joiner — specifically, host enters rendezvous immediately after its STUN discovery completes, in parallel with the existing `DIRECT_P2P_HOST_WAITING` echo-loop. REGISTER contains `session_key = SHA256(payload)[0..16]` and `my_public_port = s_work.stun.public_port`. Server records `endpoint_A = <source of this packet>`. Server replies with DELIVER containing `peer_ip/peer_public_port = 0/0` if the other side hasn't registered yet; host POLLs every 500ms for up to 8 s.
+   - **v2 insert — the cookie round.** The first REGISTER of a session carries an all-zero cookie tail, so it does **not** reach `handleRegister` at all: `returnRoutabilityGate` answers it with one CHALLENGE and binds nothing. The client copies the 8-byte cookie out of the CHALLENGE and re-sends immediately (one RTT, rather than waiting out the 500 ms resend cadence); that second REGISTER is what records `endpoint_A`. Exactly **one** challenge is therefore the normal opening of a healthy v2 session — being challenged *again* after echoing a cookie is the failure signal, not the first challenge (`docs/plan-netplay-connection.md` §6.4, task #105 correction).
 3. **Joiner enters rendezvous only after its first direct punch failed.** Today's join path: `Stun_HolePunch(2500ms)` → on failure, `DIRECT_P2P_FAILED_SYMMETRIC`. New path: on that failure, transition to `DIRECT_P2P_FALLBACK_SIGNALING`, REGISTER with its own `session_key` and `my_public_port = s_work.stun.public_port`. Server records `endpoint_B` and replies with DELIVER containing `peer_ip/peer_public_port = endpoint_A`. At the same moment the server pushes an unsolicited DELIVER to the host's registered endpoint with `peer_ip/peer_public_port = endpoint_B`.
-4. **On DELIVER with non-zero peer, both sides transition to `DIRECT_P2P_FALLBACK_BILATERAL_PUNCH`** and call `Stun_HolePunch` (unchanged — our existing `Stun_HolePunch` is already bidirectional: sends every 200ms, listens, accepts the echo). New second window: 3000 ms. Host also runs `Stun_HolePunch` now, which wasn't happening before — the old `host_tick_receive` was pure-receive. The punch is against the DELIVER-supplied endpoint.
+4. **On DELIVER with non-zero peer, both sides transition to `DIRECT_P2P_FALLBACK_BILATERAL_PUNCH`** and call `Stun_HolePunch` (unchanged — our existing `Stun_HolePunch` is already bidirectional: sends every 200ms, listens, accepts the echo). New second window: 3000 ms *[as shipped: 5000 ms — `CFG_KEY_NETPLAY_DIRECT_P2P_BILATERAL_PUNCH_MS` default, `src/port/config/config.c:106`]*. Host also runs `Stun_HolePunch` now, which wasn't happening before — the old `host_tick_receive` was pure-receive. The punch is against the DELIVER-supplied endpoint.
 5. **Retry schedule:**
-   - REGISTER: initial send, then resend every 500ms until a DELIVER arrives or the phase budget (8 s) expires. Each resend is cheap (28 bytes) and covers lost packets.
+   - REGISTER: initial send, then resend every 500ms until a DELIVER arrives or the phase budget (8 s) expires. Each resend is cheap (36 bytes since v2, was 28) and covers lost packets. A CHALLENGE also triggers one immediate off-cadence resend carrying the echoed cookie.
    - POLL: only used if the client already got a "peer not yet registered" DELIVER — the server answers every REGISTER with a DELIVER (empty if peer missing), so POLL is rare. POLL every 500ms for up to the remaining phase budget.
    - Phase budget: 8 s total. Symmetric NAT pairs typically register within a few seconds; if neither peer arrives in 8 s the assumption is the other side isn't actually running bilateral-punch code or is truly unreachable.
 6. **Race conditions:**
    - Both peers REGISTER simultaneously: server sees both arrive with the same session_key, fills both slots, sends DELIVERs to both. Safe.
    - One peer REGISTERs before the other even starts STUN discovery: first arrival sits in the map; second arrival fills the other slot and triggers both DELIVERs. Safe.
    - DELIVER to host is lost: host POLLs after 500 ms and gets a fresh DELIVER. Safe.
-   - Host already succeeded direct-P2P before joiner failed: host is in `DIRECT_P2P_HANDOFF`, no longer polling. Server expires entry after 60 s. Joiner's REGISTER arrives too late; server replies with a DELIVER whose peer fields are zero (entry expired). Joiner sees "Cannot reach peer"; host is already in-session. This is the correct behavior — once the host is handed off, no amount of signaling fixes that the fast path already won on host's side but not joiner's. If we hit this in the wild we can revisit by extending server entry lifetime or having host REGISTER include a "I'm in session, don't wait for me" bit. Deferred.
+   - Host already succeeded direct-P2P before joiner failed: host is in `DIRECT_P2P_HANDOFF`, no longer polling. Server expires the entry `SESSION_TTL_MS` after its last touch — 10 minutes as shipped, 60 s as originally designed here. Joiner's REGISTER arrives too late; server replies with a DELIVER whose peer fields are zero (entry expired). Joiner sees "Cannot reach peer"; host is already in-session. This is the correct behavior — once the host is handed off, no amount of signaling fixes that the fast path already won on host's side but not joiner's. If we hit this in the wild we can revisit by extending server entry lifetime or having host REGISTER include a "I'm in session, don't wait for me" bit. Deferred. *[Partly overtaken: "extend the entry lifetime" is exactly what S1 did (60 s → 10 min, and the clock now runs from last touch), so the expiry arm of this race is far harder to reach than the paragraph assumes. What replaces it is the stale-slot machinery — `SLOT_STALE_MS` = 30 s and the same-IP slot reclaims — which handles a host that stopped refreshing without waiting out the whole TTL.]*
 
 **User-typeability:** session_key is derived, not typed. The room code stays 11 chars (unchanged). The rendezvous protocol is invisible to the user. *[Superseded: the room code was later widened to 14 chars (v2) and then 18 chars (v3, `XXXXXX-XXXXXX-XXXXXX`) to carry a 32-bit nonce — see `docs/plan-netplay-connection.md` §6.3/§6.8. Bilateral hole-punching did not cause either bump, and "derived, not typed" still holds.]*
 

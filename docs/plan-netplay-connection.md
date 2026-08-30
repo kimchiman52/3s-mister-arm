@@ -57,8 +57,8 @@ All from `src/netplay/direct_p2p.c` (current lines); labels from
 
 | Terminal state | Status text | Raised at |
 |---|---|---|
-| `DIRECT_P2P_FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:3239, 1146; thread-spawn failure paths in Begin* :1991/:2051; joiner: :1217 |
-| `DIRECT_P2P_FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:4684, 4574 |
+| `DIRECT_P2P_FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:3306, 1146; thread-spawn failure paths in Begin* :1991/:2051; joiner: :1217 |
+| `DIRECT_P2P_FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:4751, 4574 |
 | `FAILED_SYMMETRIC` | "Could not connect. Try a different network." | joiner bypasses :1152/:1158/:1165 (host side no longer has a terminal gate — same-IP DELIVERs are ignored as stale self-registrations, review H1) |
 | `FAILED_BILATERAL` | "Could not connect. Try a different network." | joiner signaling/punch failures :1189-:1336; host: punch-thread spawn failure :1719, retry-budget exhaustion :2130 (review M1: a single host-side punch failure returns to HOST_WAITING) |
 | `FAILED_HANDSHAKE` | MIST reject reason | R-1 path, :1435 |
@@ -144,7 +144,7 @@ bilateral fallback could never pair those hosts.
 Every `netplay-direct-p2p-stun-keepalive-ms` (default 20 000 ms, ≤ 0
 disables) while HOST_WAITING, the main thread re-issues a STUN Binding
 Request on the same socket toward the server that answered discovery
-(`host_stun_keepalive_tick`, direct_p2p.c:3943-3959;
+(`host_stun_keepalive_tick`, direct_p2p.c:4010-4026;
 `Stun_SendKeepalive`, stun.c). The probe refreshes the advertised NAT
 mapping; the response is routed through a new STUN gate in
 `host_tick_receive` (direct_p2p.c:1867-1877) — which also fixes a
@@ -156,7 +156,7 @@ latent pre-S1 bug where a straggler Binding Response from a slower
 last known one, the NAT rebound and the displayed code is already
 dead. We re-encode and **display the NEW code** with status "Network
 changed! Share the NEW code." (`host_handle_stun_rebind`,
-direct_p2p.c:4012-4052), and restart the rendezvous loop under the new
+direct_p2p.c:4079-4119), and restart the rendezvous loop under the new
 session key (cancel+join before mutating the fields it reads).
 Review M2: the rewrite is debounced — a drift commits only when two
 consecutive keepalives report the same new endpoint, so a NAT that
@@ -540,26 +540,32 @@ Protocol **v2** on the '3SXR' wire. REGISTER/POLL are 36 bytes (was 28),
 the extra 8 being a cookie tail; new server→client type 4 `CHALLENGE`
 (32 bytes: magic(4) ver(1) type(1) reserved(2) key(16) cookie(8)).
 
-**The gate.** `returnRoutabilityGate` (rendezvous-server.js:553) runs
+**The gate.** `returnRoutabilityGate` (rendezvous-server.js) runs
 between "the frame is well-formed" and "we touch any state", for both
 REGISTER and POLL. An uncookied or invalid-cookied request is answered
-with exactly one CHALLENGE and **binds nothing** — no session slot, no
-creator quota, no rate budget, no table eviction, no endpoint
-disclosure. Only the cookie **echo** binds. A spoofing sender has the
-CHALLENGE delivered to the address it is impersonating, so it never
-learns the cookie and can never bind.
+with exactly one CHALLENGE and **binds no session state** — no slot, no
+creator quota, no table eviction, no endpoint disclosure, and no draw on
+the *cookied* per-IP budget. Only the cookie **echo** binds. A spoofing
+sender has the CHALLENGE delivered to the address it is impersonating,
+so it never learns the cookie and can never bind. *[Corrected, review
+HIGH-2: this paragraph used to claim an uncookied request "binds
+nothing — no rate budget", and that was wrong in the direction that
+mattered. It does draw on the separate pre-gate budget below, and on one
+bounded rate-map entry. What it still cannot do is create, refresh,
+evict or **name** a session, spend the per-IP creator quota, or touch
+the cookied budget a legitimate client depends on.]*
 
 **Cookie construction.**
 
 | property | value |
 |---|---|
-| formula | `SHA-256(secret ‖ "addr:port:slot")[0..7]` (rendezvous-server.js:191) |
+| formula | `SHA-256(secret ‖ "addr:port:slot")[0..7]` (`cookieForSlot`, rendezvous-server.js) |
 | secret | 32 bytes from `crypto.randomBytes` at process start, never leaves the process |
 | inputs | source **address**, source **port**, rotation slot |
 | size | 8 bytes |
 | slot | `floor(Date.now() / 60000)` |
 | accepted | current **and** previous slot ⇒ 60–120 s lifetime |
-| compare | `crypto.timingSafeEqual` (rendezvous-server.js:205) |
+| compare | `crypto.timingSafeEqual`, both slots (`cookieValid`, rendezvous-server.js) |
 | expiry cost | one extra challenge round; the C client answers within one RTT |
 | restart | invalidates outstanding cookies; same one-round cost per live client |
 
@@ -577,14 +583,107 @@ against the threat model and would cost the server its statelessness.
 
 **Amplification.** CHALLENGE is 32 bytes for a 36-byte request:
 factor **0.89**, a net attenuator, never worth aiming at a victim. It
-is emitted under the existing per-IP bucket, so a spoofed flood at one
-victim is capped at `RATE_LIMIT_PER_WINDOW` (10) challenges/second.
+is emitted under a **dedicated pre-gate bucket** —
+`PREGATE_LIMIT_PER_WINDOW` = **100** challenges/second per source IP
+over `PREGATE_WINDOW_MS` = 1000 ms — deliberately *not* the cookied
+per-IP bucket. *[Was: "emitted under the existing per-IP bucket, so a
+spoofed flood at one victim is capped at `RATE_LIMIT_PER_WINDOW` (10)
+challenges/second." That shared bucket is exactly what review HIGH-2
+found and fixed: it ran first, keyed on the source address alone and
+ahead of the cookie check, so 10 spoofed 36-byte REGISTERs/second
+carrying a victim's address (~2.9 kbit/s; the room code already reveals
+the address) exhausted the victim's **own** budget — the victim's
+correctly-cookied REGISTER then got zero replies, bound nothing, and the
+user saw `RENDEZVOUS_DOWN` indefinitely. The two classes of traffic now
+have separate buckets and cannot starve each other.]*
 
-**Per-key rate cap.** `keyRateAllow` (rendezvous-server.js:311), 10/s
-per session key, enforced **after** the cookie check so spoofed traffic
-cannot burn a victim key's budget. This closes the "many real,
-cookie-capable source IPs all hammering ONE key" bypass that the per-IP
-bucket cannot see. A legitimate pair peaks around 2.5 pkt/s.
+Why 100/s, from the server's own derivation: at the cap, egress toward a
+spoofed victim is 100 × 32 B = **3.2 kB/s** (25.6 kbit/s) and it costs
+the attacker 100 × 36 B = **3.6 kB/s** to elicit — the attacker spends
+more than the victim receives, every second, which is the whole point of
+keeping the reply smaller than the request. It is 10× the cookied
+budget, so starving *first contact* for a shared-NAT site now costs 10×
+what it used to, while cookied traffic is structurally immune. And the
+legitimate headroom is enormous: a client needs one challenge round at
+startup plus one per cookie rotation (≥ 60 s), so 100/s per **public
+IP** covers on the order of 6000 clients behind a single NAT. Residual,
+stated plainly: any per-source pre-gate budget is spoof-starvable for
+first contact, because first contact is by definition unauthenticated.
+What is no longer possible is starving an **established**,
+cookie-holding client.
+
+**Per-key rate cap.** `keyRateAllow` (rendezvous-server.js), **30/s**
+per session key (`KEY_RATE_LIMIT_PER_WINDOW` = 30 over
+`KEY_RATE_WINDOW_MS` = 1000 ms), enforced **after** the cookie check so
+spoofed traffic cannot burn a victim key's budget. This closes the "many
+real, cookie-capable source IPs all hammering ONE key" bypass that the
+per-IP bucket cannot see. *[Was 10/s as S4c shipped, and the number moved
+twice more before landing — read the history before "cleaning it up":
+10 → **40** (review MEDIUM-4, because the S5 relay's `RELAY_REQ` rode
+this same gate, byte-identical to REGISTER on purpose, at 300 ms per
+side = 6.67/s on one key) → back to **10** when the relay was deleted →
+**30** (review HIGH-3, which showed the swing back to 10 was a
+regression in both directions at once).]*
+
+**Why 30, derived.** All figures are per `KEY_RATE_WINDOW_MS` = 1000 ms,
+so "per window" and "per second" are the same number. What charges this
+bucket, from the shipped client: the joiner's REGISTER resend inside the
+punch race at 500 ms ⇒ **2/s per joiner**, for the signalling budget
+(`CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS`, 8 s default,
+`src/port/config/config.c:105`); the host's re-REGISTER worker at
+`CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS`, default 5000 ms
+(`config.c:111`) with a 1000 ms floor ⇒ **1/s worst case**, 0.2/s at the
+default — and this leg must never be starved, because losing it is
+precisely what reclaims a live room; plus one challenge-triggered
+immediate resend per side per cookie rotation (≥ 60 s). The session key
+**is** the room code (it is derived from the host's public endpoint), so
+everyone who pastes that code lands in the same bucket and starts its
+2/s leg immediately, without waiting to be accepted; the two-slot policy
+silences dialers 2..N at *dispatch*, but they have already charged this
+gate, which runs upstream of dispatch. With codes pasted into a group
+chat and live for `SESSION_TTL_MS` = 10 min, several people racing for
+the one free slot is the normal case, not an attack — so N = 6
+simultaneous dialers is the design point (`KEY_RATE_DESIGN_DIALERS`):
+
+```
+legit peak  = host 1 + 2 × N = 1 + 2 × 6 = 13/s
+per-IP cap  = RATE_LIMIT_PER_WINDOW      = 10/s
+```
+
+Two constraints fix the value. **(1) Ratio.** The per-key cap must be
+strictly greater than the per-IP cap: at equality the per-key limiter
+adds *zero* attacker cost — that IP is already admitted at 10/s — while
+handing that one IP the power to drop every other frame on the key, host
+liveness included. `cookieForSlot` does not mix the session key in, so a
+cookie earned on your own key validates against every key; the attacker
+needs no cooperation from the room it is silencing. Require per-key ≥
+k × per-IP for an integer k ≥ 2. **(2) Absorption.** One saturating
+cookied IP must not break a legitimate full room: per-key − per-IP ≥
+legit peak ⇒ per-key ≥ 13 + 10 = 23. The smallest integer k satisfying
+that is **k = 3**, i.e. **30** (k = 2 gives 20, leaving only 10/s for a
+room that needs 13). Resulting margins, stated honestly: 3:1 against the
+per-IP cap, so no single cookied IP takes more than a third of a room's
+budget; 30/13 = 2.3× headroom over the legit peak with no attacker;
+20/13 = 1.5× with one cookied IP saturating, so a full N = 6 room still
+pairs while under attack. **Not** covered with room to spare: the
+compound worst case where all seven sides rotate their cookie inside the
+same second (+7 ⇒ 20/s) *and* a hostile cookied IP saturates (+10) lands
+at exactly 30 of 30. Egress cost of the raise is nil — at the ceiling one
+key emits 30 × 32 B = 960 B/s — and the real anti-squatting bounds remain
+the slot policy and `MAX_NEW_KEYS_PER_IP`, not this bucket.
+
+By the same derivation a legitimate **two-player** room is nowhere near
+the cap: 2/s (one joiner) + 0.2/s (host at the 5000 ms default) =
+**2.2/s**, or 3/s if the host interval is pinned to its 1000 ms floor.
+The cap is sized for the multi-dialer room, not the pair. Because every
+input to that arithmetic lives in the **C client** while the limit lives
+in the server — two artifacts that deploy independently, with no
+translation unit and no module seeing both — neither a `_Static_assert`
+nor a JS assertion can reach across, so the arithmetic is held by
+`tools/rendezvous-server/check_key_rate_budget.py` (run from
+`tools/gates/run-gates.sh`), which reads every value from its real
+definition. A stale constant here is not a build break; it is a
+production room that DoSes itself.
 
 **Client side.** The joiner answers a CHALLENGE inline in its signaling
 loop (one RTT to bind, instead of waiting out the 500 ms resend
@@ -592,7 +691,7 @@ cadence). The host receives CHALLENGEs on the **main** thread while
 REGISTER resends are built on the rendezvous **worker** thread, so the
 8-byte cookie crosses via a seqlock (`signal_cookie_publish`, direct_p2p.c:717;
 `signal_cookie_snapshot`, direct_p2p.c:732) and the main thread also
-echoes immediately (`host_handle_challenge`, direct_p2p.c:4323).
+echoes immediately (`host_handle_challenge`, direct_p2p.c:4390).
 `Rendezvous_ParseChallenge` (rendezvous.c:193) validates magic, version,
 type **and** that the frame carries *our* session key (cross-talk +
 forgery gate — the key embeds the S4b nonce), and **zeroes its output on
@@ -1285,7 +1384,7 @@ for the joiner's two attempts. Verified headroom against the callers:
   frames to a derived bound**: it is now
   `DirectP2P_OrchWorstCaseMs()` plus `NAV_ORCH_TIMEOUT_MARGIN_MS`, summed
   from the orchestrator's own live clamped budgets in
-  `DirectP2P_OrchWorstCaseMsForRole` (`direct_p2p.c:5619`). At the
+  `DirectP2P_OrchWorstCaseMsForRole` (`direct_p2p.c:5686`). At the
   shipped defaults the joiner's deadline is 31 800 ms (1 908 frames), not
   150 000 ms. 18 400 ms of race against 31 800 ms is 1.7x headroom rather
   than 8.2x — still comfortable, and the two tail exemptions are now
@@ -1748,8 +1847,12 @@ the neutralisation record.
 
   - The host enters the race **only** from `try_handle_deliver`, and
     only while still in `HOST_WAITING`
-    (`src/netplay/direct_p2p.c:3821`, gate at `:3658`, spawn at
-    `:3751`).
+    (`try_handle_deliver` at `src/netplay/direct_p2p.c:4275`,
+    `HOST_WAITING` gate at `:4279`, `host_bilateral_punch_thread_fn`
+    spawn at `:4372`). *[The three numbers previously here — `:3821`,
+    `:3658`, `:3751` — named a thread-join line, a timings assignment and
+    a log argument; none of them was ever this claim's evidence. Repointed
+    onto the code that is, not shifted.]*
   - The server sets `pairedPeer` only on the REGISTER that fills the
     joiner slot and then pushes **one** unsolicited DELIVER to the host
     (`tools/rendezvous-server/rendezvous-server.js:692` and `:719`). It
@@ -2103,7 +2206,7 @@ at once.
 `UpnpMapping` gained two fields (upnp.h:14-39): `backend`
 (`PortMapBackend` NONE/UPNP/NATPMP/PCP) and `lifetime_s`.
 
-- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:2313),
+- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:2380),
   and every removal site goes through it. `Upnp_RemoveMapping` and
   `Natpmp_RemoveMapping` each additionally **refuse** a mapping they do
   not own. This is not defensive decoration: on a router that speaks
@@ -2119,7 +2222,7 @@ at once.
   existing `preferred_external = s_upnp_mapping.external_port` line
   already did.
 - **The renewal interval now follows the granted lease**
-  (`portmap_renew_interval_ms`, direct_p2p.c:2530). RFC 6886 §3.3: "The
+  (`portmap_renew_interval_ms`, direct_p2p.c:2597). RFC 6886 §3.3: "The
   NAT gateway MAY reduce the lifetime from what the client requested."
   A router granting 120 s against our 3600 s request would have
   silently lost the mapping 28 minutes before a fixed half-hour timer
@@ -2466,14 +2569,14 @@ runs on Linux.
   worker is either joined or detached-and-abandoned, and that a detached
   straggler can never be followed by a renewal. That covers a *renewal*.
   It does not cover a second *probe*, and the second probe is reachable:
-  `SDL_DetachThread` (`direct_p2p.c:2440`) abandons the timed-out
+  `SDL_DetachThread` (`direct_p2p.c:2507`) abandons the timed-out
   worker, and `try_portmap` returns false **without** adopting the
   result — the `s_upnp_mapping` assignment is on the joined path only
-  (`direct_p2p.c:2450`) — so `s_upnp_mapping.active` stays false; the
+  (`direct_p2p.c:2517`) — so `s_upnp_mapping.active` stays false; the
   FAILED_STUN auto-retry re-spawns `host_thread_fn`
-  (`direct_p2p.c:5202`); the "reuse the live mapping" shortcut is gated
-  on that same `s_upnp_mapping` flag (`direct_p2p.c:3121`) and is
-  therefore skipped; and `try_portmap` runs again (`direct_p2p.c:3157`),
+  (`direct_p2p.c:5269`); the "reuse the live mapping" shortcut is gated
+  on that same `s_upnp_mapping` flag (`direct_p2p.c:3188`) and is
+  therefore skipped; and `try_portmap` runs again (`direct_p2p.c:3224`),
   spawning a second worker into `Natpmp_AddMapping` while the straggler
   may still be inside it. `s_pcp_nonce` / `s_pcp_nonce_valid` /
   `s_pcp_nonce_port` (`s_pcp_nonce` is at `natpmp.c:496`) and
