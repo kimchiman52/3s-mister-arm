@@ -1393,3 +1393,104 @@ the terminal behaviour:
   were exercising this loop to a lost wakeup in `AFS_ReadSync`
   (`src/port/io/afs.c`), not to bad data — see "#134" above. The loop now fires
   on genuinely corrupt or truncated `SF33RD.AFS` only.
+
+### CLOSED — the never-existed citation class, and why it is not getting a gate
+
+A citation can fail in three ways, and the linter only reports one of them. It
+finds an **anchor** — a symbol named in the prose beside the citation — and asks
+whether the cited line mentions it. If not, it looks for that anchor elsewhere
+in the same file and reports `drift` *carrying the line it found*. When the
+anchor appears **nowhere in the cited file** there is nothing to exhibit, so it
+stays silent by design (`check_doc_citations.py`, the `best is None` branch of
+`check_path_cites`). Those are citations that misdirect a reader and that
+nothing will ever flag.
+
+Measured over the whole tree by instrumenting that branch: of 2,510 citations
+making a checkable claim, 1,141 clean, 1,002 merely moved, 99 whose anchor is
+too common to localise, and **268 never-existed**. Split by scope: **51 in
+`docs/archive/`** (not scanned, not maintained, left alone), **141 in live
+prose**, **76 in source comments** — 217 live.
+
+All 217 were hand-audited. **106 were false positives** of the heuristic and
+**110 were real**; none was undeterminable. 91 are repaired in `d1a8da8d`; the
+remaining 19 are in files two other lanes had open and are listed below for
+their owners.
+
+**The false-positive rate is the finding.** 106/217 = 48.8% overall, and it
+splits hard by corpus: 38% in prose documents, **73.8% in source comments**,
+where a comment's own vocabulary gets scraped and then tested against a
+different file. Worse, precision as a *detector* is far below even that: in one
+batch only 1 of 9 defects was actually surfaced BY the never signal — the other
+8 had a real anchor present in the target file and would have been caught as
+ordinary `drift`; they were found by reading the prose, not by following the
+signal. **So this class is not becoming a check.** A gate that is wrong half
+the time gets disabled, which is worse than no gate.
+
+Three false-positive causes are structural and would defeat any tightening:
+citations into JSON/CSV oracle files, where symbol matching is meaningless;
+citations that name another repository or a sibling worktree; and **dated
+measurement records** — `fortify_blind_sweep.py:71` cites `netplay_nav.c:445`
+and pins the measurement to tree `ed37cb42`, where line 445 *is* the offending
+`snprintf`. Repointing it would have falsified the record. Nothing mechanical
+distinguishes that from a defect.
+
+**What IS worth a one-off sweep** is the narrow slice where the target lies
+outside `src/` and `include/` — `CMakeLists.txt`, `build-deps.sh`,
+`tools/**/*.js`, `vendor/`, `third_party/`. There the rate inverts: 8 of 11
+such items were real, because nothing in this tree line-indexes those files and
+they grow by hundreds of lines between citations. Every citation into
+`tools/rendezvous-server/rendezvous-server.js` audited was stale, all three by
+*different* amounts (689→1243, 693→856, 484→575), each exact at its own citing
+commit. That is a sweep, not a standing gate.
+
+**Two escalations were checked and are NOT gate holes.** Both were reported as
+"the `src` anchor-required ERROR gate is being bypassed"; neither survived the
+experiment.
+
+- *The bare-shorthand form.* Claim: `game_state.c:654` slips past the gate that
+  catches `src/netplay/game_state.c:654`. It does not. `Repo.resolve()` returns
+  the shorthand as `('src/netplay/game_state.c', 'exact')` when the basename is
+  unique, so both forms reach the anchor-required check identically. Planted in
+  a throwaway worktree, both forms produce the same
+  `ERROR [unanchored-citation]`. The real cause of the silence at
+  `mtrans.c:372` is that the citation is *not* anchor-free — it names
+  `reserv_add_y`, so `unanchored-citation` correctly declines to fire — and
+  `reserv_add_y` occurs 0 times in `game_state.c`, so the drift check goes
+  silent. That is the never-existed class, correctly sighted and misattributed.
+  Positive control, same worktree, same cited line: an anchor that IS present
+  elsewhere in the target (`Pause_Down`) produces `ERROR [drift]`. Silence
+  tracks the anchor's absence from the target file, not the citation's spelling.
+- *`test_punch_predicates.c:586`.* Claim: a visible drift sitting unreported.
+  It was reported all along, as `degenerate-target` rather than `drift`, because
+  `late_punch.c:115` is now a lone `}`. Fixed in `ce463fb6`.
+
+**Left for the owning lanes** (verified targets, not applied — these files were
+open elsewhere):
+
+- `src/netplay/*` (10): `direct_p2p.c:338`→`CMakeLists.txt:752-758`;
+  `direct_p2p.c:4159`→`rendezvous-server.js:1243-1254`;
+  `game_state.h:731`→`sel_pl.c:162`; `late_punch.h:86`→`arcade_balance.c:178`
+  and `:221`; `net_tuning.h:10`→`build-deps.sh:812`;
+  `netplay.c:2639`→`game.c:1272` and `:1317`;
+  `test_connect_observability.c:301`→`rendezvous-server.js:856-867`;
+  `test_punch_predicates.c:563`→`late_punch.c:280-288`;
+  `test_rendezvous_wire.c:162`→`rendezvous-server.js:575-583`.
+- everything else (7): `charset.c:498`→`main.c:738` and `:718`;
+  `gd3rd.c:613`→`build-deps.sh:498`; `mtrans.c:372` and
+  `texgroup_window_probe.h:18`→ must name `GS_SAVE(plw)` (`game_state.c:690`)
+  plus `plw_canon_fields.h` `X(reserv_add_y)` (`:419`), since `game_state.c` is
+  anchor-required and a bare line there is itself an error;
+  `frame_data_overlay.c:1597`→`main.c:718` vs `:738`;
+  `ldreq_timing_trace.h:55`→`netplay_nav.c:217-220`.
+- `src/arcade/*` and `tools/frame-data/*`: **zero** true defects. Nothing to do.
+
+`tools/netplay/natmatrix/rig/natpmp_mock.py:74` also cites `natns.sh:92-98` for
+the `MASQUERADE --random-fully` emulation; that range is `ip_forward` and
+conntrack sysctls, and the rule is at `natns.sh:143-147`.
+
+**One `--fix` trap worth recording.** At `fix-plan-bg-texture-rollback.md:689`
+the linter's own suggestion is `game_state.c:1273 → 1461`. 1461 is
+`GS_LOAD(Screen_Switch_Buffer)`; the claim on that line is about `bg_w`, which
+is `GS_LOAD(bg_w)` at `:1459`. Applying the suggestion would make the citation
+*look* repaired and leave it wrong by two lines — a fresh instance of why
+`--fix` is banned.
