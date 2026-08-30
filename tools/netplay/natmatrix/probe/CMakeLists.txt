@@ -91,8 +91,43 @@ target_link_libraries(p2p_probe PRIVATE SDL3_net::SDL3_net SDL3::SDL3)
 # ---------------------------------------------------------------------------
 set(GEKKONET_ROOT "${REPO_ROOT}/third_party/GekkoNet/build" CACHE PATH
     "GekkoNet install prefix (include/ + lib/libGekkoNet.a) for the session phase")
-if(EXISTS "${GEKKONET_ROOT}/lib/libGekkoNet.a")
-    enable_language(CXX) # libGekkoNet.a is C++; the link needs the C++ runtime
+#
+# EXISTS IS NOT "USABLE" (task #126). build-deps.sh installs a HOST build of
+# GekkoNet into third_party/GekkoNet/build, and the netns rig bind-mounts this
+# repo into a Linux container -- where that archive is a macOS/arm64 Mach-O.
+# `EXISTS` was true, the configure was clean, "session phase ON" was printed,
+# and the link then died with ten undefined references (gekko_create ...
+# gekko_destroy). A p2p_probe that does not link is exactly the failure task
+# #126 was sent to characterise: run_matrix.sh and nonvacuity.sh only check
+# `[ -x "$PROBE" ]`, so a build that never produced a binary leaves an older one
+# in place and the drivers run it and exit 0.
+#
+# So prove the archive links with THIS toolchain before turning the session
+# phase on, instead of inferring it from a filename.
+set(_gk_lib "${GEKKONET_ROOT}/lib/libGekkoNet.a")
+set(_gk_usable OFF)
+if(EXISTS "${_gk_lib}")
+    enable_language(CXX)
+    # The check must link the way the real target links: C++ driver (the archive
+    # is C++ and needs the C++ runtime) calling a C-linkage GekkoNet entry point.
+    # A C-driver check fails on a PERFECTLY GOOD archive for want of libstdc++,
+    # which would disable the session phase on the host too.
+    set(_gk_probe "${CMAKE_CURRENT_BINARY_DIR}/gekkonet_link_check.cpp")
+    file(WRITE "${_gk_probe}"
+         "extern \"C\" void gekko_destroy(void*);\nint main(){ gekko_destroy(0); return 0; }\n")
+    try_compile(_gk_usable "${CMAKE_CURRENT_BINARY_DIR}/gekkonet_link_check"
+                SOURCES "${_gk_probe}"
+                LINK_LIBRARIES "${_gk_lib}"
+                OUTPUT_VARIABLE _gk_out)
+    if(NOT _gk_usable)
+        message(WARNING
+            "p2p_probe: ${_gk_lib} exists but does NOT link with this toolchain "
+            "(wrong architecture or object format). Session phase forced OFF. "
+            "Point -DGEKKONET_ROOT at a build for this platform to enable it.")
+    endif()
+endif()
+if(_gk_usable)
+    # libGekkoNet.a is C++; the link needs the C++ runtime.
     message(STATUS "p2p_probe: session phase ON (GekkoNet at ${GEKKONET_ROOT})")
     target_sources(p2p_probe PRIVATE
         session_phase.c
@@ -102,6 +137,8 @@ if(EXISTS "${GEKKONET_ROOT}/lib/libGekkoNet.a")
     target_include_directories(p2p_probe PRIVATE ${GEKKONET_ROOT}/include)
     target_link_libraries(p2p_probe PRIVATE ${GEKKONET_ROOT}/lib/libGekkoNet.a)
     set_target_properties(p2p_probe PROPERTIES LINKER_LANGUAGE CXX)
+elseif(EXISTS "${_gk_lib}")
+    message(STATUS "p2p_probe: session phase OFF (${_gk_lib} is not linkable here)")
 else()
     message(STATUS "p2p_probe: session phase OFF (no libGekkoNet.a under ${GEKKONET_ROOT})")
 endif()

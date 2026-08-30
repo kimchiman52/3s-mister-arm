@@ -68,6 +68,31 @@ while [ $# -gt 0 ]; do
 done
 [ -x "$PROBE" ] || { echo "run_matrix.sh: --probe must be an executable p2p_probe" >&2; exit 2; }
 
+# A PROBE THAT DID NOT BUILD IS NOT A PROBE (task #126). This driver only ever
+# checked `[ -x "$PROBE" ]`. A build that failed to LINK leaves the previous
+# binary sitting there, so the driver runs it, scores it, and exits 0 -- and the
+# run describes a tree that no longer exists. That is not hypothetical: p2p_probe
+# failed to link on this branch from d207ef1e (2026-08-29 12:39) to fd1fa3cc
+# (2026-08-30 04:38), because direct_p2p.c began calling
+# Netplay_LogConnectEventMT / Netplay_LogSinkInit (1c7a7c61) and
+# probe/netplay_probe_stub.c did not stub them until 0b00f237. Nothing in this
+# harness noticed for sixteen hours.
+#
+# So refuse a probe older than any source it links. There is deliberately no
+# override: the fix is to rebuild, and a run that cannot prove its instrument is
+# current is not evidence.
+assert_probe_fresh() {
+    local stale
+    stale=$(find "$REPO/src/netplay" "$HERE/probe" \
+                 \( -name '*.c' -o -name '*.h' \) -newer "$PROBE" 2>/dev/null | head -3)
+    [ -z "$stale" ] && return 0
+    echo "$(basename "$0"): STALE PROBE -- $PROBE is older than sources it links:" >&2
+    printf '  %s\n' $stale >&2
+    echo "  Rebuild p2p_probe against this tree and re-run." >&2
+    exit 2
+}
+assert_probe_fresh
+
 WORK="$(dirname "$OUT")"
 mkdir -p "$WORK"
 : > "$OUT"
