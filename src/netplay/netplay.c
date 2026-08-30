@@ -162,6 +162,13 @@ static uint32_t s_rb_buckets[5] = { 0 };
 // Netplay_Run. All netplay-tagged lines pass through netplay_logf() which
 // tees to SDL_Log + the file.
 static FILE* s_netplay_log = NULL;
+// #125: the path netplay_log_open actually opened. A test that has to
+// verify what this sink wrote used to locate the file by scanning the
+// logs directory for the newest netplay-<ms>.log, which silently picks
+// up ANOTHER process's session log whenever two builds run at once —
+// see Netplay_TestHook_SessionLogPath below. Written on the main
+// thread at open, read by tests on the main thread.
+static char s_netplay_log_path[640] = { 0 };
 
 // === #36: thread-safe connect-log sink ===
 // Before #36 the FILE* above was documented MAIN THREAD ONLY and only
@@ -492,6 +499,26 @@ static void netplay_log_prune(const char* logs_dir) {
 void Netplay_TestHook_LogPrune(const char* dir) {
     netplay_log_prune(dir);
 }
+
+/* #125. Hands back the path netplay_log_open opened for THIS process.
+ *
+ * The alternative a test has is to scan <PrefPath>logs for the newest
+ * netplay-<ms>.log, and that is wrong the moment a second build is
+ * running: the newest file in a shared directory belongs to whoever
+ * opened it last, not to us. Measured with four concurrent
+ * --test-connect-observability runs — three processes wrote to
+ * netplay-...761.log and all three then read back netplay-...763.log,
+ * reporting "800 of 800 MT lines missing or torn" about a file they had
+ * never written a line to.
+ *
+ * Empty string when no session log is open. */
+bool Netplay_TestHook_SessionLogPath(char* out, size_t cap) {
+    if (out == NULL || cap == 0) {
+        return false;
+    }
+    SDL_strlcpy(out, s_netplay_log_path, cap);
+    return out[0] != '\0';
+}
 #endif
 
 // Opens <pref>/logs/netplay-<utc_ms>.log for the active session. Block
@@ -521,6 +548,8 @@ static void netplay_log_open(uint64_t utc_ms) {
     // failed fopen cannot leave a stale "already truncated" latch behind.
     s_netplay_log_bytes = 0;
     s_netplay_log_truncated = false;
+    SDL_strlcpy(s_netplay_log_path, (s_netplay_log != NULL) ? path : "",
+                sizeof(s_netplay_log_path));
     if (s_netplay_log != NULL) {
         // Block-buffered with a small buffer; we drive fflush from the heartbeat.
         setvbuf(s_netplay_log, NULL, _IOFBF, 4096);

@@ -104,7 +104,7 @@ not.** Verified:
   `strcmp(src_ip, s_peer_ip)` (`src/netplay/late_punch.c:280`) — an IP compare
   that **cannot distinguish "the peer's NAT mapping moved" from "a different
   host behind the same public IP"**. One relearn sets `remote_port` and calls
-  `SDLNetAdapter_RetargetPeer` (`netplay.c:1390-1392`), after which every
+  `SDLNetAdapter_RetargetPeer` (`netplay.c:1419-1421`), after which every
   outbound session datagram goes to the attacker
   (`src/netplay/sdl_net_adapter.c:288-290`).
 - **It survives into the match.** `LatePunch_Disarm` (`late_punch.c:187-206`)
@@ -148,7 +148,7 @@ exists) exercised:
   `from_peer` test** (`src/netplay/mist_handshake.c:743-771`); `from_peer` gates
   only the H-1 hello latch (`:835`) and implicit completion (`:854`). And after
   a relearn the substitute *is* `from_peer` anyway — `late_punch_service` sets
-  `remote_port` (`netplay.c:1390`), which `mist_pump_start` copies into
+  `remote_port` (`netplay.c:1419`), which `mist_pump_start` copies into
   `io->peer_port` (`netplay.c:1339`) after the `s_hs_peer_refetch` re-resolve
   (`:1309-1314`).
 - **GekkoNet authenticates nothing about the remote.** The remote is registered
@@ -164,10 +164,10 @@ exists) exercised:
   DoS floor, not the ceiling.
 
 **Two capture windows, both reachable.** `late_punch_service` runs in
-TRANSITIONING (`netplay.c:2290`) and CONNECTING (`:2403`):
+TRANSITIONING (`netplay.c:2319`) and CONNECTING (`:2432`):
 
 1. **Relearn in TRANSITIONING** — `remote_port` moves *before*
-   `configure_gekko`, so `SDLNetAdapter_SetCanonicalPeer` (`netplay.c:1570`)
+   `configure_gekko`, so `SDLNetAdapter_SetCanonicalPeer` (`netplay.c:1599`)
    registers **the substitute as the canonical peer outright**. The legitimate
    peer's datagrams then arrive under a non-canonical address string and
    GekkoNet ignores them. Clean substitution; MIST runs against the substitute.
@@ -230,12 +230,12 @@ Weighed against the demonstrated availability win (late-punch converted a real
 
 - **REJECTED — clear `s_actual_peer` / `s_retarget_active` in
   `LatePunch_Disarm`.** This does not work and would break the feature. Disarm
-  fires at `GekkoSessionStarted` (`netplay.c:1798`); a window-2 relearn is
+  fires at `GekkoSessionStarted` (`netplay.c:1827`); a window-2 relearn is
   applied to the adapter but *not* to GekkoNet's registration, so clearing the
   retarget at session start would send every packet back to the dead original
   port and kill exactly the session the rescue just saved. It also does not
   touch window 1, where the substitute is already canonical. Cross-session
-  hygiene is a non-issue: `SDLNetAdapter_SetCanonicalPeer` (`netplay.c:1570`)
+  hygiene is a non-issue: `SDLNetAdapter_SetCanonicalPeer` (`netplay.c:1599`)
   re-seeds both fields on every `configure_gekko`.
 - **REJECTED — default the kill switch on.** `CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_LATE_PUNCH`
   defaults to `false` (`src/port/config/config.c:122`). Flipping it trades a
@@ -304,7 +304,7 @@ whoever spoke last.
 kind[1] | nonce[8]`, 26 bytes. The punch prefix is retained deliberately —
 every receive path already drops punch-prefixed traffic before GekkoNet —
 `Stun_HasPunchPrefix` (`src/netplay/sdl_net_adapter.c:386-393`) — the MIST pump
-offers it to `LatePunch_HandleDatagram` first (`src/netplay/netplay.c:1214-1220`),
+offers it to `LatePunch_HandleDatagram` first (`src/netplay/netplay.c:1243-1249`),
 and `classify_host_datagram` still ignores it because it demands the exact
 17-byte payload: `Stun_IsPunchPayload` (`src/netplay/direct_p2p.c:1063-1066`). Nothing
 downstream had to change to stay safe, including on a build that predates the
@@ -455,7 +455,7 @@ logging, and comments).
    with `200 + 11250 + 4*15000 + 3*5000 = 86450 >= 87050`.
 
 2. **Late-punch socket invalidation — GUARD ADDED, no live bug**
-   (`6b17dc73`). `Netplay_SetStunSocket` (`src/netplay/netplay.c:2727`) now
+   (`6b17dc73`). `Netplay_SetStunSocket` (`src/netplay/netplay.c:2756`) now
    calls `LatePunch_Disarm()` on the destroy branch only.
    **The failing case could NOT be constructed, and the attempt failed on a
    real structural guard rather than on luck:** `do_handoff` (`direct_p2p.c:4522`)
@@ -619,14 +619,111 @@ simulation. Two new test translation units, six test-only trampolines, one
 read-only test-only accessor, and a Python source-shape check; the only
 non-test source edits are inside `#ifdef ENABLE_NETPLAY_TESTS`.
 
-**Priority 2** (open)
-- The `ORCH_*` cascade — `ORCH_HOST_WORST_CASE_MS`
-  (`src/netplay/direct_p2p.c:6162`) — table-driven **from independently listed
-  constants, never importing the macro under test**.
-- natpmp timeout math, refactored to take a caller-supplied clock.
+**Priority 2 — CLOSED.** See `--test-netplay-units` below.
 
-**Priority 3** (open)
-- Extract ~13 pure blocks out of `src/netplay/test_bilateral_punch.c`.
+**Priority 3 — CLOSED.** See `--test-netplay-units` below.
+
+### `--test-netplay-units` — priorities 2 and 3, one harness
+
+`src/netplay/test_netplay_units.c`. **15 tests, 1059 assertions, 0.18 s.**
+Registered the same way every other harness is: a `Configuration` field, an
+`OPT_BOOLEAN` in `src/args.c`, a forward decl and a dispatch `if` in
+`src/main.c`. Harness count 13 → 14.
+
+**P3 — what moved, and the number that justifies it.** Per-test wall clock was
+measured directly (temporary `SDL_GetTicks` instrumentation around each call in
+`Netplay_Test_BilateralPunch`), not estimated:
+
+| test | ms |
+| --- | --- |
+| `test_race_worst_case_timing` | 26447 |
+| `test_race_two_peer_convergence` | 17956 |
+| `test_s7_lost_mapping` | 11776 |
+| `test_joiner_cookie_handshake` | 10481 |
+| `test_joiner_self_deliver` | 10236 |
+| `test_s7_review_fixes` | 7549 |
+| `test_race_rearm_releases_address_ref` | 6589 |
+| ... 26 more | |
+| **whole harness** | **110471** |
+
+The harness is one linear dispatch, so what an engineer iterating on a block
+actually pays is the CUMULATIVE cost to REACH it. Summing the dispatch order:
+the NAT-PMP/PCP wire codec sat **~88 s** in; the ladder-shape and renewal-
+cadence tables sat **~90 s** in; the earliest of the moved blocks
+(`test_failure_taxonomy`) sat **~13 s** in. **All 13 now run in 0.18 s.**
+
+**Be precise about what did NOT change: the gate's total wall clock.**
+`--test-bilateral-punch` was 110.47 s before and 110.24 s after — noise. The
+extracted blocks were *pure*, so they were never what cost the time; the
+scenario tests that do cost it are all still there, which is the instruction and
+also correct (a mocked unit would pass vacuously in their place). The win is the
+cost to REACH a decision, not the cost of the suite. The 47 s + 31 s figures in
+the original framing did not reproduce: `test_host_cookie_rejected` measures
+**745 ms**, not 31 s — it drives a mocked clock and only *reports*
+`waited_ms=30060`.
+
+The 13: `session_key_stability`, `lan_bypass`, `failure_taxonomy`,
+`host_datagram_gate`, `rendezvous_cookie_codec`, `rendezvous_frame_router`,
+`punch_gate_throttle`, `race_budget_wrap_safety`, `natpmp_codec` (the whole
+RFC 6886/6887 build+parse section), `natpmp_ladder_shape`, `pcp_short_error`,
+`nonpublic_gate`, `portmap_renew_cadence`. Moved, not copied — nothing is
+asserted twice, `test_bilateral_punch.c` went 8312 → 6840 lines and kept every
+scenario test.
+
+**P2a — the ORCH cascade, derived independently.** `unit_orch_cascade`
+(`src/netplay/test_netplay_units.c:1827`). The `ORCH_*` macros are file-local to
+`direct_p2p.c` and `DirectP2P_OrchWorstCaseMsForRole` reads its budgets from
+live config, so the arithmetic could only be reached by writing config and
+reading a role bound back — which pins the SLOPE and never the value. New hook
+`DirectP2P_TestHook_OrchCascade` (`src/netplay/direct_p2p.c:6396`) evaluates the
+real macros at CALLER-SUPPLIED budgets, no config, no clock. The test then
+re-lists the primitives (`HOST_STUN_MAX_RETRIES`, `WORKER_STARTUP_DELAY_MS`,
+`PORTMAP_PROBE_BUDGET_MS`, `RESOLVE_POLL_MAX_MS`, `JOIN_MAX_ATTEMPTS`,
+`STUN_PUNCH_CONFIRM_MS`, the four clamps) as its OWN literals and recomputes the
+ladder itself. 7 (stun, race) rows × 6 derived values, plus both slopes swept,
+plus the corner where the `MAX` branch flips.
+
+That duplication is the alarm, and it is deliberate: change
+`WORKER_STARTUP_DELAY_MS` in `direct_p2p.c` and this test goes red, so the
+change becomes a decision instead of a silent slide. The four numbers #131 got
+wrong are ALSO pinned as literals (ceiling ladder 87050, shipped defaults 43050,
+the corner, and #96's 120800 upper guard), because a careless "fix the test"
+would edit the macro and the re-derivation together and leave the table green.
+
+**P2b — natpmp timeout math takes the clock.** `np_remaining_ms`
+(`src/netplay/natpmp.c:920`), the new `np_step_deadline` (`:932`, hoisted out of
+`np_transact`'s inline expression) and `np_phase_deadline` (`:1156`) all take
+`now_ms` instead of calling `SDL_GetTicks()`. The callers still read the clock —
+this is a testability seam, not a virtual clock. Hooks
+`Natpmp_TestHook_RemainingMs` / `_StepDeadline` / `_PhaseDeadline`
+(`src/netplay/natpmp.c:869`) forward to the production functions rather than
+reimplement them. `unit_natpmp_deadline_math` (`:1976`) then sweeps what elapsed
+time cannot produce on demand: an already-expired deadline, the exact deadline
+edge, the 2000000000 ms clamp, a phase ceiling truncating a rung, a suppressed
+rung inheriting the whole phase, out-of-range steps, `now` up near 2^64, and
+three back-to-back phases fitting `NATPMP_PROBE_BUDGET_MS` exactly — the H-6
+property, in microseconds instead of the 3896 ms it took to measure.
+
+**Mutations (object file AND linked binary deleted before each run).**
+V1 a unit dropped from the dispatch → RED (`EXPECTED_TESTS`).
+V2 the RFC 6886 ladder grown back to 5 rungs → RED.
+V3 the #131 bug restored (startup delay paid once) **with every ORCH
+`_Static_assert` neutralised**, so the unit test is the only detector left →
+RED.
+V4 a primitive changed under the test (`HOST_STUN_RETRY_BACKOFF_MS` 5000→4000),
+asserts neutralised → RED ("macro says 40050, the independently derived value is
+43050").
+V5 the `MAX` dropped from `ORCH_HOST_WORST_CASE_MS`, asserts neutralised → RED
+at the corner.
+V6b `np_remaining_ms` one ms too generous → RED.
+V7 `np_step_deadline` drops the phase ceiling → RED.
+V8 `np_remaining_ms` drops the 2000000000 clamp → RED.
+
+**V6 is an EQUIVALENT mutant, not a gap.** `now_ms >= deadline_ms` →
+`now_ms > deadline_ms` survived, and it should: at `now == deadline` the
+fall-through computes `left = 0`, `0 > 2000000000u` is false, and it returns 0 —
+byte-identical behaviour for every input. The early return is an underflow
+guard, not a boundary decision. V6b exists because of it.
 
 **Non-goals, deliberately:** the punch race, split brain, the PROMISED
 LISTENING INTERVAL, the reclaim boundary, GekkoNet/rollback determinism, UPnP.
@@ -636,8 +733,61 @@ All interaction bugs, where a mocked unit passes vacuously.
 
 ## Smaller open items
 
-- **#125** — `--test-connect-observability` flakes **only under concurrent gate
-  runs**, always at `test6-byte-budget`; shared logs directory.
+- **#125 — CLOSED.** `--test-connect-observability` flaked only under
+  concurrent gate runs. **Reproduced first** (4 concurrent runs, 2 rounds: 3 of
+  the 4 failed in round 2; a later 12-run batch failed 8 times), then fixed,
+  then re-run 16/16 clean.
+
+  **The theory in this line was half right and the diagnosis it implied was
+  wrong.** It is not one test and it is not only the directory. Three distinct
+  mechanisms, all measured:
+
+  1. **Shared log FILENAME.** The session log is
+     `<PrefPath>logs/netplay-<utc_ms>.log` — `netplay_log_open`
+     (`src/netplay/netplay.c:529`) — so
+     processes that start in the same millisecond open the SAME FILE. Measured:
+     three of four concurrent runs all opened
+     `netplay-1788111677761.log`. Symptom: `test4-mt-sink: 4 of 800 MT lines
+     missing or torn` — interleaved writers, nothing wrong with the sink.
+  2. **The harness picked someone else's file.** `obs_find_new_log` took the
+     NEWEST `netplay-*.log` in the directory past a timestamp. Measured: those
+     same three processes all validated against `netplay-1788111677763.log`, a
+     fourth process's file, and reported `800 of 800 MT lines missing or torn`
+     about a file they had never written a line to. The end-of-run cleanup
+     removed that file too — i.e. it could delete a live log belonging to
+     another process.
+  3. **Cross-process truncation.** `fopen(path, "w")` on a colliding name, plus
+     the #44 prune keeping the 20 newest, produced
+     `session file grew from 261995 to 0 bytes AFTER the TRUNCATED marker` and
+     `wrote 20000 padded lines and the session file never published a TRUNCATED
+     marker`. That second one is the reported `test6-byte-budget` symptom.
+
+  **Why the directory had to be the fix and not just the accessor.** With the
+  accessor fix alone (each process reading its own path), 5 of 12 concurrent
+  runs still failed — mechanisms 1 and 3 are writer-side. Measured, both ways.
+
+  **Fix, three parts.** `Paths_GetPrefPath` (`src/port/paths.c:46`) now honours
+  `THIRDSARM_HOME` on **every** port, not just MiSTer/Miyoo. On the host build
+  there was previously no way at all to move this directory: `SDL_GetPrefPath`
+  goes through `NSApplicationSupportDirectory` on macOS, which ignores `$HOME`
+  — measured, a harness run with `HOME=/tmp/fakehome1` still wrote to
+  `~/Library/Application Support/CrowdedStreet/3S-ARM/`. `tools/gates/run-gates.sh:198`
+  then gives every harness invocation its own `$$`-keyed home, which makes
+  concurrent RUNS hermetic too, not just concurrent harnesses within a run. And
+  `Netplay_TestHook_SessionLogPath` (`src/netplay/netplay.c:515`) hands the test
+  the path this process actually opened, so the harness is correct even in a
+  shared directory.
+
+  **Result:** 16/16 concurrent runs clean, 0 failures.
+
+  **Deliberately NOT fixed, with the reason.** The production filename
+  collision itself. It would need `netplay-<ms>-<pid>.log` and a widening of
+  `netplay_log_name_stamp` (`src/netplay/netplay.c:376`), which the file calls
+  "the entire safety argument for the prune". It cannot bite in practice: two
+  3S-ARM instances on one machine is not a supported configuration, and the
+  natmatrix probes link `netplay_stub.c` (`netplay_stub.c:42`), so they write no
+  session log at all. Widening a safety-critical predicate to paper over missing
+  test isolation is the wrong trade.
 - **#128** — five reproducible file-load failures (file numbers 9, 10, 1454,
   1456, 1458) plus 379 ms startup outliers. Pre-existing.
 - **#108** — `--test-enable` pins PS2, so no corpus run exercises the shipping

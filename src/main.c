@@ -1084,6 +1084,11 @@ int Netplay_Test_SparseEffectSave(void);
 // exercises the REGISTER/POLL/DELIVER round-trip plus the LAN-bypass
 // table; no external network dep.
 int Netplay_Test_BilateralPunch(void);
+// Task #132 P3: forward-decl of the fast netplay unit harness
+// (src/netplay/test_netplay_units.c). Same gating pattern. No sockets, no
+// threads, no sleeps — it is the half of test_bilateral_punch.c that
+// never needed any of those, moved somewhere it can be run constantly.
+int Netplay_Test_NetplayUnits(void);
 // #36: forward-decl of the connect-observability proof harness
 // (src/netplay/test_connect_observability.c). Same gating pattern as the
 // other Phase 6 tests. Induces a rendezvous protocol-version skew and a
@@ -1215,6 +1220,16 @@ int main(int argc, const char* argv[]) {
 #else
         fprintf(stderr,
                 "--test-sparse-effect-save requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+    if (configuration.test_netplay_units) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_NetplayUnits();
+#else
+        fprintf(stderr,
+                "--test-netplay-units requires a build with ENABLE_NETPLAY=ON.\n");
         return 2;
 #endif
     }

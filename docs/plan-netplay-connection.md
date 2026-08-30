@@ -1376,7 +1376,7 @@ for the joiner's two attempts. Verified headroom against the callers:
 
 - `CONNECT_TIMEOUT_CONNECTING_MS` (15 000 ms, `connect_fail.h:359`) does
   **not** bound the race: it is armed on entry to
-  `NETPLAY_SESSION_CONNECTING` (`netplay.c:2395-2414`), i.e. *after* the
+  `NETPLAY_SESSION_CONNECTING` (`netplay.c:2428-2443`), i.e. *after* the
   handoff, and bounds GekkoNet's sync, not establishment.
 - The bound that does apply is nav's NAV_WAIT_ORCHESTRATOR deadline
   (`nav_orch_timeout_frames` at `netplay_nav.c:169`, enforced at
@@ -1384,7 +1384,7 @@ for the joiner's two attempts. Verified headroom against the callers:
   frames to a derived bound**: it is now
   `DirectP2P_OrchWorstCaseMs()` plus `NAV_ORCH_TIMEOUT_MARGIN_MS`, summed
   from the orchestrator's own live clamped budgets in
-  `DirectP2P_OrchWorstCaseMsForRole` (`direct_p2p.c:6377`). At the
+  `DirectP2P_OrchWorstCaseMsForRole` (`direct_p2p.c:6424`). At the
   shipped defaults the joiner's deadline is 31 800 ms (1 908 frames), not
   150 000 ms. 18 400 ms of race against 31 800 ms is 1.7x headroom rather
   than 8.2x — still comfortable, and the two tail exemptions are now
@@ -1485,8 +1485,8 @@ lines with the per-test banners attributes every one of them:
 | **24** | **many** | two concurrent real races per probe point, each with a real leg. The second review replaced the single pinned skew with seven DERIVED points plus the 1 000 ms control, so the count scales with the probe list rather than being a fixed 4 |
 | **25** | **1** | one real DELIVER-armed leg against the echo peer; confirms |
 | **26** | **1** | one real leg against the echo peer; confirms |
-| 27 | **0** | arms exactly one real leg and punches it, but the target is a **bound, silent sink** — `sink_sock` at `test_bilateral_punch.c:6604` — with `seed_port = 0` at `test_bilateral_punch.c:6611` — nothing ever answers, the race ends EXHAUSTED, and `27-no-punch-from-a-silent-sink` asserts precisely that |
-| 28 | **0** | **runs no race at all**: it calls `DirectP2P_TestHook_RaceBudgetExpired` as a pure function and compares `STUN_PUNCH_CONFIRM_MS` against the literal 600 (`test_bilateral_punch.c:6681`). No socket, no thread, no stepper |
+| 27 | **0** | arms exactly one real leg and punches it, but the target is a **bound, silent sink** — `sink_sock` at `test_bilateral_punch.c:5202` — with `seed_port = 0` at `test_bilateral_punch.c:5236` — nothing ever answers, the race ends EXHAUSTED, and `27-no-punch-from-a-silent-sink` asserts precisely that |
+| 28 | **0** | **runs no race at all**: it calls `DirectP2P_TestHook_RaceBudgetExpired` as a pure function and compares `STUN_PUNCH_CONFIRM_MS` against the literal 600. No socket, no thread, no stepper — which is why task #132 P3 MOVED it out of this harness entirely: it now runs as `unit_race_budget_wrap_safety` in `test_netplay_units.c:1062`, in microseconds |
 | 29 **(REMOVED — relay-only test, deleted with S5, §7)** | **0** | **relay-only**: it set `seed_port = 0` ("no punch leg at all") and `signal_leg = false`, so no candidate was ever armed and the only leg is the relay |
 
 So the sentence that matters is narrower than "23-29": **tests 23, 24,

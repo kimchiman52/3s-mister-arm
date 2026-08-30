@@ -2,6 +2,7 @@
 #define NETPLAY_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* Forward declaration so netplay.h does not pull in <SDL3_net/SDL_net.h>.
@@ -86,6 +87,10 @@ void Netplay_LogConnectEventMT(const char* line);
  * report first, so the next line reopens under the new directory. */
 void Netplay_TestHook_LogPrune(const char* dir);
 void Netplay_TestHook_ReportDir(const char* dir);
+/* #125: the session log path THIS process opened, so a test never has
+ * to guess it from the newest name in a shared directory. False (and
+ * an empty string) when no session log is open. */
+bool Netplay_TestHook_SessionLogPath(char* out, size_t cap);
 #endif
 void Netplay_SetMatchmakingParams(const char* server_ip, int server_port);
 void Netplay_BeginMatchmaking();

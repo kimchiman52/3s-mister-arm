@@ -174,7 +174,30 @@ DISCOVER
     else
         h_failed=0
         for h in "${HARNESSES[@]}"; do
-            "./${BIN}" "--${h}" > "${out_dir}/${h}.log" 2>&1
+            # Task #125: each harness gets its OWN state directory.
+            #
+            # These binaries keep config, keymap and the netplay logs/ tree
+            # under Paths_GetPrefPath(), which on the host build used to be
+            # SDL_GetPrefPath() with no override -- one directory shared by
+            # every process on the machine. The netplay session log is named
+            # netplay-<utc_ms>.log, so two gate runs that start in the same
+            # millisecond open the SAME FILE and interleave writes into it,
+            # and --test-connect-observability then reads back whichever
+            # netplay-*.log is newest, which is somebody else's. Measured
+            # with four concurrent runs: three opened
+            # netplay-1788111677761.log and all three validated against
+            # netplay-1788111677763.log. That is #125, and it is not
+            # specific to test6-byte-budget -- test4-mt-sink failed the same
+            # way, and the end-of-run cleanup could remove a live log
+            # belonging to another process.
+            #
+            # THIRDSARM_HOME is honoured on every port as of #125
+            # (src/port/paths.c), so one env var makes the whole run
+            # hermetic. $$ + the harness name keeps concurrent RUNS apart
+            # too, not just concurrent harnesses within one run.
+            h_home="${out_dir}/home/$$-${h}"
+            mkdir -p "${h_home}"
+            THIRDSARM_HOME="${h_home}" "./${BIN}" "--${h}" > "${out_dir}/${h}.log" 2>&1
             rc=$?
             note=""
             # exit 2 + "not compiled in" is a MISBUILD, never a pass.

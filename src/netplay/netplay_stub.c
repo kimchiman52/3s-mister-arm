@@ -58,6 +58,13 @@ void Netplay_TestHook_LogPrune(const char* dir) {
     (void)dir;
 }
 
+bool Netplay_TestHook_SessionLogPath(char* out, size_t cap) {
+    if (out != NULL && cap > 0) {
+        out[0] = '\0';
+    }
+    return false;
+}
+
 void Netplay_TestHook_ReportDir(const char* dir) {
     (void)dir;
 }

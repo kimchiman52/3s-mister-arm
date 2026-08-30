@@ -6374,6 +6374,53 @@ _Static_assert(ORCH_JOIN_PORTMAP_SERIAL_MS == 0,
                "joiner cascade did not grow. Re-derive assert [A] with the real "
                "cost — do NOT raise NAV_ORCH_UX_CEILING_MS.");
 
+#ifdef NETPLAY_TEST_HOOKS
+/* Task #132 P2: evaluate the ORCH_* cascade at CALLER-SUPPLIED budgets.
+ *
+ * The macros are file-local to this TU on purpose, and
+ * DirectP2P_OrchWorstCaseMsForRole reads its budgets from live config, so
+ * the only way to pin the arithmetic used to be to write config and read
+ * a role bound back — which pins the SLOPE but never the ladder's actual
+ * value. That is how #131 shipped: ORCH_HOST_LADDER_MS paid
+ * WORKER_STARTUP_DELAY_MS once instead of once per rung, every derived
+ * number was self-consistent with the wrong formula ([D] 86450, shipped
+ * 42450, the corner 30450, #96's guard 120200), and nothing was red.
+ *
+ * This hook evaluates the real macros, with no config and no clock, so a
+ * test can list the primitive constants INDEPENDENTLY, compute the ladder
+ * itself, and compare. A test that derived its expectation from these
+ * macros would pass through any error in them; the whole point is that
+ * the expectation comes from somewhere else.
+ *
+ * Any out pointer may be NULL. */
+void DirectP2P_TestHook_OrchCascade(int stun_ms, int race_ms,
+                                    int* out_race_hard_cap_ms,
+                                    int* out_host_ladder_ms,
+                                    int* out_host_postwait_ms,
+                                    int* out_host_worst_ms,
+                                    int* out_join_attempt_ms,
+                                    int* out_join_worst_ms) {
+    if (out_race_hard_cap_ms != NULL) {
+        *out_race_hard_cap_ms = RACE_HARD_CAP_MS(race_ms);
+    }
+    if (out_host_ladder_ms != NULL) {
+        *out_host_ladder_ms = ORCH_HOST_LADDER_MS(stun_ms);
+    }
+    if (out_host_postwait_ms != NULL) {
+        *out_host_postwait_ms = ORCH_HOST_POSTWAIT_MS(race_ms);
+    }
+    if (out_host_worst_ms != NULL) {
+        *out_host_worst_ms = ORCH_HOST_WORST_CASE_MS(stun_ms, race_ms);
+    }
+    if (out_join_attempt_ms != NULL) {
+        *out_join_attempt_ms = ORCH_JOIN_ATTEMPT_MS(stun_ms, race_ms);
+    }
+    if (out_join_worst_ms != NULL) {
+        *out_join_worst_ms = ORCH_JOIN_WORST_CASE_MS(stun_ms, race_ms);
+    }
+}
+#endif /* NETPLAY_TEST_HOOKS */
+
 int DirectP2P_OrchWorstCaseMsForRole(Role role) {
     const int stun = stun_budget_ms();
     const int race = race_budget_ms();

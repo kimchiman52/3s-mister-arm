@@ -162,7 +162,30 @@ static unsigned long long obs_newest_log_ts(void) {
 
 /* Full path of the single log file this run created, or false when the
  * sink never opened one. */
+/* #125. The session log THIS process opened, asked of the module that
+ * opened it, with the directory scan kept only as the fallback for the
+ * case the hook is built out.
+ *
+ * The scan below is what made #125 possible: it takes the NEWEST
+ * netplay-<ms>.log in <PrefPath>logs with a stamp past `since_ts`, and
+ * under concurrent gate runs that file belongs to another process.
+ * Measured with four concurrent runs of this harness: three of them wrote
+ * to netplay-1788111677761.log and all three read back
+ * netplay-1788111677763.log, then reported "800 of 800 MT lines missing
+ * or torn" and "the session file grew AFTER the TRUNCATED marker" about a
+ * file they had never written a line to. Both diagnoses were about the
+ * wrong file; nothing was wrong with the sink.
+ *
+ * Per-process isolation (Paths_GetPrefPath honouring THIRDSARM_HOME on
+ * every port now, plus tools/gates/run-gates.sh handing each harness its
+ * own home) is what actually removes the sharing. This makes the harness
+ * correct even without it. */
 static bool obs_find_new_log(unsigned long long since_ts, char* out, size_t cap) {
+#ifdef NETPLAY_TEST_HOOKS
+    if (Netplay_TestHook_SessionLogPath(out, cap)) {
+        return true;
+    }
+#endif
     char dir[512];
     obs_logs_dir(dir, sizeof(dir));
     DIR* d = opendir(dir);

@@ -163,6 +163,21 @@ Role DirectP2P_GetRole(void);
  * so a role-blind assertion is satisfied by the host term alone and
  * cannot detect a regression in the joiner term. */
 int DirectP2P_OrchWorstCaseMsForRole(Role role);
+
+#ifdef NETPLAY_TEST_HOOKS
+/* Task #132 P2: the ORCH_* cascade evaluated at caller-supplied budgets,
+ * with no config write and no clock. The macros themselves stay file-
+ * local to direct_p2p.c — a test that could #include them would be able
+ * to derive its expectation FROM the thing under test, which is the exact
+ * mistake that let #131's ladder ship. Any out pointer may be NULL. */
+void DirectP2P_TestHook_OrchCascade(int stun_ms, int race_ms,
+                                    int* out_race_hard_cap_ms,
+                                    int* out_host_ladder_ms,
+                                    int* out_host_postwait_ms,
+                                    int* out_host_worst_ms,
+                                    int* out_join_attempt_ms,
+                                    int* out_join_worst_ms);
+#endif
 int DirectP2P_OrchWorstCaseMs(void);
 
 /* S3-review M-3: true while a HOST parked in FAILED_STUN still has S2

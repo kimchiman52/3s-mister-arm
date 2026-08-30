@@ -849,6 +849,37 @@ int Natpmp_TestHook_Ladder(const int** out_steps_ms) {
     return NP_LADDER_STEPS;
 }
 
+/* The three arithmetic helpers are defined further down, next to the code
+ * that uses them; the hooks below FORWARD to them rather than reimplement
+ * anything, which is the only thing that makes the hooks worth having, so
+ * declare them here. */
+static int np_remaining_ms(uint64_t deadline_ms, uint64_t now_ms);
+static uint64_t np_step_deadline(uint64_t phase_deadline_ms, int step,
+                                 bool suppress_retransmit, uint64_t now_ms);
+static uint64_t np_phase_deadline(uint64_t overall_deadline_ms, uint64_t now_ms);
+
+/* Task #132 P2: the deadline arithmetic, reachable without a clock.
+ *
+ * These forward straight to the production functions — they do not
+ * reimplement anything, which is the only thing that makes them worth
+ * having. A test can then sweep the cases wall clock cannot produce on
+ * demand: a deadline already in the past, the 2000000000 ms clamp, a
+ * phase ceiling that truncates a rung, and a suppressed rung that must
+ * inherit the whole phase. */
+int Natpmp_TestHook_RemainingMs(uint64_t deadline_ms, uint64_t now_ms) {
+    return np_remaining_ms(deadline_ms, now_ms);
+}
+
+uint64_t Natpmp_TestHook_StepDeadline(uint64_t phase_deadline_ms, int step,
+                                      bool suppress_retransmit, uint64_t now_ms) {
+    return np_step_deadline(phase_deadline_ms, step, suppress_retransmit, now_ms);
+}
+
+uint64_t Natpmp_TestHook_PhaseDeadline(uint64_t overall_deadline_ms,
+                                       uint64_t now_ms) {
+    return np_phase_deadline(overall_deadline_ms, now_ms);
+}
+
 int Natpmp_TestHook_PhaseBudgetMs(void) {
     return np_phase_budget_ms();
 }
@@ -870,13 +901,44 @@ typedef enum {
 
 typedef NatpmpParse (*NpParseFn)(const uint8_t* buf, int len, void* ctx);
 
-static int np_remaining_ms(uint64_t deadline_ms) {
-    const uint64_t now = SDL_GetTicks();
-    if (now >= deadline_ms) {
+/* Task #132 P2: the timeout math takes the clock, it does not read it.
+ *
+ * Every function below used to call SDL_GetTicks() itself, which meant
+ * the only way to test the arithmetic was to let real time pass — so the
+ * natpmp tests that exist assert elapsed wall clock and cost seconds
+ * each. Worse, elapsed-time assertions cannot tell a 3-rung ladder from a
+ * 9-rung one, because the phase budget clamps both to the same wall
+ * clock; that is exactly how a restored nine-rung ladder once survived
+ * the suite. With `now_ms` supplied, the deadline arithmetic is a pure
+ * function of two integers and is pinned exhaustively in
+ * test_netplay_units.c, in microseconds, including the cases real time
+ * cannot reach on demand (an already-expired deadline, the
+ * 2000000000 ms clamp, a deadline that arrives mid-ladder).
+ *
+ * The callers still read the clock — this is a testability seam, not a
+ * virtual clock. */
+static int np_remaining_ms(uint64_t deadline_ms, uint64_t now_ms) {
+    if (now_ms >= deadline_ms) {
         return 0;
     }
-    const uint64_t left = deadline_ms - now;
+    const uint64_t left = deadline_ms - now_ms;
     return left > 2000000000u ? 2000000000 : (int)left;
+}
+
+/* The per-rung deadline: `now` plus this rung's ladder interval, never
+ * past the phase's own ceiling. A rung whose retransmit is suppressed
+ * (the gateway has already proven itself alive) waits out the whole
+ * remaining phase in one go instead. */
+static uint64_t np_step_deadline(uint64_t phase_deadline_ms, int step,
+                                 bool suppress_retransmit, uint64_t now_ms) {
+    if (suppress_retransmit) {
+        return phase_deadline_ms;
+    }
+    if (step < 0 || step >= NP_LADDER_STEPS) {
+        return phase_deadline_ms;
+    }
+    const uint64_t d = now_ms + (uint64_t)k_ladder_ms[step];
+    return d > phase_deadline_ms ? phase_deadline_ms : d;
 }
 
 /* Send `req`, then wait for an answer we accept, retransmitting on the
@@ -919,7 +981,7 @@ static NpTxOutcome np_transact(np_sock_t sock, const uint8_t* req, int req_len,
                                NatpmpParse* out_verdict, bool* io_gw_alive) {
     bool sent_once = false;
     for (int step = 0; step < NP_LADDER_STEPS; step++) {
-        if (np_remaining_ms(deadline_ms) <= 0) {
+        if (np_remaining_ms(deadline_ms, SDL_GetTicks()) <= 0) {
             return NP_TX_TIMEOUT;
         }
         const bool suppress_retransmit =
@@ -944,15 +1006,11 @@ static NpTxOutcome np_transact(np_sock_t sock, const uint8_t* req, int req_len,
 
         /* A suppressed rung waits out the WHOLE remaining phase in one
          * go, so the loop makes at most one more pass after it. */
-        uint64_t step_deadline =
-            suppress_retransmit ? deadline_ms
-                                : SDL_GetTicks() + (uint64_t)k_ladder_ms[step];
-        if (step_deadline > deadline_ms) {
-            step_deadline = deadline_ms;
-        }
+        const uint64_t step_deadline = np_step_deadline(
+            deadline_ms, step, suppress_retransmit, SDL_GetTicks());
 
         for (;;) {
-            const int wait_ms = np_remaining_ms(step_deadline);
+            const int wait_ms = np_remaining_ms(step_deadline, SDL_GetTicks());
             if (wait_ms <= 0) {
                 break; /* retransmit (or fall out of the ladder) */
             }
@@ -1095,8 +1153,8 @@ static np_sock_t open_gateway_socket(const char* gw_ip, uint16_t gw_port,
 /* A fresh ladder budget for the phase starting NOW, never past the
  * caller's overall ceiling. Review H-6: taken per phase, at phase start,
  * so a slow-but-answering gateway cannot let one phase eat another's. */
-static uint64_t np_phase_deadline(uint64_t overall_deadline_ms) {
-    const uint64_t d = SDL_GetTicks() + (uint64_t)np_phase_budget_ms();
+static uint64_t np_phase_deadline(uint64_t overall_deadline_ms, uint64_t now_ms) {
+    const uint64_t d = now_ms + (uint64_t)np_phase_budget_ms();
     return d > overall_deadline_ms ? overall_deadline_ms : d;
 }
 
@@ -1185,7 +1243,7 @@ bool Natpmp_AddMapping(UpnpMapping* out, uint16_t internal_port,
                                       NATPMP_LEASE_SECONDS);
             NatpmpParse verdict = NATPMP_PARSE_NOT_OURS;
             const NpTxOutcome tx = np_transact(sock, req, (int)sizeof(req),
-                                               np_phase_deadline(overall_deadline_ms),
+                                               np_phase_deadline(overall_deadline_ms, SDL_GetTicks()),
                                                pcp_parse_cb, &ctx, &verdict, &gw_alive);
             if (tx == NP_TX_ANSWERED && verdict == NATPMP_PARSE_OK &&
                 ctx.map.external_ip_be != 0) {
@@ -1249,7 +1307,7 @@ bool Natpmp_AddMapping(UpnpMapping* out, uint16_t internal_port,
         Natpmp_BuildPmpAddrRequest(areq);
         NatpmpParse averdict = NATPMP_PARSE_NOT_OURS;
         const NpTxOutcome atx = np_transact(sock, areq, (int)sizeof(areq),
-                                            np_phase_deadline(overall_deadline_ms),
+                                            np_phase_deadline(overall_deadline_ms, SDL_GetTicks()),
                                             pmp_addr_parse_cb, &actx, &averdict,
                                             &gw_alive);
         if (atx == NP_TX_ANSWERED && averdict == NATPMP_PARSE_OK &&
@@ -1282,7 +1340,7 @@ bool Natpmp_AddMapping(UpnpMapping* out, uint16_t internal_port,
                                       suggested_external, NATPMP_LEASE_SECONDS);
             NatpmpParse mverdict = NATPMP_PARSE_NOT_OURS;
             const NpTxOutcome mtx = np_transact(sock, mreq, (int)sizeof(mreq),
-                                                np_phase_deadline(overall_deadline_ms),
+                                                np_phase_deadline(overall_deadline_ms, SDL_GetTicks()),
                                                 pmp_map_parse_cb, &mctx, &mverdict,
                                                 &gw_alive);
             if (mtx == NP_TX_ANSWERED && mverdict == NATPMP_PARSE_OK &&

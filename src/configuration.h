@@ -214,6 +214,14 @@ typedef struct Configuration {
      * gated by ENABLE_NETPLAY=ON && ENABLE_NETPLAY_TESTS, otherwise the
      * stub returns 2. Pure in-process — no GekkoNet session required. */
     bool test_sparse_effect_save;
+    /* Task #132 priority 3: the fast netplay unit harness
+     * (src/netplay/test_netplay_units.c). Honors --test-netplay-units.
+     * Everything it asserts used to live in test_bilateral_punch.c behind
+     * scenario tests that open sockets and sleep; the blocks are pure, so
+     * they were moved somewhere that finishes in milliseconds. Parsed
+     * unconditionally; the real body is gated by ENABLE_NETPLAY=ON &&
+     * ENABLE_NETPLAY_TESTS, otherwise the stub returns 2. */
+    bool test_netplay_units;
     /* Step 6 of docs/plan-bilateral-hole-punch.md: when true, main() runs
      * the bilateral hole-punch test harness and exits. Honors the CLI flag
      * --test-bilateral-punch. Parsed unconditionally; the real test body

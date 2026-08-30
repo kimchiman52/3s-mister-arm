@@ -10,16 +10,41 @@
 
 static char* pref_path = NULL;
 
-#if defined(PORT_MISTER) || defined(PORT_MIYOO_MINI_PLUS)
 static bool has_trailing_slash(const char* path) {
     const size_t len = SDL_strlen(path);
     return len > 0 && path[len - 1] == '/';
 }
-#endif
 
+/*
+ * THIRDSARM_HOME is honoured on EVERY port, not just the embedded ones
+ * (task #125).
+ *
+ * It used to be MiSTer/Miyoo-only, and on the desktop/host build there was
+ * no way at all to move this directory: SDL_GetPrefPath resolves through
+ * the platform's own API, and on macOS that is
+ * NSApplicationSupportDirectory, which ignores $HOME (measured: running
+ * a harness with HOME=/tmp/fakehome1 still wrote to
+ * ~/Library/Application Support/CrowdedStreet/3S-ARM/). So two host
+ * processes could not be given separate state even in principle.
+ *
+ * That is what made #125 possible. Concurrent gate runs shared ONE logs
+ * directory, and the netplay session log is named netplay-<utc_ms>.log,
+ * so processes that started in the same millisecond opened the SAME FILE
+ * and interleaved writes into it. Measured, 4 concurrent
+ * --test-connect-observability runs: three of them opened
+ * netplay-1788111677761.log, and all three then validated against
+ * netplay-1788111677763.log (a fourth process's file) because the harness
+ * picked "the newest log in the directory". Symptoms: "800 of 800 MT
+ * lines missing or torn" and "session file grew AFTER the TRUNCATED
+ * marker".
+ *
+ * With the override universal, tools/gates/run-gates.sh hands every
+ * harness invocation a private home and the sharing is gone by
+ * construction — logs, config, keymap, the tester report, and the #44
+ * prune all become per-process.
+ */
 const char* Paths_GetPrefPath() {
     if (pref_path == NULL) {
-#if defined(PORT_MISTER) || defined(PORT_MIYOO_MINI_PLUS)
         const char* override = getenv("THIRDSARM_HOME");
 
         if (override != NULL && override[0] != '\0') {
@@ -28,18 +53,18 @@ const char* Paths_GetPrefPath() {
             } else {
                 SDL_asprintf(&pref_path, "%s/", override);
             }
+            SDL_CreateDirectory(pref_path);
         } else {
 #if defined(PORT_MISTER)
             pref_path = SDL_strdup("/media/fat/games/3s-arm/");
-#else
+            SDL_CreateDirectory(pref_path);
+#elif defined(PORT_MIYOO_MINI_PLUS)
             pref_path = SDL_strdup("/mnt/SDCARD/Roms/PORTS/Games/3s-arm/");
+            SDL_CreateDirectory(pref_path);
+#else
+            pref_path = SDL_GetPrefPath(ORG, APP);
 #endif
         }
-
-        SDL_CreateDirectory(pref_path);
-#else
-        pref_path = SDL_GetPrefPath(ORG, APP);
-#endif
     }
 
     return pref_path;

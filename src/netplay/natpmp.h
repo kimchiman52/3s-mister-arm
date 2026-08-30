@@ -368,6 +368,17 @@ int Natpmp_TestHook_Ladder(const int** out_steps_ms);
 
 /** The per-phase budget natpmp.c actually derives from that ladder. */
 int Natpmp_TestHook_PhaseBudgetMs(void);
+
+/* Task #132 P2: the timeout arithmetic without the clock. `now_ms` is
+ * supplied by the caller, so the whole deadline cascade is a pure
+ * function of integers and can be swept in microseconds instead of
+ * asserted through elapsed wall clock (which cannot distinguish a
+ * 3-rung ladder from a 9-rung one — the phase budget clamps both). */
+int Natpmp_TestHook_RemainingMs(uint64_t deadline_ms, uint64_t now_ms);
+uint64_t Natpmp_TestHook_StepDeadline(uint64_t phase_deadline_ms, int step,
+                                      bool suppress_retransmit, uint64_t now_ms);
+uint64_t Natpmp_TestHook_PhaseDeadline(uint64_t overall_deadline_ms,
+                                       uint64_t now_ms);
 #endif /* NETPLAY_TEST_HOOKS */
 
 #ifdef __cplusplus
