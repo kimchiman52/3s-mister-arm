@@ -7,7 +7,7 @@
  * code.
  *
  * WARNING: This layout must match SDL3_Net's internal struct.  Our
- * SDL3_Net pin is ref 92022dc (see build-deps.sh:253).  If the pin is
+ * SDL3_Net pin is SDL3_NET_REF="92022dc" (build-deps.sh:812).  If it is
  * ever bumped, re-run the Step 1 verification recipe from
  * docs/plan-stun-direct-p2p.md:
  *

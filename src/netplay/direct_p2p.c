@@ -335,11 +335,11 @@ static UpnpMapping s_upnp_mapping = { 0 };
  * IGD:
  *   - the UPnP half: upnpDiscover(UPNP_DISCOVER_TIMEOUT_MS=2000) costs
  *     8033 ms with miniupnpc 2.2.1 (MINIUPNPC_API_VERSION 17 — the
- *     libminiupnpc.so.17 CMakeLists.txt:651 ships to the MiSTer), and
- *     8008 ms with 2.3.3. It is NOT one 2000 ms wait; miniupnpc walks a
- *     device-type list and waits the timeout per search target. Note
- *     this already exceeds UPNP_PROBE_BUDGET_MS, which is a nominal
- *     share and not enforced anywhere.
+ *     libminiupnpc.so.17 that the MINIUPNPC_LIBRARY_DIRS install block,
+ *     CMakeLists.txt:752, ships to the MiSTer), and 8008 ms with 2.3.3.
+ *     It is NOT one 2000 ms wait; miniupnpc walks a device-type list and
+ *     waits the timeout per search target. Note this already exceeds
+ *     UPNP_PROBE_BUDGET_MS, a nominal share not enforced anywhere.
  *   - the NAT-PMP half: a wholly silent gateway costs 3510 ms, exactly
  *     the two phases natpmp.h documents.
  * 8033 + 3510 = 11543 > PORTMAP_PROBE_BUDGET_MS (11250), so the outer
@@ -4153,10 +4153,10 @@ static DirectP2PState join_attempt(uint16_t bind_port) {
      * s_work.advertised_port, which differs whenever UPnP maps an
      * external port the STUN probe never saw."
      *
-     * The rendezvous server does not route on this field at all. It reads
-     * it, compares it to the observed source port, WARNS on a mismatch,
-     * and then stores the OBSERVED tuple as the slot endpoint
-     * (rendezvous-server.js:689-694). So substituting the mapped port
+     * The rendezvous server does not route on this field at all. It reads it,
+     * compares it to the observed source port, WARNS on a mismatch (the
+     * `my_public_port` warn in handleRegister, rendezvous-server.js:1250), and
+     * stores the OBSERVED tuple as the slot endpoint. So substituting the mapped port
      * changes nothing the host aims at, and instead makes every REGISTER
      * of a mapped joiner trip an unthrottled server-side warning — at the
      * race's REGISTER cadence, a steady log stream on a shared server,

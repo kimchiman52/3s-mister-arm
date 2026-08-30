@@ -720,16 +720,27 @@ typedef struct GameState {
     s32 Y_Adjust_Buff[3];
 
     /* EX-SA chain-ex gating flag. Per-player-per-gauge-index flag set when
-     * an EX-SA chain fires (pls03.c:169,211,276) and cleared on many SA
-     * state transitions (plcnt.c:1418, called from ~20 sites in pls00.c).
+     * an EX-SA chain fires. Nine `chainex_check[...] = 1` writes, all in
+     * pls03.c: two in check_full_gauge_attack (pls03.c:49), two in
+     * check_full_gauge_attack2 (pls03.c:218), two in
+     * check_super_arts_attack_dc (pls03.c:411), three in
+     * check_special_attack (pls03.c:676). Cleared wholesale by
+     * clear_chainex_check (plcnt.c:1438), which 14 sites call: ten in
+     * pls00.c, plus plpat.c:85, plpcu.c:52, plpdm.c:195, plpnm.c:87.
+     * All nine writes now sit inside `if (!ArcadeBalance_IsEnabled())`, and
+     * netplay arms only in verified-arcade state (Netplay_ArmAllowed,
+     * netplay.h:115), so in a netplay session this field is provably
+     * all-zero; the coverage earns its keep for the PS2-balance runs the
+     * rollback harness exercises (ArcadeBalance_Init pins PS2 under
+     * --test-enable, arcade_balance.c:112).
      * Previously a file-static in sysdir.c that escaped rollback, causing
      * desync on Mac↔Mac loopback + latency after ~15s of play. Added to
      * GameState on 2026-04-24 so save/restore covers it. */
     u8 chainex_check[2][36];
 
-    /* Char-select "Color 7" chord accumulator. Per-player u16 in sel_pl.c
-     * (screen/sel_pl.c:134) accumulated across frames while a color-select
-     * button chord is held, then READ to commit the chosen color. Previously
+    /* Char-select "Color 7" chord accumulator. Per-player u16 Color7 at
+     * src/sf33rd/Source/Game/screen/sel_pl.c:162, accumulated across frames
+     * (:1047, :1054), then READ to commit the chosen color (:1057). Previously
      * a plain cross-frame global that escaped rollback, so a rollback
      * straddling the accumulate->commit window re-derived the color against
      * a stale value and desynced color selection between peers on the

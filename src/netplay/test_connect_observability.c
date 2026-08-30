@@ -298,7 +298,7 @@ static int obs_server_thread(void* arg) {
         size_t reply_len;
         if (ctx->mode == OBS_REPLY_NACK) {
             /* #122. Byte-for-byte encodeNack() from
-             * tools/rendezvous-server/rendezvous-server.js:693-705, built
+             * tools/rendezvous-server/rendezvous-server.js:856, built
              * here rather than through any client helper because the
              * client HAS no NACK encoder — only the server emits one, and
              * a mock that shared code with the parser would be testing

@@ -82,10 +82,10 @@
  *   inside the token's trust boundary. Nothing downstream narrows it
  *   either — the MIST compat gate (classify_peer_payload,
  *   mist_handshake.c:314) checks only build/ROM constants (arch tag,
- *   platform tag, proto_ver, state_ver, and the ROM-derived balance
- *   digest, arcade_balance.c:152 / :179; build_hash is a warning, never a
- *   reject), and GekkoNet authenticates nothing beyond the address string
- *   the adapter already rewrote (sdl_net_adapter.c:288-290, :405).
+ *   platform tag, proto_ver, state_ver, and the ROM balance digest
+ *   (ArcadeBalance_Init sets it, arcade_balance.c:112; ArcadeBalance_GetDigest
+ *   reads it, :221; build_hash warns, never rejects), and GekkoNet trusts only
+ *   the address the adapter already rewrote (sdl_net_adapter.c:288-290, :405).
  *
  * SO WHAT #133 CHANGED. Pre-#133 a single token-valid datagram from a new
  * port WAS the relearn: send it and every outbound session datagram

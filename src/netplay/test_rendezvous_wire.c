@@ -115,7 +115,7 @@ static void check_eq_str(const char* tag, const char* got, const char* want,
  * the tree, and that is the point: rendezvous.c has no NACK encoder (only
  * the server emits one), so a helper that shared code with the parser
  * would be testing the parser against itself. These bytes mirror
- * encodeNack() in tools/rendezvous-server/rendezvous-server.js:693-705 —
+ * encodeNack() in tools/rendezvous-server/rendezvous-server.js:856 —
  * magic, version, type, reason, one reserved byte, the sender's own
  * 16-byte session key at [8..24], and a zero 4-byte tail. */
 

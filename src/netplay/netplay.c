@@ -2635,9 +2635,9 @@ void Netplay_Run() {
         // whose own switch(Mode_Type) explicitly handles MODE_NETWORK via
         // the VS_Result menu screen, game.c ~774-798) and never
         // G_No[1]=4 (Game04, the arcade-only continue-screen flow that is
-        // the only route to Game07/Game08, the sole two G_No[1]=6/Game06
-        // writers, game.c:1251/1296). Game_Manage_10th's Check_Ending()
-        // call is also unreachable for netplay for the same reason
+        // the only route to Game07/Game08, the sole two writers of
+        // `G_No[1] = 6`, game.c:1272 and :1317). Game_Manage_10th's
+        // Check_Ending() call is unreachable for netplay, same reason
         // (Play_Type==1, forced by both wu_operator being set, short-
         // circuits it at manage.c:1202 before it can route to Game08
         // either).

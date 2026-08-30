@@ -28,7 +28,7 @@
  *      at which point the cadenced keepalive would have sent one anyway:
  *        - a valid-token punch from a FOREIGN IP must not schedule an
  *          answer (answering hands a replayer a confirmation oracle —
- *          late_punch.c:116-123 says so, and nothing enforced it);
+ *          s_peer_ip compare at late_punch.c:280 says so, unenforced);
  *        - at the relearn cap the refused move must change NOTHING, and
  *          in particular the send target must stay the LEARNED endpoint
  *          rather than following the datagram's source;
@@ -560,11 +560,11 @@ static void test4_foreign_ip_no_answer(void) {
     arm_fresh(tag);
 
     /* Consumed — it is punch-shaped, so it must never reach GekkoNet —
-     * but nothing else may move. late_punch.c:116-123: "No answer either
-     * way: answering would hand a replayer a confirmation oracle."
-     * test_late_punch.c's A5 case cannot see this: it observes the send
-     * side two full cadence intervals later, by which time the ordinary
-     * keepalive has fired regardless. */
+     * but nothing else may move. The s_peer_ip compare at
+     * late_punch.c:280: "No answer either way: answering would hand a
+     * replayer a confirmation oracle." test_late_punch.c's A5 case
+     * cannot see this: it observes the send side two full cadence
+     * intervals later, by which time the ordinary keepalive has fired. */
     CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
                                         "203.0.113.7", 4444));
     {
