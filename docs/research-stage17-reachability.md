@@ -193,9 +193,13 @@ const s8 Face_Cursor_Data[3][8] = {
 Row 1 column 4 = 17 = `CHAR_Q`. Row 1 column 3 = 15 = `CHAR_CHUNLI`. Q is
 immediately to the right of Chun in the grid — easy pick.
 
-Default cursor positions (init3rd.c:110-113):
-- P0 → `[0][1]` = `CHAR_ALEX` (id 1)
-- P1 → `[2][5]` = `CHAR_KEN` (id 11)
+Default cursor positions — the `cursor_infor[n].first_x` / `first_y` writes at
+init3rd.c:109-112, copied into `Cursor_X` / `Cursor_Y` at sys_sub.c:203-207 and
+indexed as `Face_Cursor_Data[Cursor_Y][Cursor_X]` (sel_pl.c:1229):
+- P0 → x=1, y=0 → `[0][1]` = `CHAR_ALEX` (id 1)
+- P1 → x=5, y=2 → `[2][5]` = `CHAR_RYU` (id 2). (This bullet read
+  `CHAR_KEN` (id 11) until 2026-08-30: 11 is `[2][0]`, not `[2][5]`. The
+  conclusion below is unaffected — neither cell is 17.)
 
 So neither player starts on Q by default.
 
@@ -457,12 +461,13 @@ Champion and New_Challenger index the same slot.**
 
 Citations:
 - Logic: `src/sf33rd/Source/Game/screen/sel_pl.c:2013-2035`
-- Champion forced to 0 in netplay: `src/netplay/netplay.c:305`
+- Champion forced to 0 in netplay: `Champion = 0` at `src/netplay/netplay.c:1123`
 - New_Challenger never set in netplay: grep `New_Challenger` in
   `src/netplay/netplay.c` → empty; workuser.c:28 declares with no
   initialiser; all other writers only fire in arcade / training / replay
   paths (`entry.c:1326,1342,1355`, `menu.c:453,700`, `sys_sub.c:1196`).
-- Mode_Type in netplay: `src/netplay/netplay.c:205`, `src/netplay/netplay_nav.c:121`.
+- `Mode_Type = MODE_NETWORK` in netplay: `src/netplay/netplay.c:988`,
+  `src/netplay/netplay_nav.c:187`.
 - My_char assignment on ATTACKS press: `sel_pl.c:1156-1161`.
 - Face grid with Q at row 1 col 4: `src/sf33rd/Source/Game/screen/sel_data.c:8-10`.
 - bg_w.stage = Battle_Country: `sel_pl.c:1598`.

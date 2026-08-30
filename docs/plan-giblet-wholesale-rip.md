@@ -215,7 +215,7 @@ bool ArmDisplay_Init() {
 ```
 
 Add `DISPLAY_BACKEND_NATIVE_VIDEO_WRITER` to the
-`DisplayBackend` enum at giblet's `arm_display.c:43`. Update
+`DisplayBackend` enum (giblet's, now in-tree at `src/platform/app/arm/arm_display.c:99-104`). Update
 `Shutdown`, `GetResolution`, `Present`, and
 `ComputePresentRect` switches to handle the new case.
 
@@ -286,8 +286,8 @@ renderer:
 
 After the rip, none of them have an `SDL_Renderer*`. Everything
 draws into the SoftwareRenderer canvas via
-`SoftwareRenderer_DrawUIBitmap` (already in tree at
-`src/platform/video/software/software_renderer.h:25`):
+`SoftwareRenderer_DrawUIBitmap` (already in tree, but file-`static` at
+`src/platform/video/software/software_renderer.c:1665` — it has never been declared in `software_renderer.h`, so step one is to un-`static` it and export this signature):
 
 ```
 void SoftwareRenderer_DrawUIBitmap(float x, float y, float z,
@@ -572,7 +572,7 @@ between giblet's tree layout and ours):
 Our convention puts them under `include/`. Follow giblet's
 convention for these new directories — keep `arm_display.h` next to
 `arm_display.c`. The shared include paths already cover
-`src/` (current `CMakeLists.txt:46`-ish — verify) so
+`src/` (current `CMakeLists.txt:173-179`, the `include_directories(...)` block) so
 `#include "platform/app/arm/arm_display.h"` resolves.
 
 Modify:
@@ -763,8 +763,8 @@ target", not "design and swap simultaneously".
 
 #### Files to read before implementing
 
-- `src/platform/video/software/software_renderer.h:25` (the
-  `SoftwareRenderer_DrawUIBitmap` signature)
+- `src/platform/video/software/software_renderer.c:1665` (the
+  `SoftwareRenderer_DrawUIBitmap` signature — file-`static`, never declared in `software_renderer.h`)
 - `src/rendering/renderer.c:197-232` (the input-history-glyph
   caller — already a pattern for cached ARGB bitmaps fed through
   `SoftwareRenderer_DrawUIBitmap`)

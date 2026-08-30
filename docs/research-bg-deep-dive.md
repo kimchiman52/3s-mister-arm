@@ -731,7 +731,7 @@ src/sf33rd/Source/Game/screen/next_cpu.c:1132: Battle_Country = bg_w.stage = Deb
 src/sf33rd/Source/Game/screen/next_cpu.c:1140: Super_Arts[COM_id] = bg_w.stage = Debug_w[32] - 1;
 src/sf33rd/Source/Game/screen/next_cpu.c:1491: bg_w.stage = Bonus_Type;             (bonus stage; 20/21)
 src/sf33rd/Source/Game/demo/demo02.c:286:      bg_w.stage = Demo_Stage_Play_Data[Demo_Stage_Index][rnd];
-src/test/test_runner.c:1044:                  bg_w.stage = stage;
+src/test/test_runner.c:1163:                  bg_w.stage = stage;
 ```
 
 For netplay, the **arcade CPU-progression path** (`next_cpu.c:1113-1145`) is not exercised — that fires after a CPU-opponent win. Netplay has no CPU opponent; it uses the sel_pl.c path. `sel_pl.c:1582` uses the direct `Battle_Country` as just computed above — gives non-17. `sel_pl.c:1710` (`Exit_6th`) also uses Battle_Country directly. So **by static code inspection alone, netplay cannot reach stage 17 without a Debug override.**
@@ -843,7 +843,7 @@ Before `Bg_Texture_Load_EX` runs (via `bg_initialize`), `System_all_clear_Level_
 | `bg_index_tbl[17] = {4,4,4}` is the only non-identity row | **Very high** | Direct read of bg_data.c:537-541. Enumerated every row. |
 | `bg_w.scrno = use_real_scr[bg_w.bg_index]` → scrno=1 for stage 17 | **Very high** | bg_sub.c:1114 + use_real_scr[4]=1 |
 | Screen_Switch for stage 17 = 0x3 | **Very high** | Two code sites set bits 0,1 from stage_bgw_number[17]={1,2,0}; no code site clears bit 1 for stage 17. Log confirms. |
-| Layer 1 `scr_trans(1)` binds `ppgBgList[1]`, queries `ppgBgTex[1]` | **Very high** | bg.c:729; ppgCheckTextureNumber resolution at PPGFile.c:1860 |
+| Layer 1 `scr_trans(1)` binds `ppgBgList[1]`, queries `ppgBgTex[1]` | **Very high** | bg.c:729; `ppgCheckTextureNumber` resolves `tex = ppg_w.cur->tex` at PPGFile.c:1871 |
 | `ppgBgTex[1].be == 0` because j=1 never runs | **Very high** | bg.c:361 loop bound is bg_w.scrno=1; no other write site for ppgBgTex[1].be |
 | clear color is black → uncovered pixels appear black | **High** | sdl_game_renderer.c:9487-9494, default FrameClearColor |
 | Fix in §G resolves the black-BG INTERNAL STATE inconsistency | **Very high** | Eliminates the Screen_Switch bit 1 set, so scr_trans(1) never runs. |

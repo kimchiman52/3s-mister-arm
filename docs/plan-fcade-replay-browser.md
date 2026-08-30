@@ -292,7 +292,8 @@ defined go/no-go (§6, Step B3).
   (`src/platform/` contains only `app/` and `video/`), no
   `sdl_headless_app.c`. The fork app loop is `src/main.c`
   `game_step_0()` (:541) calling `TestRunner_Prologue()` at :578 when
-  `configuration.test.enabled` (CLI `--test-enable`, src/args.c:374).
+  `configuration.test.enabled` (CLI `--test-enable`, the
+  `OPT_BOOLEAN(0, "test-enable", ...)` entry at src/args.c:508).
 - Fork input injection: `TestRunner_Prologue` writes `p1sw_buff` /
   `p2sw_buff` directly (src/test/test_runner.c:1294-1475);
   `game_step_0` then latches `p1sw_0 = p1sw_buff` at src/main.c:596-597
@@ -399,8 +400,9 @@ defined go/no-go (§6, Step B3).
   `rendezvous-server.js`, `package.json`, systemd unit, `deploy.sh`),
   binary protocol REGISTER(28)/DELIVER(32)/POLL(28) with magic
   `0x33535852` (tools/rendezvous-server/__test_protocol.js:16);
-  live at `udp://46.62.244.55:3478` (config default,
-  src/port/config/config.c:85).
+  live at `udp://46.62.244.55:3478` (the
+  `CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL` default,
+  src/port/config/config.c:104).
 - `third_party/cJSON/{cJSON.c,cJSON.h}` is vendored but currently
   **unwired** (zero grep hits in CMakeLists.txt/build-deps.sh) —
   available for device-side JSON if wanted.
@@ -619,8 +621,9 @@ Debug config and THREESX_STATCHECK are selected.
 
 **Headless caveat (verified):** the fork's `--headless` flag is parsed
 but consumed by *nothing* — grep over `src/` hits only the
-configuration field (src/configuration.h:89) and the arg definition
-(src/args.c:220), zero readers — and the fork's main loop is real-time
+configuration field (`bool headless`, src/configuration.h:204) and the
+arg definition (`OPT_BOOLEAN(0, "headless", ...)`, src/args.c:298),
+zero readers — and the fork's main loop is real-time
 frame-paced (`target_frame_time_ns = 1e9/TARGET_FPS`,
 src/port/sdl/sdl_app.c:89). Upstream's statcheck loop is by contrast
 uncapped and render-free (sdl_headless_app.c:59-72). A STATCHECK build
@@ -923,7 +926,7 @@ runs take seconds instead of real-game minutes (§4.3 headless caveat).
 - Fork: `src/test/test_runner.c` (whole file — the phase machine you
   are mirroring), `src/test/test_runner_compare.c` (fork version +
   commit `a9a4c11c`), `src/test/test_runner_utils.{c,h}`,
-  `src/main.c:540-680`, `src/port/sdl/sdl_app.c` (frame pacing :90 and
+  `src/main.c` `game_step_0()` (:634-757), `src/port/sdl/sdl_app.c` (frame pacing :89 and
   the present path).
 - Upstream (via `git show upstream/main:`): `src/test/test_runner.c`,
   `src/test/test_runner_compare.c` (full — the compare set is richer
@@ -997,7 +1000,10 @@ arcade-layout words into `p1sw_buff` (see layout invariant above).
   inline citation comment — narrower compare beats no harness.
 - First-frame desync immediately after PHASE_GAME: check the two
   known alignment subtleties — `sync_values` must read frame
-  `start_index-1` (upstream test_runner.c:263-265) and inputs are the
+  `start_index-1` (upstream test_runner.c:272-273, the
+  `RamArchive_GetFrame(..., comparison_index - 1)` + `sync_values()`
+  pair in `PHASE_GAME_TRANSITION`; `comparison_index = game.start_index`
+  at :171) and inputs are the
   *latched previous frame* convention (better-replay-parsing
   replay_match.c:88-91). Compare against the fork's own working
   `initialize_data` flow before suspecting the engine. If inputs look
@@ -1250,7 +1256,8 @@ sc_sub.h:45, C1 module.
 
 **Create/modify:** in `src/replay/replay_player.c` +
 `src/replay/replay_overlay.c` (new): hold-START-to-exit (mirror the
-"Hold to Pause" UX the fork ships — OSD bit [24], menu.sv:284;
+"Hold to Pause" UX the fork ships — OSD bit [24], the
+`"P1O[24],Hold to Pause,Off,On;"` option row at menu.sv:322;
 engine-side hold detection on `p1sw_0`), status line during playback
 (players/date from `.meta.json` sidecar via cJSON — wire
 `third_party/cJSON/cJSON.c` into the build here, first use), robust
@@ -1703,8 +1710,9 @@ feedback-quartus-nohup/fast-build).
 
 **Create/modify:** `src/replay/replay_browser.c` (menu entry +
 delete/evict), `src/port/config/config.c` (keys), docs updates:
-`docs/config.md` for the new key(s) (`replays_max_mb` etc. —
-AGENTS.md:38) and `docs/mister-runbook.md` short section (replays
+`docs/config.md` for the new key(s) (`replays_max_mb` etc. — the
+"Load docs/config.md when changing config keys" rule, AGENTS.md:65)
+and `docs/mister-runbook.md` short section (replays
 dir, eviction, proxy config).
 
 **Success criteria:** fresh boot → title → REPLAYS → browse →

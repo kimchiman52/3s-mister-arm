@@ -250,7 +250,7 @@ Rename is tempting for clarity but blocks graceful degradation: a joiner with th
 
 ### 6. Config keys
 
-All new keys follow the existing `CFG_KEY_NETPLAY_DIRECT_P2P_*` and `netplay-direct-p2p-*` convention (see `src/port/config/config.h:29-33`).
+All new keys follow the existing `CFG_KEY_NETPLAY_DIRECT_P2P_*` and `netplay-direct-p2p-*` convention (the original Direct-P2P block, `CFG_KEY_NETPLAY_DIRECT_P2P_HOST_PORT` … `_STUN_TIMEOUT_MS`, `src/port/config/config.h:47-51`).
 
 ```c
 // src/port/config/config.h

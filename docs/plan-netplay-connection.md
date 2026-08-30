@@ -1101,7 +1101,8 @@ Why it went:
   Telia's `hls-*` (Helsinki) hops — i.e. Finland. A US–US pair falling
   through to it therefore pays ~229 ms end-to-end, **about 14 frames at
   60 fps**, against an `input_prediction_window` default of **8**
-  (`src/port/config/config.c:128`). The relay could not have been
+  (`CFG_KEY_NETPLAY_INPUT_PREDICTION_WINDOW`,
+  `src/port/config/config.c:130`). The relay could not have been
   covered by rollback prediction; it would have been visible as constant
   delay. For a parry-timing rollback game that is a different game, not
   a degraded one.
@@ -1981,9 +1982,13 @@ the neutralisation record.
 - **(L-4) The H-3 relay grace is suppressed in exactly the case it was
   written for — a slow relay.** The commit condition is
   `if (!grace_done && !budget_done) goto relay_grace_pending;`, with
-  `budget_done` computed at `direct_p2p.c:2221` and the deferral to
-  `relay_grace_pending` at `direct_p2p.c:2277` — the two bounds are
-  OR'd, so `budget_done` short-circuits the grace.
+  `budget_done` computed just above it and the deferral landing on the
+  `relay_grace_pending` label after the candidate loop — the two bounds
+  are OR'd, so `budget_done` short-circuits the grace.
+  *(No live citation: this whole block was deleted with the relay leg
+  in commit `2c63adc7`. At review time it sat at `direct_p2p.c` lines
+  2094/2096/2111 of that commit's parent; the current tree has nothing
+  related there — see the §8.10 "moot" banner above.)*
   A relay that becomes ready with less than `RACE_RELAY_GRACE_MS`
   (600 ms) left in the race budget therefore commits on the spot with no
   hold at all, which is the pre-H-3 behaviour and can still split the two

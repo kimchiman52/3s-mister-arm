@@ -39,8 +39,8 @@
 #      "%s<name>" with no slash after the %s. Paths_GetPrefPath() is
 #      normalised to a trailing slash (src/port/paths.c:26-30), so this is the
 #      codebase's spelling for "a path directly under the runtime root":
-#      "%straining" (training_config.c:133), "%sbalance.status"
-#      (arcade_balance.c:91), "%slogs" (sdl_app.c:668).
+#      "%straining" (training_config.c:157), "%sbalance.status"
+#      (arcade_balance.c:96), "%slogs" (sdl_app.c:668).
 #   B2. A line containing both Paths_GetPrefPath() and a "%s/<name>" literal.
 #      One call site composes with an explicit slash -- imgui_wrapper.c:78 --
 #      producing a harmless double slash before imgui.ini. Rule B1 cannot see

@@ -56,7 +56,8 @@ destroys every `Rendezvous_HasMagic` datagram before the late-punch call at
 `:387-389`, and `LatePunch_HandleDatagram` itself returns false for anything
 failing `Stun_HasPunchPrefix` (`src/netplay/late_punch.c:217-219`). A relearn
 requires an authenticated `3SX_PUNCH` datagram from the established peer IP on
-a new port (`late_punch.c:132-134`). Linking them would couple two counters
+a new port — the `Stun_IsPunchPayload` token / peer-IP / changed-port gate at
+`late_punch.c:271-304`. Linking them would couple two counters
 that share no state and no path.
 
 Coverage: `__test_protocol.js` 39 tests (was 36) — `liveHostSlotNotHijackable`,

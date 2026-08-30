@@ -45,7 +45,7 @@ back the call sites:
 4. `bg_w.bg_routine` is reset to 0 by `bg_work_clear()` at
    `src/sf33rd/Source/Game/stage/bg_sub.c:1050`, which is called once per
    match from `Game2_0` at `src/sf33rd/Source/Game/game.c:525`. Immediately
-   after, `TATE00()` runs (`game.c:528`) which dispatches to `ta0_init00`
+   after, `TATE00()` runs (`game.c:558`) which dispatches to `ta0_init00`
    (bg_routine==0) and increments `bg_routine` to 1 (`tate00.c:55`).
 5. On frame F+1 and later, `G_No[2] = 3` (set by `Game2_0` at `game.c:505`)
    so the Game02 dispatcher routes to `Game2_3` (`game.c:647`) which calls
@@ -640,9 +640,9 @@ During a normal match transition, the texture lifecycle is:
      - `ppgSetupCurrentDataList(&ppgBgList[stg])` (bg.c:316).
      - `ppgSetupTexChunk_1st(NULL, loadAdrs, loadSize, (stg*64)+0x84, 32, 0, 0)` (bg.c:317).
        Inside `_1st` (PPGFile.c:1256):
-       - `be==1` → hang (PPGFile.c:1248-1250). Safe assumption: be==0 on entry
+       - `be==1` → hang (PPGFile.c:1265-1267). Safe assumption: be==0 on entry
          because Bg_Close preceded us.
-       - Alloc `handle[]` for 32 slots, zero them (PPGFile.c:1270-1273).
+       - Alloc `handle[]` for 32 slots (PPGFile.c:1280), zero them (PPGFile.c:1287-1290).
        - Set `be = 1` (PPGFile.c:1321). **Handles all zero at this moment.**
      - Inner loop (bg.c:320-325): for each `i` in 0..31, if `tgbix & (1<<31-i)`:
        - `ppgSetupTexChunk_2nd(NULL, i + ((stg*64)+0x84))` (PPGFile.c:1364).
@@ -653,7 +653,7 @@ During a normal match transition, the texture lifecycle is:
          **This is the key idempotency guard.**
        - Otherwise: decompress pixel data, call `flCreateTextureHandle`,
          assign to `hnof->b16[0]` (PPGFile.c:1436).
-       - If `flCreateTextureHandle` returned 0 → hang (PPGFile.c:1439-1443).
+       - If `flCreateTextureHandle` returned 0 → hang (PPGFile.c:1456-1459).
 8. `ta0_init01` → `ta0_init02` → `ta0_move` progress `bg_routine` on subsequent
    frames. `Bg_Texture_Load_EX` is NOT called again this match (unless stage
    changes, which in netplay VS it does not).
@@ -684,7 +684,7 @@ The FAIL:handle=0 outcome is the "black tile" outcome.
 Confirmed via `src/netplay/game_state.h` and `src/netplay/game_state.c`
 GS_SAVE/GS_LOAD macro calls:
 
-- `bg_w` (game_state.h:533) — full BG work state. Contains `bg_routine`,
+- `bg_w` (`BG bg_w;`, game_state.h:545) — full BG work state. Contains `bg_routine`,
   `stage`, `area`, `scno`, `scrno`, per-layer scroll state.
   GS_SAVE/LOAD at `game_state.c:584` / `game_state.c:1273`.
 - `Screen_Switch`, `Screen_Switch_Buffer` — GS_SAVE at game_state.c:585-586.
@@ -737,7 +737,7 @@ The concrete shape of the gap:
      `bg_work_clear`, so on a resim starting at `bg_routine=0` where Game2_0
      as a whole is NOT re-entered (we're mid-Game2_0 already or mid-Game2_1
      with bg_routine somehow at 0), `_1st` is called with `be==1` from the
-     pre-existing state → `if (tch->be) while(1) {}` at PPGFile.c:1248-1250 —
+     pre-existing state → `if (tch->be) while(1) {}` at PPGFile.c:1265-1267 —
      **app hangs**. This is NOT the observed symptom, which means this path
      isn't the actual one that fires.
 
@@ -789,7 +789,7 @@ Scenario (C) is the most likely. Concretely:
    mid-match). Since no `Bg_Close` preceded THIS particular call path
    (bg_initialize at bg_sub.c:1119 calls Bg_Texture_Load_EX directly without
    a Bg_Close, unlike Game2_0 at game.c:452 which pairs them), **`_1st` entry
-   sees `be == 1`** → `while (1) {}` hang at PPGFile.c:1249.
+   sees `be == 1`** → `while (1) {}` hang at PPGFile.c:1266.
 
 Conclusion: the observed "partial load + no hang" symptom is NOT trivially
 explained by the call-graph as written. Scenario (C) as above would hang at
@@ -1113,7 +1113,7 @@ current line 269, before the `bgPalCodeOffset` initialization loop at line 271.
      * ppgSetupTexChunk_1st below always executes its full alloc+zero+set-be=1
      * sequence and the population loop always runs clean.
      *
-     * ppgReleaseTextureHandle is a no-op when be==0 already (PPGFile.c:1698),
+     * ppgReleaseTextureHandle is a no-op when be==0 already (PPGFile.c:1708-1710),
      * so the non-rollback path pays almost nothing — Bg_Close ran a few
      * function calls ago via System_all_clear_Level_B (game.c:452) on the
      * normal Game2_0 entry, leaving be==0. This guard is a safety net for
@@ -1479,7 +1479,7 @@ exercised.
 
 Single-line change. Compute `bg_w.scrno` from `bg_w.stage`, not from
 `bg_w.bg_index`, so it agrees with the stage-indexed tables that drive
-everything from `Screen_Switch` (`game.c:635`) through `bgtex_stage_gbix[]`
+everything from the `stage_bgw_number`→`Bg_On_R` loop that builds `Screen_Switch` (`game.c:663-667`) through `bgtex_stage_gbix[]`
 (`bg.c:362`).
 
 **File**: `src/sf33rd/Source/Game/stage/bg_sub.c`
@@ -1563,6 +1563,6 @@ Why not the alternatives:
 | `ta_move_tbl[17] = BG180` (stage 17 shares handler w/ 18) | `src/sf33rd/Source/Game/stage/tate00.c:33-34` |
 | `BG_Draw_System` walks `Screen_Switch_Buffer` bits | `src/sf33rd/Source/Game/system/sys_sub.c:927-939` |
 | `ppgCheckTextureNumber` be==0 fail branch | `src/sf33rd/Source/Common/PPGFile.c:1878` |
-| Netplay saves entire `bg_w` (incl. `scrno`) | `src/netplay/game_state.h:533`, `game_state.c:584/1273` |
+| Netplay saves entire `bg_w` (incl. `scrno`) | `BG bg_w;` at `src/netplay/game_state.h:545`; whole-struct save/restore of `bg_w` at `game_state.c:737` / `game_state.c:1459` |
 | `Setup_Battle_Country` net/arcade path returns challenger's char | `src/sf33rd/Source/Game/screen/sel_pl.c:2030-2034` |
 

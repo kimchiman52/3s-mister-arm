@@ -593,8 +593,10 @@ Cell colors: see [`frame_data_overlay.c:54-68`](../src/sf33rd/Source/Game/ui/fra
 
 ## 11. Visual rendering
 
-`fd_draw_meter_row()`
-([`frame_data_overlay.c:892-901`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c))
+`fd_submit_meter_row()` (renamed from `fd_draw_meter_row()` in
+`6590c818`, which replaced the per-cell rect prims with two cached
+bitmap strips)
+([`frame_data_overlay.c:2482`](../src/sf33rd/Source/Game/ui/frame_data_overlay.c))
 draws every cell-slot — even idle slots get the bg color so the bar
 has a continuous visible width, important on CRTs where a
 discontinuous bar looks broken.

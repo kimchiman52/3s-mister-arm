@@ -778,7 +778,8 @@ rollback risk here".
 2. **Its character-select coverage is 4× shallower than production.**
    Still true, and still deliberate — but no longer invisible or
    unreachable. `fast`/`thorough` run select at depth 2 while production
-   predicts 8 (`netplay.c:903-905`), the gate now *says so* in every
+   predicts 8 (`config.input_prediction_window`, defaulted and clamped at
+   `netplay.c:1500-1502`), the gate now *says so* in every
    summary line (`select_depth=2`), and `run.sh select` runs the
    production depth in one command. A green `fast` run understates
    select-phase risk specifically and says nothing about depths 3–8
@@ -1311,7 +1312,8 @@ edge can be observed is the one place this harness does not cover.
 and is not attributed to a sub-symbol here — `Candidate_Buff` itself is
 scratch that `Initialize_EM_Candidate` refills from the top on every
 call (`system/sys_sub.c:1714-1716`), and `EM_Candidate`, the thing
-derived from it, *is* saved (`game_state.c:435/1175`), so the live
+derived from it, *is* saved (`GS_SAVE(EM_Candidate)` at
+`game_state.c:451`, `GS_LOAD(EM_Candidate)` at `game_state.c:1190`), so the live
 suspect in that window is `Active_Wipe_Type` (`sys_sub.c:81/92`).
 Confirming which byte moves needs a narrower probe than a per-symbol
 hash.
