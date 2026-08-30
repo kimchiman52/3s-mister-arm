@@ -54,7 +54,7 @@ back the call sites:
 
 **Rollback consequence**: `bg_w.bg_routine` IS in the netplay save/restore
 surface (confirmed: `bg_w` is a whole-struct `GS_SAVE` at
-`src/netplay/game_state.c:584` and `GS_LOAD` at `src/netplay/game_state.c:1273`;
+`src/netplay/game_state.c:737` and `GS_LOAD(bg_w)` at `src/netplay/game_state.c:1459`;
 `bg_routine` is field 0 of the `BG` struct at
 `src/sf33rd/Source/Game/stage/bg.h:56`). A `GekkoLoadEvent` that restores the
 simulation to any frame where `bg_routine != 0` means the resim never
@@ -361,7 +361,7 @@ chunks whose GPU handles were freed; chunks that weren't freed — e.g.,
 **File 3**: None required. `GameState` does NOT change. `bg_w.scrno` is
 already rollback-covered (it's field 10 of the `BG` struct at
 `src/sf33rd/Source/Game/stage/bg.h:64`, so it's saved via
-`GS_SAVE(bg_w)` at `src/netplay/game_state.c:584`). No `EXPECTED_GAME_STATE_SIZE`
+`GS_SAVE(bg_w)` at `src/netplay/game_state.c:737`). No `EXPECTED_GAME_STATE_SIZE`
 bump. No new fields.
 
 ### Risk and verification for Fix E.3
@@ -686,7 +686,7 @@ GS_SAVE/GS_LOAD macro calls:
 
 - `bg_w` (`BG bg_w;`, game_state.h:545) — full BG work state. Contains `bg_routine`,
   `stage`, `area`, `scno`, `scrno`, per-layer scroll state.
-  GS_SAVE/LOAD at `game_state.c:584` / `game_state.c:1273`.
+  `GS_SAVE(bg_w)` / `GS_LOAD(bg_w)` at `game_state.c:737` / `game_state.c:1459`.
 - `Screen_Switch`, `Screen_Switch_Buffer` — GS_SAVE at game_state.c:585-586.
 - `bg_disp_off`, `tokusyu_stage`, `ending_flag`, `rw_*` state,
   `bgPalCodeOffset`, `rw_dat` — all saved/loaded (game_state.c:587-602).
@@ -1351,10 +1351,10 @@ future investigation:
 | `bg_initialize` `Bg_Texture_Load_EX` call | `src/sf33rd/Source/Game/stage/bg_sub.c:1118-1120` |
 | `bg_work_clear` sets bg_routine=0 | `src/sf33rd/Source/Game/stage/bg_sub.c:1047-1050` |
 | `GameState` struct | `src/netplay/game_state.h:29-717` |
-| `bg_w` in GameState | `src/netplay/game_state.h:533` |
-| `chainex_check` in GameState | `src/netplay/game_state.h:728` |
+| `bg_w` in GameState | `BG bg_w;`, `src/netplay/game_state.h:545` |
+| `chainex_check` in GameState | `u8 chainex_check[2][36]`, `src/netplay/game_state.h:739` |
 | `EXPECTED_GAME_STATE_SIZE` | `src/netplay/game_state.c:144` |
-| `GameState_Save` bg_w | `src/netplay/game_state.c:584` |
+| `GameState_Save` bg_w | `GS_SAVE(bg_w)`, `src/netplay/game_state.c:737` |
 | `GameState_Save` chainex_check extern | `src/netplay/game_state.c:761-766` |
 | `GameState_Load` chainex_check extern | `src/netplay/game_state.c:1450-1454` |
 | `save_state` (Gekko callback) | `src/netplay/game_state.c:1872` |
@@ -1509,7 +1509,8 @@ layer count must match the scroll-metadata table, which is per-`bg_index`.
 - All other stages: `bg_index_tbl[s] = {s,s,s}` identity (`bg_data.c:537-541`)
   → `use_real_scr[bg_index]` == `use_real_scr[stage]` → zero behavior change.
 - Netplay: `bg_w.scrno` is part of the `bg_w` struct saved by GameState
-  (`src/netplay/game_state.h:533`, `game_state.c:584/1273`). Both peers compute
+  (`BG bg_w;` at `src/netplay/game_state.h:545`; `GS_SAVE(bg_w)` `game_state.c:737` /
+  `GS_LOAD(bg_w)` `game_state.c:1459`). Both peers compute
   the same new value from the same `bg_w.stage`, so it is deterministic and
   rollback-safe.
 - Ending/bonus paths unaffected: `bg_w.scrno` is reassigned independently in
