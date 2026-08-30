@@ -7,7 +7,12 @@ live in the C client, and embeds them by file:line in a prose derivation:
 
     legit peak  = host 1 + 2 x N = 1 + 2 x 6            = 13/s
     per-key cap = RATE_LIMIT_PER_WINDOW + legit peak    => >= 23
-    ...the smallest integer k satisfying that is k = 3
+    ...the smallest integer k satisfying that is k = 3  => 30
+
+Both halves of that are enforced here: the absorption floor AND the
+integrality of k (task #131 -- enforcing only the former left every cap in
+[23, 29] passing while the server's stated 3:1 ratio and 1.5x under-attack
+headroom were false).
 
 The three inputs to that arithmetic are:
 
@@ -48,6 +53,7 @@ nothing is worse than no check).
 """
 
 import argparse
+import math
 import pathlib
 import re
 import sys
@@ -58,12 +64,30 @@ import sys
 # testKeyBudgetCoversMultiJoinerRoom applies on the JS side.
 REQUIRED_WINDOW_MS = 1000
 
-# Constraint 1 from the derivation: the per-key cap must be at least this
-# multiple of the per-IP cap. At k = 1 the per-key limiter adds ZERO attacker
-# cost over the per-IP limiter -- that IP is already admitted at the per-IP
-# rate -- while handing that one IP the power to drop every other frame on the
-# key, host liveness included. It stops being a defense and becomes a lockout
-# weapon.
+# Constraint 1 from the derivation: the per-key cap must be an INTEGER
+# multiple k of the per-IP cap, with k at least this. At k = 1 the per-key
+# limiter adds ZERO attacker cost over the per-IP limiter -- that IP is
+# already admitted at the per-IP rate -- while handing that one IP the power
+# to drop every other frame on the key, host liveness included. It stops being
+# a defense and becomes a lockout weapon.
+#
+# THE INTEGRALITY IS PART OF THE CONSTRAINT, NOT A ROUNDING CONVENIENCE
+# (task #131). This gate originally enforced the ratio as the LINEAR bound
+# `k * ip_cap`, which is weaker than the design it guards: with the shipped
+# values it required 23 while the server's derivation
+# (rendezvous-server.js, "Constraint 1"/"Constraint 2") states an integer
+# k >= 2 and therefore k = 3 => 30. Every cap in [23, 29] passed the gate
+# while making the server's own stated margins false -- at 23 the
+# under-attack headroom is 13 of 13, i.e. exactly zero, against the 1.5x
+# the derivation claims. The design is the authority and the gate was the
+# transcription that dropped a clause: this file's own docstring already
+# quotes "the smallest integer k satisfying that is k = 3", so the two
+# halves of THIS file disagreed too.
+#
+# The upper half of the same fence lives in __test_protocol.js
+# ("k = 3 is the SMALLEST integer factor", cap <= 3 x per-IP). With the
+# integrality enforced here the pair pins the cap to exactly 30 rather than
+# to a nine-wide band.
 MIN_KEY_TO_IP_RATIO = 2
 
 DEFAULT_SERVER_JS = "tools/rendezvous-server/rendezvous-server.js"
@@ -216,18 +240,21 @@ def main():
     joiner_per_sec = REQUIRED_WINDOW_MS / race_cadence_ms
     legit_peak = host_per_sec + dialers * joiner_per_sec
 
-    # Constraint 1: ratio to the per-IP cap.
-    ratio_floor = MIN_KEY_TO_IP_RATIO * ip_cap
     # Constraint 2: absorption. One saturating cookied IP must not be able to
     # break a legitimate full room, so the cap must cover the legitimate peak
     # ON TOP OF a per-IP budget already spent by an attacker.
     absorption_floor = ip_cap + legit_peak
-    required = max(ratio_floor, absorption_floor)
+    # Constraint 1: an INTEGER multiple of the per-IP cap, at least
+    # MIN_KEY_TO_IP_RATIO. Solve for the smallest k that satisfies both, which
+    # is what the derivation means by "the smallest integer k satisfying that".
+    k = max(MIN_KEY_TO_IP_RATIO, math.ceil(absorption_floor / ip_cap))
+    required = k * ip_cap
 
     print(f"[key-rate-budget] legit peak = host {host_per_sec:g}/s + "
           f"{dialers} x {joiner_per_sec:g}/s = {legit_peak:g}/s")
-    print(f"[key-rate-budget] required cap = max(ratio {ratio_floor:g}, "
-          f"absorption {absorption_floor:g}) = {required:g}/s; "
+    print(f"[key-rate-budget] required cap = k x per-IP with k = "
+          f"max({MIN_KEY_TO_IP_RATIO}, ceil({absorption_floor:g}/{ip_cap})) "
+          f"= {k}, so {k} x {ip_cap} = {required:g}/s; "
           f"deployed cap = {key_cap}/s")
 
     if key_cap < required:
@@ -236,9 +263,9 @@ def main():
             f"is below the {required:g}/s the CLIENT's own cadences now "
             f"require. A full {dialers}-dialer room peaks at {legit_peak:g}/s "
             f"legitimately; with one cookied IP saturating its {ip_cap}/s the "
-            f"room needs {absorption_floor:g}/s to keep pairing, and the ratio "
-            f"floor (>= {MIN_KEY_TO_IP_RATIO}x the per-IP cap) needs "
-            f"{ratio_floor:g}/s.\n"
+            f"room needs {absorption_floor:g}/s to keep pairing, so the "
+            f"smallest INTEGER multiple of the {ip_cap}/s per-IP cap that "
+            f"covers it is k = {k}, i.e. {required:g}/s.\n"
             f"[key-rate-budget] The server DEPLOYS SEPARATELY from the client, "
             f"so this is not a build break -- it is a room whose host liveness "
             f"REGISTERs get rate-dropped in production until SLOT_STALE_MS "
