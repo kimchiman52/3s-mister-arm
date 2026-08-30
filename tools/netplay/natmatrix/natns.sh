@@ -35,6 +35,18 @@ WAN="${NS_PREFIX}-wan"; SRV="${NS_PREFIX}-srv"
 ALL_NS=("$HA" "$NA" "$HB" "$NB" "$WAN" "$SRV")
 
 LAN_A="10.1.0"; LAN_B="10.2.0"
+# "none" = an OPEN host with no gateway at all. Such a host must be addressed
+# PUBLICLY, not out of RFC1918: the production client refuses to punch a peer
+# whose rendezvous-DELIVERed endpoint is private
+# (direct_p2p_is_lan_peer, src/netplay/direct_p2p.c:838; the host-side refusal
+# is at :4774-4777, "DELIVER peer is LAN (%s); staying HOST_WAITING"). With the
+# open side on 10.x.0.2 the guard fires and every <natted-host> x none cell
+# reads 0/N -- which measures the rig's ADDRESSING CHOICE, not the product.
+# Measured before this change: port-restricted x none 0/3 and symmetric x none
+# 0/3, both with the host log line above and the joiner never punched back.
+# 198.51.100.0/24 (TEST-NET-2) and 192.0.2.0/24 (TEST-NET-1) are public,
+# non-RFC1918, and distinct from the 203.0.113.0/24 (TEST-NET-3) WAN.
+OPEN_A="198.51.100"; OPEN_B="192.0.2"
 WAN_NET="203.0.113"
 EXT_A="${WAN_NET}.10"; EXT_B="${WAN_NET}.20"
 SRV_IP="${WAN_NET}.100"; SRV_IP2="${WAN_NET}.101"; SRV_IP3="${WAN_NET}.102"
@@ -187,6 +199,13 @@ up() {
     local typeA="$1" typeB="$2"
     down
 
+    # An un-NATted side keeps its own source address on the WAN, so that address
+    # has to be one a real peer could route to and one the client will accept as
+    # a peer. See the OPEN_A/OPEN_B note at the top of this file.
+    local lanA="$LAN_A" lanB="$LAN_B"
+    [ "$typeA" = none ] && lanA="$OPEN_A"
+    [ "$typeB" = none ] && lanB="$OPEN_B"
+
     for ns in "${ALL_NS[@]}"; do $SUDO ip netns add "$ns"; done
     for ns in "${ALL_NS[@]}"; do ipns "$ns" ip link set lo up; done
 
@@ -205,22 +224,22 @@ up() {
     done
 
     # Host A
-    ipns "$HA" ip addr add "${LAN_A}.2/24" dev hA0
+    ipns "$HA" ip addr add "${lanA}.2/24" dev hA0
     ipns "$HA" ip link set hA0 up
-    ipns "$HA" ip route add default via "${LAN_A}.1"
+    ipns "$HA" ip route add default via "${lanA}.1"
 
     # NAT A
-    ipns "$NA" ip addr add "${LAN_A}.1/24" dev nAi
+    ipns "$NA" ip addr add "${lanA}.1/24" dev nAi
     ipns "$NA" ip addr add "${EXT_A}/24" dev nAo
     ipns "$NA" ip link set nAi up; ipns "$NA" ip link set nAo up
 
     # Host B
-    ipns "$HB" ip addr add "${LAN_B}.2/24" dev hB0
+    ipns "$HB" ip addr add "${lanB}.2/24" dev hB0
     ipns "$HB" ip link set hB0 up
-    ipns "$HB" ip route add default via "${LAN_B}.1"
+    ipns "$HB" ip route add default via "${lanB}.1"
 
     # NAT B
-    ipns "$NB" ip addr add "${LAN_B}.1/24" dev nBi
+    ipns "$NB" ip addr add "${lanB}.1/24" dev nBi
     ipns "$NB" ip addr add "${EXT_B}/24" dev nBo
     ipns "$NB" ip link set nBi up; ipns "$NB" ip link set nBo up
 
@@ -237,16 +256,16 @@ up() {
     ipns "$SRV" ip link set srv0 up
 
     # Return routes for the un-NATted ("none" = open host) case. When a side runs
-    # no NAT its packets keep their private source address, so the WAN needs a way
-    # back. With a NAT installed nothing on the WAN ever addresses the private
-    # prefix, so these routes are inert -- they only make the "none" cell work.
-    ipns "$SRV" ip route add "${LAN_A}.0/24" via "$EXT_A"
-    ipns "$SRV" ip route add "${LAN_B}.0/24" via "$EXT_B"
-    ipns "$NA"  ip route add "${LAN_B}.0/24" via "$EXT_B"
-    ipns "$NB"  ip route add "${LAN_A}.0/24" via "$EXT_A"
+    # no NAT its packets keep their own source address, so the WAN needs a way
+    # back. With a NAT installed nothing on the WAN ever addresses that prefix,
+    # so these routes are inert -- they only make the "none" cell work.
+    ipns "$SRV" ip route add "${lanA}.0/24" via "$EXT_A"
+    ipns "$SRV" ip route add "${lanB}.0/24" via "$EXT_B"
+    ipns "$NA"  ip route add "${lanB}.0/24" via "$EXT_B"
+    ipns "$NB"  ip route add "${lanA}.0/24" via "$EXT_A"
 
-    apply_nat "$NA" nAo "$EXT_A" "${LAN_A}.2" "$typeA"
-    apply_nat "$NB" nBo "$EXT_B" "${LAN_B}.2" "$typeB"
+    apply_nat "$NA" nAo "$EXT_A" "${lanA}.2" "$typeA"
+    apply_nat "$NB" nBo "$EXT_B" "${lanB}.2" "$typeB"
 }
 
 # netem is installed on the NAT WAN-side egress, so delay/loss applies to the
@@ -358,6 +377,11 @@ portmap() { # portmap <A|B|both> <up|down> [extra natpmp_mock.py args...]
     fi
     local ns wif ext inner lan
     case "$side" in
+      # These are the NATTED prefixes on purpose. A side declared `none` has no
+      # NAT and is addressed out of OPEN_A/OPEN_B instead, so a port mapping on
+      # it would be meaningless -- there is nothing to map through. `portmap`
+      # is undefined for a `none` side and run_matrix.sh's JOINER_LAN_GW
+      # (10.2.0.1) assumes side B is natted, which every --natpmp-joiner cell is.
       A) ns="$NA"; wif=nAo; ext="$EXT_A"; inner="${LAN_A}.2"; lan="${LAN_A}.1" ;;
       B) ns="$NB"; wif=nBo; ext="$EXT_B"; inner="${LAN_B}.2"; lan="${LAN_B}.1" ;;
       *) echo "natns.sh portmap: side must be A|B|both" >&2; return 2 ;;
