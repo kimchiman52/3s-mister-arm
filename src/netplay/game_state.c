@@ -17,7 +17,6 @@
 #include "sf33rd/Source/Game/engine/spgauge.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include "sf33rd/Source/Game/rendering/color3rd.h"
-#include "sf33rd/Source/Game/select_timer.h"
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "sf33rd/Source/Game/stage/bg_data.h"
 #include "sf33rd/Source/Game/stage/ta_sub.h"
@@ -123,8 +122,26 @@
  * effl8_colorram[4][12] (u16) appended at the end of the struct grew this by
  * a clean +96: 4 rows x 12 u16 = 96 bytes of payload landing on the struct's
  * 4-byte alignment with no padding on either side. Re-measured with the same
- * probe: 'char[17784]'. 17688 + 96 = 17784. */
-#define EXPECTED_GAME_STATE_SIZE 17784
+ * probe: 'char[17784]'. 17688 + 96 = 17784.
+ *
+ * Task #109 removed select_timer_state (SelectTimerState, the last remaining
+ * user of src/sf33rd/Source/Game/select_timer.{c,h}). Upstream 33dfd75b
+ * (#216) had already moved the opponent-select countdown into effect A5 and
+ * deleted both the module and this GameState member; our a752e2ca omnibus
+ * squash re-added the module without any call site, so the member was saved
+ * and loaded as permanent zeros on every rollback frame. Removing it
+ * re-converges us with upstream. On ARM32 the member is 12 bytes
+ * (bool + 2 x s32, 4-byte aligned) sitting at offset 12, preceded by one
+ * pad byte after hoji_counter@10; dropping it lets u8 Order[148] start at
+ * offset 11, so 13 bytes go away and 1 byte of trailing realignment comes
+ * back -- net -12, which is why neither "-12 payload" nor "-13 including
+ * the pad byte" is the right answer on its own.
+ * Re-measured, not computed, with the same clang
+ * --target=arm-linux-gnueabihf redeclaration probe (`extern char
+ * probe[sizeof(GameState)]` vs `extern char probe[1]`), which reported
+ * 'char[17772]' after the change and reproduced 'char[17784]' on the
+ * pre-change header, validating the environment. 17784 - 12 = 17772. */
+#define EXPECTED_GAME_STATE_SIZE 17772
 #define EXPECTED_TASK_SIZE 16
 
 _Static_assert(sizeof(GameState) == EXPECTED_GAME_STATE_SIZE,
@@ -209,7 +226,6 @@ void GameState_Save(GameState* dst) {
     GS_SAVE(counter_color);
     GS_SAVE(mugen_flag);
     GS_SAVE(hoji_counter);
-    GS_SAVE(select_timer_state);
     GS_SAVE(Order);
     GS_SAVE(Order_Timer);
     GS_SAVE(Order_Dir);
@@ -949,7 +965,6 @@ void GameState_Load(const GameState* src) {
     GS_LOAD(counter_color);
     GS_LOAD(mugen_flag);
     GS_LOAD(hoji_counter);
-    GS_LOAD(select_timer_state);
     GS_LOAD(Order);
     GS_LOAD(Order_Timer);
     GS_LOAD(Order_Dir);

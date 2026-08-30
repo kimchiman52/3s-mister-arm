@@ -86,7 +86,7 @@ const u8 lpt_seldat[4] = { 3, 4, 5, 0 };
  *                 requests it enqueues in the same call. Every call site
  *                 reachable in MODE_NETWORK passes My_char[id] (sel_pl.c:790,
  *                 :996, win.c:178, menu.c:1571-1572, ranking.c:330-331), and
- *                 My_char is GS_SAVE'd (game_state.c:232/972). The one site
+ *                 My_char is GS_SAVE'd (game_state.c:247/986). The one site
  *                 that passes something else -- Push_LDREQ_Queue_Player(
  *                 COM_id, 17) at next_cpu.c:958 -- sits under Game05, entered
  *                 only from the `default:` arm of Game03's Mode_Type switch

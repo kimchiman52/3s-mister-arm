@@ -63,7 +63,7 @@ accounts for surface unaccounted there.
 - This macOS `fast` run reported `allowlisted=67`. **That field counts
   allowlisted *divergence rows* (symbol × scenario), not allowlist entries**
   — `n_allow` is incremented once per diverging symbol per scenario and
-  summed across scenarios (`check_rollback_determinism.py:660-671` and
+  summed across scenarios (`check_rollback_determinism.py:672-683` and
   `:698-702`).
 
 **A correction to the figures this document used to carry.** The earlier
@@ -1133,7 +1133,7 @@ side, in the `plt_req` entry of the disposition block at the top of
   only by `Push_LDREQ_Queue_Player` (`io/gd3rd.c:378`, write at `:386`), which sets it to
   the character whose requests it enqueues in the same call. Every call
   site reachable in `MODE_NETWORK` passes `My_char[id]`, which is saved
-  (`game_state.c:232/972`). Measured: `plt_req1` goes `0 -> 11` at frame
+  (`game_state.c:247/986`). Measured: `plt_req1` goes `0 -> 11` at frame
   **210** with no rollback and at frame **208** with rollback — same value,
   two frames early.
 - **Its only in-select reader cannot be dispatched inside the window.**

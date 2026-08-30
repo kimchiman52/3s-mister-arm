@@ -151,7 +151,7 @@ skipped. Branches B/C/D all apply.
 - No assignment to `New_Challenger` anywhere in the function. Confirmed by:
   `grep -n "New_Challenger" src/netplay/netplay.c` → empty output.
 
-`New_Challenger` is declared at `src/sf33rd/Source/Game/engine/workuser.c:28`
+`New_Challenger` is declared at `src/sf33rd/Source/Game/engine/workuser.c:26`
 as `s8 New_Challenger;` with no initialiser → BSS → 0 on boot.
 
 Other writers of `New_Challenger` that could fire before Exit_2nd in the
@@ -535,7 +535,7 @@ regardless of who picks Q, restoring the arcade invariant.
    starting state" block of `setup_vs_mode`. Adding one line next to it is
    consistent with surrounding code.
 2. `New_Challenger` is included in the `GameState` rollback snapshot
-   (`src/netplay/game_state.c:254, 994`). Writing before the first saved
+   (`src/netplay/game_state.c:269, 1008`). Writing before the first saved
    frame means both peers enter rollback-sync with the same NC value.
 3. The value `1` (not 0 or any runtime expression) guarantees Champion != NC
    regardless of peer identity.
