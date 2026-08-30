@@ -2,6 +2,74 @@
 Date: 2026-04-24
 Author: deep-investigation agent
 
+## STATUS 2026-08-30 — Candidate R2 re-audited: sound when written, never validated, now inert
+
+Read this before acting on anything below. The document's single most
+load-bearing conclusion is **Candidate R2 / Candidate 0a**: that
+`chainex_check[2][36]` escapes rollback and is the root of the frame-1274
+MiSTer↔MiSTer desync. Three things have happened to it since 2026-04-24.
+
+**1. The mechanism is real and the code is where the document says it is.**
+`u8 chainex_check[2][36]` is declared at
+`src/sf33rd/Source/Game/system/sysdir.c:12`. There are exactly nine
+speculative writes, all of the form `chainex_check[wk->wu.id][... - 20] = 1`,
+in four functions of `src/sf33rd/Source/Game/engine/pls03.c` —
+`check_full_gauge_attack`, `check_full_gauge_attack2`,
+`check_super_arts_attack_dc`, `check_special_attack` — and exactly eight
+gating reads in the same file, each guarded by
+`wk->spmv_ng_flag2 & DIP2_UNKNOWN_23` (or `DIP2_UNKNOWN_22`). Clearing is
+`clear_chainex_check` in `src/sf33rd/Source/Game/engine/plcnt.c:1438`.
+An earlier revision of this document placed the write "inside `pl_step_25`";
+**no function of that name has ever existed in this tree** (`git log --all -S
+pl_step_25` finds the identifier only in this document's own text). The names
+above are the real ones. §G.3's "16+ distinct write sites" is also an
+overcount — there are nine writes and eight reads.
+
+**2. The conclusion was never validated. It was skipped straight to the fix.**
+§G.1 proposed *detection first* — hash `chainex_check` without saving it, and
+read the answer off which way the desync frame moved (§G.2's three outcomes).
+That experiment was never run. What landed instead is §G.5, the fix:
+`chainex_check` is a `GameState` member (`src/netplay/game_state.h`, field
+`chainex_check`), copied in `GameState_Save` and restored in `GameState_Load`,
+and folded into the focused checksum in `save_current_state`
+(`src/netplay/game_state.c`). So **every "NOT in `GS_SAVE`" claim below is
+stale** — it has been saved since 2026-04-24. And because the discriminator
+was skipped, R2 was neither confirmed nor eliminated: no repro of the
+frame-1274 desync exists anywhere in this tree after the fix, and the string
+`1274` appears in no other file. The desync was closed by assertion, not by
+measurement.
+
+That matters because this document has a demonstrated miss of exactly this
+shape. **Candidate 0b exonerated `spmv_ng_save[2]` as "dead code"** on the
+grounds that `player_number == 16` is Chun-Li. `CPS3` is not defined in this
+build, so `constants.h` makes 16 Makoto — the code was live, and it was a real
+mid-battle desync, fixed months later in `9357ef6c`. The reasoning recorded in
+`src/netplay/game_state.h` beside the `spmv_ng_save` field. A hand
+risk-classification of 258 globals produced at least one confident false
+negative; treat its confident positive with the same suspicion.
+
+**3. In netplay the mechanism is now inert, for a reason unrelated to this
+investigation.** Upstream `4485a438` ("Statcheck: Fix arcade mode desync",
+#267, on this branch 2026-07-21) put **all nine** writes behind
+`if (!ArcadeBalance_IsEnabled())`. Netplay then became arcade-only:
+`Netplay_ArmAllowed` (`src/netplay/netplay.h`) gates every session entry path
+on verified-arcade balance, with `setup_vs_mode` (`src/netplay/netplay.c`)
+logging an error if a path reaches it without one. Under arcade balance
+nothing writes `chainex_check`, so in any netplay session it is provably an
+all-zero array and the eight gates never trip. The `GameState` coverage is not
+wasted — `ArcadeBalance_Init` pins PS2 for `--test-enable` runs, which is the
+balance the rollback-determinism harness exercises — but **R2 cannot be the
+cause of a netplay desync on this branch, and re-running §G.1 as written would
+now measure nothing.** Any repro attempt must force PS2 balance
+(`balance=ps2`) or it is testing dead code.
+
+**What this means for the reader.** §A's static sweep is cited by
+`docs/rollback-determinism-harness.md` as the method that harness exists to
+*replace*, not as a premise — nothing downstream is built on R2 being true.
+The line-number citations throughout the sections below were exact at
+2026-04-24 and have since moved; they are left as written rather than
+mass-repointed, per `AGENTS.md`. Prefer the symbol names in this block.
+
 ## Evidence summary
 
 1. **Desync at frame 1274** (~21s of play at 60fps) in a **MiSTer ↔ MiSTer** session. Both peers are armv7 32-bit, same binary from same commit. Log line:
@@ -178,7 +246,7 @@ Computed by set-difference of the non-const mutable globals in `src/sf33rd/Sourc
 | `omop_spmv_ng_table2[2]` (u32) | `sf33rd/Source/Game/engine/plcnt.c:98` | same | same | LOW (same gating) |
 | `grdb[2][2][2]` (s16) | `sf33rd/Source/Game/engine/hitcheck.c:32` | `hitcheck.c:43-44,48-49` via `make_red_blocking_time` | `hitcheck.c:1150,1206` | MEDIUM — written at stage/cmd init via `cmd_data_set` → `make_red_blocking_time`. Stable mid-battle if cmd init ran identically on both peers. |
 | `grdb2[2][2]` (s16) | `sf33rd/Source/Game/engine/hitcheck.c:33` | `hitcheck.c:53-54` | `hitcheck.c:1047` | MEDIUM — same |
-| `ca_check_flag` (s8) | `sf33rd/Source/Game/engine/hitcheck.c:38` | `plcnt.c:642` (`pli_1000`), `plcnt.c:1137` (`setup_settle_rno`); `plmain.c:1173,1191`; `plcnt2.c:109` | `hitcheck.c:64` | MEDIUM — toggled each sim tick based on player state. If PLW is synced, this derives deterministically. But rollback does NOT restore it from saved state (not in `GS_SAVE`), so speculative-sim residue persists unless re-computed next tick. Affects which hit-check branch runs per-tick. |
+| `ca_check_flag` (s8) | `sf33rd/Source/Game/engine/hitcheck.c:38` | `plcnt.c:642` (`pli_1000`), `plcnt.c:1137` (`setup_settle_rno`); `plmain.c:1173,1191`; `plcnt2.c:109` | `hitcheck.c:64` | MEDIUM — toggled each sim tick based on player state. If PLW is synced, this derives deterministically. But rollback did NOT restore it from saved state at the time of this audit (not in `GS_SAVE`; saved since `7e07db3f`), so speculative-sim residue persisted unless re-computed next tick. Affects which hit-check branch runs per-tick. |
 | `hs[32]`, `hpq_in`, `mkm_wk[32]`, `q_hit_push[32]` | `hitcheck.c:31,37,36,35` | `clear_hit_queue` at `hitcheck.c:1913-1916` each tick, + fills during `hit_push_request` / `attack_hit_check` | `hitcheck.c:82-227` during the same tick | LOW — cleared at end of each `hit_check_main_process` call (`hitcheck.c:74` → `clear_hit_queue`). Scratch buffer; no cross-tick residue. |
 | `cmd_id`, `cmd_tbl_ptr`, `sw_work`, `chk_pl`, `waza_type[2]`, `waza_ptr`, `cmd_pl` | `engine/cmd_data.c:13-19` | `cmd_main.c:26,34,77,101,106` (set at start of each player's `waza_check`/`key_thru`/`cmd_move`) | Read throughout `cmd_main.c:372-962` during the same call chain | LOW — all are scratch pointers/indices set at start of each invocation (`cmd_main.c:24-30,32-37,97-119`). Not persisted between calls in a semantically meaningful way. |
 | `bcdext` (s16) | `sf33rd/Source/Game/effect/effa5.c:16` | set to 0 at `effa5.c:71` before `sbcd()` call each tick | read in `sbcd()` at `effa5.c:20,30,32` | LOW — reset before each `sbcd` call; never read when `effect_A5_move` is not active (battle has no A5 effect). |
@@ -873,7 +941,7 @@ Under these filters, the previously top-ranked "GekkoNet budget exhaustion" drop
 
 **Rank: #1 actionable candidate under the rollback-axis framing (promoted from #2 under the 32-bit-axis framing).**
 
-- **Declaration**: `src/sf33rd/Source/Game/system/sysdir.c:12`. `u8 chainex_check[2][36]`. **NOT in `GS_SAVE` (confirmed: `grep 'GS_SAVE(chainex_check)' src/netplay/game_state.c` returns empty).**
+- **Declaration**: `src/sf33rd/Source/Game/system/sysdir.c:12`. `u8 chainex_check[2][36]`. **NOT in `GS_SAVE` as of 2026-04-24 — no longer true.** It is now a `GameState` member (`src/netplay/game_state.h`, field `chainex_check`), copied in `GameState_Save` and restored in `GameState_Load` (`src/netplay/game_state.c`). See the STATUS block at the top.
 - **Sim-path writes**: `src/sf33rd/Source/Game/engine/pls03.c:169,241,330,402,592,711,924,1023,1040` (sets `chainex_check[wk->wu.id][...-20] = 1` at six distinct EX-SA cancel/chain success branches).
 - **Sim-path reads**: `src/sf33rd/Source/Game/engine/pls03.c:122,194,283,355,521,640,845,943` (if set, inhibit further chain-ex attempt; skip writes to `wk->sa->...`, `wk->as`, `hissatsu_setup_union(wk, ...)`).
 - **Clear sites**: `src/sf33rd/Source/Game/engine/plcnt.c:1438-1444` (`clear_chainex_check(ix)`), called from at least `src/sf33rd/Source/Game/engine/pls00.c:795,805,855,897,963,980,990,1040,1082,1151`, `src/sf33rd/Source/Game/engine/plpdm.c:195`, `src/sf33rd/Source/Game/engine/plpnm.c:87`.
@@ -887,7 +955,7 @@ Under these filters, the previously top-ranked "GekkoNet budget exhaustion" drop
 
 **Rank: #2 actionable candidate.**
 
-- **Declaration**: `src/sf33rd/Source/Game/engine/hitcheck.c:39`. `s8 ca_check_flag`. **NOT in `GS_SAVE` (confirmed).**
+- **Declaration**: `src/sf33rd/Source/Game/engine/hitcheck.c:39`. `s8 ca_check_flag`. **NOT in `GS_SAVE` as of 2026-04-24 — no longer true.** Saved since `7e07db3f`; it is a `GameState` member (`src/netplay/game_state.h`, field `ca_check_flag`).
 - **Sim-path writes (transition-triggered)**: `src/sf33rd/Source/Game/game.c:554` (`Game2_0`), `:655` (`Game2_2`), `:1364` (`Game09`) (round-init, set to 1); `src/sf33rd/Source/Game/engine/plcnt.c:642` (`pli_1000` → set to 1 when both players' `routine_no[0]` reaches 3 and `Allow_a_battle_f` is set, i.e. entering "round start" state); `src/sf33rd/Source/Game/engine/plcnt.c:1137` (`setup_settle_rno` → cleared to 0 when a player dies); `src/sf33rd/Source/Game/engine/plcnt2.c:109` (set to 1 on round-start); `src/sf33rd/Source/Game/engine/plmain.c:1173,1191` (both in `check_omop_vital`: set to 1 when player_number==0 enters routine_no[1]==4, routine_no[2]==21; cleared to 0 when `vital_new < 0`).
 - **Sim-path reads**: `src/sf33rd/Source/Game/engine/hitcheck.c:63` — `if (ca_check_flag) catch_hit_check();` — gates a per-tick call to `catch_hit_check` which writes to PLW (`hs[].flag.results`, `wk->wu.dm_*`, etc. via `set_caught_status` at `hitcheck.c:87`).
 - **Filter 1 (rollback)**: passes. Written during specific PLW-transition events (entering routine_no[1]==4, player dies) and during round starts. Rollback does not restore; whatever value it had at the end of the speculative pass persists.
@@ -958,7 +1026,7 @@ A candidate that predicts only one peer goes black (asymmetric) is ruled out as 
 
 **Rank: #2** (previously #1).
 
-- **File:Line**: `src/sf33rd/Source/Game/system/sysdir.c:12` (decl); `engine/pls03.c:122,169,194,241,283,330,355,402,521,592,640,711,845,924,943,1023` (reads + writes); `engine/plcnt.c:1414-1420` (`clear_chainex_check`); `engine/pls00.c:795,805,855,897,963,980,990,1040,1082,1151`, `engine/plpdm.c:195`, `engine/plpnm.c:87` (clear sites). NOT in `GS_SAVE`.
+- **File:Line**: `src/sf33rd/Source/Game/system/sysdir.c:12` (decl); `engine/pls03.c:122,169,194,241,283,330,355,402,521,592,640,711,845,924,943,1023` (reads + writes); `engine/plcnt.c:1414-1420` (`clear_chainex_check`); `engine/pls00.c:795,805,855,897,963,980,990,1040,1082,1151`, `engine/plpdm.c:195`, `engine/plpnm.c:87` (clear sites). NOT in `GS_SAVE` **at the time of writing only** — now a `GameState` member, see the STATUS block at the top.
 - **Mechanism**: see §D.6.4. Speculative sim sets `chainex_check[id][ix]` to 1; rollback load does not restore; resim inherits stale bits from the speculative pass.
 - **Symmetry analysis** (new, requested by caller):
   - Scenario 2 (both peers roll back same depth K): both set identical speculative bits → both stale-identical after load → **symmetric**. Produces matching (wrong) hashes → **no desync** but potentially produces "both go black" if the downstream PLW state ends up in an `effect_77`/`effect_K8` trigger path deterministically.
@@ -1094,13 +1162,13 @@ Things the code couldn't answer — need the live DEBUG dump, or upstream GekkoN
 
 The primary variable is **whether Gekko's speculative advance actually rolls back during gameplay** — not architecture, not word-width, not PIE. Mac↔Mac localhost runs clean because the speculative-advance path is effectively unexercised at 0 ms RTT. Any session with real RTT exercises it. If any sim-path global escapes `GS_SAVE` / `GS_LOAD`, rollback contamination becomes possible and both peers converge on the same stale state symmetrically, because both peers roll back through the same moments.
 
-- **Top actionable candidate is Candidate R2 (`chainex_check` rollback-unsafe)**, rank #1. Decl at `src/sf33rd/Source/Game/system/sysdir.c:12`; write at `src/sf33rd/Source/Game/engine/pls03.c:129` (and eight other pls03 sites); read at `src/sf33rd/Source/Game/engine/pls03.c:80` (and seven other pls03 gates). Not in `GS_SAVE`. Under the rollback-axis framing, the speculative-write symmetry + stale-read-after-rollback mechanism produces the symmetric "both peers go black" pattern (indirect, via PLW/SA-routine divergence downstream of the gate) AND the asymmetric checksum mismatch (when rollback depths differ between peers).
+- **Top actionable candidate is Candidate R2 (`chainex_check` rollback-unsafe)**, rank #1. Decl at `src/sf33rd/Source/Game/system/sysdir.c:12`; write at `src/sf33rd/Source/Game/engine/pls03.c:129` (and eight other pls03 sites); read at `src/sf33rd/Source/Game/engine/pls03.c:80` (and seven other pls03 gates). Not in `GS_SAVE` **when this was written; saved since 2026-04-24, and inert in netplay since `4485a438` — see the STATUS block at the top.** Under the rollback-axis framing, the speculative-write symmetry + stale-read-after-rollback mechanism produces the symmetric "both peers go black" pattern (indirect, via PLW/SA-routine divergence downstream of the gate) AND the asymmetric checksum mismatch (when rollback depths differ between peers).
 - **Secondary candidates**: R3 (`ca_check_flag`, `engine/hitcheck.c:39`), R4 (`grdb`/`grdb2` via Twelve metamorphose, `engine/hitcheck.c:33-34`), R5 (`omop_spmv_ng_table` gated out in MODE_NETWORK). R6 (GekkoNet rollback-budget exhaustion) DEMOTED from prior #1 because it doesn't gate a BG-off path directly and is unfalsifiable from code.
 - **Bg_Disp_Switch exit audit (§F)** finds NO unsaved flag directly gating a BG-off exit. Every `Bg_Disp_Switch(1)` call in `effect_K8_move` has a matching `Bg_Disp_Switch(0)` in the same function, gated by `GS_SAVE`-covered or EffectState-covered state. Every `Bg_Off_R(mask)` in sim effects has a matching `Bg_On_R(mask)` in the same effect. The BG-black symptom therefore must be a DOWNSTREAM effect of a PLW or routine-state divergence that shifts WHEN or WHETHER those paired exits fire — not a missing exit flag.
 - **Elimination experiment (§G)**: add `h = djb2_update_mem(h, (const uint8_t*)chainex_check, sizeof(chainex_check));` at `src/netplay/game_state.c:1742`, plus `extern u8 chainex_check[2][36];` near the top. If next MiSTer↔MiSTer repro desync fires EARLIER than frame 1274, chainex_check is implicated. If it fires at the same frame, chainex_check is one of multiple contributors. If it fires later or not at all, chainex_check is eliminated.
 - **Checksum coverage** (unchanged): parity with 3sxtra plus combo_type/remake_power (`src/netplay/game_state.c:1670-1728`). State coverage: 604 saved fields; 258 uncovered, ~10 have sim-side footprint. All re-audited against the rollback-axis filter.
 
-**New top candidate, one-line**: **`chainex_check[2][36]`** (decl `src/sf33rd/Source/Game/system/sysdir.c:12`; speculative-write at `src/sf33rd/Source/Game/engine/pls03.c:169` in an EX-SA chain success branch; gating read at `src/sf33rd/Source/Game/engine/pls03.c:122` that suppresses further PLW mutation when set) — fires during speculative rollback (filter 1), sets identical bits on both peers (filter 2, because the PLW state driving the write is itself hashed), and indirectly drives the BG-black symptom via downstream SA-routine divergence when the speculative-set bit lingers past the rollback and inhibits the next real chain-ex attempt (filter 3).
+**New top candidate, one-line**: **`chainex_check[2][36]`** (decl `src/sf33rd/Source/Game/system/sysdir.c:12`; speculative-write in the EX-SA chain-success branch of `check_full_gauge_attack` (`src/sf33rd/Source/Game/engine/pls03.c:129`); gating read at the head of the same branch (`pls03.c:80`) that suppresses further PLW mutation when set) — fires during speculative rollback (filter 1), sets identical bits on both peers (filter 2, because the PLW state driving the write is itself hashed), and indirectly drives the BG-black symptom via downstream SA-routine divergence when the speculative-set bit lingers past the rollback and inhibits the next real chain-ex attempt (filter 3).
 
 **Why the prior #1 (Candidate 6 GekkoNet budget exhaustion) was demoted**: it's a library-internal mechanism we cannot verify from code (library source not in tree); it doesn't directly gate the BG-off path; its "symmetric degradation" was an unsupported assumption. It remains a backup hypothesis, testable by reducing `input_prediction_window` to 3 and monitoring `frame_max_rollback` at `src/netplay/netplay.c:729-738`.
 
@@ -1225,7 +1293,7 @@ Names confirmed as truly uncovered (NOT in State, NOT in EffectState): `spmv_ng_
 ---
 
 Single-line ranked guess [REVISED 2026-04-24 rollback-axis]:
-1. **`chainex_check[2][36]` rollback-unsafe (Candidate R2)** — `src/sf33rd/Source/Game/system/sysdir.c:12` (decl); speculative-write at `src/sf33rd/Source/Game/engine/pls03.c:129` (and 8 other pls03 sites); gating read at `src/sf33rd/Source/Game/engine/pls03.c:80` (and 7 other gates). Not in `GS_SAVE`. Passes all three rollback-axis filters (fires during rollback, symmetric contamination, indirectly gates BG-off via downstream SA-routine divergence when speculative-set bits linger past rollback).
+1. **`chainex_check[2][36]` rollback-unsafe (Candidate R2)** — `src/sf33rd/Source/Game/system/sysdir.c:12` (decl); speculative-write at `src/sf33rd/Source/Game/engine/pls03.c:129` (and 8 other pls03 sites); gating read at `src/sf33rd/Source/Game/engine/pls03.c:80` (and 7 other gates). Not in `GS_SAVE` **when this was written; saved since 2026-04-24, and inert in netplay since `4485a438` — see the STATUS block at the top.** Passes all three rollback-axis filters (fires during rollback, symmetric contamination, indirectly gates BG-off via downstream SA-routine divergence when speculative-set bits linger past rollback).
 2. **`ca_check_flag` (Candidate R3)** — `src/sf33rd/Source/Game/engine/hitcheck.c:38`. Gates `catch_hit_check()` at `hitcheck.c:63` which writes to PLW. Set during speculative PLW state transitions (`engine/plmain.c:1187`); stale after rollback.
 3. **`grdb[2][2][2]` / `grdb2[2][2]` via Twelve metamorphose (Candidate R4)** — `engine/hitcheck.c:33-34`. Only diverges when `set_base_data_metamorphose` is speculated but not confirmed.
 
