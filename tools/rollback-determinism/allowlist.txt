@@ -23,7 +23,9 @@
 # buffer that really is a palette buffer, and still fed saved frw[] bytes).
 # So an entry must say which reads exist and where each one lands. Reasons on
 # the §A-derived blocks below were re-derived against the code on 2026-08-30;
-# three of the sixteen failed. If you add an entry, trace its reads first.
+# three of the sixteen failed. Task #138 then DE-ALLOWLISTED all three and
+# ran the harness on each; the per-entry MEASURED blocks below carry the
+# before/after DIVERGENT sets. If you add an entry, trace its reads first.
 
 # --- rollback-path bookkeeping in src/netplay/game_state.c ---------------
 # These are written by save_current_state()/save_state() — i.e. only when
@@ -47,6 +49,7 @@ g_random_32_calls          # pls02.c:621, same (game_state.c:2323)
 *.s_pctn_log               # ppgCheckTextureNumber rate-limited debug print counter
 *.s_log_count              # bgDrawOneChip rate-limited debug print counter
 *.s_dbg_count              # BG_Draw_System rate-limited debug print counter
+flLogOut.bflLogOutFirst    # AcrSDK/ps2/foundaps2.c flLogOut's one-shot "write the acrout.txt banner" latch. Exactly one read, flLogOut's own `if (bflLogOutFirst != 0)`, whose arm does a flFileWrite of a fixed string and clears the latch; not extern'd, address never taken, no simulation reader. ADDED 2026-08-30 (task #138) after it surfaced DIVERGENT on the stock allowlist: it flips only in the rollback run because the ENABLE_PERF_TELEMETRY flLogOut inside Push_LDREQ_Queue's duplicate-drop guard (io/gd3rd.c) fires only on a resim leg. Read it as a MARKER of the rollback duplicate-push that guard exists to swallow -- the B run's log carries twelve `[ldreq-dedupe] Push_LDREQ_Queue dropped duplicate` lines and neither baseline carries any -- not as an independent escapee
 fd_engine_*                # frame-data overlay engine probes (docs/plan-frame-data-harness.md); read only by the DEBUG training overlay/trace, reset per frame in game_step_0
 fd_prev_active_cgix*       # frame-data overlay cg_ix edge-latch diagnostics, overlay-only consumers (frame_data_overlay.c)
 
@@ -167,7 +170,83 @@ sdbd                       # sound/sound3rd.c `s8* sdbd[3]` sound data bank poin
 # harness see what it is currently hiding. If it stays it needs the plt_req
 # treatment (a positive reachability + ordering proof), not a category
 # sentence. Do not re-file it as a sound sink; it belongs with ldreq_result.
-cseSysWork                 # CRI middleware sound work area — REASON FALSIFIED, SEE THE CORRECTION ABOVE. Feeds ldreq_result and hence GS_SAVE(Exit_No)/(Exit_Timer)/(G_No)/(G_Timer)
+#
+# MEASURED 2026-08-30 (task #138) — DE-ALLOWLISTED AND RUN, and THE PREDICTION
+# ON RECORD IS REFUTED. The prediction was that cseSysWork would surface
+# DIVERGENT *ahead of* ldreq_result/rckeyctr — the ordering technique that
+# convicted ColorRAM. It surfaces BEHIND them, in both scenarios and at both
+# cadences. tools/rollback-determinism/run.sh select on the Debug host build,
+# both fast scenarios, this file with only the cseSysWork line removed:
+#
+#   select_period=8 (the shared gate): divergent 4 -> 6, feedback 0 -> 0. The
+#   entire delta is cseSysWork itself, DIVERGENT (not DIVERGENT+FEEDBACK — it
+#   is not a GS_SAVE symbol), TWO divergent frames per scenario, then it
+#   reconverges and never differs again in 1500 frames.
+#
+# FIRST DIVERGENT FRAME PER SYMBOL, ryu-ken-basic-exchange / makoto-sa3-super,
+# read off the same report — this is the substance of the refutation:
+#
+#   rckeyctr 208/208   plt_req 208/208   afs_handle 208/208   q_ldreq 208/208
+#   ldreq_result 209/209   rckeymin 211/210   ColorRAM 212/213
+#   ram 214/215   cseSysWork 214/215   PhdAddr 215/216   gpTsb 215/216
+#   sdbd 215/216
+#
+# cseSysWork lands FIVE TO SIX FRAMES BEHIND ldreq_result and rckeyctr, in
+# exactly the slot its own writer occupies in the pipeline: SpuBankId is set by
+# cseSendBd2SpuWithId, and q_ldreq_color_data reaches that call in `case 4`,
+# after the async read has completed — long after `case 2` took the ramcnt key
+# and after *curr->result was first touched. In these runs cseSysWork is a
+# DOWNSTREAM SYMPTOM of the one LDREQ phase shift, the status this block
+# already assigns to sdbd — not the upstream cause of ldreq_result's
+# divergence. The "one mechanism, not seven independent sinks" reading above
+# survives; the direction of causation inside it does not.
+#
+# ADVERSARIAL CONTROL, because a 2-frame window is a weak negative.
+# --select-rollback-period 1 (8x the select-phase rollback cadence; see known
+# limit 1 in the harness doc for why period 1 is tracked separately), same
+# de-allowlisted file: divergent 8, feedback 0. cseSysWork's window widens from
+# 2 frames to NINETEEN (197..215 / 196..216) and the ordering is unchanged —
+# rckeyctr/plt_req 193, ldreq_result 194, ram 196/197, cseSysWork 196/197,
+# sdbd 197/198. So even with SpuBankId in disagreement for nineteen consecutive
+# frames across the whole of character select, Exit_No, Exit_Timer, G_No and
+# G_Timer stay byte-identical on all 1500 frames of both scenarios. (The other
+# two DIVERGENT rows at period 1 are Candidate_Buff, which this file
+# deliberately does not allowlist and which the block below already names, and
+# flLogOut.bflLogOutFirst, now allowlisted at the top.)
+#
+# WHY IT SELF-HEALS. Both timelines complete the SAME bank load and write the
+# same id, so cseSysWork reconverges on its own; and both arms of the branch
+# set the same result bit, so ldreq_result reconverges with it. The window
+# closes 111 frames before in-game (G_No[1]==2 at frame 328) and long before
+# Exit_6th can be dispatched, which needs Exit_No == 5.
+#
+# THIS IS NOT AN EXONERATION, and the ColorRAM precedent is exactly why: a
+# scenario-bounded feedback=0 means "no scenario reaches it yet". The branch at
+# the head of q_ldreq_color_data's type-10 arm is still an UNSAVED gate on a
+# path that writes SAVED state, and it is still the only member of this block
+# with that shape. What bounds it is CADENCE, not structure — the type-10
+# requests these scenarios issue are spaced further apart than the window in
+# which SpuBankId disagrees, and widening the window 10x did not close that
+# gap. REOPEN IF: a type-10 request is pumped while SpuBankId is in
+# disagreement (observable as ldreq_result, Exit_No, Exit_Timer, G_No or
+# G_Timer moving with cseSysWork de-allowlisted), or cseSysWork stops
+# reconverging, or a scenario is added in which the two legs load DIFFERENT
+# bank ids rather than the same one at different frames.
+#
+# RELATIONSHIP TO THE LDREQ ROLLBACK LEAK — they are TWO mechanisms on one
+# path, and the difference is the direction. The leak is a SAVED gate (SP_No,
+# incremented by Sel_PL_3rd in screen/sel_pl.c) with an UNSAVED side-effect
+# ledger (q_ldreq, texgrplds, the rckey allocator), so rollback replays the
+# side effect and it accumulates — a heap leak that ends in a crash, invisible
+# to this harness by construction. cseSysWork is the mirror image: an UNSAVED
+# gate (SpuBankId) in front of a branch whose consumer state IS saved, so
+# rollback can make the two legs take different arms — a divergence, which is
+# precisely what this harness is for. Same q_ldreq_color_data pump, opposite
+# save-set asymmetry. Fixing one does not fix the other. The
+# `[ldreq-dedupe] Push_LDREQ_Queue dropped duplicate` lines that appear only in
+# the rollback run's log (see the flLogOut.bflLogOutFirst entry at the top) are
+# the leak's mechanism being caught by its own guard, in the same runs.
+cseSysWork                 # CRI middleware sound work area — REASON FALSIFIED, SEE THE CORRECTION ABOVE. Feeds ldreq_result and hence GS_SAVE(Exit_No)/(Exit_Timer)/(G_No)/(G_Timer). MEASURED 2026-08-30 (task #138): de-allowlisted it surfaces DIVERGENT but BEHIND ldreq_result, self-heals in 2 frames (19 at select period 1), and moves no saved consumer — kept on that CADENCE bound, not on the falsified category. Honour the reopen condition
 PhdAddr                    # CRI PHD (sound header) pointer table, AcrSDK/…/CapSndEng/emlMemMap.c. Exactly one read, mlMemMapGetPhdAddr, whose one caller is PlaySe (emlSndDrv.c). pHEAD feeds GetNumSplit/GetPhdParam/CalcPhdParam (emlRefPhd.c declares no globals) then StartSound -> emlShimStartSound, whose entire mutable state is file-static in port/sound/emlShim.c. Every return in that stack is a hard-coded 0 and the sole game-side caller discards it. No file under src/sf33rd/Source/Game/ names it. VERIFIED write-only 2026-08-30
 gpTsb                      # CRI TSB (sound bank) pointer table, AcrSDK/…/CapSndEng/emlTSB.c. Exactly one read, mlTsbGetDataAdrs; the resulting pTSB drives mlTsbRequest's cmd switch and is copied field-by-field into a STACK-LOCAL CSE_REQP. The switch arms reach only EchoWork (which has no reader outside emlTSB.c), the emlShim statics and SPU voice registers. Every return in the stack is 0. VERIFIED write-only 2026-08-30. Latent hazard, not a desync: mlTsbSetBankAddr lacks the bounds check its PhdAddr twin has; bank is currently <= 3
 
@@ -184,7 +263,7 @@ gpTsb                      # CRI TSB (sound bank) pointer table, AcrSDK/…/CapS
 # (src/main.c) sit outside the §A.2 sweep universe (src/sf33rd/Source/Game/)
 # altogether. Five of these eight were never in the cited document at all.
 palettes                   # software-renderer palette store, platform/video/software/software_renderer.c, `static` so no other TU can name it. Sole writer Renderer_CreatePalette; three reads, all `pal = &palettes[...]` in the rasterizers, terminating in the static `canvas` -> SoftwareRenderer_GetCanvas -> port/sdl/sdl_app.c presentation. Checked specifically for a read-back-out: there is no "already uploaded" early-out, no refcount and no LRU; the one cross-call read-back is `version`, consumed by the colour-key scratch cache, whose output is pixels. VERIFIED write-only 2026-08-30
-ColorRAM                   # rendering/color3rd palette transfer RAM. PARTIALLY EXEMPT: the four row-prefixes effl8 latches from (ColorRAM[0]/[8]/[16]/[24], first 12 u16) ARE in the save set as GameState.effl8_colorram — they fed back into saved frw[] bytes and caused the persistent makoto-sa3-super frw divergence. THE RESIDUAL CLAIM IS NO LONGER "no path back into simulation state" — SEE THE CORRECTION BELOW. If a NEW ColorRAM-mediated feedback shows up, widen the save set; do not widen this entry.
+ColorRAM                   # rendering/color3rd palette transfer RAM. See the ROW ARITHMETIC and MEASURED blocks below: pinned rows are 0/8/16/24 entries [0..11] only, the metamor launder writes all four of them, and a Twelve-vs-Makoto run found it carrying nothing divergent. PARTIALLY EXEMPT: the four row-prefixes effl8 latches from (ColorRAM[0]/[8]/[16]/[24], first 12 u16) ARE in the save set as GameState.effl8_colorram — they fed back into saved frw[] bytes and caused the persistent makoto-sa3-super frw divergence. THE RESIDUAL CLAIM IS NO LONGER "no path back into simulation state" — SEE THE CORRECTION BELOW. If a NEW ColorRAM-mediated feedback shows up, widen the save set; do not widen this entry.
 #
 # CORRECTION 2026-08-30 — the residual ColorRAM claim is UNDETERMINED, not
 # proven. This entry used to end "The rest of the array is render fan-out with
@@ -214,6 +293,90 @@ ColorRAM                   # rendering/color3rd palette transfer RAM. PARTIALLY 
 # cleared one. (The same "only path from ColorRAM into saved state" wording in
 # src/netplay/game_state.c's GameState_Load comment was corrected alongside
 # this note.)
+#
+# ROW ARITHMETIC 2026-08-30 (task #138) — the durable fact the correction above
+# was missing. Stated once, here, so nobody re-derives it.
+#
+#   PINNED (saved by GameState_Save, restored by GameState_Load): ColorRAM rows
+#   0, 8, 16, 24 — and only entries [0..11] of each. The rows come from
+#   EFFL8_STEP_ROW / EFFL8_MOVE_ROW (effect/effl8.h) through
+#   EFFL8_COLORRAM_ROW_LIST (src/netplay/game_state.c); the width is
+#   GameState.effl8_colorram's second dimension, 12 of the 64 u16 in a
+#   ColorRAM row, tied to EFFL8_COLOR_ENTRIES by a _Static_assert.
+#
+#   metamor_color_store READS rows wkid*16 + 0..3 plus row mcs_sel_tbl[wkid]
+#   (0x1F8 / 0x1FC), all 64 entries, into metamor_original.
+#   metamor_color_restore WRITES rows wkid*16 + 0..3, rows wkid*16 + 8..11 and
+#   row mcs_sel_tbl[wkid], all 64 entries.
+#
+#   INTERSECTION: NON-EMPTY, and neither covered nor disjoint. restore's i == 0
+#   arm writes rows wkid*16 and wkid*16 + 8 — rows 0 and 8 for wkid 0, rows 16
+#   and 24 for wkid 1, i.e. all four pinned rows, entries [0..11] included. The
+#   pin holds 12 of the 64 columns metamor writes.
+#
+#   BUT the only metamor cell that can reach saved state is
+#   metamor_original[wkid][0][0..11]. save_old_color_data (effl8.c) reads
+#   exactly EFFL8_COLOR_ENTRIES s16 from step_xy_table, and step_xy_table is
+#   (s16*)ColorRAM[row], so the sole ColorRAM -> frw read in the tree lies
+#   inside the pinned window. restore's i == 1..3 arms land in rows 1-3 / 9-11
+#   / 17-19 / 25-27 and its mcs_sel_tbl arm in row 504 / 508; none of those is
+#   pinned, and none has a reader that reaches saved state — effj7's
+#   get_new_color_data WRITES rows master_id*16 and +8 from a ROM table rather
+#   than reading them, and mtrans/color3rd read ColorRAM only into render
+#   fan-out.
+#
+# THE PRESCRIBED SCENARIO WAS WRONG. "A Twelve mirror" cannot settle this.
+# Every metamor_color_restore call passes the TWELVE player's own slot id
+# (mwk->wu.id / wk->wu.id, under a player_number == CHAR_TWELVE gate in
+# engine/plmain.c's player_mv_0000, engine/plmain2.c and effect/effk7.c), while
+# effl8's master_id is the MAKOTO player's own slot (effect_L8_init returns 0
+# unless wk->player_number == 16, then sets ewk->master_id = wk->wu.id). One
+# slot cannot be both, so in a Twelve MIRROR effl8 never spawns and there is no
+# ColorRAM -> frw read to poison at all. The overlap needs ONE slot to be
+# Twelve when restore runs and Makoto when effl8 latches — i.e. Twelve after
+# X.C.O.P.Y. has set wk->player_number to the opponent's character, which
+# K7_muriyari_metamor_rebirth (effect/effk7.c) later undoes by reassigning
+# My_char[wk->wu.id]. The scenario is TWELVE vs MAKOTO with Twelve copying, not
+# a mirror.
+#
+# MEASURED 2026-08-30 (task #138) — DE-ALLOWLISTED AND RUN, three ways.
+#
+#   (a) Both stock fast scenarios, ColorRAM removed from this file:
+#       divergent 4 -> 6, feedback 0. ColorRAM diverges on exactly two frames
+#       per scenario — 212,213 (ryu-ken-basic-exchange) and 213,214
+#       (makoto-sa3-super) — i.e. inside the select-phase LDREQ palette load,
+#       nowhere else in 1500 frames. metamor_original and hi_meta hold ONE
+#       distinct hash for the whole run in both: the metamor path is never
+#       entered, so those runs said nothing about it.
+#
+#   (b) TWELVE vs MAKOTO, the scenario the paragraph above derives:
+#       makoto-sa3-super with --test-p1-character 18 --test-p2-character 16
+#       --test-p1-super-art 2, ColorRAM removed. The metamor path IS entered
+#       for the first time in this harness — metamor_original and hi_meta each
+#       take TWO distinct hashes instead of one, i.e. init_trans_color_ram's
+#       case 3 ran metamor_color_store, and player_mv_0000's unconditional
+#       `player_number == CHAR_TWELVE` restore ran the store->restore launder
+#       into the pinned rows (Twelve is P1, so wkid 0, so rows 0 and 8).
+#       Result: ColorRAM gains two NEW in-battle divergent frames, 1059 and
+#       1060, on top of the select-phase pair at 211,212 — so the scenario is
+#       not vacuous. metamor_original is BYTE-IDENTICAL between the baseline
+#       and the rollback run on all 1500 frames, and so is frw. feedback 0.
+#
+#   (c) The adversarial control on the cseSysWork entry
+#       (--select-rollback-period 1) leaves ColorRAM's behaviour unchanged.
+#
+# VERDICT: the launder exists, it is now EXERCISED, and it carries nothing
+# divergent — metamor_original never differs, so restore can only write back
+# what both timelines already agreed on. That is a much narrower residual than
+# "undetermined", but it is still not a clearance, for one named reason: the
+# X.C.O.P.Y. SUPER never activated in run (b).
+# perf_metamorphose_active_frames (port/sdl/sdl_app.c) never leaves its initial
+# value, so effect_K7's in-battle metamor_color_restore calls — the ones that
+# run while a rollback window is open, as opposed to the one at round init —
+# were not exercised. SETTLE IT by making Twelve actually land X.C.O.P.Y.
+# inside the battle (a preset that scripts the SA and asserts
+# perf_metamorphose_active_frames > 0), then re-run (b). Until then: store side
+# exercised and clean, in-battle restore side still unexercised.
 colPalBuffDC               # rendering/color3rd DC palette buffer. Three occurrences in the whole tree: the definition, the write in palCopyGhostDC, and one read in palUpdateGhostDC feeding palConvRowTim2CI8Clut into VRAM locked by flLockPalette. Checked for the read-back shapes: no "already converted" test, no diff/compare, no reuse check, no address taken, no sizeof, no alias escaping the file. VERIFIED write-only 2026-08-30
 latest_texture_spec        # platform/video/software/software_renderer.c current-texture latch. REASON CORRECTED 2026-08-30: it is NOT a batching memo or cache. Its eight occurrences contain no ==, != or memcmp — nothing ever compares it, so no stale value can gate or skip work. Four unconditional writes in Renderer_SetTexture (void) plus the Init reset; three reads, each a plain struct copy into quads[]. The struct is two int16_t handle indices, not pointers, so process layout cannot move it. VERIFIED write-only 2026-08-30
 #
@@ -249,7 +412,65 @@ latest_texture_spec        # platform/video/software/software_renderer.c current
 # established by reading is whether a real rollback window straddles one of
 # those calls in a live session; that needs a harness run with mts_ok
 # de-allowlisted. The reason string is falsified either way.
-mts_ok                     # rendering sprite-dispatch ready flags (aboutspr/texcash) — REASON FALSIFIED, SEE THE CORRECTION ABOVE. Reaches GS_SAVE(plw) canon fields my_clear_level/current_colcd and the saved frw field my_trans_mode
+#
+# MEASURED 2026-08-30 (task #138) — DE-ALLOWLISTED AND RUN. NULL RESULT, and
+# the null is stronger than a feedback=0. tools/rollback-determinism/run.sh
+# select on the Debug host build, both fast scenarios, select_depth=8
+# select_period=8, this file with only the mts_ok line removed:
+# divergent 4 -> 4, allowlisted 66 -> 66, feedback 0. mts_ok does not appear in
+# the A1-vs-B diff AT ALL in either scenario — the pattern never matched, i.e.
+# the symbol is byte-identical between the baseline and the rollback run on
+# every one of the 1500 frames. That is a different (and better) result than
+# ColorRAM's "diverges, but nothing downstream moved".
+#
+# WHY, established by reading rather than left as "no scenario reaches it yet".
+# mts_ok[].be flips only in make_texcash_work / purge_texcash_work
+# (rendering/texcash.c) and in init_texcash_1st. The slots that matter are the
+# two plw[] entries draw with: setup_base_and_other_data (engine/plcnt.c)
+# assigns plw[0].wu.my_mts = 3 and plw[1].wu.my_mts = 4, and wu.my_mts is
+# itself a PLW canon field (src/netplay/plw_canon_fields.h), so only `be` is
+# unsaved. Every purge/make pair on those two slots is SAME-FRAME:
+# Purge_texcash_of_list(3) is immediately followed by Make_texcash_of_list(3)
+# at every one of its call sites — game.c's Select_Player/Switch_Screen arm,
+# its Next_CPU arm, its After_Bonus arm and its Next_Q arm, plus menu/menu.c
+# and demo/demo02.c — and pto_list[3] and mto_list[3] (rendering/mmtmcnt.c)
+# both name slots 3 and 4. A frame boundary cannot land between them, so the
+# per-frame hash never observes be == 0 for a live PLW slot.
+#
+# The one site that leaves a PLW slot purged ACROSS frames is the bonus-stage
+# entry in engine/bbbscom2.c — purge_texcash_work(4) / purge_texcash_work(3),
+# reassign wk->wu.my_mts, then make_texcash_work(5) — and it is UNREACHABLE IN
+# MODE_NETWORK. Bonus_Type's only non-zero writer is Check_Bonus_Type() in
+# screen/next_cpu.c, inside Next_CPU, i.e. Game05, which is entered solely from
+# the `default:` arm of Game03's Mode_Type switch that
+# `case MODE_VERSUS: case MODE_NETWORK:` diverts past (game.c) — the same gate
+# the plt_req proof further down rests on.
+#
+# The other cross-frame window is character-select entry, and it is benign for
+# a different reason: Purge_mmtm_area(2) (screen/sel_pl.c) purges slots 3 and 4
+# through pto_list[2], and the Make_texcash_of_list(2) on the next line remakes
+# only 12/13/14 (mto_list[2]), so be == 0 for slots 3 and 4 for the whole of
+# select. Nothing reads it, because plw[N].wu.my_mts is not assigned until
+# setup_base_and_other_data, which runs after game.c's Make_texcash_of_list(3)
+# has put those slots back.
+#
+# CORRECTION TO THE CORRECTION. The block above says the be == 0 gate defeats
+# the No_Trans invariant for BOTH `wk->my_clear_level = 0x90` and
+# `wk->current_colcd &= 0x1FF`. Only the first is above the guard: read
+# Mtrans_use_trans_mode (rendering/aboutspr.c) and `current_colcd &= 0x1FF`
+# sits BELOW `if (No_Trans) return;`, so it is already skipped on every
+# No_Trans frame by design. The be gate does add a skip on NON-No_Trans frames,
+# so current_colcd is still at risk — but not for the reason the correction
+# gave. my_clear_level is the field the quoted invariant was written for.
+#
+# STATUS: the reason string stays falsified — mts_ok is NOT "consumed by the
+# renderer/loader" — but the entry is now admitted on REACHABILITY, like ppwork
+# below, and no longer on a category. VOIDING CONDITION — delete this entry and
+# re-open the finding if ANY of: a purge of slot 3 or 4 stops being followed by
+# its make in the same frame; Bonus_Type becomes settable under MODE_NETWORK;
+# plw[N].wu.my_mts starts pointing at a slot mto_list[3] does not remake; or
+# Mtrans_use_trans_mode's `be` gate moves relative to the No_Trans return.
+mts_ok                     # rendering sprite-dispatch ready flags (aboutspr/texcash) — REASON FALSIFIED, SEE THE CORRECTION ABOVE. Reaches GS_SAVE(plw) canon fields my_clear_level/current_colcd and the saved frw field my_trans_mode. MEASURED CLEAN 2026-08-30 (task #138): de-allowlisted, it never enters the diff at all — now admitted on NETPLAY UNREACHABILITY, not write-only-ness. Honour the voiding condition
 texcash_melt_buffer_mem    # main.c static scratch handed to the texture cache. Never written through its own name; its single alias texcash_melt_buffer has one consumer, mts[ix].mltbuf, and every one of the 27 mltbuf uses is either the destination of lz_ext_p6_fx/_cx or the source of njReLoadTexturePartNumG -> ppgRenewDotDataSeqs (void, copies into texture source RAM). njReLoadTexturePartNumG returns a constant that all 14 call sites discard. No byte ever reaches a branch, index, count or loop bound. VERIFIED write-only 2026-08-30
 tpu_free_mem               # main.c static scratch handed to the TPU allocator. This one DOES have the risky shape — get_mltbuf16_ext/32_ext return slot handles read out of tpu_free->x16_used/x32_used — so it was traced rather than assumed: every returned handle terminates in njReLoadTexturePartNumG (texture upload) or seqsStoreChip, which writes only seqs_w and whose sole zero-return condition is the sprite list being full, never a tpu_free value. Pool exhaustion is never branched on by simulation code. The render path writes no WORK field at all (`grep -E "wk->[A-Za-z_0-9.\[\]]+ *=[^=]"` over mtrans.c and texcash.c is empty). VERIFIED write-only 2026-08-30
 sa_frame                   # ui/sc_sub.c SA-gauge HUD frame display state (cockpit rendering). Exactly four reads, all inside Sa_frame_Write, all supplying scfont_put arguments; scfont_put writes only scrscrntex[] and returns void. Sa_frame_Write returns early on omop_cockpit == 0 AND on No_Trans, so it does not execute on a rollback resim frame at all. No address taken, no sizeof, no memcpy, not inside a struct copied wholesale. VERIFIED write-only 2026-08-30
@@ -405,7 +626,29 @@ rckeyque                   # system/ramcnt.c RAM-key allocator queue
 # menu.c write stops being a constant 0. It is admitted on unreachability,
 # which is a weaker guarantee than the write-only ones above and can be
 # revoked by an edit in a file nobody would think to check against this list.
-ppwork                     # io/pulpul.c rumble device work — REASON FALSIFIED, SEE THE CORRECTION ABOVE. ok_dev gates a write into GS_SAVE(Convert_Buff); admitted on NETPLAY UNREACHABILITY, not on write-only-ness. Honour the voiding condition
+#
+# MEASURED 2026-08-30 (task #138) — DE-ALLOWLISTED AND RUN, and it behaves
+# exactly as the unreachability argument predicts. Same command and build as
+# the mts_ok block above, with only the ppwork line removed: divergent 4 -> 5,
+# feedback 0. ppwork surfaces DIVERGENT (not DIVERGENT+FEEDBACK — it is not a
+# GS_SAVE symbol) in ryu-ken-basic-exchange only, first frame 639, last 1477,
+# 270 divergent frames. A large, persistent divergence with no consumer moving
+# is what "move_pulpul_work drains once per replayed logic frame" looks like
+# from the outside. makoto-sa3-super does not exercise it at all (its vib_req
+# is quiet too). Convert_Buff is byte-identical on all 1500 frames of both.
+#
+# ALL THREE VOIDING GATES RE-VERIFIED AT TIP on 2026-08-30, since this entry is
+# only correct for as long as they hold:
+#   1. Pause_Task still opens `!nowSoftReset() && Mode_Type != MODE_NETWORK &&
+#      !Is_Training_Mode(Mode_Type)` (system/pause.c) — narrower than when the
+#      condition was written, not wider.
+#   2. setup_vs_mode still calls cpExitTask(TASK_MENU) (src/netplay/netplay.c).
+#   3. setup_vs_mode still does SDL_zeroa(Convert_Buff), and Button_Config_Sub's
+#      two writes (menu/menu.c) are still the literal constant 0.
+# The dispatch chain in the note also still holds: Menu_Jmp_Tbl[1] is In_Game
+# and In_Game_Jmp_Tbl[2] is Button_Config_in_Game (menu/menu.c), so reaching the
+# write needs task[TASK_MENU].r_no[0] == 1 with TASK_MENU alive.
+ppwork                     # io/pulpul.c rumble device work — REASON FALSIFIED, SEE THE CORRECTION ABOVE. ok_dev gates a write into GS_SAVE(Convert_Buff); admitted on NETPLAY UNREACHABILITY, not on write-only-ness. Honour the voiding condition — all three gates re-verified at tip 2026-08-30 (task #138), and the de-allowlisted run confirms DIVERGENT-without-FEEDBACK
 vib_req                    # io/pulpul.c rumble request queue. Reason corrected 2026-08-30: nothing in the pad pipeline reads it. Seven occurrences total, of which exactly two are reads, both `pulpul_request(N, vib_req[N][0])` inside pulpul_request_again; pulpul_request returns void and writes only vib_req and ppwork[id].p[prio]. No engine, effect, menu or netplay file reads it. Both callers of pulpul_request_again (system/pause.c, menu/menu.c) are unreachable during a session anyway. VERIFIED write-only 2026-08-30
 
 # --- per-tick scratch re-derived before every read --------------------------

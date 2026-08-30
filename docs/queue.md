@@ -1899,3 +1899,155 @@ unreachability argument.
 entries" in six places; the count has been 40 since `830784e2` removed
 `perf_super_art_command_telemetry`. Left alone — the file is outside
 `tools/doc-citations/baselines.txt` and this lane did not otherwise edit it.
+
+## #138 — the three falsified suppressions, de-allowlisted and run — CLOSED
+
+Took the **shared `build/host`** tree (Debug, host) for the rollback-determinism
+runs; #137 was on its own `build/host-bgfix`, so the two never collided. Edit
+set: `tools/rollback-determinism/allowlist.txt` and this file. **No simulation
+code changed**, so the 99-corpus frame-data suite, the shipped-config build and
+the ARM cross-build were all skipped — nothing this lane touched can reach them.
+
+### The runs, and the delta per de-allowlisting
+
+Seven harness runs, all `tools/rollback-determinism/run.sh select`
+(`select_depth=8`, `select_period=8` unless stated), same Debug `build/host`
+binary, `--allowlist` pointed at a copy of the file with exactly one line
+removed so the delta is attributable.
+
+| run | divergent | feedback | delta vs baseline |
+|---|---|---|---|
+| baseline (stock allowlist) | 4 | 0 | — |
+| `cseSysWork` removed | 6 | 0 | **+`cseSysWork`** ×2 scenarios, 2 frames each |
+| `mts_ok` removed | 4 | 0 | **none** — the pattern never matched |
+| `ppwork` removed | 5 | 0 | **+`ppwork`** ×1 scenario, 270 frames |
+| `ColorRAM` removed | 6 | 0 | **+`ColorRAM`** ×2, 2 frames each |
+| `cseSysWork` removed, `--select-rollback-period 1` | 8 | 0 | `cseSysWork` widens to 19 frames; `Candidate_Buff` as documented |
+| `ColorRAM` removed, Twelve-vs-Makoto | 3 (1 scenario) | 0 | `ColorRAM` gains frames 1059,1060 |
+
+The baseline's four DIVERGENT rows were **not** escapees:
+`flLogOut.bflLogOutFirst` (a diagnostic latch, now allowlisted — see below) and
+`TATE00.bgx_n` (#137's uncommitted `#if defined(DEBUG)` counter in `tate00.c`,
+not in `HEAD`). With this commit's allowlist the gate reports **divergent=2,
+feedback=0**, and both remaining rows are `TATE00.bgx_n`. On a tree without
+#137's instrumentation that is divergent=0.
+
+### `cseSysWork` — the prediction is REFUTED, and it is NOT the LDREQ leak
+
+The prediction on record was that `cseSysWork` would surface DIVERGENT *ahead
+of* `ldreq_result`/`rckeyctr`. It surfaces **behind** them, in both scenarios
+and at both cadences. First divergent frame, ryu-ken / makoto:
+
+    rckeyctr 208/208  plt_req 208/208  afs_handle 208/208  q_ldreq 208/208
+    ldreq_result 209/209  rckeymin 211/210  ColorRAM 212/213
+    ram 214/215  cseSysWork 214/215  PhdAddr 215/216  gpTsb 215/216  sdbd 215/216
+
+That is one LDREQ pipeline pass in source order, and `cseSysWork` sits where its
+own writer sits — `cseSendBd2SpuWithId`, reached in `q_ldreq_color_data`'s
+`case 4`, after the async read completes. So in these runs it is a **downstream
+symptom** of the LDREQ phase shift, the status the entry already gives `sdbd` —
+not the cause of `ldreq_result`'s divergence. It self-heals in 2 frames (both
+legs write the same bank id), and the window closes 111 frames before in-game.
+
+Adversarial control, because a 2-frame window is a weak negative:
+`--select-rollback-period 1` widens `cseSysWork`'s disagreement to **19
+consecutive frames** across the whole of character select, and `Exit_No`,
+`Exit_Timer`, `G_No` and `G_Timer` are still byte-identical on all 1500 frames
+of both scenarios. Ordering unchanged.
+
+**Not the same mechanism as the LDREQ rollback leak — they are mirror images on
+one path.** The leak is a SAVED gate (`SP_No`, incremented by `Sel_PL_3rd`) with
+an UNSAVED side-effect ledger (`q_ldreq`, `texgrplds`, the rckey allocator), so
+rollback *replays* the side effect and it accumulates: a heap leak ending in a
+crash, invisible to this harness by construction. `cseSysWork` is an UNSAVED
+gate in front of a branch whose consumer state IS saved, so rollback can make
+the two legs take *different arms*: a divergence, which is what the harness is
+for. Same `q_ldreq_color_data` pump, opposite save-set asymmetry; fixing one
+does not fix the other. Incidentally the leak's own mechanism was observed live
+in these runs — the rollback leg's log carries twelve `[ldreq-dedupe]
+Push_LDREQ_Queue dropped duplicate` lines and neither baseline carries any.
+
+**Nothing was fixed here, and nothing needed to be.** The escapee did not
+realise, and the LDREQ ledger was not touched.
+
+### `mts_ok` — null result, and it is now a reachability entry
+
+De-allowlisted, `mts_ok` does not enter the A1-vs-B diff **at all** — byte
+identical on every one of 1500 frames in both scenarios. Established by reading
+why: every purge/make pair on the two slots `plw[]` draws with
+(`my_mts` 3 and 4, from `setup_base_and_other_data`) is **same-frame** —
+`Purge_texcash_of_list(3)` is immediately followed by `Make_texcash_of_list(3)`
+at all six call sites, and `pto_list[3]`/`mto_list[3]` both name slots 3 and 4.
+The one site that leaves a PLW slot purged across frames is the bonus-stage
+entry in `bbbscom2.c`, and it is unreachable in `MODE_NETWORK`: `Bonus_Type`'s
+only non-zero writer is `Check_Bonus_Type()` inside `Next_CPU`/Game05, which
+Game03's `case MODE_VERSUS: case MODE_NETWORK:` arm diverts past — the same gate
+the `plt_req` proof rests on.
+
+Also a **correction to the correction**: only `my_clear_level` sits above the
+`No_Trans` early return in `Mtrans_use_trans_mode`. `current_colcd &= 0x1FF` is
+*below* it, so it is already skipped on every `No_Trans` frame by design; the
+`be` gate adds a skip on non-`No_Trans` frames, which is a real risk but not the
+invariant the quoted comment protects.
+
+### `ppwork` — behaves exactly as the unreachability argument predicts
+
+DIVERGENT without FEEDBACK, `ryu-ken-basic-exchange` only, frames 639..1477,
+270 divergent frames; `Convert_Buff` byte-identical throughout. All three
+voiding gates re-verified at tip: `Pause_Task`'s `Mode_Type != MODE_NETWORK`
+(now further narrowed by `!Is_Training_Mode`), `cpExitTask(TASK_MENU)` and
+`SDL_zeroa(Convert_Buff)` in `setup_vs_mode`, and the constant-0 writes in
+`Button_Config_Sub`.
+
+### `ColorRAM` — the row arithmetic, and the prescribed scenario was wrong
+
+Pinned rows are **0, 8, 16, 24, entries [0..11] only** (12 of 64 u16).
+`metamor_color_restore` writes rows `wkid*16 + 0..3`, `wkid*16 + 8..11` and
+`mcs_sel_tbl[wkid]`, all 64 entries — so its `i == 0` arm writes **all four
+pinned rows**. The sets are neither disjoint nor covered. But the only metamor
+cell that can reach saved state is `metamor_original[wkid][0][0..11]`, because
+`save_old_color_data` reads exactly `EFFL8_COLOR_ENTRIES` s16 from
+`ColorRAM[row]` — the sole ColorRAM→`frw` read in the tree lies inside the
+pinned window. Rows 1-3 / 9-11 / 17-19 / 25-27 / 504 / 508 have no reader that
+reaches saved state.
+
+**A Twelve mirror cannot settle it.** Every `metamor_color_restore` passes the
+Twelve player's own slot, and `effl8`'s `master_id` is the Makoto player's own
+slot; one slot cannot be both, so a mirror never spawns `effl8` at all. The
+scenario is **Twelve vs Makoto**. Run: `metamor_original` and `hi_meta` go from
+one distinct hash (never written) to two, so the metamor path is entered for the
+first time in this harness; `ColorRAM` gains two new in-battle divergent frames
+(1059, 1060); and `metamor_original` and `frw` are byte-identical between
+baseline and rollback on all 1500 frames.
+
+**Residual, narrowed and named:** `perf_metamorphose_active_frames` never left
+its initial value, so the X.C.O.P.Y. *super* did not activate — only the
+round-init restore in `player_mv_0000` ran. The store side is exercised and
+clean; `effect_K7`'s in-battle restore is still unexercised. Settling it needs a
+preset that lands X.C.O.P.Y. mid-battle and asserts
+`perf_metamorphose_active_frames > 0`, then a re-run.
+
+### New allowlist entry
+
+`flLogOut.bflLogOutFirst` — `flLogOut`'s one-shot "write the acrout.txt banner"
+latch. One read, its own `if (bflLogOutFirst != 0)`; not extern'd, address never
+taken, no simulation reader. It was surfacing DIVERGENT on the stock allowlist
+because the `ENABLE_PERF_TELEMETRY` `flLogOut` in `Push_LDREQ_Queue`'s
+duplicate-drop guard fires only on a resim leg. Same class as the
+`*.s_log_count` / `*.s_dbg_count` entries beside it. This takes the file to
+**41 entries**, which incidentally makes the "41 entries" count in
+`docs/rollback-determinism-harness.md` true again — it was stale at 40 (see the
+carried item under #137's allowlist re-derivation above). Still not editing that
+doc from this lane.
+
+### #137 — build-tree note
+
+`build/host` was held by the allowlist lane's `check_rollback_determinism.py`
+run for most of this lane, so every measurement above was taken in private
+configure dirs (`build/host-bgfix` Debug, `build/host-np137` with
+`NETPLAY_TEST_HOOKS` + `ENABLE_NETPLAY_TESTS`, `build/host-rel137` Release).
+`build/host` is taken only for the one thing that hardcodes it,
+`tools/frame-data/run-suite.sh`, and only once that run had exited.
+Edit set: `src/sf33rd/Source/Game/stage/{bg.c,bg.h,tate00.c}`,
+`src/netplay/{direct_p2p.c,direct_p2p.h,test_punch_predicates.c}`,
+`docs/fix-plan-bg-texture-rollback.md`, this file.
