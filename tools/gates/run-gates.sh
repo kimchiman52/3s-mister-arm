@@ -61,6 +61,7 @@ GATES=(
     "netplay-harnesses|run every --test-* harness with true exit codes"
     "rendezvous-protocol|node tools/rendezvous-server/__test_protocol.js"
     "key-rate-budget|server per-key cap vs the CLIENT cadences it is derived from -- #123"
+    "reclaim-window|slot-reclaim staleness vs the CLIENT cadences it is derived from -- #130"
     "host-diagnostic-parity|diagnostics the host's fortified libc headers hide -- #106"
     "doc-citation-baselines|tools/doc-citations/check_baselines.py (breach AND slack)"
     "arm-cross-build|cross-compile the shipped config for ARM -- #106 (needs --arm)"
@@ -222,6 +223,28 @@ case $? in
 1) record key-rate-budget RED
    grep -E "FAIL|legit peak|required cap" "${out_dir}/key-rate-budget.log" | head -10 ;;
 *) record key-rate-budget ERROR; tail -8 "${out_dir}/key-rate-budget.log" ;;
+esac
+echo
+
+# ---------------------------------------------------------------------------
+# 4c. Slot-reclaim staleness window -- task #130.
+#
+# Same cross-repo coupling as 4b and the same reason it cannot be an
+# assertion: the port-reclaim staleness precondition is a multiple of the
+# slot's OBSERVED cadence, and the multiple is derived from client constants
+# (the host advertise interval, the in-race REGISTER cadence, the signalling
+# leg) that ship in a release ZIP while the server runs on a VPS. Drift in
+# either direction is silent and neither is a crash: too small reopens the
+# live-slot hijack #130 closed, too large reopens the #105 retry lockout.
+# ---------------------------------------------------------------------------
+echo "=== reclaim window ==="
+python3 tools/rendezvous-server/check_reclaim_window.py \
+    > "${out_dir}/reclaim-window.log" 2>&1
+case $? in
+0) record reclaim-window GREEN ;;
+1) record reclaim-window RED
+   grep -E "FAIL|threshold|signal leg" "${out_dir}/reclaim-window.log" | head -10 ;;
+*) record reclaim-window ERROR; tail -8 "${out_dir}/reclaim-window.log" ;;
 esac
 echo
 
