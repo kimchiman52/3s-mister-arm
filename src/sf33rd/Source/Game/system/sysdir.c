@@ -4,6 +4,7 @@
  */
 
 #include "sf33rd/Source/Game/system/sysdir.h"
+#include "arcade/arcade_balance.h"
 #include "common.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
@@ -114,8 +115,21 @@ void init_omop() {
 
     omop_spmv_ng_table[0] |= sysdir_base_move[My_char[0]];
     omop_spmv_ng_table[1] |= sysdir_base_move[My_char[1]];
-    cmd_sel[0] = (omop_spmv_ng_table[0] & DIP2_ALL_SUPER_ARTS_AVAILABLE_DISABLED) == 0;
-    cmd_sel[1] = (omop_spmv_ng_table[1] & DIP2_ALL_SUPER_ARTS_AVAILABLE_DISABLED) == 0;
+    /* [TM-07] "All Super Arts available" cannot be honoured under arcade
+     * balance: get_commands() returns ArcadeCommandData_Get(char) before it
+     * ever reaches the cmd_sel branch, and there is no all-SA variant of the
+     * ROM-derived command tables. Previously cmd_sel stayed set anyway, so the
+     * SA-gauge and UI consumers (plcnt.c, spgauge.c, pls03.c, com_sub.c) acted
+     * as though every super art were selectable while the motion tables
+     * disagreed -- an inconsistent half-applied state. Force it off under
+     * arcade so every consumer agrees with the command tables. */
+    if (ArcadeBalance_IsEnabled()) {
+        cmd_sel[0] = 0;
+        cmd_sel[1] = 0;
+    } else {
+        cmd_sel[0] = (omop_spmv_ng_table[0] & DIP2_ALL_SUPER_ARTS_AVAILABLE_DISABLED) == 0;
+        cmd_sel[1] = (omop_spmv_ng_table[1] & DIP2_ALL_SUPER_ARTS_AVAILABLE_DISABLED) == 0;
+    }
     no_sa[0] = (omop_spmv_ng_table[0] & (DIP_UNKNOWN_30 | DIP_UNKNOWN_31)) != 0;
     no_sa[1] = (omop_spmv_ng_table[1] & (DIP_UNKNOWN_30 | DIP_UNKNOWN_31)) != 0;
     vib_sel[0] = 1;
