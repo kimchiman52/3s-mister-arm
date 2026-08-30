@@ -87,6 +87,25 @@ this runbook (per the parent plan's Step 10 success criteria).
     (`DEFAULT_INTER_ENTRY_WAIT`, `compile_corpus.py:75`); Ryu uses 90,
     Hugo uses 200 (grabs need a longer settle) — pick per-character, not
     dogmatically the default.
+  - `balance:` — **which engine the corpus is measured against** (task
+    #108). `"ps2"` (the default, and what all 94 pre-#108 corpora are) or
+    `"arcade"`. Resolved by `resolve_balance` in `compile_corpus.py`,
+    always written into `meta.json`, and always passed on as
+    `--test-balance` by `run.sh` — the engine under test is never implicit.
+    An `arcade:` corpus needs a verified CPS3 romset; without one the run
+    exits **6** and `run.sh` reports it as a romset problem rather than
+    letting the corpus quietly re-measure PS2. Point it at one with
+    `FDH_CPS3_ZIP=/path/to/sfiii3nr1.zip` (dev-only; it is exported as
+    `$THIRDSARM_CPS3_ZIP`, `src/arcade/arcade_char_data.c:628`).
+  - `super_full:` — `true` runs with `--test-p1-super-full`, granting P1
+    exactly `store_max` super stock once, at `game_frame <= 2`
+    (`tr_spgauge_cont_init2`, `src/test/test_runner.c:993-1009`).
+    **An arcade corpus that needs meter must use this, not `sa_gauge:`.**
+    The training S.A.GAUGE menu options `sa_gauge:` drives live inside
+    `if (!ArcadeBalance_IsEnabled())` in `player_mv_0000`
+    (`src/sf33rd/Source/Game/engine/plmain.c:183-204`), so under arcade
+    balance the whole `demo_set_sa_full` / `clear_super_arts_point` switch
+    is skipped and an `sa_gauge:` corpus gets **no meter at all**.
 - [ ] **Standard entry ladder** (plan's own words,
       `docs/plan-frame-data-completion.md:744-747`): **six-button close
       BLOCK → HIT sample → WHIFF sample at 250 → crouching → command
@@ -252,6 +271,42 @@ BLOCK/HIT rows.
       corpus (same posture as `feedback-no-shipping-wrong-data.md` and the
       plan's own house rule against accepting wrong data,
       `docs/plan-frame-data-completion.md:209-211`).
+
+## Phase 4a — Arcade-balance corpora (task #108)
+
+A `balance: arcade` corpus measures the engine that actually ships: arcade
+balance auto-selects the moment a CPS3 romset verifies
+(`src/arcade/arcade_balance.c`), which is confirmed on hardware. Things that
+are true on the PS2 path and NOT on the arcade path, learned the hard way:
+
+- [ ] **`sa_gauge:` is inert.** See the `super_full:` note in Phase 2. Use
+      `super_full: true`.
+- [ ] **Dummy BLOCK is not trustworthy yet.** `check_illegal_lever_data()`
+      lever normalization is PS2-only (`plmain.c:52-55`). A `dummy: stand`
+      entry that BLOCKs under PS2 was observed to **HIT** under arcade
+      (`corpus-smoke.yaml`'s `close-lp-block-vs-stand`, measured this
+      session). That divergence is unexplained, so per Phase 6 it is a
+      **STOP, not an xfail** — do not author BLOCK entries into an arcade
+      corpus until it is understood. Tracked in `docs/queue.md` under #108.
+- [ ] **The CPS3 super-art state machines are only reachable here.**
+      `sag_union` dispatches on `sa->gauge_type` under arcade balance
+      (`plmain.c:1042-1050`); `sag_union_0/1/3` (`:642/:691/:790`) cannot
+      execute at all on the PS2 path. `sag_union_1` (gauge_type 1) is the
+      install-super machine that carried the unbounded-stock bug upstream
+      `ad411df5` fixed. `corpus-yun-sa3-arcade.yaml` is the worked example,
+      including its re-runnable RED proof.
+
+      Measured census (temporary probe inside `sag_union`'s arcade branch,
+      2026-08-30): exactly seven (character, super-art) pairs dispatch to
+      `sag_union_1`, all with `store_max=1` — **yun SA3, oro SA1, oro SA3,
+      yang SA3, makoto SA3, q SA3, twelve SA3**. Everything else measured
+      landed on gauge_type 0. Those seven are where an install-stock
+      assertion can go.
+- [ ] **`store` is not a traced field**, so a corpus cannot assert super
+      stock directly. Make stock observable through *what the input
+      produces*: with stock, the super; without it, the underlying special.
+      Pin the fall-through move against its own oracle row so the entry is a
+      real frame-data assertion, not merely "something else happened".
 
 ## Phase 5 — Known traps
 

@@ -25,10 +25,25 @@ match the present.
 
 | Quantity | Value |
 |---|---|
-| Corpora GREEN | 94<!-- canon:corpora --> |
-| Total rows | 1,349<!-- canon:total --> |
-| PASS | 1,296<!-- canon:pass --> |
-| XFAIL | 53<!-- canon:xfail --> |
+| Corpora GREEN | 96<!-- canon:corpora --> |
+| Total rows | 1,403<!-- canon:total --> |
+| PASS | 1,348<!-- canon:pass --> |
+| XFAIL | 55<!-- canon:xfail --> |
+
+**Two of the 96 run the ARCADE (CPS3) engine** (`corpus-q-arcade.yaml`,
+`corpus-yun-sa3-arcade.yaml` — 54 of the 1,403 rows), added by task #108. The
+other 94 run the PS2 port tables, as they always have. Which engine a corpus
+runs is now its own declared `balance:` key rather than a side effect of
+`--test-enable`; see `tools/frame-data/CORPUS-AUTHORING.md` Phase 2 and
+Phase 4a. The arcade corpora need a verified CPS3 romset:
+
+```sh
+FDH_CPS3_ZIP=/path/to/sfiii3nr1.zip tools/frame-data/run-suite.sh --check-golden
+```
+
+Without one they RED with "arcade balance UNAVAILABLE" (game exit 6) rather
+than silently re-measuring PS2 — which is the failure mode #108 existed to
+close.
 
 **These four numbers are generated, not typed.** They are the sum of
 the per-corpus golden tables under `tools/frame-data/golden/` — the
@@ -7170,8 +7185,12 @@ asserting the oracle, with the true mechanism documented — the honest floor.
 
 **§13.16 addendum (HONEST FLOOR, dated 2026-07-14, user decision —
 opus-substitute / WANTS FABLE RE-REVIEW).** As of the drive-to-zero closing
-pass the overlay is **frame-exact on 1,296<!-- canon:pass --> of
-1,349<!-- canon:total --> legs** (1,290 at the
+pass the overlay is **frame-exact on 1,348<!-- canon:pass --> of
+1,403<!-- canon:total --> legs** (the two figures carry live canon markers, so
+they track the suite; the parenthetical arithmetic that follows is the dated
+2026-07-14..17 derivation of the then-current 1,296/1,349 and is left as the
+historical record it is -- the delta to today is task #108's two arcade
+corpora, +52 PASS +2 XFAIL) (1,290 at the
 2026-07-14 floor + 4 from the 2026-07-17 lever-V remy-sa1 resolution + 2 from
 the 2026-07-17 lever-W yang landing-cut re-anchor) and within ~1 frame on the
 remaining 53, with **every one of the 53 deviations diagnosed and terminally
@@ -7200,14 +7219,26 @@ partition into seven terminal classes, none of which admits a suite-safe fix:
 | **CAPABILITY-GATED-remaining** | 4 | projectile rows, now hardware-measured (CAP-3) — the divergence is documented (was 8; remy-sa1 ×4 removed 2026-07-17, the slot-0-latch artifact resolved by lever V, not a table split) |
 | **CONVENTION/RULED** | 6 | genuinely ambiguous mapping between two hardware-real quantities (yang startup 5-vs-7; yun-zesshou A 15-vs-16), user-ruled, both readings defensible |
 | **REACHABILITY-GAP** | 4 | the clean-whiff baseline is harness-unproducible (urien-chariot connects even at DIST_MAX; sean-sa1 Hadou-Burst projectile has no reachable whiff) |
+| **ARCADE-VS-PORT-DIVERGENCE** | 2 | `q-arcade` ×2 (`q-crmp-hit-capture-a`, `-b`), added 2026-08-30 by task #108. Under ARCADE balance the pair measure `adv=-2` where the PS2 corpus measures the oracle's `-1`; outcome, S, A and R are identical on both engines. A one-frame defender-recovery divergence BETWEEN THE TWO ENGINES — a class that could not exist before the suite could run the shipping engine at all. Cause not isolated; candidates are the arcade-only skips in `plmain.c` (`check_illegal_lever_data` at `:52-55`, `check_omop_vital` at `:335-337`, the `about_gauge_process` calls at `:246-249`/`:274-277`/`:293-295`/`:305-307`). NOT terminal — an open work item, tracked in `docs/queue.md` under #108, with the reopen condition stated in the corpus note (it XPASSes the moment the engines agree) |
 | **ENGINE-MODEL-LIMITATION** | 2 | urien-sa2 ×2 — re-adjudicated 2026-07-17 (digest finding #1): the earlier "ORACLE-TABLE-INCONSISTENCY / S+R=92>T=91 over-budget" label is REFUTED (the 91 is the engine meter window, not an oracle quantity; the arcade 94-frame post-flash busy window makes oracle S=1+R=91 jointly satisfiable). Terminal because the engine's single-slot proj-split model (`R = meter_len − proj_s`) cannot place S and R independently AND the engine meter window is 3 frames short of arcade's 94 at the window OPEN (sa_stop-vs-frz definitional gap; re-anchor path CLOSED 2026-07-18 — the oracle conventions sit on the engine's window and a re-anchor regresses 20+ passing S legs; see the Q6 closure above). S now displays oracle 1 (lever V, display-only); residual is A (travel-dependent, no flat canonical value) + the open 91-vs-94 window. The genuine cross-character oracle-table convention split is `twelve-sa1` (classified under CAPABILITY-GATED-remaining; `proj_spawn_raw=3` post-append consume, `proj-split/fit.md §1`) |
-| **Total** | **53**<!-- canon:xfail --> | all characterized known-limitations; zero UNCLASSIFIED |
+| **Total** | **55**<!-- canon:xfail --> | 53 characterized known-limitations + 2 open arcade-vs-port work items; zero UNCLASSIFIED |
 
 No row remains UNCLASSIFIED. The engine is LAYER-1 arcade-faithful; the
 residual 53 are the diagnosed floor, held honestly rather than papered over.
 
-**(Class-table reconciliation, dated 2026-07-17.)** The per-class rows above
-now sum to 53 (15+12+10+4+6+4+2), matching both the **Total** row and the
+**(Class-table reconciliation, dated 2026-08-30 — task #108.)** The per-class
+rows now sum to **55** (15+12+10+4+6+4+2+**2**). The +2 is the new
+ARCADE-VS-PORT-DIVERGENCE class, and it is not a regression of the 53: those
+53 are unchanged, row for row. It is the first result from a part of the
+engine the suite could not previously execute — arcade balance was pinned off
+for every test-runner process — so the two rows are NEW COVERAGE reporting a
+disagreement, not old coverage getting worse. They are the only XFAILs among
+the 54 arcade rows added; the other 52 agree with the PS2-authored
+expectations exactly.
+
+**(Class-table reconciliation, dated 2026-07-17 — HISTORICAL, superseded by
+the 2026-08-30 note above; left as written.)** The per-class rows above
+then summed to 53 (15+12+10+4+6+4+2), matching both the **Total** row and the
 post-lever-W suite count (1,296 PASS / 53 XFAIL); the earlier header of 55
 XFAIL is superseded by the lever-W yang-senkyuutai-lk-block +
 yang-exsenkyuutai-block XFAIL→PASS flip (TERMINAL-NON-SURGICAL 17→15), which

@@ -1,0 +1,131 @@
+# Yun Super Art 3 (Genei Jin) under ARCADE (CPS3) balance -- task #108.
+#
+# WHY THIS CORPUS EXISTS
+# ----------------------
+# Every one of the 94 pre-#108 corpora runs on the PS2 balance tables. Not by
+# choice: `tools/frame-data/run.sh` passes `--test-enable`, and
+# `src/arcade/arcade_balance.c` used to pin PS2 for any test-runner process,
+# before ArcadeCharData_Init was even called. Real hardware auto-selects
+# ARCADE the moment the romset verifies ("Arcade balance auto-selected: CPS3
+# ROM verified, 20/20 characters adapted, digest eab701778c8b20ad"), so the
+# suite could not execute the engine that ships, and the CPS3-only super-art
+# state machines `sag_union_0/1/3`
+# (src/sf33rd/Source/Game/engine/plmain.c:642/691/790) were unreachable from
+# automation by construction.
+#
+# This corpus is the one that closes that. It carries `balance: arcade`, so
+# run.sh passes `--test-balance arcade` and the run resolves to the shipping
+# CPS3 tables or exits 6 -- it cannot silently fall back to PS2 and report
+# green.
+#
+# WHY YUN SA3 SPECIFICALLY
+# ------------------------
+# `sag_union` dispatches on `sa->gauge_type` under arcade balance
+# (plmain.c:1042-1050). Yun + super_art 2 is a MEASURED gauge_type 1, i.e.
+# `sag_union_1`, with store_max 1 -- verified this session with a temporary
+# probe inside the arcade branch of sag_union:
+#
+#   T108PROBE arcade sag_union gauge_type=1 id=0 my_char=3 arts=2 sa_idx=2
+#             store=0 store_max=1
+#
+# `sag_union_1` is where the install-super stock bug lived. Before upstream
+# `ad411df5`, its activation arm read `wk->sa->store -= -1;` -- an INCREMENT --
+# so the seven install supers had unbounded super stock on the shipping device
+# path, and no corpus could have caught it because no corpus ran that code.
+#
+# WHAT THE THREE ENTRIES PIN
+# --------------------------
+# The activation, then the same input twice more after the stock is spent.
+# That shape is deliberate: `store` is not a traced field, so a one-activation
+# corpus cannot see a stock bug at all. What IS observable is what the motion
+# produces on the SECOND attempt -- the super if stock remains, the underlying
+# special if it does not.
+#
+# Meter: `super_full: true`, NOT `sa_gauge:`. The training S.A.GAUGE options
+# live in the PS2-only half of player_mv_0000 (plmain.c:183-204, inside
+# `if (!ArcadeBalance_IsEnabled())`), so an arcade corpus asking for
+# `sa_gauge: 3` gets no meter whatsoever. `--test-p1-super-full` goes through
+# test_runner.c's own tr_spgauge_cont_init2 (src/test/test_runner.c:993-1009),
+# which is not balance-gated, and grants exactly store_max = 1 stock once, at
+# game_frame <= 2. One stock, spent once, is precisely the condition the bug
+# needs to be visible.
+#
+# `inter_entry_wait: 900` is sized so the Genei Jin install fully drains
+# between entries; a shorter wait leaves `sa_rno` parked in sag_union_1's
+# case 4 and the second attempt is blocked by the ACTIVE install rather than
+# by the empty stock, which would make the corpus insensitive to the very bug
+# it exists to catch.
+#
+# THE RED PROOF (re-runnable)
+# ---------------------------
+# Re-apply the pre-ad411df5 sign at plmain.c's sag_union_1 activation arm
+# (`store -= 1` -> `store -= -1`), rebuild build/host, and run this corpus.
+# Measured this session:
+#
+#   shipped fix   entry 1 WHIFF S=9  | entries 2,3 HIT S=22 A=6 R=17  -> GREEN
+#   flip reverted entry 1 WHIFF S=9  | entries 2,3 WHIFF S=9 A=0 R=0  -> RED
+#
+# i.e. with the bug restored the install re-activates from a stock that should
+# be empty, exactly as it did on shipped hardware, and this corpus fails. A
+# green run with the flip reverted would mean the arcade path still is not
+# executing.
+#
+# DUMMY GUARD, DELIBERATELY UNUSED
+# --------------------------------
+# Every entry is `dummy: none`. Under arcade balance the port's
+# check_illegal_lever_data() lever normalization is skipped (plmain.c:52-55),
+# and a `dummy: stand` entry that BLOCKs under PS2 was observed to HIT under
+# arcade instead. That divergence is real and unexplained; per
+# CORPUS-AUTHORING.md Phase 6 it is a STOP, not an xfail, so no BLOCK entry is
+# authored here at all. Recorded in docs/queue.md under #108.
+character: yun
+oracle: yun.json
+balance: arcade
+super_art: 2
+super_full: true
+inter_entry_wait: 900
+entries:
+
+- label: yun-sa3-arc-activation
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Genei Jin" }
+  outcome: WHIFF
+  # The install activation itself. Oracle-exact on the only numeric field
+  # yun.json publishes for this row (Startup=9); Hit/Recovery/Hit_advantage/
+  # Block_advantage are all the literal string "-", so from-qjson would raise
+  # on any of them and the measured A=0/R=0/adv=+0 are the engine's
+  # "no active window" sentinels, not quantities to assert. Same disposition
+  # as the PS2 corpus-yun-sa3.yaml, which measures S=9 too: the activation's
+  # startup does NOT differ between the two engines. That agreement is a
+  # useful control -- it says this corpus's later entries diverge because of
+  # the stock machine, not because arcade moved Genei Jin's startup.
+  expect: { S: from-qjson }
+
+- label: yun-sa3-arc-stock-spent
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Tetsu Zankou (Fierce)" }
+  outcome: HIT
+  # Stock is now 0, so the double-quarter-circle no longer resolves to the
+  # super and the input falls through to the underlying command normal. The
+  # measured S=22 A=6 R=17 is oracle-EXACT against yun.json's "Tetsu Zankou
+  # (Fierce)" row (Startup=22, Hit=6, Recovery=17), which is what makes this
+  # a real frame-data assertion and not just "something other than the super
+  # happened". adv is not asserted: that row's Hit_advantage is the literal
+  # string "-" (from-qjson would raise); the harness measures adv=+91 kd=1,
+  # consistent with a knockdown, and a knockdown advantage is not a quantity
+  # this oracle publishes.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }
+
+- label: yun-sa3-arc-stock-spent-2
+  setup: { dist: close, dummy: none }
+  input: "motion 2qcf HP"
+  qjson: { name: "Tetsu Zankou (Fierce)" }
+  outcome: HIT
+  # Repeat of the above. Not redundant: one exhausted attempt could in
+  # principle be a timing artefact of the install's own drain tail, whereas a
+  # SECOND identical result establishes the stock stays at 0 rather than
+  # creeping back. Under the reverted sign flip both of these entries flip to
+  # the super together, which is the signature the bug actually had.
+  expect: { S: from-qjson, A: from-qjson, R: from-qjson }

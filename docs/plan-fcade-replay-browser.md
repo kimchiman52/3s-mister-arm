@@ -325,7 +325,11 @@ defined go/no-go (§6, Step B3).
   (409 lines, old path at repo root, `download` subcommand only —
   `grep -c add_parser` = 1). Superseded by upstream
   `tools/fcade-replays/` (§2.1).
-- The fork's celebrated "1,296 PASS / 53 XFAIL" suite is the
+- The fork's celebrated "1,296 PASS / 53 XFAIL" suite (that figure is the
+  state as of 2026-07-18 and is quoted here as a dated reference; the LIVE
+  canon lives in `docs/frame-data-synthesis.md` § "Verification canon
+  (live)", where it is generated from the golden tables rather than typed)
+  is the
   **frame-data corpus suite** (`tools/frame-data/check_frame_data.py`
   diffing `frame_trace.c` logs against a scraped-oracle
   `expected.json`; docstring check_frame_data.py:1-27), driven by
