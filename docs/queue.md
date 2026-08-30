@@ -2052,17 +2052,214 @@ Edit set: `src/sf33rd/Source/Game/stage/{bg.c,bg.h,tate00.c}`,
 `src/netplay/{direct_p2p.c,direct_p2p.h,test_punch_predicates.c}`,
 `docs/fix-plan-bg-texture-rollback.md`, this file.
 
-## #139 — is the LDREQ rollback leak actually fixed, or only its log line? — IN PROGRESS
+## #139 — the LDREQ rollback leak, measured instead of inferred — CLOSED, and the dedupe is not what closed it
 
-Auditing whether the `[ldreq-dedupe]` guard (`Push_LDREQ_Queue`, io/gd3rd.c) and
-the #72-widened `Ldreq_BarrierActive()` (io/gd3rd.c) actually close the task-50
-duplicate-load leak, or merely suppress the duplicate PUSH while the ramcnt
-ledger keeps accumulating. Twelve dedupe drops in #138's rollback leg is the
-observation under test, not the answer.
+Asked whether the `[ldreq-dedupe]` guard (`Push_LDREQ_Queue`, io/gd3rd.c) and
+the #72-widened `Ldreq_BarrierActive()` close the task-50 duplicate-load leak,
+or merely suppress the duplicate PUSH while the ramcnt ledger keeps
+accumulating. Twelve dedupe drops in #138's rollback leg was the observation
+under test, not the answer.
 
-**Build tree**: NOT taking `build/host`. Private configure dir
-`build/host-ldreq139` (Debug, stock options) for every run in this lane.
-Edit set so far: this file only.
+**Answer: the leak is CLOSED — permanent leak 0 bytes, measured — and the
+`[ldreq-dedupe]` guard contributes NOTHING to that under production
+conditions, where it never fires at all.** The load-bearing guard is the
+`q_ldreq_texture_group()` case-2 reclaim (`rendering/texgroup.c`, the
+`purge_texture_group(curr->group)` immediately before `Pull_ramcnt_key`).
+
+**Build tree**: `build/host` was never taken. Private configure dir
+`build/host-ldreq139` (Debug, stock options) for the harness runs; a private
+detached worktree (removed at the end) for the instrumented and neutralized
+builds. Repo edit set: **this file only** — no source changed.
+
+### 1. What the dedupe guard actually does — and when it does nothing
+
+It drops the push **before touching any ledger**. The `return 1` inside the
+scan (`Push_LDREQ_Queue`, io/gd3rd.c) precedes the free-slot scan, the
+`q_ldreq[i] = ldreq[0]` write and the `*q_ldreq[i].result &= ~masknum` clear,
+all of which are below it. A dropped push therefore adds no queue slot, no
+ramcnt key and no bytes. It is a clean suppression, not a suppression that
+hides an accumulation.
+
+**But it cannot fire in a live session.** Its match condition requires
+`q_ldreq[i].be != 0` — the original still queued. The task-#66/#72 barrier
+guarantees the opposite: while `Ldreq_BarrierActive()` is true,
+`Check_LDREQ_Queue()` drains the queue to empty inside the frame that pumped
+it, and `Check_LDREQ_Queue()` runs once per simulated frame (`Game_Task`,
+game.c) including on every rollback resim frame
+(`rbd_speculative_advance` → `njUserMain`). So by the time a rolled-back
+confirm re-issues the request, every slot has `be == 0` and the scan misses.
+Measured, same scenario and cadence, barrier off vs `--ldreq-barrier-force`:
+
+| select cadence | barrier | dedupe drops | dup-transfer | reclaim |
+|---|---|---|---|---|
+| period 8, depth 8 | off | 7 | 1 | 1 |
+| period 8, depth 8 | **on** | **0** | 3 | 3 |
+| period 1, depth 8 | off | 55 | 4 | 4 |
+| period 1, depth 8 | **on** | **0** | 24 | 24 |
+
+The twelve dedupe lines #138 saw were an artifact of the harness running
+without a session. In the field that number is zero. The dedupe's own comment
+already says depth >= 3 hands the job to the reclaim; this adds that the
+barrier makes it structural rather than depth-dependent.
+
+### 2. What `Ldreq_BarrierActive()` covers — and what it does not
+
+It is called from exactly **one** production site, `Check_LDREQ_Queue()` in
+io/gd3rd.c, plus one telemetry probe in the same file and the two Debug
+instruments (`src/test/texgroup_window_probe.c`,
+`src/test/ldreq_timing_trace.c`). The three `src/netplay/netplay.c`
+"references" are **prose inside `#if ENABLE_PERF_TELEMETRY` comment blocks on
+`Ldreq_LogSessionProbe` calls — not call sites.** #72's widening (IDLE and
+EXITING out, TRANSITIONING/CONNECTING/RUNNING in) changes *which frames drain*,
+nothing about the replay window.
+
+**It does not close the replay window, and it does not narrow it. It widens
+what the replay can reach** — by draining the head before the duplicate
+arrives, it is precisely what takes the dedupe out of play. The file already
+says the barrier buys wall-clock invariance, not rollback invariance; this
+lane's numbers are the concrete cost of that distinction.
+
+### 3. The measurement
+
+Per-frame ramcnt readout (`mmGetRemainder` / `mmGetRemainderMin` /
+`rckeyctr` / `rckeymin` / live-key count / live-byte sum) added to
+`RollbackDeterminism_FrameEnd`, in the private worktree, uncommitted and
+discarded with it. The per-symbol capture hash **cannot** answer the byte
+question: `rckey_work` and `rckey_mmobj` hold raw arena addresses that differ
+between two runs whose argv lengths differ, which is why the driver has always
+listed them as baseline NOISE. (First attempt at this got the wrong answer for
+a dumber reason — `Stream.rows` are raw bytes, not per-symbol words, so
+`rows[f][i]` indexes a byte. Corrected before anything was concluded from it.)
+
+`char06-pressure-super` (Hugo — the 2026-08-24 repro), 2400 frames,
+`--ldreq-barrier-force` on every run so the loader behaves as it does in a live
+session:
+
+| select cadence | frames where the ledger differs | peak transient | **permanent leak** |
+|---|---|---|---|
+| period 8, depth 8 (production prediction window) | 2 (208-209) | 1,722,496 B | **0 B** |
+| period 1, depth 8 (a rollback every select frame) | 14 (193-209) | 3,342,400 B | **0 B** |
+
+Final frame 2399 identical field for field in both:
+`rem=3,084,800 remmin=3,084,800 rckeyctr=37 rckeymin=37 keys=26 bytes=11,070,812`.
+
+**The transient is a phase LEAD, not a leak.** Frame by frame, the rollback
+run's free-byte figure at 193-199 is exactly the baseline's at 200-202, and at
+203-209 exactly the baseline's at 210+:
+
+```
+frame |    rem_A |    rem_B |    delta | keys A/B
+  192 | 11212864 | 11212864 |        0 | 10/10
+  193 | 11212864 |  7870464 | -3342400 | 10/11
+  199 | 11212864 |  7870464 | -3342400 | 10/11
+  200 |  7870464 |  7870464 |        0 | 11/11
+  203 |  7870464 |  6147968 | -1722496 | 11/13
+  209 |  7870464 |  6147968 | -1722496 | 11/13
+  210 |  6147968 |  6147968 |        0 | 13/13
+```
+
+The rollback leg finishes the load ~7 frames early and then agrees — the same
+shape as the `plt_req` phase lead #69 closed with proof. The -3,342,400 delta
+is the SAME NUMBER as the original leak (3,342,336 B block + 64 B cell header);
+the difference is that it now comes back.
+
+**Minimum free memory over the whole run is IDENTICAL**: 3,084,800 B, reached
+at frames 330-332 in both runs. Rollback does not cost the allocator one byte
+of worst-case headroom.
+
+### 4. The positive control — the instrument can see the leak
+
+Same instrumented build with the case-2 reclaim neutralized to
+`if (0 && curr->lds->ok && ...)`, object file and binary deleted before
+rebuilding:
+
+- **Sanity, no-rollback vs no-rollback, tip build vs neutralized build:
+  identical on all 2400 frames**, final row identical. Neutralizing the reclaim
+  changes nothing offline, because it only fires on a duplicate.
+- **Neutralized + rollback (period 8, depth 8, barrier on): diverges at frame
+  200 and NEVER reconverges** — 2200 differing frames, peak deficit 5,064,896 B,
+  final `rem=51,648` vs `3,084,800`, final live bytes `14,100,720` vs
+  `11,070,812`. dup-transfer 3, reclaim 0, and **27 `[ramcnt-skip]` allocation
+  failures** where the fixed build has zero.
+
+So the zero on the tip build is a measurement, not a blind spot.
+
+### 5. The SIGSEGV — not reachable, by two independent margins
+
+1. **The precondition never arises.** Zero `[ramcnt-skip]` lines in every
+   rollback run of the fixed build, and minimum free arena identical to
+   baseline at 3,084,800 B against a 393,216 B round-init request — a 7.8x
+   margin, not the 135,680 B the 2026-08-24 diagnosis measured.
+2. **Even with the leak restored it does not crash.** The neutralized control
+   exhausts the arena (51,648 B free), takes 27 allocation failures, and still
+   **exits 0** — task-50's fix 4 catches the `-1` / NULL sentinel at both
+   `make_texcash_work` key0 sites and the key1 site (`rendering/texcash.c`,
+   the `key0-alloc-failed` / `key1-alloc-failed` bail-outs) instead of carrying
+   it into `ppgSetupTexChunkSeqs`. The crash is closed independently of the
+   leak.
+
+`errors=0` in all four harness runs of the fixed build, including the
+`char06-pressure-super` scenario the harness doc still records as
+"deterministically segfaults ... at round-init boundaries".
+
+### 6. Scope note — the reclaim covers every enqueue site, not just `Sel_PL_3rd`
+
+The 2026-08-24 note listed `Push_LDREQ_Queue_BG` (screen/sel_pl.c) and
+`Push_LDREQ_Queue_Player` (screen/sel_pl.c) as siblings fix 2 does not cover.
+That is wrong: the reclaim lives in `q_ldreq_texture_group()`, the **type-1
+handler**, not in any pusher, so it covers all ten enqueue sites
+(demo00.c, ranking.c, next_cpu.c, win.c, sel_pl.c, menu.c) uniformly.
+The other handler, `q_ldreq_color_data()` (types 2-5,
+`rendering/color3rd.c`), holds no single-slot key holder to strand: every
+terminal arm releases `curr->key` — `init_trans_color_ram()` ends each of its
+type arms with `Push_ramcnt_key(key)`, the type-10 arm releases in `case 5`,
+and the `case 3` / `case 4` error arms release before resetting. A duplicate
+colour load therefore allocates and frees inside the same drain, which is why
+`rckeyque` and `mts_ok` come out byte-identical.
+
+### 7. Gates
+
+- **Rollback-determinism harness: RUN, 5 configurations** (4 driver invocations
+  of `char06-pressure-super` at select 8/8 and 1/8, with and without
+  `--ldreq-barrier-force`, plus the neutralized control). `errors=0`
+  everywhere. Divergent rows: `bg_fastpath_scroll_x` in all four (task #137's
+  black-BG bug — these runs were built at `237789a7`, i.e. BEFORE `9f2981ea`
+  landed that fix, so it is expected), plus `Candidate_Buff` first=193
+  frames=7 at select period 1, which reproduces the documented open red
+  symbol-for-symbol, and `q_ldreq` first=193 frames=7 at select period 1 with
+  the barrier forced, which reproduces the documented noise-unmasking.
+- **99-corpus frame-data suite: SKIPPED, no simulation code changed.** The only
+  repo edit in this lane is `docs/queue.md`. The instrumented and neutralized
+  builds lived in a worktree that has been removed.
+- **Shipped-config build and ARM cross-build: SKIPPED, no compiled code
+  changed** in the repo for the same reason.
+- **Citation baselines: run at the end** (see below).
+
+### 8. Carried — two stale claims in `docs/rollback-determinism-harness.md`, NOT edited from this lane
+
+Recorded rather than repaired, following the convention #137 used for the same
+file:
+
+1. The known-limit-1 paragraph says `char06-pressure-super`'s rollback run
+   "deterministically segfaults when a speculative leg crosses a round
+   (re)initialization", with the `ppgSetupTexChunkSeqs` `adrs=NULL` stack. Four
+   runs at tip say `errors=0`. The paragraph two sentences above it already
+   says that segfault is fixed as of task 50; the two halves contradict.
+2. The same section says select depth is `min(--rollback-depth,
+   --rbd-select-rollback-depth)` at `rollback_determinism.c:498`. The two knobs
+   have been independent since #69 and the code that says so is the block
+   comment in `RollbackDeterminism_PreFrame`.
+
+### 9. Recommendation, not taken (report-before-fix)
+
+The regression risk task 50's own commit named is still live and is now
+sharper: a test written against the **dedupe** licenses deleting the guard that
+actually fixes this, and under the barrier the dedupe counter is **zero**, so
+any test asserting `dedupe > 0` is asserting a harness artifact. A regression
+test for this bug should assert on the ledger — `mmGetRemainder(&rckey_mmobj)`
+equal between a rollback and a no-rollback leg at end of run — with
+`--ldreq-barrier-force` and select depth >= 3. The instrument that measures it
+is ~15 lines in `RollbackDeterminism_FrameEnd`. Not landed here.
 
 ## #137 — the black-BG fix that was never implemented — CLOSED, and E.3 was not it
 
