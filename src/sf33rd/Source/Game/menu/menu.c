@@ -5394,6 +5394,24 @@ void Back_to_Mode_Select(struct _TASK* task_ptr) {
     BGM_Request_Code_Check(0x41);
 }
 
+/* INVARIANT: this function writes save_w[Present_Mode].extra_option (below).
+ * Under netplay Present_Mode is PRESENT_MODE_NETPLAY (2), and save_w[2] is
+ * exactly what init_omop() reads to build the engine DIP tables for a netplay
+ * match. If one peer could mutate save_w[2] and the other could not, the next
+ * match would desync.
+ *
+ * That is safe today only by REACHABILITY, not by construction:
+ *   - Extra_Option is reachable solely via After_Title's AT_Jmp_Tbl (main-menu
+ *     flow); In_Game_Jmp_Tbl has no entry for it, and Suspend_Menu is a stub.
+ *   - Pause_Task early-outs entirely when Mode_Type == MODE_NETWORK, so the
+ *     in-match pause menu never opens during netplay.
+ *   - Netplay teardown always runs Soft_Reset_Sub -> Reset_Sub0, which restores
+ *     Present_Mode = 1 before the menus are reachable again.
+ *
+ * Breaking ANY of those three -- e.g. adding a rollback-safe pause for netplay,
+ * or exposing Extra Options from the in-game menu -- makes save_w[2] mutable
+ * mid-session and reintroduces the desync. If you do that, index these writes
+ * explicitly rather than via Present_Mode. */
 void Extra_Option(struct _TASK* task_ptr) {
     Menu_Cursor_Y[1] = Menu_Cursor_Y[0];
 

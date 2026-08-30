@@ -123,6 +123,19 @@ void effect_E3_move(WORK_Other* ewk) {
         }
 
         ewk->wu.routine_no[0]++;
+        /* These are the PERSISTENT engine DIP globals, not training-scoped
+         * state -- plw[].spmv_ng_flag/flag2 are seeded from them at match init.
+         * A training setting therefore survives leaving training mode, and is
+         * cleared only by init_omop() (sysdir.c), which zeroes both slots and
+         * re-derives them. init_omop() runs on the character-select exit path
+         * (Exit_6th, sel_pl.c), which every match -- including netplay --
+         * passes through.
+         *
+         * That single call is the whole guarantee. It became load-bearing with
+         * [TM-02]: before then the CPS3 path had no reader for the SA-gauge
+         * bits, so a leaked INFINITY/MAXIMUM setting was inert under arcade.
+         * It is not any more -- a match entered without init_omop() would carry
+         * the training gauge setting into real play. */
         omop_spmv_ng_table[mwk->wu.id] = mwk->spmv_ng_flag;
         omop_spmv_ng_table2[mwk->wu.id] = mwk->spmv_ng_flag2;
         /* fallthrough */
