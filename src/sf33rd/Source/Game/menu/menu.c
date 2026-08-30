@@ -4267,7 +4267,11 @@ void Normal_Training(struct _TASK* task_ptr) {
                         Training_Menu_From_Pause = TRAINING_MENU_DIRECT;
                         Training_Cursor = 0;
 
-                        Training[0].contents[0][1][3] = 0; /* clear stored sub-mode cursor (player 0, submenu page 1, slot 3) */
+                        /* [TM-09] Dead write to the DIFFICULTY slot removed.
+                         * contents[0][1][3] IS the DIFFICULTY setting; reusing it
+                         * as sub-mode cursor scratch aliased two unrelated values,
+                         * and the cursor value could never be observed (see the
+                         * commit message). */
                         set_init_A4_flag();
                         Setup_Training_Difficulty();
 
@@ -4367,7 +4371,8 @@ void Normal_Training(struct _TASK* task_ptr) {
                         Training[0].contents[1][0][3] = Training[2].contents[1][0][3];
                     }
 
-                    Training[0].contents[0][1][3] = Menu_Cursor_Y[0]; /* store selected sub-mode cursor */
+                    /* [TM-09] Second dead write to the DIFFICULTY slot removed;
+                     * see the note in the quick-resume path above. */
                     init_omop();
                     set_init_A4_flag();
 
