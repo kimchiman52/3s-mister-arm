@@ -451,6 +451,15 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                    0,
                    0),
         OPT_STRING(0,
+                   "test-balance",
+                   &configuration->test.balance,
+                   "Balance mode for the test runner: 'ps2' (default) pins PS2 balance so the frame-data "
+                   "corpora resolve identically everywhere; 'arcade' lets the normal auto-selection run so "
+                   "the arcade-only branches can be measured (needs a verified CPS3 ROM).",
+                   NULL,
+                   0,
+                   0),
+        OPT_STRING(0,
                    "test-scene-preset",
                    &configuration->test.scene_preset,
                    "Optional named scripted gameplay preset (stage-heavy, effect-heavy, super-heavy, yun-sa3-repeat, yun-sa3-repeat-pressure, q-sa1-repeat, q-sa1-repeat-pressure, ken-sa3-repeat, ken-sa3-repeat-pressure, chunli-sa2-repeat, chunli-sa2-repeat-pressure, basic-exchange, pressure-exchange, left-corner-ryu-stage, training-yun-ryu-ryu-stage, training-frame-data).",

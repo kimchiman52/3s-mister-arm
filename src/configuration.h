@@ -35,6 +35,13 @@ typedef struct TestRunnerConfiguration {
      * priority in TestRunner_Prologue's PHASE_GAME branch when set). */
     const char* input_script_path;
     const char* scene_preset;
+    /* Harness balance override. NULL (default) keeps the historical
+     * behaviour: --test-enable pins PS2 balance so the frame-data corpora
+     * resolve identically on every machine regardless of ROM presence.
+     * "arcade" instead lets the normal auto-selection run, which is the
+     * only way to measure the arcade branches the corpora never cover.
+     * Requires a verified CPS3 ROM to be reachable. */
+    const char* balance;
     int characters[2];
     int super_arts[2];
     bool initial_super_full;

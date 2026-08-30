@@ -84,6 +84,7 @@ Configuration configuration = {
     .test =
         {
             .scene_preset = NULL,
+            .balance = NULL,
             .characters = { -1, -1 },
             .super_arts = { -1, -1 },
             .initial_super_full = false,

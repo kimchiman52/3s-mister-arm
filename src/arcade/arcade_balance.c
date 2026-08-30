@@ -113,11 +113,30 @@ void ArcadeBalance_Init() {
      * -> PS2 balance with a logged reason. There is no OSD toggle. */
     do {
         if (configuration.test.enabled) {
-            /* The frame-data suite's corpora encode PS2-balance
-             * expectations; the harness must resolve identically on
-             * every machine regardless of ROM presence. */
-            set_ps2_reason("test runner pins PS2 balance");
-            break;
+            /* The frame-data suite's corpora encode PS2-balance expectations,
+             * so the harness must resolve identically on every machine
+             * regardless of ROM presence -- that stays the default.
+             *
+             * --test-balance arcade opts out. Without it there is no way to
+             * measure the arcade-only engine branches at all, which is how a
+             * family of arcade-gated training bugs shipped unnoticed: every
+             * automated measurement this project has ever taken was PS2-side.
+             * Falling through here runs the normal auto-selection, so it still
+             * lands on PS2 (with a logged reason) if no verified ROM is found. */
+            const char* test_balance = configuration.test.balance;
+
+            if (test_balance != NULL && SDL_strcasecmp(test_balance, "arcade") == 0) {
+                SDL_Log("Test runner: --test-balance arcade -- running normal balance auto-selection");
+            } else {
+                if (test_balance != NULL && SDL_strcasecmp(test_balance, "ps2") != 0) {
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                                "Unknown --test-balance '%s' (expected 'arcade' or 'ps2'); pinning PS2",
+                                test_balance);
+                }
+
+                set_ps2_reason("test runner pins PS2 balance");
+                break;
+            }
         }
 
         const char* override = Config_GetString(CFG_KEY_BALANCE);
