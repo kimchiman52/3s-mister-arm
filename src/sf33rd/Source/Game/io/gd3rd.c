@@ -648,7 +648,7 @@ void Ldreq_SetBarrierForced(bool forced) {
  * states are also strictly safer to stall than RUNNING: no peer is
  * counting our packets yet, so GekkoNet's 5000 ms DISCONNECT_TIMEOUT is
  * not in play, and CONNECTING's own 15 s deadline (CONNECT_TIMEOUT_
- * CONNECTING_MS, connect_fail.h:241) sees at most one such drain. */
+ * CONNECTING_MS, connect_fail.h:270) sees at most one such drain. */
 bool Ldreq_BarrierActive(void) {
     if (ldreq_barrier_forced) {
         return true;

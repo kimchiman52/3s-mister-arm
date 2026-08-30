@@ -740,6 +740,93 @@ async function testStaleJoinerSlotReplaced(handle) {
     assertEq(stub.sent.length, 0, 'stale-joiner: third party got no reply');
 }
 
+async function testJoinerPortReclaimSameIp(handle) {
+    // Task #105. The joiner's automatic second attempt binds a FRESH local
+    // socket on purpose (it exists to dodge stale per-port NAT state), so
+    // its REGISTER arrives from a new PUBLIC port and matches neither slot.
+    // Slot B is NOT stale — attempt 1 refreshed it moments ago at its
+    // ~500 ms cadence — so before this fix the retry fell through to the
+    // third-party drop and was ignored for the whole connect budget, and
+    // the joiner reported "Matchmaking auth failed. Update the game."
+    const key = crypto.randomBytes(16);
+    const stub = makeStubSocket();
+    handle._onMessage(regFrom(key, 1111, '198.51.100.40', 1111), { address: '198.51.100.40', port: 1111 }, stub);
+    handle._onMessage(regFrom(key, 2222, '198.51.100.41', 2222), { address: '198.51.100.41', port: 2222 }, stub);
+    const entry = handle._sessionMap.get(key.toString('hex'));
+    assertEq(entry.endpointB.port, 2222, 'joiner-port: attempt 1 holds slot B');
+
+    // Attempt 2: same public IP, new port, slot B deliberately LEFT FRESH.
+    stub.sent.length = 0;
+    handle._onMessage(regFrom(key, 3333, '198.51.100.41', 3333), { address: '198.51.100.41', port: 3333 }, stub);
+    assertEq(entry.endpointB.port, 3333, 'joiner-port: live slot B repointed to the retry port');
+    assertEq(entry.endpointA.port, 1111, 'joiner-port: host slot untouched');
+    assertEq(stub.sent.length, 2, 'joiner-port: retry got a reply AND the host got a re-notify push');
+    const toJoiner = stub.sent.find((s) => s.port === 3333);
+    const toHost = stub.sent.find((s) => s.port === 1111);
+    assert(toJoiner && decodeDeliver(toJoiner.buf).peerPort === 1111, 'joiner-port: retry told the host endpoint');
+    assert(toHost && decodeDeliver(toHost.buf).peerPort === 3333, 'joiner-port: host told the NEW joiner port');
+
+    // THE BOUNDARY THIS MUST NOT CROSS: a DIFFERENT IP still cannot touch
+    // a live slot B. Same assertion as testStaleJoinerSlotReplaced's third-
+    // party control, restated here against a slot that was just reclaimed.
+    stub.sent.length = 0;
+    handle._onMessage(regFrom(key, 4444, '198.51.100.42', 4444), { address: '198.51.100.42', port: 4444 }, stub);
+    assertEq(entry.endpointB.port, 3333, 'joiner-port: different-IP third party did NOT take live slot B');
+    assertEq(stub.sent.length, 0, 'joiner-port: different-IP third party got no reply');
+
+    // The reclaim is budgeted, so a co-located peer cannot flap the slot
+    // forever. Spend the remainder, then prove the next one is refused
+    // while the slot is still fresh.
+    const cap = handle._maxPortReclaims;
+    assert(cap > 0, 'joiner-port: cap is exposed and positive');
+    for (let i = entry.portReclaims; i < cap; i++) {
+        const p = 5000 + i;
+        handle._onMessage(regFrom(key, p, '198.51.100.41', p), { address: '198.51.100.41', port: p }, stub);
+    }
+    assertEq(entry.portReclaims, cap, 'joiner-port: budget fully spent');
+    const heldPort = entry.endpointB.port;
+    stub.sent.length = 0;
+    handle._onMessage(regFrom(key, 6000, '198.51.100.41', 6000), { address: '198.51.100.41', port: 6000 }, stub);
+    assertEq(entry.endpointB.port, heldPort, 'joiner-port: reclaim refused once the budget is spent');
+    assertEq(stub.sent.length, 0, 'joiner-port: over-budget reclaim got no reply');
+}
+
+async function testPortReclaimSlotA(handle) {
+    // Task #105 follow-up, and the regression this exists to prevent.
+    // Slots are FIRST-COME, not role-based — no role bit exists anywhere in
+    // the REGISTER frame — so the retrying party routinely holds slot A
+    // rather than slot B. A reclaim keyed only on endpointB silently misses
+    // that entire population: measured 13/13 on the natmatrix rig, every
+    // failing rep with the joiner in slot A logged 16 ignored REGISTERs and
+    // zero reclaims. This test fails against a B-only rule.
+    const key = crypto.randomBytes(16);
+    const stub = makeStubSocket();
+    // The RETRYING party binds first and therefore takes slot A.
+    handle._onMessage(regFrom(key, 1111, '198.51.100.50', 1111), { address: '198.51.100.50', port: 1111 }, stub);
+    handle._onMessage(regFrom(key, 2222, '198.51.100.51', 2222), { address: '198.51.100.51', port: 2222 }, stub);
+    const entry = handle._sessionMap.get(key.toString('hex'));
+    assertEq(entry.endpointA.address, '198.51.100.50', 'slotA-reclaim: retrying party holds slot A');
+    assertEq(entry.endpointB.address, '198.51.100.51', 'slotA-reclaim: peer holds slot B');
+
+    // Its attempt 2 arrives on a fresh port, both slots LIVE.
+    stub.sent.length = 0;
+    handle._onMessage(regFrom(key, 3333, '198.51.100.50', 3333), { address: '198.51.100.50', port: 3333 }, stub);
+    assertEq(entry.endpointA.port, 3333, 'slotA-reclaim: live slot A repointed to the retry port');
+    assertEq(entry.endpointB.port, 2222, 'slotA-reclaim: peer slot untouched');
+    assertEq(stub.sent.length, 2, 'slotA-reclaim: retry got a reply AND the peer got a re-notify push');
+    const toRetry = stub.sent.find((s) => s.port === 3333);
+    const toPeer = stub.sent.find((s) => s.port === 2222);
+    assert(toRetry && decodeDeliver(toRetry.buf).peerPort === 2222, 'slotA-reclaim: retry told the peer endpoint');
+    assert(toPeer && decodeDeliver(toPeer.buf).peerPort === 3333, 'slotA-reclaim: peer told the NEW port');
+
+    // Same boundary as the slot-B arm: a different IP cannot take a live slot.
+    stub.sent.length = 0;
+    handle._onMessage(regFrom(key, 4444, '198.51.100.52', 4444), { address: '198.51.100.52', port: 4444 }, stub);
+    assertEq(entry.endpointA.port, 3333, 'slotA-reclaim: different-IP third party did NOT take live slot A');
+    assertEq(entry.endpointB.port, 2222, 'slotA-reclaim: different-IP third party did NOT take live slot B');
+    assertEq(stub.sent.length, 0, 'slotA-reclaim: different-IP third party got no reply');
+}
+
 // --- S4c: return-routability (challenge cookie) ------------------------------
 
 async function testCookieChallengeRequired(handle, serverPort) {
@@ -1511,7 +1598,7 @@ async function testSweepHook(handle) {
 // EXPECTED_TESTS is deliberately a literal, NOT TESTS.length: the point is
 // to catch a test vanishing from the registry, and deriving it from the
 // registry would make that undetectable.
-const EXPECTED_TESTS = 29;
+const EXPECTED_TESTS = 31; // +2: joinerPortReclaimSameIp, portReclaimSlotA (task #105)
 
 let testsRun = 0;
 let testsFailed = 0;
@@ -1581,6 +1668,8 @@ async function main() {
         await runTest('reclaimRequiresSameIp', () => testReclaimRequiresSameIp(handle));
         await runTest('poisonedKeyBothSlotsStale', () => testPoisonedKeyBothSlotsStale(handle));
         await runTest('staleJoinerSlotReplaced', () => testStaleJoinerSlotReplaced(handle));
+        await runTest('joinerPortReclaimSameIp', () => testJoinerPortReclaimSameIp(handle));
+        await runTest('portReclaimSlotA', () => testPortReclaimSlotA(handle));
 
         // --- S4c: return-routability + per-key cap + version interlock ---
         await runTest('cookieChallengeRequired', () => testCookieChallengeRequired(handle, serverPort));

@@ -92,9 +92,29 @@ typedef enum ConnectFailCode {
     /* Joiner fallback-signaling failures */
     CONNECT_FAIL_RENDEZVOUS_DOWN, /* zero DELIVERs AND zero CHALLENGEs —
                                      server/path down                          */
-    CONNECT_FAIL_COOKIE_REJECTED, /* S4c: server CHALLENGEd us (alive!) but
-                                     never accepted the cookie echo — auth /
-                                     version trouble, not connectivity         */
+    CONNECT_FAIL_COOKIE_REJECTED, /* S4c: server CHALLENGEd us (alive!) and
+                                     RE-challenged after we echoed a cookie —
+                                     the echo never verified: auth / version
+                                     trouble, not connectivity                 */
+    /* Task #105. Split out of COOKIE_REJECTED, which used to absorb every
+     * "challenged but never DELIVERed" outcome and then told the user
+     * "Matchmaking auth failed. Update the game."
+     *
+     * That inference was unsound. The server challenges ONLY when
+     * cookieValid() fails, and the joiner carries the cookie on every
+     * later REGISTER, so an ACCEPTED cookie produces exactly ONE challenge
+     * per source port and then silence-or-DELIVERs. Seeing one challenge
+     * and zero DELIVERs therefore does NOT mean the cookie was refused —
+     * it means the cookie BOUND and we were never paired. Measured causes:
+     * the DELIVERs were lost in transit, or the server dropped our
+     * correctly-cookied REGISTER for a non-auth reason (a full session
+     * slot, the per-IP cookied bucket, the per-key cap).
+     *
+     * Telling a user to update the game because a datagram was lost costs
+     * us the bug report, which is what #44's tester log depends on. */
+    CONNECT_FAIL_RENDEZVOUS_NOPAIR, /* server alive, our REGISTER was
+                                       accepted (cookie bound, no
+                                       re-challenge), yet zero DELIVERs   */
     CONNECT_FAIL_HOST_OFFLINE,    /* only zero-sentinel DELIVERs — code stale */
     CONNECT_FAIL_NAT_BLOCKED,     /* real DELIVER, bilateral punch timed out  */
     /* Both of these are TERMINAL. The S5 relay rung that once followed
@@ -199,6 +219,15 @@ typedef struct ConnectJoinEvidence {
     bool deliver_real;       /* >=1 DELIVER carried a real peer endpoint */
     bool challenge_any;      /* S4c: >=1 CHALLENGE frame received — the server
                                 is provably alive even with zero DELIVERs */
+    /* Task #105: a CHALLENGE arrived while we ALREADY held a cookie for
+     * this race, i.e. we echoed one and were challenged again. This is the
+     * only on-wire proof that the echo did not verify, and it is what
+     * separates a genuine cookie rejection from "cookie accepted, never
+     * paired". It needs no threshold: the server stops challenging the
+     * moment cookieValid() succeeds, and a cookie cannot expire inside one
+     * race (it is honoured for the current AND previous 60 s rotation
+     * slot, while the race budget is at most 15 s). */
+    bool cookie_rechallenged;
     bool bilateral_punched;  /* bilateral Stun_HolePunch succeeded */
     bool port_disagreement;  /* StunResult.port_disagreement (S2 symmetric signal) */
     bool punch_bad_token;    /* S4a: StunResult.diag_punch_bad_token — peer spoke

@@ -475,6 +475,7 @@ typedef struct DirectP2PAttemptEvidence {
     bool     deliver_any;
     bool     deliver_real;
     bool     challenge_any;
+    bool     cookie_rechallenged;  /* #105 */
     uint32_t t_race_ms;
     bool     confirm_seen;
     uint32_t confirm_ms;
