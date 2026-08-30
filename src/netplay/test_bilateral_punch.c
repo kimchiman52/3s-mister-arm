@@ -245,7 +245,7 @@ typedef struct {
 } MockServerCtx;
 
 /* Cookie construction for the mock. The real server uses
- * SHA-256(secret ‖ "addr:port:slot")[0..7] (rendezvous-server.js:191);
+ * SHA-256(secret ‖ "addr:port:slot")[0..7] (cookieForSlot, rendezvous-server.js:775);
  * matching that byte-for-byte is NOT the property under test. What IS
  * under test is that the cookie is (a) bound to the source endpoint and
  * (b) unforgeable by the client — a client that does not RECEIVE the
@@ -370,7 +370,7 @@ static int SDLCALL mock_server_thread(void* arg) {
 
         /* S4c return-routability gate. Runs between "the frame is
          * well-formed" and "we touch any state" — exactly where
-         * returnRoutabilityGate sits in rendezvous-server.js:553 — so an
+         * returnRoutabilityGate sits in rendezvous-server.js:1529 — so an
          * uncookied/invalid-cookied request binds NOTHING: no session
          * slot, no endpoint recorded, no DELIVER. Only the echo binds. */
         if (ctx->challenge_enabled) {
@@ -1590,7 +1590,7 @@ done:
  * above, which DOES use advertised_port — every UPnP host whose external
  * port differs from its STUN-observed port would send the server a
  * my_public_port that disagrees with its own UDP source port
- * (rendezvous-server.js:517 compares exactly those two). The two agree
+ * (rendezvous-server.js:1243-1250 compares exactly those two). The two agree
  * today only because a reviewer read the code, not because a test says
  * so. Test 13 makes them DIFFER at runtime and asserts the echo carries
  * the STUN one.
@@ -1910,7 +1910,7 @@ static int test_host_cookie_handshake(void) {
 
     /* 4) THE PIN. my_public_port must be the STUN-observed port, which
      *    the server compares against the datagram's own source port
-     *    (rendezvous-server.js:516-518). advertised_port is the UPnP
+     *    (rendezvous-server.js:1243-1250). advertised_port is the UPnP
      *    external port and is NOT what arrives at the server. */
     if (rec_my_public_port(echo) != stun_public_port) {
         fprintf(stderr,

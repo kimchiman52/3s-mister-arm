@@ -159,7 +159,7 @@ static void build_good_nack(uint8_t* out, size_t cap, uint8_t reason) {
  * Hand-written, NOT derived from the enum: a table generated from the
  * thing under test proves nothing. Every column is the value a REAL
  * counterpart produces — the wire number the server sends
- * (rendezvous-server.js:484-492), the log anchor
+ * (the `NACK_REASON_*` constants, rendezvous-server.js:575-583), the log anchor
  * Rendezvous_NackReasonText must keep stable, and the verdict the user
  * is shown. */
 typedef struct {

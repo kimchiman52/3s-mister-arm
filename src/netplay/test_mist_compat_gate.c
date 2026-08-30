@@ -39,7 +39,7 @@
  *      A table that loses a row is a failure, not a smaller green run.
  *
  * And the stub at the bottom says "not compiled in", spelled exactly that
- * way, because tools/gates/run-gates.sh:181 greps for that phrase to turn
+ * way, because tools/gates/run-gates.sh:204 greps for that phrase to turn
  * an exit-2 misbuild into a RED gate rather than a pass.
  *
  * NO -DNETPLAY_TEST_HOOKS NEEDED. Every symbol used here comes from

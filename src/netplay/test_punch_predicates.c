@@ -47,7 +47,7 @@
  * HOW IT CANNOT PASS VACUOUSLY. The three devices from
  * test_rendezvous_wire.c:73-82 — a LITERAL EXPECTED_TESTS, an assertion
  * floor, and per-sweep case floors on every bit sweep. The stub says
- * "not compiled in", spelled exactly as tools/gates/run-gates.sh:181
+ * "not compiled in", spelled exactly as tools/gates/run-gates.sh:204
  * greps for it.
  *
  * NO -DNETPLAY_TEST_HOOKS NEEDED — stun.c and late_punch.c are both in
