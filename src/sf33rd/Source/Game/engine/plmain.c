@@ -490,10 +490,15 @@ void about_gauge_process(PLW* wk) { // 🟡
     sag_union(wk);
     mpg_union(wk);
 
-    // CPS3 has no equivalent max-gauge bit update.
-    if (!ArcadeBalance_IsEnabled()) {
-        add_sp_arts_gauge_maxbit(wk);
-    }
+    /* [TM-02] Bits 16/19 of spmv_ng_flag2 (the INFINITY trickle and the
+     * MAXIMUM refill) have exactly one reader in the tree -- this function --
+     * and it used to be skipped entirely under arcade balance, so every
+     * S.A.GAUGE training option and the system S.A. GAUGE TYPE option were
+     * inert. Safe to run in both modes: at defaults init_omop() sets BOTH
+     * bits (sysdir.c, S.A. GAUGE TYPE = NORMAL -> 0x90000), which makes this
+     * a no-op. It only acts when the player explicitly selects
+     * INFINITY/MAXIMUM in the training menu or Extra Options. */
+    add_sp_arts_gauge_maxbit(wk);
 }
 
 void mpg_union(PLW* wk) { // 🟡
