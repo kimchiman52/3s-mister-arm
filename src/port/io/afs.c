@@ -468,6 +468,16 @@ void AFS_ReadSync(AFSHandle handle, int sectors, void* buf) {
 
     AFS_Read(handle, sectors, buf);
 
+    /* AFS_Read has three paths that set ERROR and return WITHOUT submitting
+     * anything (close already queued, SDL_AsyncIOFromFile failed,
+     * SDL_ReadAsyncIO failed). There is then no completion to wait for, and
+     * SDL_WaitAsyncIOResult below blocks with an infinite timeout -- so the
+     * wait must not be entered at all. The caller polls AFS_GetState() and
+     * sees the ERROR, which is what it is there for. */
+    if (requests[handle].state == AFS_READ_STATE_ERROR) {
+        return;
+    }
+
     /* TEST-ONLY: the injected-latency instrument targets the ASYNC LDREQ
      * pipeline, which is the only place a wall-clock completion frame can
      * leak into the simulation. Blocking reads are already frame-exact.
@@ -480,11 +490,32 @@ void AFS_ReadSync(AFSHandle handle, int sectors, void* buf) {
     SDL_AsyncIOOutcome outcome;
 
     while (SDL_WaitAsyncIOResult(asyncio_queue, &outcome, -1)) {
+        /* Identity is read BEFORE process_asyncio_outcome(), and the wait
+         * ends only on this slot's own READ. Both halves are load-bearing.
+         *
+         * process_asyncio_outcome() SDL_zerop()s a slot whose deferred close
+         * has just landed (the close_pending branch), which sets
+         * request->index back to 0. Reading ->index after that call made
+         * every such completion indistinguishable from slot 0's, so
+         * AFS_ReadSync(0, ...) returned while its OWN read was still in
+         * flight. fsCheckFileReaded() then saw AFS_READ_STATE_READING and
+         * reported failure, and load_it_use_this_key() (gd3rd.c:355-380)
+         * logged "file load failed" and retried -- which succeeded, because
+         * nothing was actually wrong with the file. That is the whole of the
+         * five reproducible boot-time load failures: a lost wakeup, not a
+         * missing asset.
+         *
+         * Matching on READ as well as on the slot closes the second half:
+         * AFS_Open() reuses the first free slot, so a CLOSE completion left
+         * over from that slot's PREVIOUS user carries the same index and
+         * would end this wait just as wrongly. */
+        const ReadRequest* completed_request = (const ReadRequest*)outcome.userdata;
+        const int completed_index = (completed_request != NULL) ? completed_request->index : AFS_NONE;
+        const bool completed_read = (outcome.type == SDL_ASYNCIO_TASK_READ);
+
         process_asyncio_outcome(&outcome);
 
-        ReadRequest* request = (ReadRequest*)outcome.userdata;
-
-        if (request->index == handle) {
+        if (completed_read && completed_index == handle) {
             break;
         }
     }
