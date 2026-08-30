@@ -1654,3 +1654,145 @@ is the live netplay both-caps item above. The number is corrected in every
 file; the three subject lines are left alone because another lane committed on
 top of them before the mistake was caught, and rewriting shared history to fix
 a subject line is not worth orphaning someone else's work.
+
+### OPEN — section A's confident positive was never tested either, and 16 allowlist entries rest on its method
+
+The citation audit flagged `research-desync-deep-investigation.md` for placing
+its most load-bearing conclusion "inside `pl_step_25`", a function that has
+never existed. Repairing the pointer was the smaller half. Checking the claim
+under it produced three findings, recorded in a STATUS block at the top of that
+document and summarised here.
+
+**The mechanism is real; only the names were invented.** `chainex_check[2][36]`
+is declared in `system/sysdir.c`; nine speculative writes live in
+`check_full_gauge_attack`, `check_full_gauge_attack2`,
+`check_super_arts_attack_dc` and `check_special_attack` in `engine/pls03.c`,
+with eight gating reads in the same file and `clear_chainex_check` in
+`engine/plcnt.c`. The callers are the `nm_NNNNN` normal-state family in
+`engine/pls00.c` dispatched by `process_normal` — that is the state machine
+`pl_step_25` was standing in for; nothing named `pl_step` exists in `src/` or
+`include/`. The April line numbers were exact at `17ab61e7`, verified by
+reading that blob rather than inferring it.
+
+**The conclusion was never tested.** Section G proposed detection FIRST — hash
+`chainex_check` without saving it and read the answer off which way the desync
+frame moved — and said in as many words that adding save/restore "would be the
+FIX. We want the DETECTION first." G.1 was skipped and G.5 shipped:
+`chainex_check` has been a `GameState` member since 2026-04-24. So Candidate R2
+was neither confirmed nor eliminated, and the frame number the whole
+investigation is named for appears in no other file in this tree. **Not a
+defect to fix — a conclusion that is still open, currently written down as
+settled.**
+
+**And in netplay it is now inert.** Upstream `4485a438` ("Statcheck: Fix arcade
+mode desync", #267) put all nine writes behind `!ArcadeBalance_IsEnabled()`,
+and netplay then became arcade-only via `Netplay_ArmAllowed`. In any netplay
+session `chainex_check` is provably an all-zero array and the eight gates never
+trip. It stays live only under the PS2 balance `ArcadeBalance_Init` pins for
+`--test-enable`.
+
+**What would settle it, offline, no device.** Drop the `chainex_check` restore
+from `GameState_Load` (leave the field and the save), run the
+rollback-determinism harness `--thorough` on macOS — it runs PS2 balance, so
+the writes are live — and see whether `chainex_check` lands in the divergent
+set. If it never diverges across the 21 scenarios, that is not an exoneration:
+it means the scripted supers never reach an EX-SA *chain* branch, which a
+counter on the nine write sites settles in one run. Either way it is the first
+measurement this candidate has ever had. The harness is macOS-only by policy
+and is somebody's gate, so this is a scheduled experiment, not a drive-by.
+
+**What actually rests on section A.** Not the harness's existence —
+`rollback-determinism-harness.md` cites §A as the method it replaces, naming
+the `spmv_ng_save` false negative, and that framing is now recorded as
+two-sided. The real dependency is `tools/rollback-determinism/allowlist.txt`:
+**16 of its 40 entries** come from §A's per-subsystem classification — the
+sound-sink block from §A.2.3, the render/texture/palette block from §A.2.2 and
+§A.2.4, the rumble block from §A.2.2. Those entries suppress harness failures
+on the strength of a hand "write-only fan-out, cannot feed back" judgement —
+the same reasoning pattern this tree has now caught being wrong **three
+separate times**: `spmv_ng_save` exonerated on the wrong character enum; the
+loader block's own `CORRECTION 2026-08-24` recording that
+"consumed by the loader, not read by the simulation" was false for
+`ldreq_result` "and it is the reason this block hides a real desync class"; and
+`ColorRAM` — an entry inside one of the §A blocks — carrying a PARTIALLY
+EXEMPT note because the `effl8` row-prefixes fed back into saved `frw[]`
+bytes. The loader block is not §A-sourced; the shared thing is the judgement,
+not the citation. Three for three, against an allowlist whose own header says "when in doubt, leave it OUT — a
+catalogued finding beats a hidden one". **Nothing here is known wrong. The
+point is that its provenance has a measured error rate and the entries have
+never been re-derived from anything but the document.** Re-deriving the 16 is a
+bounded job: each needs one answer, whether any simulation read reaches it.
+(The harness document's two other §A cross-references — §A.3.7 for per-peer
+`extra_option`/`system_dir` seeds, §A.3.1 for the `rwd_ptr`/`brw_ptr` walk —
+are informational, not premises. Nothing else in `docs/`, `tools/` or `src/`
+cites this conclusion.)
+
+**Citations left alone deliberately.** The line numbers throughout the desync
+document were exact at their citing tree and it is not in
+`tools/doc-citations/baselines.txt`, so per `AGENTS.md` they are not
+mass-repointed. What was corrected is the prose that is now FALSE: the
+"NOT in `GS_SAVE`" claims for `chainex_check` and `ca_check_flag` (both saved
+since 2026-04-24 and `7e07db3f`), the invented `pl_step` family, and the
+headline one-liner, re-anchored to `check_full_gauge_attack`.
+
+### CLOSED — the outside-src slice, swept once; and what the linter cannot see
+
+The never-existed audit deferred one slice for a one-off sweep: citations whose
+TARGET lies outside `src/` and `include/`, where 8 of 11 audited were real. Run
+in full: **232 citations, 51 citing files, 40 target files** — `tools/**` 115,
+`docs/**` 40, `CMakeLists.txt` 34, `vendor/` 15, `AGENTS.md` 14,
+`third_party/` 8, `build-deps.sh` 5, `README.md` 1. All 232 hand-audited.
+**~55 real defects carrying 61 wrong pointers**, ~148 correct, ~29 owned by
+other lanes, none undeterminable in the fixable set. The inversion holds.
+
+**The cause is mechanical and will not fix itself.** `is_symbol_candidate`
+requires an identifier of six-plus characters **containing an underscore**. The
+rendezvous server is camelCase — `touchSlot`, `notePushLost`, `encodeNack`,
+`slotReclaimable` — and so are most CMake, shell and SystemVerilog identifiers.
+No citation into `rendezvous-server.js`, `CMakeLists.txt`, `build-deps.sh` or
+`thirdsarm_wrapper.cpp` can be anchored, therefore none can drift, therefore
+they rot in permanent silence. This is not a tuning gap; it is the anchor rule
+meeting a naming convention. **Still not a gate** — relaxing the underscore
+rule would flood every prose document with English words — but it is why this
+slice needs re-sweeping when those files move again, and why a citation into
+them should carry a symbol name in the prose even though nothing checks it.
+
+Worst of the 55, by what a reader would have concluded: the analog-CRT memory
+pointed a thousand-odd lines short of the `video_refresh_yc_mode()` call that
+runs *before the game starts*. That call is
+`vendor/Main_MiSTer/thirdsarm_wrapper.cpp:2905`; the file also holds two
+**teardown** calls to the same function, at `:2322` and `:2392`. A reader
+following the stale number would have read the bug backwards. Second: a `CMakeLists.txt` citation whose *spelling* had gone
+stale as well — `$<$<CONFIG:Debug>:DEBUG>` is now
+`$<${DEBUG_HOOKS_GENEX}:DEBUG>`, so the prose was corrected, not the pointer.
+
+Left as records with reasons stated in place: JSON oracles (every one checked
+out); commit-pinned measurements, including `plan-fcade-replay-browser.md`'s
+`menu.sv` numbers, which say in the document that they are at `54c95d13`; foreign trees (`pr-243:`, `upstream/main:`);
+and the `plan-bilateral-hole-punch-review.md` rows that quote superseded plan
+text — though the present-tense "Actual:" assertions beside them were
+repointed. All 22 `AGENTS.md` and `README.md` citations were already correct.
+
+**One unresolved.** `docs/plan-stun-direct-p2p.md` cites
+`docs/archive/plan-netplay-phase6.md:433-437` for an `r_no[1]=6` routing claim;
+that range is now a file list. `docs/archive/` is unscanned and unmaintained,
+so it is flagged rather than guessed at.
+
+**The 19 handed-off never-existed repairs are done** — ten in `src/netplay`
+(including the `chainex_check` field comment, which cited two `pls03.c` lines
+that have never held that field in any revision), seven elsewhere, plus the
+`natpmp_mock.py` conntrack claim. Two mechanical lessons that cost a rework
+each and are worth knowing before the next batch:
+
+- **Repairs must be line-count neutral.** Growing a heavily-cited file rots
+  every citation below the edit. One `src/netplay/game_state.h` repair
+  genuinely needed the space and moved `chainex_check` eleven lines, which
+  broke a pointer in `fix-plan-bg-texture-rollback.md`; that one was followed
+  and repaired. `docs/plan-netplay-connection.md` is an enforced scope at
+  ceiling 0 and cites `test_bilateral_punch.c` by line, so a one-line growth
+  there would have breached a gate.
+- **Anchor ownership splits only on a full-path citation**, because
+  `anchor_tokens` builds its list with `RE_PATH_CITE`, which requires a slash.
+  Two bare `main.c:NNN` numbers in one sentence share every anchor and
+  manufacture a false drift; spelling one of them `src/main.c:NNN` separates
+  them.
