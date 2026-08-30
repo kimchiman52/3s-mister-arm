@@ -1007,7 +1007,14 @@ All interaction bugs, where a mocked unit passes vacuously.
   session log at all. Widening a safety-critical predicate to paper over missing
   test isolation is the wrong trade.
 - **#128** — five reproducible file-load failures (file numbers 9, 10, 1454,
-  1456, 1458) plus 379 ms startup outliers. Pre-existing.
+  1456, 1458). **The failures are CLOSED**: fixed by `522e574c`, and verified on
+  hardware under #140 (five before, zero after, on the device). The 379 ms
+  startup outliers bundled into this item were **not** the same bug and are
+  still open — see #141.
+- **#141** — an unexplained ~400 ms stall at **frame 449**, every boot, on
+  device. Survives the AFS fix unchanged (376.5–416.7 ms with the load failures
+  present, 413.0–415.0 ms with them gone), so it is not the doubled reads it was
+  assumed to be. Reproducible and now frame-addressable; cause unknown.
 - **#108** — CLOSED 2026-08-30, both mechanisms. Two residuals remain open and
   are named below; see the full "#108" section further down this file.
 
@@ -1105,6 +1112,13 @@ Before: the same five numbers, in call order `9, 1456, 1458, 10, 1454`
 then `Scrscreen_Init` at `src/sf33rd/Source/Game/ui/sc_sub.c:425-437`, then
 `checkSelObjFileLoaded` at `src/sf33rd/Source/Game/rendering/texgroup.c:558`).
 After: zero, with 600 frames still completing.
+
+**REFUTED on hardware — see #140.** The frame ordinal added by `9a597cd7`
+shows the big outlier is at **frame 449** in every run, while all five failures
+complete before frame 10, and a diagnostic build with `afs.c` alone reverted
+puts it at 376.5-416.7 ms *with* the failures against 413.0-415.0 ms *without*
+them. The paragraph below is left as written, as the reasoning that was
+falsified.
 
 **The 379 ms startup outliers are a consequence, not a separate cause.** The
 outlier test (`src/port/sdl/sdl_app.c:3627`, threshold 50 ms — its comment
@@ -2406,3 +2420,220 @@ no-ASLR spawn are what produced the saved-state-neutrality diff.
   side effect: #138's prose points at "the carried item under #137's allowlist
   re-derivation", and #137 has no allowlist re-derivation; that carried item is
   #138's own. Left as written rather than edited from this lane.
+
+---
+
+## #140 — the AFS fix on hardware, and the 379 ms link REFUTED — CLOSED
+
+Device `192.168.1.171`. Runtime built from committed `9a597cd7` in a worktree
+(`--flavor both`, `mode=arm-cross-build`, `platform=linux/arm64`); `HEAD`
+`cd4ae0e5` differs from it only in `docs/queue.md`, so the binary is
+content-identical to `HEAD` for every compiled source. Deployed binary on
+device `md5 1b6dc20f37a720b563345709301b6702`, 4,521,348 bytes — byte-identical
+to that build's `build/mister-telemetry-package/bin/3s-arm`.
+
+### 1. The five failures are gone
+
+Fresh boot, `timeout 45 scripts/launch-osd.sh`, 136 log lines:
+
+```
+--- AFS load-failure count ---
+0
+--- the five fnums, any mention ---
+(none)
+```
+
+Three further runs of the same binary: `failures=0` each. So five before, zero
+after — now on hardware, not only on the host.
+
+### 2. `SF33RD.AFS` is the same file everywhere
+
+| copy | md5 | sha256 (first 16) | size |
+| --- | --- | --- | --- |
+| device `/media/fat/games/3s-arm/resources/` | `cc788f2ba398c7e4…` | `f9fa50f3a124ec9f…` | 642,492,416 |
+| host runtime `~/Library/Application Support/CrowdedStreet/3S-ARM/resources/` | `cc788f2ba398c7e4…` | `f9fa50f3a124ec9f…` | 642,492,416 |
+| `/Volumes/KimchDrive/Games/ps2/` | `cc788f2ba398c7e4…` | `f9fa50f3a124ec9f…` | 642,492,416 |
+
+Full: `md5 cc788f2ba398c7e464736f4b6d00bc82`,
+`sha256 f9fa50f3a124ec9fa9465aa9c8546c2d867887eb39f711a070762a0324ba5604`.
+All three identical by content, not merely by size. The failures were never
+about which file the device had.
+
+### 3. The 379 ms link is REFUTED — and it is now measured, not argued
+
+This supersedes the claim under #128 that "the 379 ms startup outliers are a
+consequence, not a separate cause".
+
+`9a597cd7` put a frame ordinal on the outlier line
+(`src/port/sdl/sdl_app.c:3638`, threshold 50 ms), which is what made the
+question answerable. A **diagnostic binary** was then built from `HEAD` with
+`src/port/io/afs.c` alone reverted to `522e574c^`
+(`md5 69a13d93dcacfbba58d7a413c1af5466`) — so the failures come back while the
+frame ordinal stays. It was installed by copying over `bin/3s-arm`, with the
+verified binary saved on-device first and restored on script exit; the restore
+is confirmed below.
+
+| build | failures | frame=2 | frame=9 | **frame=449** |
+| --- | --- | --- | --- | --- |
+| pre-fix run 1 | 5 | 56.8 ms | 54.7 ms | **416.7 ms** |
+| pre-fix run 2 | 4 | 52.1 ms | — | **376.5 ms** |
+| fixed run 1 | 0 | — | 52.0 ms | **415.0 ms** |
+| fixed run 2 | 0 | 83.0 ms | — | **413.6 ms** |
+| fixed run 3 | 0 | — | — | **413.0 ms** |
+
+The big outlier is at **frame 449** in every run of both builds, and its size is
+unchanged by the fix (376–417 ms with the failures, 413–415 ms without them).
+Pre-fix run 2's **376.5 ms** is the "379 ms" of the original report.
+
+The five failures all land in the first ten frames — interleaved with the
+`frame=2` and `frame=9` outlier lines in log order:
+
+```
+94:ファイルの読み込みに失敗しました。ファイル番号：9
+96:ファイルの読み込みに失敗しました。ファイル番号：1456
+98:ファイルの読み込みに失敗しました。ファイル番号：1458
+100:ファイルの読み込みに失敗しました。ファイル番号：10
+102:FRAME OUTLIER: frame=2 total=56.8ms update=51.3 render=0.5 present=5.0
+103:ファイルの読み込みに失敗しました。ファイル番号：1454
+105:FRAME OUTLIER: frame=9 total=54.7ms update=48.6 render=0.4 present=5.7
+111:FRAME OUTLIER: frame=449 total=416.7ms update=408.3 render=0.3 present=8.1
+```
+
+Frame 449 is ~440 frames after the last failure. A doubled read that finishes
+by frame 10 cannot be what a frame-449 outlier is made of, and removing the
+doubled reads entirely does not shrink it. **The outlier is a separate,
+unexplained ~400 ms stall at a fixed frame — reproducible, and now
+addressable.** The boot-time `frame=2`/`frame=9` outliers survive the fix too
+(52.0 ms and 83.0 ms with zero failures), so they are not the doubled reads
+either.
+
+Not a regression introduced here: it is present in both builds. Opened as a
+follow-up rather than chased in this lane.
+
+### 4. #129's device leg — the trimmed search, on the real device
+
+All three cases induced against the deployed binary. The two induced misses use
+a **tmpfs overlay** over `/media/fat/games/mame`, so the real romset is never
+moved, renamed or deleted; the script refuses to run a case if the overlay is
+not empty, and unmounts on exit.
+
+- **Found** — `ArcadeCharData: CPS3 ROM load satisfied by
+  /media/fat/games/mame/sfiii3.zip`, then `Arcade balance auto-selected: CPS3
+  ROM verified, 20/20 characters adapted (digest eab701778c8b20ad)`. The
+  trimmed 5x2 search finds the romset on hardware.
+- **Directory exists, holds neither basename** — `no CPS3 ROM -- 1 of the 5
+  arcade ROM directories searched exist (/media/fat/games/mame), but none of
+  them holds sfiii3nr1.zip or sfiii3.zip.`
+- **Zip found, contents rejected** — four `Rom_Load: … no entry matched …`
+  lines, then `… /media/fat/games/mame/sfiii3nr1.zip exists but FAILED CONTENT
+  VERIFICATION -- wrong romset revision, not a missing ROM`, then `no CPS3 ROM
+  -- 1 candidate zip(s) were FOUND and REJECTED by content verification …
+  out of 10 probed location(s).`
+
+`10 probed location(s)` is the trim itself, observed rather than asserted: 5
+directories x 2 basenames. Afterwards: `no tmpfs on /media/fat/games/mame` and
+the real 5.2 GB romset directory listing back in place.
+
+The staged `device-129.sh` from the previous attempt was **not** used as
+written: its first step is `misterctl.sh deploy --src build/mister-telemetry-package`,
+which would have deployed the *main checkout's* package — a different, older
+binary (`md5 d50ceb6dc0fb78681a9da6a305da8f5a`, 4,521,316 bytes, built 16:45 by
+an unrelated lane) — over the build under test.
+
+### 5. What actually held the lock for 7h48m
+
+`ConnectTimeout`/`ConnectionAttempts` govern connection *setup*. Once a session
+is established they are never consulted again, so a remote that dies mid-command
+leaves the local `ssh` blocked on a socket that will never speak again.
+`ServerAliveInterval`/`ServerAliveCountMax` are the mechanism that tells a
+*quiet* session from a *dead* one: the probe rides the transport and a live sshd
+answers it whether or not the remote command is producing output, so a long
+silent harness run is never at risk while a dead peer is reaped in
+INTERVAL x COUNTMAX. Set to **15 x 8 = 120 s** in `mister_ssh_password_args`,
+`mister_ssh_key_only_args`, and both rsync `-e` command strings.
+
+Wedge model: `ssh` is pointed at a local TCP relay which is then `SIGSTOP`ped —
+it stops forwarding both ways with nothing torn down, no FIN and no RST, so the
+peer is silent forever.
+
+Establishment is confirmed by asking the **device** whether the remote command
+is running, not by grepping local output. That detail is the whole reason the
+first attempt at this proof reported a failure: `expect` echoes its own `spawn`
+command line, which contains the marker string, so the grep matched at t=1s and
+the relay was stopped **mid-authentication** — where `ServerAliveInterval` is
+not yet armed, and where nothing reaps the session. Two runs "failed" at t+201s
+and t+241s for that reason, and the fix was never at fault.
+
+| arg vector | outcome |
+| --- | --- |
+| `mister_ssh_password_args()` with `ServerAlive*` stripped (byte-for-byte the committed pre-fix vector) | `t+201s -- local ssh STILL BLOCKED (budget 200s). HUNG.` at `0:00.00` CPU |
+| `mister_ssh_password_args()` as shipped, 15 x 8 | `RESULT: local ssh EXITED 133s after the peer went silent` / `ssh said: Timeout, server 127.0.0.1 not responding.` |
+
+`0:00.00` CPU on a blocked control is the same signature the 7h48m holder had.
+A separate run of the shipped vector, with `ssh -vv`, shows the mechanism
+firing: `Timeout, server 127.0.0.1 not responding.`, and at 3 x 3 the same
+vector reaps in 12s — the reap time tracks INTERVAL x COUNTMAX as designed.
+
+The production wiring is not inferred either. The real `misterctl.sh exec`
+invocation used for the device runs above spawns:
+
+```
+spawn ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ConnectionAttempts=1
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=8 -o PubkeyAuthentication=no
+  -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 root@192.168.1.171 …
+```
+
+### 6. A max-age lock bound would be a regression, not an addition
+
+`mister_lock_acquire` reclaims on **liveness** — `kill -0` on the recorded pid
+fails, `rm -rf`, retry. That predicate is correct and it worked; the gap was
+that the owner never died, which is what the keepalive fix addresses at source.
+
+A max-age that *reclaims* cannot tell a wedged holder from a legitimately slow
+one: `mister_transfer_timeout` is 1200 s by default, and a harness sweep runs
+minutes beyond that. Any bound loose enough not to kill a healthy deploy is far
+too loose to have helped here, and a bound tight enough to have helped would
+put two writers on the device — worse than a stale lock. So age is **reported,
+never enforced**: `mister_lock_status` now prints `owner_age_seconds` and
+`owner_age_human`. What was missing on 2026-08-30 was not a policy but the
+number — the owner file records a wall-clock date and left the subtraction to
+whoever read it. Verified under `bash` (which is `misterctl.sh`'s shebang):
+
+```
+lock_state=held
+owner_pid=46826
+owner_live=1
+owner_age_seconds=0
+owner_age_human=0h00m00s
+```
+
+### 7. Residual — the authentication phase is still unbounded
+
+`ConnectTimeout` covers TCP connect; `ServerAlive*` covers an established
+session. A peer that accepts the connection and then goes silent **during
+authentication** is covered by neither, and that is exactly the state the first
+(flawed) proof runs sat in for 201 s and 241 s. Not fixed here, and not
+observed in the wild — the 2026-08-30 wedge was on an established session
+running a harness. Recorded so it is not rediscovered as a surprise.
+
+### 8. Gates
+
+- **Skipped, deliberately.** Frame-data, netplay harnesses and ARM were skipped
+  for `mister-common.sh` and the `docs/queue.md` prose: shell tooling and text
+  reach no compiled artifact.
+- **Covered for `sdl_app.c`.** The frame-ordinal change was committed at
+  `9a597cd7` and built there with `--flavor both` (shipped/clean *and*
+  telemetry), `mode=arm-cross-build` — so the shipped-config build and the ARM
+  cross-build both ran on exactly that source, and the resulting telemetry
+  binary is the one that produced every device measurement above.
+- `bash -n tools/mister/mister-common.sh` clean.
+- Citation baselines: `BASELINE SUMMARY: scopes=11 breached=0 slack=0`.
+- Canon untouched: 99 corpora / 1,488 rows / 1,435 PASS / 53 XFAIL. No corpus,
+  simulation or netplay source was modified in this lane.
+
+### 9. Device left clean
+
+`SF33RD.AFS` untouched; the verified binary restored and re-hashed on-device
+(`1b6dc20f37a720b563345709301b6702`); no tmpfs mounted; scratch files removed;
+no processes left running. Nothing was deleted from the device at any point and
+no `rsync --delete` was issued.
