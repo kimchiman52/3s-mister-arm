@@ -398,3 +398,78 @@ void frame_spawn_probe_tick(void) {
             (int)sa_stop_check());
     fflush(g_fp);
 }
+
+/* === Task #108: select-screen timer probe ===============================
+ *
+ * Why this exists. The frame-data suite drives `training-frame-data`, which
+ * boots training mode, so Present_Mode is PRESENT_MODE_NORMAL_TRAINING(4) or
+ * PRESENT_MODE_PARRY_TRAINING(5) for the whole run — and effect_A5_move, the
+ * character-select countdown runner, opens with
+ *
+ *     if (Present_Mode == 4 || Present_Mode == 5) { return; }
+ *
+ * (src/sf33rd/Source/Game/effect/effa5.c:49-51). The runner is therefore
+ * ENTERED on the select screen and returns before doing anything: a measured
+ * 280 entries with zero Select_Timer ticks. "Select-screen coverage" that
+ * never advances the select timer is a claim with no content behind it, on
+ * either balance path — the early return is upstream of the arcade/PS2 split
+ * entirely.
+ *
+ * What this does NOT do: it does not remove or weaken that early return. A
+ * training-mode select screen genuinely has no countdown; suppressing it is
+ * correct game behaviour, and an observation instrument has no business
+ * changing behaviour to make itself observable. Instead the probe records
+ * what the runner did — including that it returned early, and why — so a
+ * harness run can be checked for whether a tick actually happened. Reaching
+ * the tick is the CALLER's job: run a non-training scene preset (so
+ * Present_Mode is PRESENT_MODE_LOCAL) and dwell on select long enough for
+ * Unit_Of_Timer (UNIT_OF_TIMER_MAX = 50, src/constants.h:6) to expire. See
+ * --test-select-dwell-frames and tools/frame-data/check-select-timer.py.
+ *
+ * Gating: a single env var, FD_SELECT_PROBE, holding the output PATH. Unset
+ * (every normal run, and the whole golden suite) means not one
+ * branch of this is taken past the first `if`. It deliberately does NOT reuse
+ * the FRAME_TRACE_PATH stream: frame_trace_annotate() is gated on
+ * Is_Training_Mode(Mode_Type) && Disp_Frame_Data (see above), which is
+ * exactly the state a select-timer observation must NOT be in.
+ *
+ * Observation only: reads globals, writes a file, touches no engine state. */
+static FILE* g_select_probe_fp = NULL;
+static bool g_select_probe_attempted = false;
+static unsigned long g_select_probe_calls = 0;
+
+void frame_select_timer_probe(int present_mode, int routine_no, int unit_of_timer, int select_timer, int early_return) {
+    if (!g_select_probe_attempted) {
+        g_select_probe_attempted = true;
+        const char* path = getenv("FD_SELECT_PROBE");
+        if (path != NULL && path[0] != '\0') {
+            g_select_probe_fp = fopen(path, "w");
+            if (g_select_probe_fp != NULL) {
+                fprintf(g_select_probe_fp,
+                        "# task #108 select-timer probe. One row per effect_A5_move() entry.\n"
+                        "# call pm rno uot st early\n");
+            }
+        }
+    }
+
+    if (g_select_probe_fp == NULL) {
+        return;
+    }
+
+    /* Same bound the trace itself carries (FRAME_TRACE_MAX_ROWS): a probe run
+     * is deliberately parked on one screen, so a caller that forgets to cap
+     * the run would otherwise grow this file without limit. */
+    if (g_select_probe_calls >= FRAME_TRACE_MAX_ROWS) {
+        return;
+    }
+
+    fprintf(g_select_probe_fp,
+            "SELPROBE call=%lu pm=%d rno=%d uot=%d st=0x%02X early=%d\n",
+            g_select_probe_calls++,
+            present_mode,
+            routine_no,
+            unit_of_timer,
+            select_timer & 0xFF,
+            early_return);
+    fflush(g_select_probe_fp);
+}

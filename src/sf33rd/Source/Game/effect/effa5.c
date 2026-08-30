@@ -9,6 +9,7 @@
 #include "sf33rd/Source/Game/debug/Debug.h"
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
+#include "sf33rd/Source/Game/ui/frame_trace.h"
 
 s32 Check_Sleep_A5(WORK_Other* ewk);
 
@@ -36,6 +37,15 @@ u8 sbcd(u8 a, u8 b) {
 }
 
 void effect_A5_move(WORK_Other* ewk) {
+    /* Task #108. Observation only, env-gated on FD_SELECT_PROBE and inert
+     * without it (frame_trace.c). Placed BEFORE the early return on purpose:
+     * the fact the runner is entered and returns immediately in training mode
+     * is the measurement -- 280 entries, zero ticks -- and it is invisible if
+     * the probe sits after the return. Nothing below is changed. */
+    frame_select_timer_probe(
+        (int)Present_Mode, (int)ewk->wu.routine_no[0], (int)Unit_Of_Timer, (int)Select_Timer,
+        (Present_Mode == 4 || Present_Mode == 5) ? 1 : 0);
+
     if (Present_Mode == 4 || Present_Mode == 5) {
         return;
     }

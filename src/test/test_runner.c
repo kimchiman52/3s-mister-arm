@@ -94,6 +94,9 @@ static TestScenePreset scene_preset = TEST_SCENE_PRESET_NONE;
 static int player_super_art_activation_starts[2] = { 0, 0 };
 static bool player_super_art_was_active[2] = { false, false };
 static bool scene_preset_repeat_second_super_ready = false;
+/* Task #108, see PHASE_CHARACTER_SELECT. Seeded from
+ * configuration.test.select_dwell_frames when the phase is first entered. */
+static int select_dwell_remaining = -1;
 static u16 inputs[REPLAY_FRAMES_MAX][2] = { 0 };
 static int inputs_index = 0;
 static int inputs_total = 0;
@@ -1352,12 +1355,29 @@ void TestRunner_Prologue() {
 
         if (wait_timer <= 0) {
             phase = PHASE_CHARACTER_SELECT;
+            /* Task #108: seed the select dwell exactly once, on entry. */
+            if (select_dwell_remaining < 0) {
+                select_dwell_remaining = configuration.test.select_dwell_frames;
+            }
         }
 
         break;
 
     case PHASE_CHARACTER_SELECT:
         apply_stage_override();
+        /* Task #108: dwell on select before touching a cursor. The runner
+         * otherwise clears this screen in a handful of frames, which is short
+         * of UNIT_OF_TIMER_MAX (50, src/constants.h:6) - one Select_Timer
+         * decrement - so effect_A5_move never reaches its tick even on a
+         * non-training preset where Present_Mode does not early-return it
+         * (effa5.c:49-51). Inputs are left at neutral while dwelling, so the
+         * screen simply sits there and the countdown runs. 0 (default) skips
+         * this entirely and the phase behaves exactly as before. */
+        if (select_dwell_remaining > 0) {
+            select_dwell_remaining -= 1;
+            break;
+        }
+
         maybe_force_training_scene_character_and_super_state();
         switch (char_select_phase) {
         case 0:
