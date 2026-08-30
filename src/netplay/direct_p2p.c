@@ -1465,6 +1465,57 @@ _Static_assert(RACE_PUNCH_SETTLE_MS <= STUN_PUNCH_CONFIRM_MS,
  * to the cap moves both together or moves neither. */
 #define RACE_HARD_CAP_MS(budget_ms) ((budget_ms) + 2 * STUN_PUNCH_CONFIRM_MS)
 
+/*
+ * ================= RULE: THE PROMISED LISTENING INTERVAL =================
+ *
+ * The moment a punch leg is armed, this race has PROMISED its peer an
+ * interval during which we are listening. The promise is always LONGER
+ * than the sending that created it:
+ *
+ *   - an armed leg listens for `punch_leg_ms + RACE_PUNCH_SETTLE_MS` from
+ *     its own arm time (section 2), and
+ *   - a leg that CONFIRMS owes a further STUN_PUNCH_CONFIRM_MS tail from
+ *     the confirm, because the peer is confirmed by that tail and not
+ *     before (stun.c, Stun_PunchSettled).
+ *
+ * THE RULE: no other bound in this file may end a leg before its promised
+ * interval runs out. Not the race budget, not the deadline extension, not
+ * a re-arm, not anything added later.
+ *
+ * WHY A RULE AND NOT THREE ONE-LINE FIXES. Every split-brain this race has
+ * shipped has had the SAME shape: some second bound, correct in
+ * isolation, truncated a promised interval, and the peer — already
+ * confirmed by the partial tail it did receive — reached the opposite
+ * verdict. PUNCHED on one side with EXHAUSTED on the other is a split
+ * brain regardless of which bound did the cutting, so the defect is not
+ * "the budget was wrong" or "the re-arm was wrong"; it is that the
+ * promise had no name and therefore nothing to be checked against.
+ *
+ * ENFORCED AT FOUR SITES, all of them this shape:
+ *   1. race_budget_expired()'s H-1 exemption — the budget does not cut a
+ *      CONFIRMED leg's tail.
+ *   2. p2p_race section 8's `settle_outstanding` — the budget does not
+ *      cut an unconfirmed leg's settle window either.
+ *   3. the _Static_assert on RACE_PUNCH_SETTLE_MS above — the one-tail
+ *      extension that (1) and (2) grant is large enough to contain a
+ *      whole settle window, so the grant cannot truncate the very thing
+ *      it exists to protect.
+ *   4. race_arm_punch()'s confirmed-slot guard — a DELIVER carrying a
+ *      DIFFERENT endpoint does not re-arm over a CONFIRMED leg. Re-arming
+ *      calls race_finish_punch() on the incumbent, which Stun_PunchEnds it
+ *      mid-tail: it destroys a punch that provably reached us AND stops
+ *      the tail owed to a peer our partial tail may already have
+ *      confirmed. Section 1 only ends the race once a confirmed leg has
+ *      SETTLED, so between confirm and settle the leg is live, valuable,
+ *      and — before the guard — replaceable.
+ *
+ * ADDING A FIFTH SITE. Any new code that can end, replace, or re-arm a
+ * leg must first ask whether that leg is inside a promised interval.
+ * race_punch_confirmed() and race_punch_settled() are the two predicates
+ * that answer it; declining is the only correct response when it is.
+ * ========================================================================
+ */
+
 /* One punch candidate. `oracle` is DP2P_PUNCH_REAL for every production
  * leg; the other two values make the leg a pure clock with no wire
  * traffic, for the offline harnesses. */
@@ -1494,10 +1545,13 @@ static bool race_cancelled(const RaceCfg* cfg) {
 }
 
 static void race_finish_punch(RacePunchCandidate* c, uint32_t now);
+static bool race_punch_confirmed(const RacePunchCandidate* c);
 
 /* Arm a punch candidate. Returns false if the endpoint is unusable (or a
  * duplicate of one we are already punching — punching the same endpoint
- * twice from one socket doubles the traffic and teaches us nothing). */
+ * twice from one socket doubles the traffic and teaches us nothing, and
+ * see THE PROMISED LISTENING INTERVAL above for why a CONFIRMED
+ * incumbent is refused outright). */
 static bool race_arm_punch(RacePunchCandidate* cands, int n_cands, int slot,
                            const RaceCfg* cfg, const char* ip, uint16_t port,
                            uint32_t now) {
@@ -1509,6 +1563,19 @@ static bool race_arm_punch(RacePunchCandidate* cands, int n_cands, int slot,
             cands[i].port == port && strcmp(cands[i].ip, ip) == 0) {
             return false;
         }
+    }
+    /* THE PROMISED LISTENING INTERVAL, site 4. The slot we are about to
+     * take is re-armed by race_finish_punch() below; if its incumbent has
+     * CONFIRMED, that call ends a live punch mid-tail. Decline instead —
+     * a confirmed leg is worth more than any endpoint a later DELIVER can
+     * carry, and section 1 is already committed to ending the race on it
+     * as soon as it settles. */
+    if (race_punch_confirmed(&cands[slot])) {
+        SDL_Log("[direct_p2p] S6 race: refusing to re-arm slot %d over a "
+                "CONFIRMED leg (%s:%u) for %s:%u",
+                slot, cands[slot].ip, (unsigned)cands[slot].port,
+                ip, (unsigned)port);
+        return false;
     }
     /* S6-review M-2: VALIDATE, THEN memset. The pre-fix order wiped the
      * slot before Stun_PunchBegin could fail, and a slot being re-armed

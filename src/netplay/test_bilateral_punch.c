@@ -2133,7 +2133,7 @@ static int test_rendezvous_cookie_codec(void) {
  *
  *   rendezvous.c:281  Rendezvous_HasMagic   — magic ONLY
  *   rendezvous.c:296  Rendezvous_FrameType  — magic AND version AND type
- *   direct_p2p.c:1836-1838 — the race's one shared receive path routes
+ *   direct_p2p.c:1903-1905 — the race's one shared receive path routes
  *                            with HasMagic ? FrameType : -1
  *   sdl_net_adapter.c:291,298 — the GekkoNet straggler drop
  *
@@ -2471,7 +2471,7 @@ static int send_log_count(void) {
 /* Records every packet direct_p2p.c pushes through RENDEZVOUS_SEND and
  * then performs the real send, so the machine under test keeps running
  * against the mock server. Both roles route here: the host's rend_q
- * drain AND its main-thread CHALLENGE echo (direct_p2p.c:4353), and the
+ * drain AND its main-thread CHALLENGE echo (direct_p2p.c:4420), and the
  * joiner's inline signaling loop sends. */
 static bool recording_rendezvous_send(NET_DatagramSocket* sock, NET_Address* target,
                                       uint16_t target_port, const uint8_t* pkt,
@@ -2538,7 +2538,7 @@ static void mock_server_stop(MockServerCtx* ctx, SDL_Thread* tid,
 
 /* --- host-side STUN seam that hands the test a live handle ------------- */
 
-/* direct_p2p.c:3217 calls STUN_DISCOVER(&s_work.stun, ...) — the mock is
+/* direct_p2p.c:3284 calls STUN_DISCOVER(&s_work.stun, ...) — the mock is
  * therefore handed a pointer to the orchestrator's own StunResult. Test
  * 13 keeps it so it can move stun.public_port AFTER the room code (and
  * with it advertised_port) has been latched, which is the only way to
@@ -2594,7 +2594,7 @@ static bool pred_two_cookied_requests(void) {
  * DIRECT_P2P_HANDOFF is NOT the same observable. On the host's bilateral
  * rung the worker raises s_bilateral_handoff_pending and Tick then does
  * set_state(HANDOFF) IMMEDIATELY BEFORE calling do_handoff
- * (direct_p2p.c:5254-5262), so a state-only wait can return with the
+ * (direct_p2p.c:5321-5329), so a state-only wait can return with the
  * handoff arguments not yet written — and, if the pending flag were ever
  * dropped, would still be satisfied by any other path that publishes the
  * state. Counting do_handoff calls is what pins the host worker ->
@@ -2650,7 +2650,7 @@ static int test_host_cookie_handshake(void) {
         char url[64];
         SDL_snprintf(url, sizeof(url), "udp://127.0.0.1:%u", (unsigned)server_port);
         Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, url);
-        /* 1000 ms is the code's own floor (direct_p2p.c:2708); the
+        /* 1000 ms is the code's own floor (direct_p2p.c:2775); the
          * seqlock assertion needs one worker cadence to elapse. */
         Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS, "1000");
     }
@@ -2833,9 +2833,9 @@ static int test_host_cookie_handshake(void) {
      *    alone. This is the suite's only wait on a handoff from a HOST
      *    session, and therefore its only coverage of the
      *    s_bilateral_handoff_pending chain: the punch worker raises the
-     *    flag (direct_p2p.c:3055), Tick observes it, joins the worker,
+     *    flag (direct_p2p.c:3122), Tick observes it, joins the worker,
      *    publishes HANDOFF and calls do_handoff
-     *    (direct_p2p.c:5254-5262). A state-only wait is satisfied one
+     *    (direct_p2p.c:5321-5329). A state-only wait is satisfied one
      *    statement earlier, before any handoff argument is written, and
      *    would also be satisfied by any other path that publishes the
      *    state — so both are waited on, state first. */
@@ -3071,7 +3071,7 @@ done:
  * Pinned by timing the first cookied REGISTER.
  * Part B — the same mock, never accepting: budget expiry must classify
  * CONNECT_FAIL_COOKIE_REJECTED (connect_fail.c:166), only reachable
- * when the race's challenge_any evidence was set (direct_p2p.c:3736).
+ * when the race's challenge_any evidence was set (direct_p2p.c:3803).
  * (The inline answer itself lives in the race's CHALLENGE arm.)
  */
 
@@ -4661,7 +4661,7 @@ static int test_natpmp_pcp(void) {
  *       off. DirectP2P_BeginHost is the entry into
  *       try_portmap/upnp_worker_fn, and upnp_worker_fn's ONLY brake is
  *       Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP)
- *       (src/netplay/direct_p2p.c:2342). So: every DirectP2P_BeginHost
+ *       (src/netplay/direct_p2p.c:2409). So: every DirectP2P_BeginHost
  *       call site must have a disable-UPnP site within the preceding
  *       UPNP_SETUP_WINDOW_LINES lines. (Widest real gap today is 15
  *       lines; the window is 25, loose enough to survive a comment being
@@ -4863,7 +4863,7 @@ static int test_s7_disable_pairing(void) {
 
 /*
  * do_handoff's first argument is the ONLY thing that tells GekkoNet
- * which side we are (direct_p2p.c:3892). It is a LITERAL at every call
+ * which side we are (direct_p2p.c:3959). It is a LITERAL at every call
  * site — nothing downstream can correct a wrong one — and two peers that
  * both hand off as the same number get identical local and remote roles,
  * so the session never starts.
@@ -6798,7 +6798,7 @@ static int test_race_budget_wrap_safety(void) {
  * proof that silently stops pointing at the bytes is worse than no proof.
  *
  * The guard was never the defect. M-2's fix is the code just below it —
- * direct_p2p.c:1519-1532 — and it is TWO changes, not one:
+ * direct_p2p.c:1586-1599 — and it is TWO changes, not one:
  *
  *   (i)  VALIDATE, THEN memset. The new StunPunchLeg is built on the
  *        STACK and Stun_PunchBegin is allowed to fail BEFORE the
@@ -6872,8 +6872,8 @@ static int SDLCALL hc_sink_thread(void* arg) {
  * UNSOLICITED to the address that REGISTER came from, one every
  * `gap_ms`. Unsolicited is not a cheat: direct_p2p.c sets
  * signal_active = false the moment the first DELIVER_PEER lands
- * (direct_p2p.c:1934), so no further REGISTER is ever sent — but the
- * REND_FRAME_DELIVER branch of the receive path (direct_p2p.c:1875) is
+ * (direct_p2p.c:2001), so no further REGISTER is ever sent — but the
+ * REND_FRAME_DELIVER branch of the receive path (direct_p2p.c:1942) is
  * NOT gated on signal_active, so every later DELIVER is still parsed and
  * still re-arms slot 1. That asymmetry is the production behaviour under
  * test.
@@ -7365,6 +7365,196 @@ done:
     return (rc == 0 && fail_count == fails_before) ? 0 : 1;
 }
 
+/* --- Test 41: a re-arm must not destroy a CONFIRMED leg (#120) --------- */
+
+/*
+ * THE PROMISED LISTENING INTERVAL, site 4 (see the rule of that name in
+ * direct_p2p.c). Slot 1 is re-armed whenever a DELIVER carries a
+ * DIFFERENT endpoint, and race_arm_punch calls race_finish_punch() on the
+ * incumbent to release its leg. Before the guard that call was
+ * UNCONDITIONAL, so a second DELIVER landing between a leg's CONFIRM and
+ * its SETTLE ran Stun_PunchEnd on a punch that had provably reached us —
+ * and stopped the tail owed to a peer our partial tail may already have
+ * confirmed. Section 1 of p2p_race only ends the race once a confirmed
+ * leg SETTLES, so that band is exactly RACE_PUNCH_SETTLE_MS wide and the
+ * leg is live and valuable throughout it.
+ *
+ * REACHABILITY, stated honestly: this needs the registered endpoint to
+ * CHANGE mid-race (a reclaim push, or a NAT rebind), which is narrow. No
+ * divergent production trace was ever constructed. The rig below does not
+ * claim one — it constructs the mechanism directly, which is what the
+ * guard is written against.
+ *
+ * THE RIG. Two endpoints, delivered in sequence by hc_server_thread:
+ *   A = punch_echo_thread with delay 0, so the REAL leg armed on it
+ *       confirms on the first pump (~one 5 ms tick after the arm).
+ *   B = hc_sink_thread, which never echoes, so a leg armed on it can
+ *       never confirm and the race would run to EXHAUSTED on it.
+ * The gap between the two DELIVERs is HC41_GAP_MS, which must sit inside
+ * A's settle window: after the gap A is CONFIRMED and NOT YET SETTLED,
+ * which is the only state in which the defect is reachable.
+ *
+ * WHY IT CANNOT PASS FOR THE WRONG REASON. `echoes_sent > 0` proves A
+ * really confirmed (not merely that B was refused), `delivers >= 2`
+ * proves the rig really offered a second, different endpoint, and
+ * `arm_lines == 1` is the guard itself. Without the guard the race ends
+ * EXHAUSTED on a silent B; with it, PUNCHED on A.
+ */
+#define HC41_GAP_MS 200
+#define HC41_BUDGET_MS 4000
+
+static int test_race_rearm_over_confirmed_leg(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 41: a DELIVER carrying a DIFFERENT endpoint "
+            "does NOT re-arm over a CONFIRMED leg (#120)\n");
+    const int fails_before = fail_count;
+    int rc = 0;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+    DirectP2P_TestHook_SetPunchOracle(NULL); /* REAL legs only */
+    DirectP2P_TestHook_SetArmFailEndpoint(NULL, 0);
+
+    /* The whole test lives inside A's tail; if the gap ever grew past it,
+     * A would have SETTLED and section 1 would have ended the race before
+     * the second DELIVER, so the guard would never be exercised and the
+     * test would pass vacuously. */
+    if (HC41_GAP_MS >= STUN_PUNCH_CONFIRM_MS) {
+        FAIL("test41", "HC41_GAP_MS must be inside the confirmation tail");
+        return 1;
+    }
+
+    unsigned short echo_port = 0, sink_port = 0, server_port = 0;
+    PunchEchoCtx echo;
+    HcSinkCtx sink_b;
+    HcServerCtx srv;
+    memset(&echo, 0, sizeof(echo));
+    memset(&sink_b, 0, sizeof(sink_b));
+    memset(&srv, 0, sizeof(srv));
+
+    echo.sock = open_udp_on_localhost(&echo_port);
+    echo.delay_ms = 0;                 /* confirm A as early as possible */
+    sink_b.sock = open_udp_on_localhost(&sink_port);
+    const int server_sock = open_udp_on_localhost(&server_port);
+    uint16_t my_port = 0;
+    NET_DatagramSocket* sock = sb6_net_socket(&my_port);
+
+    SDL_Thread* echo_tid = NULL;
+    SDL_Thread* b_tid = NULL;
+    SDL_Thread* srv_tid = NULL;
+
+    if (echo.sock < 0 || sink_b.sock < 0 || server_sock < 0 || sock == NULL) {
+        FAIL("test41", "could not bind the rig sockets");
+        rc = 1;
+        goto done;
+    }
+
+    srv.sock = server_sock;
+    srv.life_secs = 30;
+    srv.gap_ms = HC41_GAP_MS;
+    srv.n_ports = 2;
+    srv.ports[0] = (uint16_t)echo_port;   /* confirms */
+    srv.ports[1] = (uint16_t)sink_port;   /* silent — must never be armed */
+
+    echo_tid = SDL_CreateThread(punch_echo_thread, "hc_echo41", &echo);
+    b_tid = SDL_CreateThread(hc_sink_thread, "hc_sink41", &sink_b);
+    srv_tid = SDL_CreateThread(hc_server_thread, "hc_srv41", &srv);
+    if (echo_tid == NULL || b_tid == NULL || srv_tid == NULL) {
+        FAIL("test41", "SDL_CreateThread failed");
+        rc = 1;
+        goto done;
+    }
+
+    sb6_log_begin();
+    {
+        DirectP2PRaceProbeCfg cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.host_role = false;
+        cfg.sock = sock;
+        cfg.punch_token = k_sb6_token;
+        cfg.seed_ip = "127.0.0.1";
+        cfg.seed_port = 0;          /* no seed leg: slot 1 is the only candidate */
+        cfg.signal_ip = "127.0.0.1";
+        cfg.signal_port = (uint16_t)server_port;
+        cfg.session_key = k_sb6_key;
+        cfg.my_public_port = my_port;
+        cfg.signal_leg = true;
+        cfg.signal_budget_ms = HC41_BUDGET_MS;
+        /* Longer than the race, so a leg can only stop being punched
+         * because its slot was taken — never because it timed out. */
+        cfg.punch_leg_ms = 60000;
+        cfg.race_budget_ms = HC41_BUDGET_MS;
+
+        DirectP2PRaceProbeOut out;
+        DirectP2P_TestHook_RunRace(&cfg, &out);
+        sb6_log_end();
+
+        fprintf(stderr,
+                "[test_bilateral_punch] test 41: delivers=%d arm-lines=%d "
+                "echo(punches=%d echoes=%d) B(punches=%d) outcome=%d peer=%s:%u\n",
+                srv.delivers, s_sb6_arm_lines, echo.punches_seen, echo.echoes_sent,
+                sink_b.punches, (int)out.outcome, out.peer_ip,
+                (unsigned)out.peer_port);
+
+        /* --- rig sanity: the second, DIFFERENT endpoint was offered --- */
+        if (srv.delivers < 2) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test41: the mock sent only %d "
+                    "DELIVER(s); the guard had no re-arm to refuse\n", srv.delivers);
+            fail_count++;
+            rc = 1;
+        }
+        /* --- rig sanity: A really CONFIRMED ---------------------------- */
+        if (echo.echoes_sent <= 0) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test41: the echo peer never echoed, "
+                    "so no leg ever confirmed and this test proves nothing\n");
+            fail_count++;
+            rc = 1;
+        }
+
+        /* --- the guard ------------------------------------------------- */
+        if (s_sb6_arm_lines != 1) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: test41: %d candidates were armed "
+                    "against %d DELIVERs, expected exactly 1 — a DELIVER carrying a "
+                    "different endpoint re-armed slot 1 over a CONFIRMED leg, which "
+                    "Stun_PunchEnds it mid-tail (THE PROMISED LISTENING INTERVAL, "
+                    "site 4)\n",
+                    s_sb6_arm_lines, srv.delivers);
+            fail_count++;
+            rc = 1;
+        }
+        /* B is a silent sink: punching it at all means the confirmed leg
+         * was thrown away for an endpoint that can never answer. */
+        EXPECT_TRUE("41-silent-endpoint-never-punched", sink_b.punches == 0);
+        /* And the race must still converge on the endpoint that answered. */
+        EXPECT_TRUE("41-punched", out.outcome == DP2P_RACE_PROBE_PUNCHED);
+        EXPECT_TRUE("41-peer-is-the-confirmed-leg", out.peer_port == echo_port);
+
+        if (rc == 0 && fail_count == fails_before) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] test 41 OK — %d DELIVERs armed exactly 1 "
+                    "candidate and the confirmed leg survived to PUNCHED\n",
+                    srv.delivers);
+        }
+    }
+
+done:
+    echo.stop = true;
+    sink_b.stop = true;
+    srv.stop = true;
+    if (echo_tid != NULL) SDL_WaitThread(echo_tid, NULL);
+    if (b_tid != NULL) SDL_WaitThread(b_tid, NULL);
+    if (srv_tid != NULL) SDL_WaitThread(srv_tid, NULL);
+    if (echo.sock >= 0) close_sock(echo.sock);
+    if (sink_b.sock >= 0) close_sock(sink_b.sock);
+    if (server_sock >= 0) close_sock(server_sock);
+    if (sock != NULL) NET_DestroyDatagramSocket(sock);
+    return (rc == 0 && fail_count == fails_before) ? 0 : 1;
+}
+
 /* --- Test 34: TWO p2p_race instances, concurrently, against each other - */
 
 /*
@@ -7689,7 +7879,7 @@ static bool sb6_run_two_peer(int skew_ms, int owd_ms,
 
     /* No signal leg and no signal endpoint: with the relay gone there is
      * nothing in this rig for a rendezvous server to do, and RunRace
-     * treats a NULL signal_ip as "no legs" (direct_p2p.c:2205-2222). The
+     * treats a NULL signal_ip as "no legs" (direct_p2p.c:2272-2289). The
      * seed candidate — the delay line — is the whole race. */
     a.cfg.host_role = true;
     a.cfg.sock = net_a;
@@ -8090,6 +8280,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_race_duplicate_candidate_guard();   /* M-2: the guard (see H-C) */
     rc |= test_race_failed_rearm_keeps_live_candidate(); /* H-C: M-2 half i  */
     rc |= test_race_rearm_releases_address_ref();        /* H-C: M-2 half ii */
+    rc |= test_race_rearm_over_confirmed_leg();    /* #120: test 41 */
     rc |= test_race_confirm_at_budget_edge();      /* H-1 / H-2 */
     rc |= test_race_two_peer_convergence();        /* 34: two peers, concurrently */
     rc |= test_natpmp_pcp();  /* S7: test 22 */

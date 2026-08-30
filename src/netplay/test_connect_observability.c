@@ -684,7 +684,7 @@ static void test3_confirm_not_nat(void) {
      * the harness:
      *
      *   - race_punch_confirmed() returns false the moment a leg is
-     *     finished (direct_p2p.c:1560-1566), and section 2's lifetime
+     *     finished (direct_p2p.c:1627-1633), and section 2's lifetime
      *     sweep `continue`s over any confirmed leg, so a confirmed leg is
      *     never finished by the budget.
      *   - The latest instant a leg can still be confirmed is therefore

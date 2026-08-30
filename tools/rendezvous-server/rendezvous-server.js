@@ -259,37 +259,56 @@ const MAX_RATE_ENTRIES = 2 * MAX_SESSIONS;
 //
 // ---- DERIVATION (all figures per KEY_RATE_WINDOW_MS = 1000 ms, so
 //      "per window" and "per second" are the same number here) ------------
+// MECHANICALLY CHECKED (task #123). Everything below is derived from
+// constants that live in the C CLIENT, and the client and this server
+// DEPLOY INDEPENDENTLY — a cadence tune ships in a release ZIP without
+// rebuilding, restarting or notifying a long-lived VPS process, and no
+// translation unit and no module sees both a C literal and a JS const, so
+// neither a _Static_assert nor a JS assertion can reach across. The
+// file:line pointers below are navigation aids and WILL drift; the
+// arithmetic is held by tools/rendezvous-server/check_key_rate_budget.py,
+// which reads every value from its real definition and runs in
+// tools/gates/run-gates.sh. If you change a client cadence, that gate is
+// what tells you this constant went stale — and a stale constant here is
+// not a build break, it is a production room that DoSes itself.
+//
 // What charges this bucket, from the shipped client:
 //   * joiner REGISTER resend inside the punch race — 500 ms
-//     (src/netplay/direct_p2p.c:1477-1478, `(now - signal_last_send) >=
+//     (src/netplay/direct_p2p.c:1888, `(now - signal_last_send) >=
 //     500u`) => 2/s PER JOINER, for signal_budget_ms (8 s default,
-//     direct_p2p.c:2953-2954 / src/port/config/config.c:105).
+//     direct_p2p.c:3678-3679 / src/port/config/config.c:105).
 //   * host re-REGISTER worker — CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_
 //     INTERVAL_MS, default 5000 ms (config.c:111), floor 1000 ms
-//     (direct_p2p.c:2393-2395) => 1/s worst case. This leg must NEVER be
+//     (direct_p2p.c:2983) => 1/s worst case. This leg must NEVER be
 //     starved: losing it is precisely what reclaims a live room. The host
-//     runs NO signalling leg inside the race (direct_p2p.c:2495 sets
+//     runs NO signalling leg inside the race (direct_p2p.c:3082 sets
 //     cfg.signal_leg = false for the host — the DELIVER that started that
 //     thread already proves it is paired).
 //   * one challenge-triggered immediate resend per side per cookie
 //     rotation (COOKIE_ROTATE_MS >= 60 s), since the client answers a
-//     CHALLENGE at once (direct_p2p.c:1512-1515).
+//     CHALLENGE at once (direct_p2p.c:1907).
 //
 // N, the number of simultaneous dialers on ONE key. The session key is
-// derived from the HOST's public endpoint (direct_p2p.c:2930-2932), i.e.
-// the key IS the room code — everyone who pastes that code lands in the
-// same bucket, and each one starts its 2/s leg immediately, without
-// waiting to be accepted (cfg.signal_leg at direct_p2p.c:2972 keys only on
-// "have signal URL + have session key", not on pairing). The server's
-// two-slot policy silences dialers 2..N at DISPATCH, but they have already
-// charged this bucket — the gate runs upstream of dispatch. Codes are
-// pasted into a group chat and stay live for SESSION_TTL_MS = 10 min, so
-// several people racing for the single free slot is the normal case, not
-// an attack. N = 6 is the design point: more than any 2-player room can
-// consume, enough to cover a code dropped into a small active channel plus
-// the 8 s tails of losing dialers overlapping the next wave, and past it
-// the binding constraint stops being this limiter and becomes the two-slot
-// policy itself.
+// derived from the HOST's public endpoint (direct_p2p.c:3655, via
+// Rendezvous_DeriveSessionKey), i.e. the key IS the room code — everyone
+// who pastes that code lands in the same bucket, and each one starts its
+// 2/s leg immediately, without waiting to be accepted (cfg.signal_leg at
+// direct_p2p.c:3696 keys only on "have signal URL + have session key", not
+// on pairing). The server's two-slot policy silences dialers 2..N at
+// DISPATCH, but they have already charged this bucket — the gate runs
+// upstream of dispatch. Codes are pasted into a group chat and stay live
+// for SESSION_TTL_MS = 10 min, so several people racing for the single
+// free slot is the normal case, not an attack. N = 6 is the design point:
+// more than any 2-player room can consume, enough to cover a code dropped
+// into a small active channel plus the 8 s tails of losing dialers
+// overlapping the next wave, and past it the binding constraint stops
+// being this limiter and becomes the two-slot policy itself.
+//
+// It is a NAMED CONSTANT rather than a number in this paragraph because
+// three things consume it — this derivation, testKeyBudgetCoversMulti-
+// JoinerRoom in __test_protocol.js, and check_key_rate_budget.py — and a
+// design point restated in three places is a design point that drifts.
+const KEY_RATE_DESIGN_DIALERS = 6;
 //
 //   legit peak  = host 1 + 2 x N = 1 + 2 x 6            = 13/s
 //   per-IP cap  = RATE_LIMIT_PER_WINDOW                 = 10/s
@@ -1076,6 +1095,10 @@ function start(port) {
         // rather than ASSUMING "per window == per second" while doing
         // their arithmetic in requests/second.
         _keyRateWindowMs: KEY_RATE_WINDOW_MS,
+        // #123: the multi-joiner budget test sizes its dialer wave from the
+        // DESIGN POINT rather than restating it, so the test and the
+        // derivation cannot disagree about what N is.
+        _keyDesignDialers: KEY_RATE_DESIGN_DIALERS,
         // --- Review HIGH-2 / MEDIUM-3 hooks ------------------------------
         _preGateMap: preGateMap,
         _preGateLimit: PREGATE_LIMIT_PER_WINDOW,

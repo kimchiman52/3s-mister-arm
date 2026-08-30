@@ -1409,7 +1409,12 @@ async function testKeyBudgetCoversMultiJoinerRoom(handle) {
     assertEq(handle._keyRateWindowMs, 1000,
         'multi-joiner: KEY_RATE_WINDOW_MS is 1 s, so per-window == per-second');
 
-    const N = 6;                       // design point; see the constant's comment
+    // #123: read the design point rather than restating it. The two client
+    // cadences below CANNOT be read from here — they are literals in C that
+    // no JS module can see — so they stay mirrored, and the coupling is held
+    // instead by tools/rendezvous-server/check_key_rate_budget.py, which
+    // reads them out of direct_p2p.c and runs in the gate set.
+    const N = handle._keyDesignDialers;
     const HOST_PER_SEC = 1000 / 1000;  // REGISTER_INTERVAL_MS floor
     const JOINER_PER_SEC = 1000 / 500; // race signal resend, per joiner
     const legitPeak = HOST_PER_SEC + N * JOINER_PER_SEC;
