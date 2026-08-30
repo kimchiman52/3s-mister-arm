@@ -1113,3 +1113,41 @@ at the top of `TATE00` when the cache is detectably torn down. That guard does
 not exist: `src/sf33rd/Source/Game/stage/tate00.c` has three pre-2026 commits
 and `TATE00()` is the unmodified "before" state the doc quotes. The bug appears
 nowhere in this queue and has no owner.
+
+### RE-LITIGATED AND LEFT — `load_it_use_this_key`'s unbounded retry (gd3rd.c)
+
+`src/sf33rd/Source/Game/io/gd3rd.c:355-380`. `while (1)` around
+`fsOpen` / `fsFileReadSync`: a read that keeps failing logs
+`ファイルの読み込みに失敗しました。ファイル番号：%d` (`:378`) and retries
+forever. Raised again on 2026-08-30 as a brick-prevention gap.
+
+**It is not a gap. It is a decision.** This exact site — named by function, not
+by line — was audited in the 2026-04-29 arcade `while(1)` trap sweep, which
+replaced 12+ such traps across `texgroup.c`, `ramcnt.c`, `PPGFile.c` and
+`gd3rd.c` itself (`load_it_use_any_key2`'s fnum-out-of-range trap and its
+`Pull_ramcnt_key` guard both became `[gd3rd-skip]`, `docs/netplay-diagnostics.md:180-186`).
+`load_it_use_this_key` was put on the sweep's **deliberately deferred** list by
+explicit user choice, on the reasoning that it is *not a brick*: unlike the
+empty `while(1){}` traps, it logs on every iteration, so a stuck load leaves a
+growing trail rather than a silent freeze. At the sweep-era tree
+(`3f020a54:src/sf33rd/Source/Game/io/gd3rd.c`) the function is at `:199` and
+the loop at `:204`; it is textually unchanged since.
+
+Recorded here because until now the decision lived only in a session memory,
+which is why it came back around. **Do not "fix" it without re-opening the
+decision with the user.** For whoever does re-open it, the facts that bear on
+the terminal behaviour:
+
+- Callers cannot escalate. `load_it_use_any_key2` (`gd3rd.c:331`) turns a
+  non-zero return into `return size`, and `texgroup.c:558` assigns the result
+  to `rnum`. Neither has a "load failed, abort" path to reach.
+- **There is no error-reporting mechanism left to reuse.** The arcade
+  `ERR_STOP` macro was deleted during the same sweep; every surviving mention
+  is a comment recording that it used to be there (`ramcnt.c:59`, `:79`, `:127`,
+  `:141`, `:155`, `:200`, `:232`; `texcash.c:502`). The established convention
+  is the `[*-skip]` log-and-continue marker, gated behind
+  `ENABLE_PERF_TELEMETRY`.
+- The trigger is gone. `522e574c` root-caused the five boot-time failures that
+  were exercising this loop to a lost wakeup in `AFS_ReadSync`
+  (`src/port/io/afs.c`), not to bad data — see "#134" above. The loop now fires
+  on genuinely corrupt or truncated `SF33RD.AFS` only.
