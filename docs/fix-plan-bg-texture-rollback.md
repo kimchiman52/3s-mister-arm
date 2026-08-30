@@ -8,6 +8,79 @@ HUD/sprites/effects render normally while only the BG layer is black.
 
 ---
 
+## Fix E.3 was never implemented, and must not be (2026-08-30, task #137)
+
+**Everything below this section from "Fix E — corrected approach" onward is
+SUPERSEDED.** Fix E.3 was carried as the authoritative recommendation for four
+months and never landed. Re-derived against the tree, the mechanism it names is
+real but the fix it prescribes is not merely inadequate — it would break the
+game in two independent ways, both measured.
+
+**What survives re-derivation.** The reachability argument holds exactly as
+written. `Bg_Texture_Load_EX` has one gameplay caller, `bg_initialize`; that has
+one caller, `ta0_init00`; that runs only on the `bg_w.bg_routine == 0` arm of
+`TATE00`'s dispatch, and increments `bg_routine` immediately. `bg_w` is saved
+whole by `GS_SAVE(bg_w)` / restored by `GS_LOAD(bg_w)` while nothing in
+`src/netplay/game_state.c` names `ppgBgTex`. So a torn-down cache with
+`bg_routine > 0` has no repair path, and the layer stays black. That half is
+now proven dynamically, not argued: injecting one `Bg_Close`-shaped
+tear-down mid-match on the host runner left **6852 of 6852** subsequent BG chip
+draws skipped for the remaining 571 frames, with `be` never returning to 1.
+
+**Why Fix E.3's predicate is wrong.** It tests `ppgBgTex[0 .. scrno-1]`. The
+loader fills `ppgBgTex[stg .. stg+scrno)`, where `stg` is the first non-zero
+`stage_bgw_number[bg_w.stage][]` entry — the same scan the loader runs before
+its population loop. Measured on stage 11: `stage_bgw_number[11] = [0,1,0]`, so
+`scrno == 1` and the healthy steady state is `be = 0,1,0`. E.3's predicate reads
+`ppgBgTex[0]`, which is legitimately empty, and would therefore fire on **every
+frame of a healthy match**.
+
+**Why Fix E.3's action is worse than the bug.** Its trigger is a `be` flag,
+which is not rollback-covered. Its action writes `bg_w` — saved — and, through
+`ta0_init00`, calls `random_16()`, which advances `Random_ix16` — saved. That
+makes saved simulation state a function of each peer's local rollback history.
+It is the DIVERGENT-plus-FEEDBACK shape that
+`tools/rollback-determinism/allowlist.txt`'s header calls the genuine desync
+class, installed deliberately.
+
+**What was implemented instead.** `Bg_Texture_Rollback_Repair`, in
+`src/sf33rd/Source/Game/stage/bg.c`, called from `TATE00` when
+`bg_routine > 0`. It uses the correct `stg`-based predicate, re-runs the loader,
+and snapshots-and-restores every `GS_SAVE`-covered global the loader writes
+(`bgPalCodeOffset[]`, `ending_flag`, `Screen_Switch`, `Screen_Switch_Buffer`).
+Measured: after the same injected tear-down the cache is back on the next frame,
+6840 of 6840 chips drawn; on a healthy match the loader still runs exactly once,
+so the guard costs nothing; and a whole-image per-frame hash diff of a control
+run against an injected-and-repaired run shows **zero GS_SAVE-covered symbols
+differing** across 1500 frames.
+
+**What Fix B turned out to be.** Not a spare safety net — load-bearing, and
+incomplete as shipped. It released the four `Texture` chunks but not the two
+`Palette` chunks the same function sets up, so re-entering `Bg_Texture_Load_EX`
+outside the `Bg_Close` path **hung** the process in `ppgSetupPalChunk`'s
+`if (pch->be) while (1) {}` re-entry trap, with the Ake palette still live.
+Verified by stack sample. Fix B stays, extended with
+`ppgReleasePaletteHandle` for `ppgAkePal` and `ppgAkanePal`; without those two
+lines the repair above trades a black background for a wedged game.
+
+**What is still NOT established.** That *rollback* is what tears the cache down
+in the field. The evidence this document rests on cannot show it: the
+`ppgCheckTextureNumber` classifier budgets 64 prints per `Play_Game`
+transition, and both runs quoted below saturate it exactly — 547+69+24 = 640 =
+10x64, and 336+24+24 = 384 = 6x64 — so the samples are the first 64 checks after
+each transition, which is precisely the window where the pre-match tear-down
+legitimately leaves `be == 0`. That is also why "24 FAIL:be=0" is identical
+before and after Fix B. Nor can the rollback-determinism harness settle it: it
+excludes the game-transition phase where `Bg_Close` lives from its rollback
+cadence by design, and `ppgBgTex` is 192 bytes of pointer-bearing struct, so it
+is never pointer-canonicalized and lands in that harness's baseline-noise list —
+verified in a run of `--scenario ryu-ken-basic-exchange`, where `ppgBgTex`
+appears in the excluded-noise set and the rollback leg produces zero
+`FAIL:be=0`. The repair is therefore justified by the latent defect it is
+measured to close, not by a reproduced field trigger.
+
+---
+
 ## Fix B post-mortem (2026-04-24)
 
 **Status: Fix B implemented as described below, rebuilt, and re-tested. The

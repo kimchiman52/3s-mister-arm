@@ -41,6 +41,17 @@ void ta0_move();
 void TATE00() {
     void (*jump_tbl[4])() = { ta0_init00, ta0_init01, ta0_init02, ta0_move };
 
+    /* Rollback-safety (task #137). bg_routine > 0 means bg_initialize has
+     * already run for this stage, so bg_w.stage/scrno describe a cache that
+     * ought to be loaded; if it reads back torn down, nothing else will ever
+     * reload it and the BG layer renders black for the rest of the match.
+     * Deliberately not "reset bg_routine to 0" -- see the block comment on
+     * Bg_Texture_Rollback_Repair for why that shape both mis-identifies the
+     * chunk and writes saved state off an unsaved trigger. */
+    if (bg_w.bg_routine > 0) {
+        Bg_Texture_Rollback_Repair();
+    }
+
     if (Game_pause & 0x80) {
         return;
     }

@@ -314,6 +314,18 @@ void Bg_Texture_Load_EX() {
         if (ppgRwBgTex.be)  ppgReleaseTextureHandle(&ppgRwBgTex,  -1);
         if (ppgAkeTex.be)   ppgReleaseTextureHandle(&ppgAkeTex,   -1);
         if (ppgAkaneTex.be) ppgReleaseTextureHandle(&ppgAkaneTex, -1);
+        /* The two PALETTE chunks this function also sets up. Without
+         * them the guard is incomplete and does not do the job it was
+         * written for: re-entering with ppgAkePal.be still set traps in
+         * ppgSetupPalChunk's `if (pch->be) while (1) {}` re-entry check
+         * and hangs the game. Measured (task #137) by injecting one
+         * Bg_Close-shaped texture tear-down mid-match and letting
+         * Bg_Texture_Rollback_Repair re-enter: without these two lines
+         * the process wedges in ppgSetupPalChunk with the Ake palette
+         * still live. Bg_Close releases both (see above), so the normal
+         * path is unaffected and pays nothing. */
+        if (ppgAkePal.be)   ppgReleasePaletteHandle(&ppgAkePal,   -1);
+        if (ppgAkanePal.be) ppgReleasePaletteHandle(&ppgAkanePal, -1);
     }
 
     for (i = 0; i < 8; i++) {
@@ -419,6 +431,133 @@ void Bg_Texture_Load_EX() {
         }
 
         ppgSourceDataReleased(&ppgAkeList);
+    }
+}
+
+/* --- rollback-safety repair for the BG texture cache (task #137) -------
+ *
+ * The PPG BG texture cache is NOT in the netplay save set: no GS_SAVE or
+ * GS_LOAD in src/netplay/game_state.c names ppgBgTex. `bg_w` IS saved
+ * whole (GS_SAVE(bg_w) / GS_LOAD(bg_w)), and bg_routine is its first
+ * field. Bg_Texture_Load_EX has exactly one caller in gameplay --
+ * bg_initialize -- which is reached only from ta0_init00, i.e. only on a
+ * frame where bg_routine == 0. So if the cache is ever torn down while
+ * bg_routine has already advanced past 0, nothing re-populates it:
+ * ppgCheckTextureNumber returns 0 on `be == 0` for every BG tile and
+ * bgDrawOneChip skips the quad, so the whole layer renders as the clear
+ * colour. Measured on host by injecting one tear-down mid-match: 6852 of
+ * 6852 subsequent BG chip draws skipped, for the rest of the match, with
+ * no recovery.
+ *
+ * The repair re-runs the loader, but it MUST NOT be observable by the
+ * simulation. Its trigger (a `be` flag) is unsaved state; if its effects
+ * reached saved state, saved state would become a function of each
+ * peer's local rollback history -- a desync, not a fix for one. Every
+ * GS_SAVE-covered global Bg_Texture_Load_EX writes is snapshotted and
+ * put back: bgPalCodeOffset[] and ending_flag, which it assigns
+ * directly, and Screen_Switch / Screen_Switch_Buffer, which its Bg_On_R
+ * calls fold into. Everything else the loader touches -- scr_bcm[],
+ * bg_priority[], the ppg*List/Texture/Palette structures -- is render
+ * state that the save set deliberately does not carry.
+ *
+ * This is NOT the "force bg_routine = 0 at the top of TATE00" shape that
+ * docs/fix-plan-bg-texture-rollback.md recommends as Fix E.3. That shape
+ * writes bg_w (saved) and, through ta0_init00, random_16() (Random_ix16,
+ * saved) off an unsaved trigger; and its `ppgBgTex[0 .. scrno-1]`
+ * predicate is wrong, because the loader fills ppgBgTex[stg .. stg+scrno)
+ * where stg is the first non-zero stage_bgw_number[] entry. On stage 11
+ * the healthy steady state is measured as scrno=1 with be=0,1,0, so that
+ * predicate reads a chunk that is legitimately empty and would fire on
+ * every frame of a healthy match. */
+
+/* Index of the first ppgBgTex[] chunk this stage populates -- the same
+ * `stg` the loader's own scan above computes. */
+static u8 bg_tex_first_chunk() {
+    u8 stg;
+
+    for (stg = 0; stg < 3; stg++) {
+        if (stage_bgw_number[bg_w.stage][stg] != 0) {
+            break;
+        }
+    }
+
+    return stg;
+}
+
+/* True when a chunk this stage is supposed to have loaded reads back
+ * torn down. */
+static s32 bg_tex_cache_torn_down() {
+    u8 stg;
+    u8 n = bg_w.scrno;
+    u8 i;
+
+    /* stage_bgw_number is [22][3]; a restored-garbage stage must make
+     * this predicate inert rather than read off the end of it. */
+    if (bg_w.stage < 0 || bg_w.stage >= 22) {
+        return 0;
+    }
+
+    stg = bg_tex_first_chunk();
+
+    if (stg >= 3 || n == 0) {
+        return 0;
+    }
+
+    if (stg + n > 3) {
+        n = 3 - stg;
+    }
+
+    for (i = 0; i < n; i++) {
+        if (ppgBgTex[stg + i].be == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+/* Latched off when a repair does not take, so a cache that cannot be
+ * rebuilt (source data no longer resident, say) costs one full loader
+ * pass rather than one per frame for the rest of the match. Unsaved, and
+ * driven only by unsaved state, so it cannot feed the simulation. */
+static u8 bg_tex_repair_suppressed = 0;
+
+void Bg_Texture_Rollback_Repair() {
+    s32 saved_pal[8];
+    u16 saved_switch;
+    u16 saved_switch_buffer;
+    u8 saved_ending_flag;
+    s32 i;
+
+    if (!bg_tex_cache_torn_down()) {
+        bg_tex_repair_suppressed = 0;
+        return;
+    }
+
+    if (bg_tex_repair_suppressed) {
+        return;
+    }
+
+    for (i = 0; i < 8; i++) {
+        saved_pal[i] = bgPalCodeOffset[i];
+    }
+
+    saved_switch = Screen_Switch;
+    saved_switch_buffer = Screen_Switch_Buffer;
+    saved_ending_flag = ending_flag;
+
+    Bg_Texture_Load_EX();
+
+    for (i = 0; i < 8; i++) {
+        bgPalCodeOffset[i] = saved_pal[i];
+    }
+
+    Screen_Switch = saved_switch;
+    Screen_Switch_Buffer = saved_switch_buffer;
+    ending_flag = saved_ending_flag;
+
+    if (bg_tex_cache_torn_down()) {
+        bg_tex_repair_suppressed = 1;
     }
 }
 

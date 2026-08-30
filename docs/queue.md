@@ -2063,3 +2063,149 @@ observation under test, not the answer.
 **Build tree**: NOT taking `build/host`. Private configure dir
 `build/host-ldreq139` (Debug, stock options) for every run in this lane.
 Edit set so far: this file only.
+
+## #137 — the black-BG fix that was never implemented — CLOSED, and E.3 was not it
+
+**The diagnosis half-survives, and the prescribed fix does not survive at
+all.** Both halves were re-derived against the tree rather than read off
+`docs/fix-plan-bg-texture-rollback.md`, whose pointers that document itself
+has a history of getting wrong.
+
+**What survives.** The reachability chain is exactly as written and still
+holds. `Bg_Texture_Load_EX` has one gameplay caller (`bg_initialize`), which
+has one caller (`ta0_init00`), which runs only on the `bg_routine == 0` arm of
+`TATE00`'s dispatch and increments `bg_routine` immediately. `bg_w` is saved
+whole (`GS_SAVE(bg_w)` / `GS_LOAD(bg_w)`); nothing in `game_state.c` names
+`ppgBgTex`. So a cache torn down while `bg_routine > 0` has no repair path.
+That is now measured, not argued. One injected `Bg_Close`-shaped tear-down
+mid-match (at `TATE00` call 600 of 1171, pinned RNG, `basic-exchange` preset),
+counted over the identical window in all four runs (`TATE00` call >= 602):
+
+| | drawn | skipped |
+|---|---|---|
+| before fix, control  | 6840 | 0 |
+| before fix, injected | **0** | **6840** |
+| after fix, control   | 6840 | 0 |
+| after fix, injected  | 6840 | 0 |
+
+Before the fix `be` never returns to 1 for the remaining 570 frames. After it,
+the cache is back on the very next frame.
+
+**Why Fix E.3 would have broken the game, twice.**
+
+- *Its predicate is wrong.* E.3 scans `ppgBgTex[0 .. scrno-1]`. The loader
+  fills `ppgBgTex[stg .. stg+scrno)`, where `stg` is the first non-zero
+  `stage_bgw_number[stage][]` entry. Measured on the harness's stage 11:
+  `stage_bgw_number[11] = [0,1,0]`, `scrno == 1`, and the HEALTHY steady state
+  is `be = 0,1,0`. E.3 would have read `ppgBgTex[0]` — legitimately empty —
+  and fired on every frame of a healthy match, re-running a 1-5 ms loader and
+  `bg_initialize` per frame.
+- *Its action is the desync class it was written to avoid.* The trigger is a
+  `be` flag, which is not rollback-covered. The action writes `bg_w` (saved)
+  and, through `ta0_init00`, calls `random_16()`, advancing `Random_ix16`
+  (saved). Saved state would become a function of each peer's local rollback
+  history.
+
+**What shipped instead.** `Bg_Texture_Rollback_Repair` in `bg.c`, called from
+`TATE00` under `bg_routine > 0`: correct `stg`-based predicate, re-runs the
+loader, and snapshots-and-restores every `GS_SAVE`-covered global the loader
+writes (`bgPalCodeOffset[]`, `ending_flag`, `Screen_Switch`,
+`Screen_Switch_Buffer`). A stage-bounds guard keeps a garbage restored
+`bg_w.stage` from indexing off `stage_bgw_number[22][3]`, and a suppression
+latch keeps a cache that cannot be rebuilt from costing a loader pass per
+frame.
+
+Proof, all on the host runner at 1500 frames of `basic-exchange`:
+on a healthy match the loader still runs exactly once (2 entries in the
+injected run, 1 in the control), so the guard is free on the happy path; and a
+per-frame whole-image hash diff of control vs
+injected-and-repaired — symbol map generated from that exact binary, both runs
+spawned with ASLR disabled — shows **zero GS_SAVE-covered symbols differing**
+across all 1500 frames. The only symbol that first diverges at the injection
+frame is `Bg_Texture_Load_EX.s_btle_count`, the DEBUG loader-entry counter.
+
+**Verdict on Fix B: it stays, and it was incomplete.** Not a spare safety net.
+It released the four `Texture` chunks but not the two `Palette` chunks the
+same function sets up, so re-entering `Bg_Texture_Load_EX` outside the
+`Bg_Close` path **hung** the process in `ppgSetupPalChunk`'s
+`if (pch->be) while (1) {}` re-entry trap with the Ake palette still live —
+confirmed by stack sample, not inferred. Extended with
+`ppgReleasePaletteHandle` for `ppgAkePal` and `ppgAkanePal`. Without those two
+lines the repair above trades a black background for a wedged game, which is
+worse. Anyone who had implemented E.3 as written would have hit the same trap.
+
+**What is still NOT established, and cannot be from here.** That *rollback* is
+what tears the cache down in the field.
+
+- The document's own evidence cannot show it. The `ppgCheckTextureNumber`
+  classifier budgets 64 prints per `Play_Game` transition, and both quoted runs
+  saturate it exactly — 547+69+24 = 640 = 10x64, 336+24+24 = 384 = 6x64 — so
+  the samples are the first 64 checks after each transition, which is precisely
+  the window where the pre-match tear-down legitimately leaves `be == 0`. That
+  is also why "24 FAIL:be=0" is identical before and after Fix B. The document
+  separately concludes its 69 `FAIL:handle=0` are correct arcade data.
+- The rollback-determinism harness cannot show it either, for two independent
+  structural reasons. Its cycle gate covers only `TestRunner_IsPhaseActive`
+  "game" and "character-select" and deliberately excludes the transition phases
+  — which is where `Bg_Close` lives. `Bg_Close` has exactly two callers:
+  `System_all_clear_Level_B` (`sys_sub.c`) and the endings path
+  (`end_main.c`); of `System_all_clear_Level_B`'s call sites in `game.c` only
+  one is inside the Game02 battle dispatcher, and it is `Game2_0` — the same
+  frame that then reloads. The other is in `Game01`.
+  And `ppgBgTex` is a 192-byte pointer-bearing struct array, so the
+  whole-pointer canonicalization rule (`size == sizeof(void*)`) can never fire
+  on it and it lands in the baseline-noise list — confirmed in a
+  `--scenario ryu-ken-basic-exchange` run where `ppgBgTex` appears in the
+  excluded-noise set and the rollback leg produced zero `FAIL:be=0`.
+
+So the repair is justified by the latent defect it is measured to close, not
+by a reproduced field trigger. **Reopen condition:** if a black-BG report
+arrives with a log showing `FAIL:be=0` at a frame far from a `Play_Game`
+transition, the trigger is real and worth chasing to its source; the repair
+will have masked the symptom by then, so raise the classifier's budget before
+concluding anything from a quiet log.
+
+**Gates.** Full frame-data suite, `--check-golden`: **99 corpora, 99 GREEN,
+zero golden drift**, summed 1488 rows = 1435 PASS + 53 XFAIL — identical to the
+canon derived independently from `golden/*.tsv`. Nothing moved.
+
+That took two passes and the reason is worth writing down, because the first
+pass looks like a regression and is not one. The five `*-arcade` corpora RED as
+"MISSING trace/expected" whenever `FDH_CPS3_ZIP` is unset and no romset is
+installed — `run-suite.sh` says so in its own first three lines before it builds
+anything. Re-run as
+`FDH_CPS3_ZIP=<...>/sfiii3nr1.zip tools/frame-data/run-suite.sh --check-golden
+hugo-arcade q-arcade remy-arcade twelve-arcade yun-sa3-arcade`, all five are
+GREEN with zero drift (30+73+16+17+3 = 139 rows, all PASS). A bare
+`run-suite.sh` on a machine without the romset therefore reports 94/5 and
+"DRIFT DETECTED" from five corpora that never ran, which is not the same
+statement as drift.
+
+Also green: shipped-config Release host build, ARM cross-build
+(`build-game.sh --flavor telemetry`), all 14 netplay harnesses, doc-citation
+baselines 0 breached.
+
+**Skipped, with reason: on-device.** The MiSTer lock is held by a wedged
+external process. Nothing here is confirmed on hardware; the ARM cross-build
+proves it compiles for the target and nothing more. Also skipped: the
+rollback-determinism harness as a *verdict* on this change — it is structurally
+blind to `ppgBgTex` (see above), so running it would have produced a green that
+means nothing. It was used as an instrument instead: its capture, symbol map and
+no-ASLR spawn are what produced the saved-state-neutrality diff.
+
+**Two operational notes.**
+
+- *The wait-for-the-tree poller deadlocked on itself.* A background job that
+  waited for `check_rollback_determinism.py` to leave `ps` never fired, because
+  the poller's own `zsh -c` command line contains that string — the python
+  source is embedded in it. It matched itself and would have waited out its
+  whole budget while `build/host` sat free. The brief warns about bare
+  `pgrep -f`; the same trap catches `ps ax | grep` from inside the command being
+  grepped for. Match on something the poller cannot contain (the process's
+  binary path, or a marker file the watched job writes).
+- *#138 landed while this lane's queue text sat in the working tree*, so two of
+  its commits carry this lane's `docs/queue.md` appends. No source file was
+  cross-staged in either direction — both lanes staged explicit paths. One
+  side effect: #138's prose points at "the carried item under #137's allowlist
+  re-derivation", and #137 has no allowlist re-derivation; that carried item is
+  #138's own. Left as written rather than edited from this lane.

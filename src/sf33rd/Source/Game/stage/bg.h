@@ -122,6 +122,10 @@ void Bg_Kakikae_Set();
 void Ed_Kakikae_Set(s16 type);
 void Bg_Close();
 void Bg_Texture_Load_EX();
+/* Rollback-safety: the saved-state-neutral BG texture cache repair TATE00
+ * runs before it dispatches. See the block comment above its definition in
+ * bg.c for the mechanism and for why it is not Fix E.3's shape. */
+void Bg_Texture_Rollback_Repair();
 void Bg_Texture_Load2(u8 type);
 void Bg_Texture_Load_Ending(s16 type);
 void scr_trans(u8 bgnm);
