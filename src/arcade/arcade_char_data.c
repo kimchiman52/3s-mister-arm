@@ -1,7 +1,6 @@
 #include "arcade/arcade_char_data.h"
 #include "arcade/rom_load.h"
 #include "constants.h"
-#include "port/resources.h"
 #include "structs.h"
 #include "utils/sha256.h"
 
@@ -451,44 +450,132 @@ static void dump_data(CharInitData* data, Character character) {
 }
 #endif
 
+/* The romset directories a MiSTer arcade core reads, in MiSTer Main's own
+ * resolution order.
+ *
+ * Main resolves the arcade ROM directory ONCE per MRA, via
+ * findGamesDir("mame") -> findPrefixDir(GAMES_DIR, no_prefix_check=true,
+ * "mame") -- Main_MiSTer file_io.cpp:1135-1138 and :1046-1132 @ 915ca339.
+ * The in-source order comment there (file_io.cpp:1048-1055) and the code
+ * below it agree: USB first, then network, then CIFS, then the SD card,
+ * with the bare `<root>/mame` checked before `<root>/games/mame` at every
+ * root. Relative paths are resolved against the storage root by
+ * make_fullpath (file_io.cpp:215-227), so "../usb0/mame" is
+ * /media/usb0/mame.
+ *
+ * The last entry is Main's fallback rather than part of that list: when
+ * findGamesDir finds no `mame` directory anywhere, set_arcade_root falls
+ * back to the MRA's own top-level folder (mra_loader.cpp:176-178), i.e.
+ * /media/fat/_Arcade/mame for an MRA under _Arcade/. Main only reaches it
+ * when every directory above is absent, which is why it is probed last.
+ *
+ * /media/fat/mame is listed for a different reason. Main does check it
+ * (file_io.cpp:1124-1127), but a hit there leaves mame_root empty
+ * (mra_loader.cpp:172-174) and the part path is then built as
+ * "%s/mame/%s/%s" (mra_loader.cpp:895) -> the absolute "/mame/<zip>/<part>",
+ * so Main itself misreads that case. We still look, because it is where
+ * such a user actually put the romset and one failed open costs nothing.
+ *
+ * Deliberate difference from Main: Main commits to the FIRST directory that
+ * exists and never looks past it, so a `mame` folder on usb0 hides the SD
+ * card's. We probe every entry instead. That is safe precisely because
+ * acceptance is by content digest, not by presence -- a decoy or
+ * wrong-revision zip in an earlier directory cannot mask a good one later. */
+static const char* const cps3_rom_dirs[] = {
+    "/media/usb0/mame",       "/media/usb0/games/mame",
+    "/media/usb1/mame",       "/media/usb1/games/mame",
+    "/media/usb2/mame",       "/media/usb2/games/mame",
+    "/media/usb3/mame",       "/media/usb3/games/mame",
+    "/media/usb4/mame",       "/media/usb4/games/mame",
+    "/media/usb5/mame",       "/media/usb5/games/mame",
+    "/media/network/mame",    "/media/network/games/mame",
+    "/media/fat/cifs/mame",   "/media/fat/cifs/games/mame",
+    "/media/fat/mame",        "/media/fat/games/mame",
+    "/media/fat/_Arcade/mame",
+};
+
+/* The zip basenames the shipped jtcps3 3rd Strike MRA declares, in its own
+ * order: `<rom index="0" zip="sfiii3nr1.zip|sfiii3.zip" ...>` -- verified
+ * both in jotego/jtbin's published MRA and in the copy installed on the
+ * target device at /media/fat/_Arcade/Street Fighter III 3rd Strike Fight
+ * for the Future (Japan 990512, NO CD).mra. Main walks that `|` list with
+ * strsep and takes the first that satisfies the part (mra_loader.cpp:889-915),
+ * so either basename is a legitimate install: update_all ships the merged
+ * sfiii3.zip, while a set assembled to run the JOTEGO public-repo core --
+ * the route users take because the jtcps3 MRAs are jtbeta-gated in
+ * update_all -- is commonly the small sfiii3nr1.zip.
+ *
+ * These names decide only which file we OPEN. What we accept out of it is
+ * decided purely by content hash in rom_load.c. */
+static const char* const cps3_rom_zip_names[] = {
+    "sfiii3nr1.zip",
+    "sfiii3.zip",
+};
+
+#define CPS3_ROM_DIR_COUNT (sizeof(cps3_rom_dirs) / sizeof(cps3_rom_dirs[0]))
+#define CPS3_ROM_ZIP_NAME_COUNT (sizeof(cps3_rom_zip_names) / sizeof(cps3_rom_zip_names[0]))
+
 void ArcadeCharData_Init() {
-    /* CPS3 ROM search path. Sources are tried in order; within each zip
-     * the required slices are matched by content hash (see rom_load.c),
-     * so both our minimal flat sfiii3nr1.zip and update_all's merged
-     * subdirectory-variant sfiii3.zip load identically.
-     *   1. our own resources/ dir (preserves the original behavior);
-     *   2. THIRDSARM_CPS3_ZIP env override (test/dev hook);
-     *   3. the zip update_all ships for the jtcps3 core on MiSTer. */
-    char* resources_path = Resources_GetPath("sfiii3nr1.zip");
-    const char* env_path = SDL_getenv("THIRDSARM_CPS3_ZIP");
-    const char* candidates[3];
-    int candidate_count = 0;
-
-    candidates[candidate_count++] = resources_path;
-
-    if (env_path != NULL && env_path[0] != '\0') {
-        candidates[candidate_count++] = env_path;
-    }
-
-    candidates[candidate_count++] = "/media/fat/games/mame/sfiii3.zip";
-
+    /* CPS3 ROM search path.
+     *
+     * We ship no ROM of our own and we do not look for one in our own
+     * install dir. The only ROM this program loads is the romset the
+     * user's own CPS3 arcade core already reads; a player without that
+     * core gets PS2 balance rather than a copy we supplied.
+     *
+     * Within each zip the required slices are matched by CONTENT --
+     * stored-CRC32 pre-filter then SHA-256 (rom_load.c) -- never by entry
+     * name or path, so a flat minimal set, update_all's merged set and
+     * subdirectory-variant packagings all load identically. A path that
+     * does not exist costs one failed open and nothing else: Rom_Load
+     * returns NULL without logging when mz_stream_open fails
+     * (rom_load.c:120-126). */
     size_t rom_size = 0;
     const void* rom = NULL;
+    int probed = 0;
 
-    for (int i = 0; i < candidate_count && rom == NULL; i++) {
-        rom = Rom_Load(candidates[i], &rom_size);
+    /* DEV/TEST ONLY. Not a supported player knob and never set on a real
+     * install: it is how CI-style and cross-arch runs point at a romset
+     * that lives outside a MiSTer arcade install at all. */
+    const char* env_path = SDL_getenv("THIRDSARM_CPS3_ZIP");
+
+    if (env_path != NULL && env_path[0] != '\0') {
+        probed++;
+        rom = Rom_Load(env_path, &rom_size);
 
         if (rom != NULL) {
-            SDL_Log("ArcadeCharData: CPS3 ROM load satisfied by %s", candidates[i]);
+            SDL_Log("ArcadeCharData: CPS3 ROM load satisfied by %s ($THIRDSARM_CPS3_ZIP)", env_path);
         }
     }
 
-    SDL_free(resources_path);
+    /* One flat walk over dirs x names so the loop has a single exit and
+     * the per-candidate string is freed on every path. */
+    for (size_t i = 0; rom == NULL && i < CPS3_ROM_DIR_COUNT * CPS3_ROM_ZIP_NAME_COUNT; i++) {
+        char* path = NULL;
+        SDL_asprintf(&path, "%s/%s", cps3_rom_dirs[i / CPS3_ROM_ZIP_NAME_COUNT],
+                     cps3_rom_zip_names[i % CPS3_ROM_ZIP_NAME_COUNT]);
+
+        if (path == NULL) {
+            continue;
+        }
+
+        probed++;
+        rom = Rom_Load(path, &rom_size);
+
+        if (rom != NULL) {
+            SDL_Log("ArcadeCharData: CPS3 ROM load satisfied by %s", path);
+        }
+
+        SDL_free(path);
+    }
 
     if (rom == NULL) {
         SDL_Log("ArcadeCharData: no CPS3 ROM source matched the pinned content digests "
-                "(tried resources/sfiii3nr1.zip%s and /media/fat/games/mame/sfiii3.zip)",
-                (env_path != NULL && env_path[0] != '\0') ? ", $THIRDSARM_CPS3_ZIP" : "");
+                "in %d probed location(s); install a CPS3 arcade core romset "
+                "(%s or %s under a MiSTer arcade ROM directory such as "
+                "/media/fat/games/mame)%s",
+                probed, cps3_rom_zip_names[0], cps3_rom_zip_names[1],
+                (env_path != NULL && env_path[0] != '\0') ? ", $THIRDSARM_CPS3_ZIP included" : "");
         return;
     }
 
