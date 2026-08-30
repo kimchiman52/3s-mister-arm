@@ -38,7 +38,13 @@
 #define TRAINING_INPUT_HISTORY_BUTTONS_MASK 0x770
 #define TRAINING_INPUT_HISTORY_TEXT_ATR 9
 #define TRAINING_INPUT_HISTORY_BUTTON_ATR 13
-#define TRAINING_INPUT_HISTORY_TEXT_PRIORITY 2
+/* [TM-04] Was 2 -- the same PrioBase slot the combo popup draws at
+ * (combo_message_set), so the two had identical Z and the tie fell to draw
+ * order, hiding the "N HITS" text behind the history column. 6 is the first
+ * free slot after the HUD band (2..5 = TopHUD text/shadow/face/vital), still
+ * far in front of gameplay (characters ~30). Engine convention: LOWER index
+ * = closer to camera. */
+#define TRAINING_INPUT_HISTORY_TEXT_PRIORITY 6
 #define TRAINING_INPUT_HISTORY_TEXT_SCALE 1.0f
 #define TRAINING_INPUT_HISTORY_CHAR_WIDTH 8
 #define TRAINING_INPUT_HISTORY_GLYPH_WIDTH 8
