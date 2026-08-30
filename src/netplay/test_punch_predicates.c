@@ -76,14 +76,14 @@ static int tests_run = 0;
 static int checks_run = 0;
 
 /* A LITERAL. Never a count of a registry. */
-#define EXPECTED_TESTS 7
+#define EXPECTED_TESTS 10
 
-/* Assertion floor. The real figure at the time of writing is 744 and is
- * printed in the summary; this sits comfortably below it and comfortably
- * above what any executing SUBSET could produce (the largest single test
- * contributes about 150). Not an exact count — that invites bumping the
- * number instead of asking why it moved. */
-#define EXPECTED_MIN_CHECKS 550
+/* Assertion floor. The real figure is 1561 (task #133 added tests 8-10)
+ * and is printed in the summary; this sits comfortably below it and
+ * comfortably above what any executing SUBSET could produce. Not an exact
+ * count — that invites bumping the number instead of asking why it
+ * moved. */
+#define EXPECTED_MIN_CHECKS 1400
 
 static void check(const char* tag, bool ok, const char* what) {
     checks_run++;
@@ -179,6 +179,51 @@ static Peek peek(void) {
     memset(&p, 0, sizeof(p));
     LatePunch_TestPeek(p.ip, sizeof(p.ip), &p.port, &p.prompt, &p.relearns);
     return p;
+}
+
+static bool peek_port_is(uint16_t port) {
+    return peek().port == port;
+}
+
+/* Task #133: the liveness challenge state. `nonce` is the value the
+ * module drew for the pending challenge; a test needs it to forge the
+ * CORRECT response, which is the only way to pin that a live peer is
+ * still relearnable rather than that everything is refused. */
+typedef struct {
+    bool     active;
+    uint16_t port;
+    uint8_t  nonce[STUN_PUNCH_PROBE_NONCE_LEN];
+    bool     echo_pending;
+    uint16_t echo_port;
+} Chal;
+
+static Chal chal(void) {
+    Chal c;
+    memset(&c, 0, sizeof(c));
+    LatePunch_TestPeekChallenge(&c.active, &c.port, c.nonce, &c.echo_pending,
+                                &c.echo_port);
+    return c;
+}
+
+/* Drive one nominate -> challenge -> correct response round trip and
+ * return whether the module promoted. Everything a real peer does, and
+ * nothing a room-code holder can do without receiving the challenge. */
+static bool answer_challenge(const char* tag, uint16_t port) {
+    const Chal c = chal();
+    CHECK(tag, c.active);
+    check_eq_int(tag, c.port, port, "the challenge went to the nominee");
+    uint8_t resp[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+    Stun_BuildProbePayload(k_token, STUN_PUNCH_PROBE_RESPONSE, c.nonce, resp);
+    return LatePunch_HandleDatagram(resp, (int)sizeof(resp), PEER_IP, port);
+}
+
+/* A full accepted move: the punch that nominates, then the response that
+ * verifies. Returns true iff the target actually moved. */
+static bool move_peer(const char* tag, const uint8_t* payload, uint16_t port) {
+    CHECK(tag, LatePunch_HandleDatagram(payload, STUN_PUNCH_PAYLOAD_LEN,
+                                        PEER_IP, port));
+    CHECK(tag, answer_challenge(tag, port));
+    return peek_port_is(port);
 }
 
 /* Arm fresh at the established endpoint and assert the arm actually took,
@@ -588,14 +633,22 @@ static void test5_relearn_cap(void) {
 
     arm_fresh(tag);
 
-    /* Spend the budget: LATE_PUNCH_MAX_RELEARNS distinct moves, each
-     * accepted, each surfaced exactly once. */
+    /* Spend the budget. Task #133: a move now costs a VERIFIED round trip
+     * — the punch only nominates, and the target does not follow until
+     * the nominee returns the nonce we drew for it. */
     uint16_t port = PEER_PORT;
     int moves = 0;
     for (int i = 0; i < LATE_PUNCH_MAX_RELEARNS; i++) {
         const uint16_t next = (uint16_t)(PEER_PORT + 1 + i);
         CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
                                             PEER_IP, next));
+        /* The nomination ALONE must change nothing that reaches the wire. */
+        check_eq_int(tag, peek().port, port,
+                     "a nomination does not move the target by itself");
+        check_eq_int(tag, peek().relearns, i,
+                     "and does not spend the budget by itself");
+        CHECK(tag, !LatePunch_TakeRelearn(NULL, 0, NULL));
+        CHECK(tag, answer_challenge(tag, next));
         char ip[64] = { 0 };
         uint16_t got = 0;
         CHECK(tag, LatePunch_TakeRelearn(ip, sizeof(ip), &got));
@@ -605,7 +658,8 @@ static void test5_relearn_cap(void) {
         const Peek p = peek();
         check_eq_int(tag, p.port, next, "the send target followed");
         check_eq_int(tag, p.relearns, i + 1, "the counter advanced by one");
-        check_eq_int(tag, (long)p.prompt, 1, "an accepted move schedules the answer");
+        check_eq_int(tag, (long)p.prompt, 1, "a verified move schedules the answer");
+        CHECK(tag, !chal().active); /* promotion clears the candidate slot */
         port = next;
         moves++;
     }
@@ -614,27 +668,27 @@ static void test5_relearn_cap(void) {
     check_eq_int(tag, peek().relearns, LATE_PUNCH_MAX_RELEARNS,
                  "the counter is at the cap");
 
-    /* THE NINTH MOVE. Consumed — it is a valid, authenticated punch and
-     * must not reach GekkoNet — and refused in every other respect. The
-     * send target must remain the LEARNED port, NOT the source port of
-     * the datagram we just read: a same-IP spoofer that could keep
-     * moving the target past the cap would have an unbounded redirect,
-     * which is the whole reason the cap exists (late_punch.h:128-150).
+    /* THE MOVE PAST THE BUDGET. Consumed — it is a valid, authenticated
+     * punch and must not reach GekkoNet — and refused in every other
+     * respect. Task #133: refused EARLIER than before, at nomination, so
+     * no challenge is even opened; there is therefore no nonce in flight
+     * for the source to answer, and no round trip that could move the
+     * target (late_punch.c:96-102).
      *
      * The prompt flag is NOT asserted false here, and that is a measured
      * choice rather than an omission. It is sticky: only LatePunch_Tick
-     * clears it, at the moment it actually sends (late_punch.c:181), so
-     * after the eight accepted moves above an answer is already owed and
-     * the flag is legitimately still set. What matters — and what is
-     * asserted — is that any owed answer goes to the LEARNED endpoint.
-     * Distinguishing "the cap path did not ALSO raise the flag" would
-     * take a Tick, which takes a socket, which is test_late_punch.c's
-     * job; faking it here would be the vacuous version of this test. */
+     * clears it, at the moment it actually sends, so after the accepted
+     * move above an answer is already owed and the flag is legitimately
+     * still set. What matters — and what is asserted — is that any owed
+     * answer goes to the LEARNED endpoint. Distinguishing "the refusal
+     * path did not ALSO raise the flag" would take a Tick, which takes a
+     * socket, which is test_late_punch.c's job. */
     {
         const uint16_t rogue = (uint16_t)(PEER_PORT + 100);
         CHECK(tag, rogue != port);
         CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
                                             PEER_IP, rogue));
+        CHECK(tag, !chal().active); /* no challenge opened past the budget */
         CHECK(tag, !LatePunch_TakeRelearn(NULL, 0, NULL));
         const Peek p = peek();
         check_eq_int(tag, p.port, port, "the target is still the LEARNED port");
@@ -650,6 +704,7 @@ static void test5_relearn_cap(void) {
         for (int i = 0; i < 25; i++) {
             CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
                                                 PEER_IP, (uint16_t)(6000 + i)));
+            CHECK(tag, !chal().active);
             rogue_cases++;
         }
         check_eq_int(tag, rogue_cases, 25, "every rogue repeat ran");
@@ -673,8 +728,7 @@ static void test5_relearn_cap(void) {
     /* Re-arming restores the budget — the cap is per session, not for the
      * life of the process. */
     arm_fresh(tag);
-    CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
-                                        PEER_IP, (uint16_t)(PEER_PORT + 1)));
+    CHECK(tag, move_peer(tag, payload, (uint16_t)(PEER_PORT + 1)));
     CHECK(tag, LatePunch_TakeRelearn(NULL, 0, NULL));
     check_eq_int(tag, peek().relearns, 1, "a fresh arm starts the budget over");
 
@@ -700,8 +754,7 @@ static void test6_answer_targets_learned(void) {
     arm_fresh(tag);
     {
         const uint16_t moved = (uint16_t)(PEER_PORT + 7);
-        CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
-                                            PEER_IP, moved));
+        CHECK(tag, move_peer(tag, payload, moved));
         const Peek p = peek();
         check_eq_int(tag, p.port, moved, "the target is the new source port");
         CHECK(tag, p.port != PEER_PORT);
@@ -721,14 +774,7 @@ static void test6_answer_targets_learned(void) {
      * "answer whoever just spoke", because in direction 1 the two are
      * the same value. */
     {
-        uint16_t port = (uint16_t)(PEER_PORT + 7);
-        for (int i = 1; i < LATE_PUNCH_MAX_RELEARNS; i++) {
-            const uint16_t next = (uint16_t)(PEER_PORT + 20 + i);
-            CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
-                                                PEER_IP, next));
-            (void)LatePunch_TakeRelearn(NULL, 0, NULL);
-            port = next;
-        }
+        const uint16_t port = (uint16_t)(PEER_PORT + 7);
         check_eq_int(tag, peek().relearns, LATE_PUNCH_MAX_RELEARNS,
                      "the budget is spent");
         const uint16_t source = (uint16_t)(PEER_PORT + 900);
@@ -879,6 +925,427 @@ static void test7_bad_token_and_lifecycle(void) {
 }
 
 /* ====================================================================== */
+/* 8. Task #133: the liveness challenge is what moves the target — not    */
+/*    the token, which a room-code holder already has.                    */
+/* ====================================================================== */
+
+static void test8_liveness_gate(void) {
+    const char* tag = "liveness";
+    tests_run++;
+
+    uint8_t payload[STUN_PUNCH_PAYLOAD_LEN];
+    Stun_BuildPunchPayload(k_token, payload);
+
+    /* (a) A NOMINEE THAT NEVER ANSWERS NEVER BECOMES THE TARGET. This is
+     * the pin: pre-#133 this single datagram WAS the retarget. */
+    arm_fresh(tag);
+    {
+        const uint16_t rogue = (uint16_t)(PEER_PORT + 11);
+        CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
+                                            PEER_IP, rogue));
+        const Peek p = peek();
+        check_eq_int(tag, p.port, PEER_PORT, "the target did NOT move");
+        CHECK(tag, p.port != rogue);
+        check_eq_int(tag, p.relearns, 0, "and no budget was spent");
+        check_eq_int(tag, (long)p.prompt, 0,
+                     "an unverified nominee is not answered either");
+        CHECK(tag, !LatePunch_TakeRelearn(NULL, 0, NULL));
+        const Chal c = chal();
+        CHECK(tag, c.active);
+        check_eq_int(tag, c.port, rogue, "but it IS being challenged");
+    }
+
+    /* (b) A WRONG NONCE IS NOT AN ANSWER. The nominee holds the token —
+     * it is room-code-derived — so the token cannot be what separates the
+     * cases; only the nonce can. */
+    {
+        const uint16_t rogue = (uint16_t)(PEER_PORT + 11);
+        uint8_t guess[STUN_PUNCH_PROBE_NONCE_LEN];
+        const Chal c = chal();
+        memcpy(guess, c.nonce, sizeof(guess));
+        int flips = 0;
+        for (size_t bit = 0; bit < STUN_PUNCH_PROBE_NONCE_LEN * 8; bit++) {
+            guess[bit / 8] ^= (uint8_t)(1u << (bit % 8)); /* one bit wrong */
+            uint8_t resp[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+            Stun_BuildProbePayload(k_token, STUN_PUNCH_PROBE_RESPONSE, guess,
+                                   resp);
+            CHECK(tag, LatePunch_HandleDatagram(resp, (int)sizeof(resp),
+                                                PEER_IP, rogue));
+            CHECK(tag, peek().port == PEER_PORT);
+            CHECK(tag, peek().relearns == 0);
+            guess[bit / 8] ^= (uint8_t)(1u << (bit % 8)); /* restore */
+            flips++;
+        }
+        check_eq_int(tag, flips, 64, "every single-bit nonce error was tried");
+        CHECK(tag, chal().active); /* a wrong answer does not close it */
+    }
+
+    /* (c) THE RIGHT NONCE FROM THE WRONG PORT IS NOT AN ANSWER EITHER.
+     * The challenge went to one endpoint; return-routability means the
+     * answer has to come back from it. */
+    {
+        const Chal c = chal();
+        uint8_t resp[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+        Stun_BuildProbePayload(k_token, STUN_PUNCH_PROBE_RESPONSE, c.nonce,
+                               resp);
+        int wrong_ports = 0;
+        const uint16_t others[] = { (uint16_t)(c.port + 1),
+                                    (uint16_t)(c.port - 1), PEER_PORT, 1u,
+                                    65535u };
+        for (size_t i = 0; i < sizeof(others) / sizeof(others[0]); i++) {
+            CHECK(tag, LatePunch_HandleDatagram(resp, (int)sizeof(resp),
+                                                PEER_IP, others[i]));
+            check_eq_int(tag, peek().port, PEER_PORT, "still not moved");
+            check_eq_int(tag, peek().relearns, 0, "still no budget spent");
+            wrong_ports++;
+        }
+        check_eq_int(tag, wrong_ports, 5, "every wrong source port was tried");
+
+        /* And from a FOREIGN IP with the right nonce and the right port. */
+        CHECK(tag, LatePunch_HandleDatagram(resp, (int)sizeof(resp),
+                                            "203.0.113.9", c.port));
+        check_eq_int(tag, peek().port, PEER_PORT, "a foreign IP cannot answer");
+        check_eq_int(tag, peek().relearns, 0, "nor spend the budget");
+    }
+
+    /* (d) THE LEGITIMATE PEER IS STILL RELEARNABLE. The whole point of
+     * the layer survives: the endpoint that actually receives the
+     * challenge and answers it does become the target. Without this the
+     * rescue is dead and the other three assertions are worthless. */
+    {
+        const uint16_t rogue = (uint16_t)(PEER_PORT + 11);
+        CHECK(tag, answer_challenge(tag, rogue));
+        const Peek p = peek();
+        check_eq_int(tag, p.port, rogue, "the verified nominee IS the target");
+        check_eq_int(tag, p.relearns, 1, "and THAT is what spends the budget");
+        check_eq_int(tag, (long)p.prompt, 1, "and it is answered");
+        char ip[64] = { 0 };
+        uint16_t got = 0;
+        CHECK(tag, LatePunch_TakeRelearn(ip, sizeof(ip), &got));
+        check_eq_int(tag, got, rogue, "and netplay.c is told to retarget");
+        CHECK(tag, !chal().active);
+    }
+
+    /* (d2) THE NONCE MUST ACTUALLY VARY. Every assertion above still
+     * passes against a module that "draws" a constant, because the test
+     * reads the value the module chose. A fixed nonce is exactly the
+     * vulnerability this whole mechanism exists to close — a room-code
+     * holder would learn it once and answer forever — so vary it and
+     * check, the same way test_room_code.c checks RoomCode_GenerateNonce. */
+    {
+        uint8_t seen[16][STUN_PUNCH_PROBE_NONCE_LEN];
+        int drawn = 0;
+        for (int i = 0; i < 16; i++) {
+            arm_fresh(tag);
+            CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
+                                                PEER_IP,
+                                                (uint16_t)(PEER_PORT + 60 + i)));
+            const Chal c = chal();
+            CHECK(tag, c.active);
+            memcpy(seen[drawn], c.nonce, STUN_PUNCH_PROBE_NONCE_LEN);
+            drawn++;
+        }
+        check_eq_int(tag, drawn, 16, "sixteen challenges were drawn");
+        int distinct_pairs = 0;
+        int identical_pairs = 0;
+        for (int a = 0; a < drawn; a++) {
+            for (int b = a + 1; b < drawn; b++) {
+                if (memcmp(seen[a], seen[b], STUN_PUNCH_PROBE_NONCE_LEN) == 0) {
+                    identical_pairs++;
+                } else {
+                    distinct_pairs++;
+                }
+            }
+        }
+        check_eq_int(tag, distinct_pairs + identical_pairs, 120,
+                     "every pair was compared");
+        check_eq_int(tag, identical_pairs, 0,
+                     "no two challenges reused a nonce — the draw is not a "
+                     "constant and not a counter that repeats");
+        /* An all-zero draw is the shape a fail-open CSPRNG wrapper leaves. */
+        int nonzero = 0;
+        for (int a = 0; a < drawn; a++) {
+            for (size_t k = 0; k < STUN_PUNCH_PROBE_NONCE_LEN; k++) {
+                if (seen[a][k] != 0) {
+                    nonzero++;
+                    break;
+                }
+            }
+        }
+        check_eq_int(tag, nonzero, 16, "no challenge was all zeroes");
+    }
+
+    /* (e) REPLAY: the same response cannot be used twice. The candidate
+     * slot is closed, so a recorded response is a stale response. */
+    {
+        arm_fresh(tag);
+        const uint16_t moved = (uint16_t)(PEER_PORT + 31);
+        CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
+                                            PEER_IP, moved));
+        const Chal c = chal();
+        uint8_t resp[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+        Stun_BuildProbePayload(k_token, STUN_PUNCH_PROBE_RESPONSE, c.nonce,
+                               resp);
+        CHECK(tag, LatePunch_HandleDatagram(resp, (int)sizeof(resp), PEER_IP,
+                                            moved));
+        check_eq_int(tag, peek().port, moved, "the first answer landed");
+        check_eq_int(tag, peek().relearns, 1, "and spent the budget");
+        /* Replay it. */
+        CHECK(tag, LatePunch_HandleDatagram(resp, (int)sizeof(resp), PEER_IP,
+                                            moved));
+        check_eq_int(tag, peek().relearns, 1, "the replay bought nothing");
+    }
+
+    LatePunch_Disarm();
+}
+
+/* ====================================================================== */
+/* 9. Task #133: a SECOND distinct-port move is refused, and a flood of   */
+/*    nominations cannot displace the one being challenged.               */
+/* ====================================================================== */
+
+static void test9_second_move_refused(void) {
+    const char* tag = "second-move";
+    tests_run++;
+
+    uint8_t payload[STUN_PUNCH_PAYLOAD_LEN];
+    Stun_BuildPunchPayload(k_token, payload);
+
+    /* The capture shape, run end to end. One verified move is the whole
+     * budget (LATE_PUNCH_MAX_RELEARNS == 1), so the port that answered
+     * first owns the session; a later port cannot take it, and — this is
+     * the part the old cap got backwards — the later port cannot even
+     * open a challenge, so there is no round trip for it to win. */
+    check_eq_int(tag, LATE_PUNCH_MAX_RELEARNS, 1,
+                 "the budget is ONE verified move");
+
+    arm_fresh(tag);
+    const uint16_t first = (uint16_t)(PEER_PORT + 3);
+    CHECK(tag, move_peer(tag, payload, first));
+    check_eq_int(tag, peek().relearns, 1, "the budget is spent");
+    (void)LatePunch_TakeRelearn(NULL, 0, NULL);
+
+    int refused = 0;
+    for (int i = 0; i < 8; i++) {
+        const uint16_t next = (uint16_t)(PEER_PORT + 40 + i);
+        CHECK(tag, next != first);
+        CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
+                                            PEER_IP, next));
+        CHECK(tag, !chal().active); /* no challenge is opened at all */
+        check_eq_int(tag, peek().port, first, "the target stays with the first");
+        check_eq_int(tag, peek().relearns, 1, "and the budget stays spent");
+        CHECK(tag, !LatePunch_TakeRelearn(NULL, 0, NULL));
+        refused++;
+    }
+    check_eq_int(tag, refused, 8,
+                 "all eight of the ports that used to WIN under the old cap "
+                 "were refused");
+
+    /* FIRST COME holds the candidate slot: while one nominee is being
+     * challenged, a different port cannot displace it, so a flood cannot
+     * make the module challenge whoever spoke last. */
+    arm_fresh(tag);
+    {
+        const uint16_t held = (uint16_t)(PEER_PORT + 5);
+        CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
+                                            PEER_IP, held));
+        check_eq_int(tag, chal().port, held, "the first nominee is challenged");
+        uint8_t held_nonce[STUN_PUNCH_PROBE_NONCE_LEN];
+        memcpy(held_nonce, chal().nonce, sizeof(held_nonce));
+        int floods = 0;
+        for (int i = 0; i < 16; i++) {
+            CHECK(tag, LatePunch_HandleDatagram(payload, (int)sizeof(payload),
+                                                PEER_IP,
+                                                (uint16_t)(7000 + i)));
+            check_eq_int(tag, chal().port, held, "the slot did not move");
+            CHECK(tag, memcmp(chal().nonce, held_nonce,
+                              STUN_PUNCH_PROBE_NONCE_LEN) == 0);
+            floods++;
+        }
+        check_eq_int(tag, floods, 16, "every displacement attempt ran");
+        check_eq_int(tag, peek().port, PEER_PORT, "and nothing moved");
+    }
+
+    LatePunch_Disarm();
+}
+
+/* ====================================================================== */
+/* 10. Task #133: the probe frames themselves — who gets answered, and    */
+/*     what never reaches GekkoNet.                                       */
+/* ====================================================================== */
+
+static void test10_probe_frames(void) {
+    const char* tag = "probe-frames";
+    tests_run++;
+
+    static const uint8_t k_nonce[STUN_PUNCH_PROBE_NONCE_LEN] = {
+        0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04
+    };
+    uint8_t challenge[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+    Stun_BuildProbePayload(k_token, STUN_PUNCH_PROBE_CHALLENGE, k_nonce,
+                           challenge);
+
+    /* The frame is punch-PREFIXED on purpose: every receive path in the
+     * tree already drops punch-prefixed traffic before GekkoNet
+     * (sdl_net_adapter.c:386-393), and the host gate demands the exact
+     * 17-byte payload so it still ignores this (direct_p2p.c:1063-1066). */
+    CHECK(tag, Stun_HasPunchPrefix(challenge, (int)sizeof(challenge)));
+    CHECK(tag, !Stun_IsPunchPayload(challenge, (int)sizeof(challenge), k_token));
+    check_eq_int(tag, (long)sizeof(challenge), 26, "the probe frame is 26 bytes");
+
+    /* Round-trip the codec, including the kind byte. */
+    {
+        uint8_t kind = 0;
+        uint8_t got[STUN_PUNCH_PROBE_NONCE_LEN];
+        CHECK(tag, Stun_ParseProbePayload(challenge, (int)sizeof(challenge),
+                                          k_token, &kind, got));
+        check_eq_int(tag, kind, STUN_PUNCH_PROBE_CHALLENGE, "kind survives");
+        CHECK(tag, memcmp(got, k_nonce, sizeof(got)) == 0);
+
+        /* Length is EXACT, like Stun_IsPunchPayload's. */
+        int lens = 0;
+        for (int n = -4; n <= 40; n++) {
+            if (n == STUN_PUNCH_PROBE_PAYLOAD_LEN) {
+                continue;
+            }
+            CHECK(tag, !Stun_ParseProbePayload(challenge, n, k_token, NULL,
+                                               NULL));
+            lens++;
+        }
+        check_eq_int(tag, lens, 44, "every other length was tried");
+
+        /* Every single-bit token error is rejected. */
+        int bits = 0;
+        for (size_t bit = 0; bit < STUN_PUNCH_TOKEN_LEN * 8; bit++) {
+            uint8_t bad[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+            memcpy(bad, challenge, sizeof(bad));
+            bad[STUN_PUNCH_PREFIX_LEN + bit / 8] ^= (uint8_t)(1u << (bit % 8));
+            CHECK(tag, !Stun_ParseProbePayload(bad, (int)sizeof(bad), k_token,
+                                               NULL, NULL));
+            bits++;
+        }
+        check_eq_int(tag, bits, 64, "every token bit was flipped");
+
+        /* An unknown kind byte is not a probe frame. */
+        int kinds = 0;
+        for (int k = 0; k < 256; k++) {
+            if (k == STUN_PUNCH_PROBE_CHALLENGE || k == STUN_PUNCH_PROBE_RESPONSE) {
+                continue;
+            }
+            uint8_t bad[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+            memcpy(bad, challenge, sizeof(bad));
+            bad[STUN_PUNCH_PAYLOAD_LEN] = (uint8_t)k;
+            CHECK(tag, !Stun_ParseProbePayload(bad, (int)sizeof(bad), k_token,
+                                               NULL, NULL));
+            kinds++;
+        }
+        check_eq_int(tag, kinds, 254, "every other kind byte was tried");
+    }
+
+    /* Constant-time nonce compare, exercised on every single-bit error. */
+    {
+        uint8_t other[STUN_PUNCH_PROBE_NONCE_LEN];
+        memcpy(other, k_nonce, sizeof(other));
+        CHECK(tag, Stun_ProbeNonceEqual(k_nonce, other));
+        int bits = 0;
+        for (size_t bit = 0; bit < STUN_PUNCH_PROBE_NONCE_LEN * 8; bit++) {
+            other[bit / 8] ^= (uint8_t)(1u << (bit % 8));
+            CHECK(tag, !Stun_ProbeNonceEqual(k_nonce, other));
+            other[bit / 8] ^= (uint8_t)(1u << (bit % 8));
+            bits++;
+        }
+        check_eq_int(tag, bits, 64, "every nonce bit was flipped");
+
+        /* FOLD TRAP. Every single-bit flip above is also caught by an
+         * accumulator that XORs instead of ORs; two flips at the SAME bit
+         * position in different bytes are not (they cancel). Same trap as
+         * the token compare's, and the same reason: `diff |=` -> `diff ^=`
+         * is a one-character mutation that survives a pure bit sweep. */
+        memcpy(other, k_nonce, sizeof(other));
+        other[0] ^= 0x01u;
+        other[3] ^= 0x01u;
+        CHECK(tag, !Stun_ProbeNonceEqual(k_nonce, other));
+
+        /* ORDER TRAP. A compare that sums or sorts bytes instead of
+         * comparing them positionally passes both sweeps above. */
+        memcpy(other, k_nonce, sizeof(other));
+        {
+            const uint8_t swap = other[0];
+            other[0] = other[1];
+            other[1] = swap;
+        }
+        CHECK(tag, k_nonce[0] != k_nonce[1]); /* the swap is observable */
+        CHECK(tag, !Stun_ProbeNonceEqual(k_nonce, other));
+    }
+
+    /* A CHALLENGE from the established peer parks an answer aimed at the
+     * SOURCE port it arrived from — that is the mirror of what we demand
+     * of the peer, and it is what keeps the rescue working when the other
+     * side is the one that has handed off. */
+    arm_fresh(tag);
+    {
+        CHECK(tag, LatePunch_HandleDatagram(challenge, (int)sizeof(challenge),
+                                            PEER_IP, (uint16_t)(PEER_PORT + 2)));
+        const Chal c = chal();
+        CHECK(tag, c.echo_pending);
+        check_eq_int(tag, c.echo_port, (uint16_t)(PEER_PORT + 2),
+                     "the answer goes back to where the challenge came from");
+        CHECK(tag, !c.active); /* a challenge is not a nomination */
+        check_eq_int(tag, peek().port, PEER_PORT,
+                     "and answering a challenge moves nothing");
+        check_eq_int(tag, peek().relearns, 0, "and spends no budget");
+    }
+
+    /* A CHALLENGE from a foreign IP is consumed and NOT answered — the
+     * same no-oracle rule the foreign-IP punch path follows. */
+    arm_fresh(tag);
+    {
+        CHECK(tag, LatePunch_HandleDatagram(challenge, (int)sizeof(challenge),
+                                            "203.0.113.7", 4444));
+        CHECK(tag, !chal().echo_pending);
+        check_eq_int(tag, (long)peek().prompt, 0, "and no punch is scheduled");
+    }
+
+    /* A RESPONSE is never echoed — that is what stops two peers that both
+     * probe from ping-ponging one nonce forever. */
+    arm_fresh(tag);
+    {
+        uint8_t resp[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+        Stun_BuildProbePayload(k_token, STUN_PUNCH_PROBE_RESPONSE, k_nonce,
+                               resp);
+        CHECK(tag, LatePunch_HandleDatagram(resp, (int)sizeof(resp), PEER_IP,
+                                            (uint16_t)(PEER_PORT + 2)));
+        const Chal c = chal();
+        CHECK(tag, !c.echo_pending);
+        CHECK(tag, !c.active);
+        check_eq_int(tag, peek().port, PEER_PORT,
+                     "an unsolicited response moves nothing");
+        check_eq_int(tag, peek().relearns, 0, "and spends no budget");
+    }
+
+    /* A probe frame carrying a DIFFERENT room's token is not a probe at
+     * all: it falls through to the bad-token path, is consumed, and is
+     * never answered. */
+    arm_fresh(tag);
+    {
+        static const uint8_t k_other_token[STUN_PUNCH_TOKEN_LEN] = {
+            0x99, 0x98, 0x97, 0x96, 0x95, 0x94, 0x93, 0x92
+        };
+        uint8_t foreign[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+        Stun_BuildProbePayload(k_other_token, STUN_PUNCH_PROBE_CHALLENGE,
+                               k_nonce, foreign);
+        CHECK(tag, LatePunch_HandleDatagram(foreign, (int)sizeof(foreign),
+                                            PEER_IP, PEER_PORT));
+        const Chal c = chal();
+        CHECK(tag, !c.echo_pending);
+        CHECK(tag, !c.active);
+        check_eq_int(tag, (long)peek().prompt, 0, "and nothing is owed to it");
+    }
+
+    LatePunch_Disarm();
+}
+
+/* ====================================================================== */
 
 int Netplay_Test_PunchPredicates(void) {
     /* late_punch.c logs a relearn through Netplay_LogConnectEvent, which
@@ -893,6 +1360,9 @@ int Netplay_Test_PunchPredicates(void) {
     test5_relearn_cap();
     test6_answer_targets_learned();
     test7_bad_token_and_lifecycle();
+    test8_liveness_gate();
+    test9_second_move_refused();
+    test10_probe_frames();
 
     LatePunch_Disarm();
 

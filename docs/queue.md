@@ -50,11 +50,11 @@ The understated comment at the old `:160-164` is replaced by
 
 **The two 8-caps were NOT linked, with evidence.** `MAX_PORT_RECLAIMS`
 (`rendezvous-server.js:194`) and `LATE_PUNCH_MAX_RELEARNS`
-(`src/netplay/late_punch.h:150`) cannot compose: a rendezvous DELIVER cannot
+(`src/netplay/late_punch.h:190`) cannot compose: a rendezvous DELIVER cannot
 reach the late-punch layer at all. `src/netplay/sdl_net_adapter.c:368-373`
 destroys every `Rendezvous_HasMagic` datagram before the late-punch call at
 `:387-389`, and `LatePunch_HandleDatagram` itself returns false for anything
-failing `Stun_HasPunchPrefix` (`src/netplay/late_punch.c:101-102`). A relearn
+failing `Stun_HasPunchPrefix` (`src/netplay/late_punch.c:217-219`). A relearn
 requires an authenticated `3SX_PUNCH` datagram from the established peer IP on
 a new port (`late_punch.c:132-134`). Linking them would couple two counters
 that share no state and no path.
@@ -69,15 +69,16 @@ See #133 below: it settles composition, not separate exercise.
 
 ---
 
-## #133 — both-caps, exercised SEPARATELY — SEVERITY ANSWERED: **TAKEOVER**. Mitigation OPEN.
+## #133 — both-caps, exercised SEPARATELY — SEVERITY ANSWERED: **TAKEOVER**. Mitigation **SHIPPED** (host-side; rig re-run pending).
 
-**Do not treat this as documented-and-closed. The severity question below is
-settled; the two false comments are corrected; NO mitigation has been
-implemented.**
+**The severity analysis below stands as written and is the record of what was
+wrong. The mitigation it recommended is now implemented — see "Mitigation —
+IMPLEMENTED" at the end of this section for what changed, what it does and does
+not buy, and what is still unproven.**
 
 The question: can a same-public-IP room-code holder exercise `MAX_PORT_RECLAIMS`
 (`rendezvous-server.js:194`) and `LATE_PUNCH_MAX_RELEARNS`
-(`src/netplay/late_punch.h:150`) **separately** in one session? #130 proved only
+(`src/netplay/late_punch.h:190`) **separately** in one session? #130 proved only
 that one datagram cannot drive both.
 
 **Answer: yes, and the relearn grants a capability a plain room-code join does
@@ -100,13 +101,13 @@ not.** Verified:
   reachable only from that state (`direct_p2p.c:5748-5761`) — so a racing loser
   normally gets no second attempt. `LatePunch_HandleDatagram` is the only path
   that re-points an already-committed peer, and its sole identity check is
-  `strcmp(src_ip, s_peer_ip)` (`src/netplay/late_punch.c:115`) — an IP compare
+  `strcmp(src_ip, s_peer_ip)` (`src/netplay/late_punch.c:280`) — an IP compare
   that **cannot distinguish "the peer's NAT mapping moved" from "a different
   host behind the same public IP"**. One relearn sets `remote_port` and calls
   `SDLNetAdapter_RetargetPeer` (`netplay.c:1390-1392`), after which every
   outbound session datagram goes to the attacker
   (`src/netplay/sdl_net_adapter.c:288-290`).
-- **It survives into the match.** `LatePunch_Disarm` (`late_punch.c:82-89`)
+- **It survives into the match.** `LatePunch_Disarm` (`late_punch.c:187-206`)
   clears the token and arming but **never touches `s_actual_peer` /
   `s_retarget_active`**; only `SDLNetAdapter_SetCanonicalPeer`
   (`sdl_net_adapter.c:53-64`) and `SDLNetAdapter_Destroy` (`:465-466`) do.
@@ -179,7 +180,10 @@ TRANSITIONING (`netplay.c:2290`) and CONNECTING (`:2403`):
 
 **The relearn cap is anti-mitigation.** Once `s_relearn_count` reaches
 `LATE_PUNCH_MAX_RELEARNS` the endpoint is **frozen** and every later move is
-refused (`src/netplay/late_punch.c:135-141`). A same-IP party that fires 8
+refused (the pre-mitigation relearn-cap block in `late_punch.c`, deleted by
+the fix; the refusal now lives in `late_punch_nominate`,
+`src/netplay/late_punch.c:95-102`, and refuses at ONE). A same-IP party that
+fires 8
 token-valid punches from 8 different source ports therefore locks the send
 target onto its own 8th port, and the legitimate peer — still punching from its
 original mapping — can never be relearned back. The cap converts a flapping
@@ -219,7 +223,7 @@ NAT assumptions without also disabling the rescue.
   reading, not a demonstrated capture.
 - The CGNAT / shared-NAT premise itself is a network property, taken as given.
 
-### Mitigation — PROPOSED, NOT IMPLEMENTED
+### Mitigation — the options as weighed (the RECOMMENDED one is now built)
 
 Weighed against the demonstrated availability win (late-punch converted a real
 `FAILED_HANDSHAKE` into a connect at +11.4 s):
@@ -264,10 +268,135 @@ not available at this layer: the punch token is room-code-derived by design
 (`room_code.h:221-236` calls the code key material), so a same-IP holder of the
 code is inside the token's trust boundary no matter what this module does.
 
-**No test distinguishes the two same-IP cases.** `src/netplay/test_punch_predicates.c`
-and `src/netplay/test_late_punch.c` cover the cap and the foreign-IP refusal;
-none separates "the peer moved" from "a second host on the same NAT", and
-`late_punch.c:115` cannot.
+**No test distinguished the two same-IP cases** at the time this was written.
+`src/netplay/test_punch_predicates.c` and `src/netplay/test_late_punch.c`
+covered the cap and the foreign-IP refusal; none separated "the peer moved"
+from "a second host on the same NAT", and an IP-string compare cannot. That is
+now the property the liveness challenge tests, below.
+
+### Mitigation — IMPLEMENTED
+
+Both recommended changes, plus the responder they need on the other side.
+
+**1. `LATE_PUNCH_MAX_RELEARNS` 8 -> 1** (`src/netplay/late_punch.h:163-200`).
+The proven rescue needs exactly one move. Critically, the budget is now spent
+by `late_punch_promote` (`late_punch.c:139-155`) — i.e. only by an endpoint
+that ANSWERED — so an endpoint that merely sends cannot consume it. Without
+that, a cap of 1 would be a one-datagram freeze, which is the old failure made
+cheaper.
+
+**2. A liveness round trip gates the retarget.** A token-valid punch from a new
+port on the peer IP no longer moves anything; it calls `late_punch_nominate`
+(`src/netplay/late_punch.c:304`, defined at `src/netplay/late_punch.c:95`). The
+module draws 8 CSPRNG bytes with `Stun_MakeProbeNonce`
+(`src/netplay/stun.c:167-175`), sends them to the nominee as a 26-byte probe
+frame, and retargets only on a RESPONSE that comes back from that exact port
+carrying that exact nonce — `Stun_ProbeNonceEqual`
+(`src/netplay/late_punch.c:256-258`). No CSPRNG, no challenge, no relearn:
+`Stun_MakeProbeNonce` failing is fail-closed
+(`src/netplay/late_punch.c:116-124`). An unanswered nomination expires after
+`LATE_PUNCH_CHALLENGE_MS` (1500 ms) and costs nothing —
+`late_punch_challenge_due` (`src/netplay/late_punch.c:319-339`); one candidate
+is held at a time, first come, so a flood cannot make the module challenge
+whoever spoke last.
+
+**The frame** (`stun.h`, `STUN_PUNCH_PROBE_*`): `"3SX_PUNCH" | token[8] |
+kind[1] | nonce[8]`, 26 bytes. The punch prefix is retained deliberately —
+every receive path already drops punch-prefixed traffic before GekkoNet —
+`Stun_HasPunchPrefix` (`src/netplay/sdl_net_adapter.c:386-393`) — the MIST pump
+offers it to `LatePunch_HandleDatagram` first (`src/netplay/netplay.c:1214-1220`),
+and `classify_host_datagram` still ignores it because it demands the exact
+17-byte payload: `Stun_IsPunchPayload` (`src/netplay/direct_p2p.c:1063-1066`). Nothing
+downstream had to change to stay safe, including on a build that predates the
+frame. The kind byte stops a challenge/response pair ping-ponging.
+
+**3. The racing peer answers.** In the rescue the endpoint being challenged has
+NOT handed off — it is a `StunPunchLeg` mid-race — so `Stun_PunchOffer` parks
+the answer and `Stun_PunchPump` emits it to the challenge's source port
+(`stun.c`, `StunPunchLeg.echo_*`). A probe frame carries the same prefix and
+token a punch does, so it also confirms/retargets the leg exactly as a punch
+would: the rescue does not get slower because the other side now verifies.
+
+**Why a room-code holder cannot predict the challenge.** The token is
+room-code-derived and therefore public to them; anything checked against values
+they can compute is a slower version of the same hole. The nonce is the one
+value in the exchange the nominee did not choose and cannot derive: producing
+it requires having RECEIVED our datagram at the address claimed. Blind and
+off-path injection is now dead outright — a forged source that cannot receive
+can never answer.
+
+**What it does NOT buy, stated plainly.** A same-public-IP party holding the
+room code and running this build still receives the challenge and can still
+answer it. It can therefore still win the single relearn if it gets there
+first. Full identity binding is not available at this layer for the reason
+already argued above. What changed is the cost: from "send one datagram, own
+the session, deterministically" to "hold a live socket at the claimed endpoint,
+beat the real peer's own retry to the single budget, and complete a round trip
+inside 1500 ms".
+
+**Unit pins (all shown RED against a mutation).** `--test-punch-predicates` now
+runs 10 tests / 1680 assertions (`EXPECTED_TESTS` 7 -> 10, floor 550 -> 1400);
+`--test-late-punch` gained A13/A14/A15 and rewrote A3/B3/A9. New coverage: a
+nomination alone moves nothing and spends nothing; every single-bit nonce error
+is refused; the right nonce from the wrong port or a foreign IP is refused; a
+replayed response buys nothing; sixteen challenges never reuse a nonce and are
+never all-zero; eight distinct ports after a verified move are all refused
+without a challenge being opened; a nominee in flight cannot be displaced; an
+unanswered nominee expires without spending the budget and the real peer is
+still relearnable after it; the challenge is observed ARRIVING at the nominee
+over a real socket and the response is built from the nonce that came off the
+wire; and `Stun_PunchOffer`/`Pump` answer a challenge to the port it came from.
+
+**Mutations proved (all RED; object file AND linked binary deleted before each
+run, per the doctrine above).** M1 cap 1->8; M2 nomination retargets
+immediately (the pre-fix behaviour); M3 nonce check removed; M4 source-port
+check removed; M5 budget spent at nomination instead of verification; M6 nonce
+compare `|=` -> `^=`; M7 probe length exact -> minimum; M8 a RESPONSE is echoed
+too; M9 foreign-IP guard removed from the probe path; M10 the challenge never
+expires; M11 the nonce is a constant (fail-open CSPRNG); M12 the candidate slot
+is displaceable; M13 the budget is not enforced at nomination; M14 the racing
+leg never answers; M15 the parked answer is never sent. M4, M6, M7, M9, M11,
+M12 and M13 are caught by `--test-punch-predicates` only; M10, M14 and M15 by
+`--test-late-punch` only.
+
+**THE RESCUE STILL WORKS — re-run on the netns rig against the fixed code.**
+`tools/netplay/natmatrix/rescue_scenario.sh` is Linux-netns only (`sudo -n ip
+netns exec`, `iptables -m string --algo bm --string "3SX_PUNCH"`), so it was run
+in a privileged `debian:trixie` container on the Docker Desktop VM kernel
+(`6.12.76-linuxkit aarch64`, `xt_string` present), with SDL3/SDL3_net/GekkoNet
+built for the guest and the probe configured `session phase ON`. Same rig,
+same `--lift-s 11`, one variable:
+
+| phase | before (`81571c85`) | after (this fix) |
+| --- | --- | --- |
+| control | both sync, host 633 ms | both sync, host 641 ms |
+| baseline | host `FAILED_HANDSHAKE`/`DEADLINE`, joiner `FAILED_BILATERAL` | identical |
+| rescue | host relearns **x1**, syncs 11423 ms; joiner 32 ms | host relearns **x1**, syncs **11409 ms**; joiner 32 ms |
+
+`RESULT: GREEN`, exit 0. The added round trip costs nothing measurable — the
+challenge and its answer both ride the pre-existing punch cadence, and the
+joiner's leg confirms on the challenge itself.
+
+**The rig's integrity guards were shown FIRING, not assumed.** A `p2p_probe`
+once went 16 hours unlinked while its drivers exited 0, so none of the above is
+worth anything until the instrument can fail:
+
+- *vacuous baseline -> 3.* Re-run with `--lift-s 0` so the injection misses:
+  baseline ends `HANDOFF/STARTED`, `RESULT: VACUOUS`, exit **3**.
+- *rig contamination -> 5.* A two-row `TOPOLOGY_UP_FAILED` `.jsonl` fed to
+  `tools/netplay/natmatrix/summarize.py`: `## REFUSING TO SUMMARIZE`, exit **5**.
+- *a pass that syncs without a relearn -> 1.* A scratch copy of the scenario
+  with `RH_RELEARN` forced to 0 after the scrape: the run genuinely relearned
+  once, and the guard still refused it — `RESULT: RED -- the pair synced but the
+  host applied no relearn`, exit **1**.
+
+**Still unproven.** Nothing was exercised on the MiSTer device (its lock is held
+by another session). Cross-version behaviour is a known degradation, not a
+regression: a peer on a build without the probe frame consumes the challenge as
+punch-shaped bad-token traffic and never answers, so no relearn happens and the
+pair falls back to the pre-#119 delayed failure. The rig exercises the
+LEGITIMATE mover only — it has no adversary namespace, so the same-IP capture
+itself is pinned at unit level, not on the wire.
 
 ---
 
@@ -336,7 +465,7 @@ logging, and comments).
    handoff is unreachable. Both terminal paths disarm before the destroy by
    explicit ordering (`netplay.c:2543` vs `:2562`; SessionStarted `:1798`).
    What remains is that the invariant lives in a *different* TU, so it is now
-   pinned by `test_late_punch` A12 (`src/netplay/test_late_punch.c:334`),
+   pinned by `test_late_punch` A12 (`src/netplay/test_late_punch.c:621`),
    which fails with the disarm removed.
 
 3. **Rate-cap gate vs its prose — GATE TIGHTENED, prose is authoritative**
@@ -428,7 +557,7 @@ any reader visible.
 
 ### `--test-punch-predicates` (`80327519`) — 7 tests, 744 assertions
 
-`Stun_IsBindingResponse` (`src/netplay/stun.c:1028`) had zero tests despite
+`Stun_IsBindingResponse` (`src/netplay/stun.c:1146`) had zero tests despite
 gating three receive paths (`direct_p2p.c:1060`, `:2230`,
 `sdl_net_adapter.c:343`). `Stun_IsPunchPayload` `:147` had a four-row truth
 table at `test_stun_mock.c:861-894` that said nothing about WHICH bytes it
@@ -479,7 +608,7 @@ shipped-config binary.
   reach; the harness sweeps all 153 `(off, len)` pairs inside the real
   invariant instead and names the residual in a comment.
 - Whether the relearn-cap path ALSO raises the prompt-answer flag. The flag is
-  sticky until `LatePunch_Tick` sends (`late_punch.c:181`), so after the eight
+  sticky until `LatePunch_Tick` sends (`late_punch.c:342`), so after the eight
   accepted moves an answer is legitimately already owed. Separating the two
   needs a Tick, which needs a socket, which is `test_late_punch.c`'s job.
   Faking it would be the vacuous version.

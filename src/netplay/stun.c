@@ -162,6 +162,75 @@ bool Stun_IsPunchPayload(const uint8_t* buf, int len,
     return diff == 0;
 }
 
+/* --- S4a liveness probe frames (task #133) ----------------------------- */
+
+bool Stun_MakeProbeNonce(uint8_t nonce[STUN_PUNCH_PROBE_NONCE_LEN]) {
+    if (nonce == NULL) {
+        return false;
+    }
+    /* Same source and same fail-closed policy as the room-code nonce
+     * (room_code.h:210-213): a challenge drawn from a predictable
+     * generator is not a challenge, so there is no weak fallback here. */
+    return Csprng_Bytes(nonce, STUN_PUNCH_PROBE_NONCE_LEN);
+}
+
+void Stun_BuildProbePayload(const uint8_t token[STUN_PUNCH_TOKEN_LEN],
+                            uint8_t kind,
+                            const uint8_t nonce[STUN_PUNCH_PROBE_NONCE_LEN],
+                            uint8_t out[STUN_PUNCH_PROBE_PAYLOAD_LEN]) {
+    if (token == NULL || nonce == NULL || out == NULL) {
+        return;
+    }
+    memcpy(out, k_punch_prefix, STUN_PUNCH_PREFIX_LEN);
+    memcpy(out + STUN_PUNCH_PREFIX_LEN, token, STUN_PUNCH_TOKEN_LEN);
+    out[STUN_PUNCH_PAYLOAD_LEN] = kind;
+    memcpy(out + STUN_PUNCH_PAYLOAD_LEN + 1, nonce, STUN_PUNCH_PROBE_NONCE_LEN);
+}
+
+bool Stun_ParseProbePayload(const uint8_t* buf, int len,
+                            const uint8_t token[STUN_PUNCH_TOKEN_LEN],
+                            uint8_t* kind_out,
+                            uint8_t nonce_out[STUN_PUNCH_PROBE_NONCE_LEN]) {
+    if (buf == NULL || token == NULL || len != STUN_PUNCH_PROBE_PAYLOAD_LEN) {
+        return false;
+    }
+    if (memcmp(buf, k_punch_prefix, STUN_PUNCH_PREFIX_LEN) != 0) {
+        return false;
+    }
+    const uint8_t kind = buf[STUN_PUNCH_PAYLOAD_LEN];
+    if (kind != STUN_PUNCH_PROBE_CHALLENGE && kind != STUN_PUNCH_PROBE_RESPONSE) {
+        return false;
+    }
+    /* Constant-time, for the same reason Stun_IsPunchPayload is. */
+    uint8_t diff = 0;
+    for (int i = 0; i < STUN_PUNCH_TOKEN_LEN; i++) {
+        diff |= (uint8_t)(buf[STUN_PUNCH_PREFIX_LEN + i] ^ token[i]);
+    }
+    if (diff != 0) {
+        return false;
+    }
+    if (kind_out != NULL) {
+        *kind_out = kind;
+    }
+    if (nonce_out != NULL) {
+        memcpy(nonce_out, buf + STUN_PUNCH_PAYLOAD_LEN + 1,
+               STUN_PUNCH_PROBE_NONCE_LEN);
+    }
+    return true;
+}
+
+bool Stun_ProbeNonceEqual(const uint8_t a[STUN_PUNCH_PROBE_NONCE_LEN],
+                          const uint8_t b[STUN_PUNCH_PROBE_NONCE_LEN]) {
+    if (a == NULL || b == NULL) {
+        return false;
+    }
+    uint8_t diff = 0;
+    for (int i = 0; i < STUN_PUNCH_PROBE_NONCE_LEN; i++) {
+        diff |= (uint8_t)(a[i] ^ b[i]);
+    }
+    return diff == 0;
+}
+
 // Parse STUN Binding Response for XOR-MAPPED-ADDRESS or MAPPED-ADDRESS
 static bool parse_binding_response(const uint8_t* buf, int len, const uint8_t* transaction_id, char* out_ip,
                                    int ip_buf_size, uint16_t* out_port) {
@@ -824,6 +893,22 @@ void Stun_PunchPump(StunPunchLeg* leg, NET_DatagramSocket* sock, uint32_t now_ms
     if (!Stun_PunchActive(leg) || sock == NULL)
         return;
 
+    /* Task #133: answer a parked liveness CHALLENGE first, and answer it
+     * at the cadence of the caller's pump rather than this leg's send
+     * interval — the challenger is holding an already-committed session
+     * open waiting for it, and it is off the punch cadence entirely (one
+     * 26-byte reply per parked challenge, and only one can be parked).
+     * The reply goes to the CHALLENGE's source port, which is not
+     * necessarily leg->target_port. */
+    if (leg->echo_pending) {
+        if (!NET_SendDatagram(sock, leg->target, leg->echo_port, leg->echo,
+                              sizeof(leg->echo))) {
+            SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION,
+                         "STUN: liveness echo send failed: %s", SDL_GetError());
+        }
+        leg->echo_pending = false;
+    }
+
     int interval_ms;
     if (leg->confirmed) {
         /* Confirmation tail: keep punching the CONFIRMED endpoint at the
@@ -861,6 +946,39 @@ bool Stun_PunchOffer(StunPunchLeg* leg, StunResult* local,
 
     if (!Stun_HasPunchPrefix(buf, len))
         return false;
+
+    /* Task #133: a 26-byte liveness probe frame. It carries exactly what
+     * a 17-byte punch carries (prefix + token) plus a kind and a nonce,
+     * so it is the same quality of evidence that the peer is there and
+     * confirms/retargets this leg identically — the rescue must not get
+     * slower because the other side now verifies before retargeting. The
+     * addition is the ANSWER: a CHALLENGE is echoed back as a RESPONSE
+     * carrying the same nonce, to the source endpoint it came from, which
+     * is what lets the challenger distinguish "a party that knows the
+     * room-code-derived token" from "a party that is actually at that
+     * endpoint and listening". A RESPONSE is never echoed, so two peers
+     * that both probe cannot ping-pong. */
+    {
+        uint8_t kind = 0;
+        uint8_t nonce[STUN_PUNCH_PROBE_NONCE_LEN];
+        if (Stun_ParseProbePayload(buf, len, leg->token, &kind, nonce)) {
+            if (kind == STUN_PUNCH_PROBE_CHALLENGE) {
+                Stun_BuildProbePayload(leg->token, STUN_PUNCH_PROBE_RESPONSE,
+                                       nonce, leg->echo);
+                leg->echo_port = src_port;
+                leg->echo_pending = true;
+            }
+            if (!leg->confirmed) {
+                SDL_Log("STUN: Hole punch SUCCESS — liveness probe from peer");
+                leg->confirmed = true;
+                leg->confirm_ms = now_ms;
+                leg->sent_any = false;
+            }
+            leg->target_port = src_port;
+            SDL_strlcpy(leg->peer_ip, src_ip, sizeof(leg->peer_ip));
+            return true;
+        }
+    }
 
     if (!Stun_IsPunchPayload(buf, len, leg->token)) {
         /* S4a: a datagram from the expected peer IP that SPEAKS the punch

@@ -119,6 +119,64 @@ bool Stun_IsPunchPayload(const uint8_t* buf, int len,
 /// failed auth" (version mismatch evidence) from unrelated traffic.
 bool Stun_HasPunchPrefix(const uint8_t* buf, int len);
 
+/* --- S4a liveness probe frames (task #133) -----------------------------
+ *
+ * The 17-byte punch payload proves only that the sender KNOWS the token,
+ * and the token is derived from the room code alone
+ * (Rendezvous_DerivePunchToken, rendezvous.c:146-152; the nonce it
+ * hashes is carried in the code's low 32 bits, room_code.h:233-236),
+ * so it proves nothing about who or where the sender is. That is fine for
+ * opening a NAT mapping and it is NOT fine for moving an already-committed
+ * send target (see late_punch.h). The probe frame adds the one property
+ * the punch payload cannot carry: a value the sender did not choose.
+ *
+ * Layout, 26 bytes: "3SX_PUNCH" | token[8] | kind[1] | nonce[8]
+ *
+ * The prefix is deliberately retained so every existing receive path
+ * already classifies the frame as punch traffic and CONSUMES it —
+ * sdl_net_adapter.c:386-393 drops it before GekkoNet, the MIST pump
+ * offers it to late_punch first (netplay.c:1214-1220), and
+ * classify_host_datagram (direct_p2p.c:1063-1066) returns IGNORE because
+ * it demands the exact 17-byte payload. Nothing downstream had to change
+ * to stay safe, including on a build that predates this frame.
+ *
+ * kind separates the two directions so an echo cannot ping-pong: a
+ * CHALLENGE is answered with a RESPONSE carrying the same nonce, and a
+ * RESPONSE is never answered.
+ */
+#define STUN_PUNCH_PROBE_NONCE_LEN 8
+#define STUN_PUNCH_PROBE_PAYLOAD_LEN \
+    (STUN_PUNCH_PAYLOAD_LEN + 1 + STUN_PUNCH_PROBE_NONCE_LEN) /* 26 */
+#define STUN_PUNCH_PROBE_CHALLENGE 'C'
+#define STUN_PUNCH_PROBE_RESPONSE 'R'
+
+/// Draw a fresh probe nonce from the platform CSPRNG (utils/csprng.h).
+/// Returns false when the CSPRNG is unavailable; callers MUST fail closed
+/// (a predictable challenge is not a challenge).
+bool Stun_MakeProbeNonce(uint8_t nonce[STUN_PUNCH_PROBE_NONCE_LEN]);
+
+/// Compose a 26-byte probe frame into `out`. `kind` is
+/// STUN_PUNCH_PROBE_CHALLENGE or STUN_PUNCH_PROBE_RESPONSE.
+void Stun_BuildProbePayload(const uint8_t token[STUN_PUNCH_TOKEN_LEN],
+                            uint8_t kind,
+                            const uint8_t nonce[STUN_PUNCH_PROBE_NONCE_LEN],
+                            uint8_t out[STUN_PUNCH_PROBE_PAYLOAD_LEN]);
+
+/// True iff buf/len is EXACTLY a 26-byte probe frame for `token` with a
+/// known kind (constant-time token compare, same as Stun_IsPunchPayload).
+/// On true, writes the kind and the nonce out. Either out pointer may be
+/// NULL.
+bool Stun_ParseProbePayload(const uint8_t* buf, int len,
+                            const uint8_t token[STUN_PUNCH_TOKEN_LEN],
+                            uint8_t* kind_out,
+                            uint8_t nonce_out[STUN_PUNCH_PROBE_NONCE_LEN]);
+
+/// Constant-time nonce compare. The nonce is the whole strength of the
+/// liveness check, so the comparison that gates a retarget must not leak
+/// a prefix-length oracle.
+bool Stun_ProbeNonceEqual(const uint8_t a[STUN_PUNCH_PROBE_NONCE_LEN],
+                          const uint8_t b[STUN_PUNCH_PROBE_NONCE_LEN]);
+
 /// Hole punches NAT to connect to peer. Blocks for up to `punch_duration_ms`.
 /// `punch_token` (required, 8 bytes from Rendezvous_DerivePunchToken)
 /// authenticates the exchange in BOTH directions: we send it with every
@@ -159,6 +217,16 @@ typedef struct {
     char     peer_ip[64];            /* observed peer IP once confirmed */
     uint8_t  msg[STUN_PUNCH_PAYLOAD_LEN];
     uint8_t  token[STUN_PUNCH_TOKEN_LEN];
+    /* Task #133 liveness responder. A peer that has already handed off
+     * challenges a moved endpoint before it will retarget at it
+     * (late_punch.h); a leg still racing its punch is the thing that has
+     * to answer, or the rescue this whole layer exists for stops
+     * working. Offer() cannot send (it has no socket), so it parks the
+     * answer here and Pump() emits it. One slot: a flood of challenges
+     * costs at most one 26-byte reply per Pump call. */
+    bool     echo_pending;
+    uint16_t echo_port;   /* host order — the CHALLENGE's source port */
+    uint8_t  echo[STUN_PUNCH_PROBE_PAYLOAD_LEN];
 } StunPunchLeg;
 
 /// Arm a leg at `peer_ip:peer_port`. Resolves the address (numeric

@@ -262,37 +262,324 @@ int Netplay_Test_LatePunch(void) {
     CHECK("A5", recv_one(sockB, buf, (int)sizeof(buf), &blen, NULL)); /* still to B */
     CHECK("A5", recv_none(sockC));
 
-    /* ---- A3/B3: valid token, same IP, NEW port — the S2-retry shape.
-     * Consumed, exactly one relearn event, and delivery retargets. */
-    CHECK("A3", LatePunch_HandleDatagram(payload, (int)sizeof(payload), "127.0.0.1", portC));
-    CHECK("A3", LatePunch_TakeRelearn(rip, sizeof(rip), &rport));
-    CHECK("A3", strcmp(rip, "127.0.0.1") == 0 && rport == portC);
-    CHECK("A3", !LatePunch_TakeRelearn(rip, sizeof(rip), &rport)); /* one-shot */
-    now = tick_until_sent(sockC, now + LATE_PUNCH_TX_INTERVAL_MS + 1, buf, (int)sizeof(buf), &blen);
-    CHECK("B3", blen == STUN_PUNCH_PAYLOAD_LEN);
-    CHECK("B3", recv_none(sockB)); /* nothing still leaking to the old port */
-
-    /* ---- A9: the relearn cap bounds a same-IP port bouncer. Already at
-     * 1 relearn; bounce until the cap, then verify one more move is
-     * refused and the accepted endpoint stays put. */
+    /* ---- A3/B3 (rewritten, task #133): valid token, same IP, NEW port
+     * — the S2-retry shape. This used to BE the relearn: one datagram and
+     * every session send followed it. It now only NOMINATES, and the move
+     * costs a round trip the nominee cannot fake from the room code.
+     *
+     * Driven over real sockets on purpose: the challenge is observed
+     * ARRIVING at the nominee (sockC), and the response is built from the
+     * nonce that actually came off the wire, not from a peek. A test that
+     * read the nonce out of the module could pass against a module that
+     * never sent it. */
+    uint8_t chal[64];
+    int chal_len = -1;
     {
-        int applied = 1; /* the A3 relearn */
-        uint16_t here = portC;
-        for (int i = 0; applied < LATE_PUNCH_MAX_RELEARNS; i++) {
-            uint16_t next = (here == portB) ? portC : portB;
-            CHECK("A9", LatePunch_HandleDatagram(payload, (int)sizeof(payload), "127.0.0.1", next));
-            if (LatePunch_TakeRelearn(rip, sizeof(rip), &rport)) {
-                applied++;
-                here = next;
-            } else {
-                CHECK("A9-under-cap-refused", false);
-                break;
+        CHECK("A3", LatePunch_HandleDatagram(payload, (int)sizeof(payload),
+                                             "127.0.0.1", portC));
+        /* Nothing has moved yet. */
+        CHECK("A3-nominate-only",
+              !LatePunch_TakeRelearn(rip, sizeof(rip), &rport));
+
+        /* The keepalive still goes to the ESTABLISHED port... */
+        now = tick_until_sent(sockB, now + LATE_PUNCH_TX_INTERVAL_MS + 1, buf,
+                              (int)sizeof(buf), &blen);
+        CHECK("A3-keepalive-unmoved", blen == STUN_PUNCH_PAYLOAD_LEN);
+
+        /* ...and the nominee gets a CHALLENGE instead of the payload it
+         * would need to confirm its own leg. */
+        for (int spin = 0; spin < 40 && chal_len < 0; spin++) {
+            LatePunch_Tick(now);
+            for (int wait = 0; wait < 20; wait++) {
+                NET_Datagram* d = NULL;
+                if (NET_ReceiveDatagram(sockC, &d) && d != NULL) {
+                    int n = d->buflen < (int)sizeof(chal) ? d->buflen
+                                                          : (int)sizeof(chal);
+                    memcpy(chal, d->buf, (size_t)n);
+                    chal_len = d->buflen;
+                    NET_DestroyDatagram(d);
+                    break;
+                }
+                SDL_Delay(5);
+            }
+            now += LATE_PUNCH_TX_INTERVAL_MS + 1;
+        }
+        CHECK("B3-challenge-sent", chal_len == STUN_PUNCH_PROBE_PAYLOAD_LEN);
+    }
+    if (chal_len == STUN_PUNCH_PROBE_PAYLOAD_LEN) {
+        uint8_t kind = 0;
+        uint8_t nonce[STUN_PUNCH_PROBE_NONCE_LEN];
+        CHECK("B3-challenge-shape",
+              Stun_ParseProbePayload(chal, chal_len, token, &kind, nonce));
+        CHECK("B3-challenge-kind", kind == STUN_PUNCH_PROBE_CHALLENGE);
+        /* It is punch-PREFIXED, so every receive path in the tree already
+         * drops it before GekkoNet. */
+        CHECK("B3-challenge-prefixed", Stun_HasPunchPrefix(chal, chal_len));
+        CHECK("B3-challenge-not-a-punch",
+              !Stun_IsPunchPayload(chal, chal_len, token));
+
+        /* A WRONG answer buys nothing. */
+        {
+            uint8_t wrong[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+            uint8_t flipped[STUN_PUNCH_PROBE_NONCE_LEN];
+            memcpy(flipped, nonce, sizeof(flipped));
+            flipped[0] ^= 0x01u;
+            Stun_BuildProbePayload(token, STUN_PUNCH_PROBE_RESPONSE, flipped,
+                                   wrong);
+            CHECK("A3-wrong-nonce",
+                  LatePunch_HandleDatagram(wrong, (int)sizeof(wrong),
+                                           "127.0.0.1", portC));
+            CHECK("A3-wrong-nonce",
+                  !LatePunch_TakeRelearn(rip, sizeof(rip), &rport));
+        }
+
+        /* The RIGHT answer, from the port that was challenged, IS the
+         * relearn — the rescue still works, which is the whole point. */
+        {
+            uint8_t resp[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+            Stun_BuildProbePayload(token, STUN_PUNCH_PROBE_RESPONSE, nonce,
+                                   resp);
+            CHECK("A3", LatePunch_HandleDatagram(resp, (int)sizeof(resp),
+                                                 "127.0.0.1", portC));
+            CHECK("A3", LatePunch_TakeRelearn(rip, sizeof(rip), &rport));
+            CHECK("A3", strcmp(rip, "127.0.0.1") == 0 && rport == portC);
+            CHECK("A3", !LatePunch_TakeRelearn(rip, sizeof(rip), &rport)); /* one-shot */
+        }
+        now = tick_until_sent(sockC, now + LATE_PUNCH_TX_INTERVAL_MS + 1, buf,
+                              (int)sizeof(buf), &blen);
+        CHECK("B3", blen == STUN_PUNCH_PAYLOAD_LEN);
+        CHECK("B3", recv_none(sockB)); /* nothing still leaking to the old port */
+    }
+
+    /* ---- A9 (task #133): the budget is ONE VERIFIED move, and a second
+     * distinct port is refused before a challenge is even opened. Under
+     * the old cap of 8 this loop is exactly the capture: eight token-valid
+     * punches from eight ports left the target on the last one. */
+    {
+        CHECK("A9-budget-is-one", LATE_PUNCH_MAX_RELEARNS == 1);
+        int refused = 0;
+        for (int i = 0; i < 8; i++) {
+            const uint16_t rogue = (uint16_t)(portB + 300 + i);
+            CHECK("A9", rogue != portC);
+            CHECK("A9", LatePunch_HandleDatagram(payload, (int)sizeof(payload),
+                                                 "127.0.0.1", rogue));
+            CHECK("A9-cap", !LatePunch_TakeRelearn(rip, sizeof(rip), &rport));
+            refused++;
+        }
+        CHECK("A9", refused == 8);
+        /* No challenge went out to any of them, and the send target is
+         * still the endpoint that answered. */
+        LatePunch_Tick(now + LATE_PUNCH_TX_INTERVAL_MS + 1);
+        now += LATE_PUNCH_TX_INTERVAL_MS + 1;
+        CHECK("A9", recv_one(sockC, buf, (int)sizeof(buf), &blen, NULL));
+        CHECK("A9", blen == STUN_PUNCH_PAYLOAD_LEN);
+        CHECK("A9", recv_none(sockB));
+    }
+
+    /* ---- A13 (task #133): a nominee that never answers EXPIRES, costs
+     * nothing, and the real peer is still relearnable afterwards.
+     *
+     * This is the property that keeps "budget of 1" from becoming a
+     * one-datagram freeze — the failure mode the old cap of 8 had, only
+     * cheaper. If a nomination could spend the budget, a single spoofed
+     * punch would pin the target forever. */
+    {
+        LatePunch_Arm(sockA, token, "127.0.0.1", portB);
+        CHECK("A13-armed", LatePunch_IsArmed());
+        uint32_t t = 1000u;
+        /* Drain whatever the fresh arm sends. */
+        (void)tick_until_sent(sockB, t, buf, (int)sizeof(buf), &blen);
+
+        /* A rogue port nominates, is challenged, and never answers. */
+        const uint16_t rogue = (uint16_t)(portB + 777);
+        CHECK("A13", LatePunch_HandleDatagram(payload, (int)sizeof(payload),
+                                              "127.0.0.1", rogue));
+        bool active = false;
+        uint16_t cport = 0;
+        LatePunch_TestPeekChallenge(&active, &cport, NULL, NULL, NULL);
+        CHECK("A13-challenged", active && cport == rogue);
+
+        /* Walk the clock past the challenge window. */
+        for (int i = 0; i < 4; i++) {
+            t += LATE_PUNCH_CHALLENGE_MS;
+            LatePunch_Tick(t);
+        }
+        LatePunch_TestPeekChallenge(&active, NULL, NULL, NULL, NULL);
+        CHECK("A13-expired", !active);
+        CHECK("A13-no-move", !LatePunch_TakeRelearn(rip, sizeof(rip), &rport));
+
+        /* The budget survived, so the REAL peer can still be relearned. */
+        CHECK("A13", LatePunch_HandleDatagram(payload, (int)sizeof(payload),
+                                              "127.0.0.1", portC));
+        uint8_t nonce2[STUN_PUNCH_PROBE_NONCE_LEN];
+        LatePunch_TestPeekChallenge(&active, &cport, nonce2, NULL, NULL);
+        CHECK("A13-renominated", active && cport == portC);
+        uint8_t resp2[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+        Stun_BuildProbePayload(token, STUN_PUNCH_PROBE_RESPONSE, nonce2, resp2);
+        CHECK("A13", LatePunch_HandleDatagram(resp2, (int)sizeof(resp2),
+                                              "127.0.0.1", portC));
+        CHECK("A13-relearned", LatePunch_TakeRelearn(rip, sizeof(rip), &rport));
+        CHECK("A13-relearned", rport == portC);
+        LatePunch_Disarm();
+    }
+
+    /* ---- A14 (task #133): we ANSWER a challenge aimed at us, over the
+     * wire, to the port it came from. A peer that has also handed off runs
+     * this same check against us, so a module that only CHALLENGES and
+     * never ANSWERS would deadlock two rescuing peers. */
+    {
+        LatePunch_Arm(sockA, token, "127.0.0.1", portB);
+        uint32_t t = 5000u;
+        (void)tick_until_sent(sockB, t, buf, (int)sizeof(buf), &blen);
+        static const uint8_t k_nonce[STUN_PUNCH_PROBE_NONCE_LEN] = {
+            1, 2, 3, 4, 5, 6, 7, 8
+        };
+        uint8_t inbound[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+        Stun_BuildProbePayload(token, STUN_PUNCH_PROBE_CHALLENGE, k_nonce,
+                               inbound);
+        CHECK("A14", LatePunch_HandleDatagram(inbound, (int)sizeof(inbound),
+                                              "127.0.0.1", portC));
+        /* The answer goes to portC (where the challenge came from), NOT to
+         * portB (the established target). */
+        int alen = -1;
+        uint8_t abuf[64];
+        for (int spin = 0; spin < 40 && alen < 0; spin++) {
+            t += LATE_PUNCH_TX_INTERVAL_MS + 1;
+            LatePunch_Tick(t);
+            for (int wait = 0; wait < 20; wait++) {
+                NET_Datagram* d = NULL;
+                if (NET_ReceiveDatagram(sockC, &d) && d != NULL) {
+                    int n = d->buflen < (int)sizeof(abuf) ? d->buflen
+                                                          : (int)sizeof(abuf);
+                    memcpy(abuf, d->buf, (size_t)n);
+                    alen = d->buflen;
+                    NET_DestroyDatagram(d);
+                    break;
+                }
+                SDL_Delay(5);
             }
         }
-        CHECK("A9", applied == LATE_PUNCH_MAX_RELEARNS);
-        uint16_t next = (here == portB) ? portC : portB;
-        CHECK("A9", LatePunch_HandleDatagram(payload, (int)sizeof(payload), "127.0.0.1", next));
-        CHECK("A9-cap", !LatePunch_TakeRelearn(rip, sizeof(rip), &rport));
+        CHECK("A14-answered", alen == STUN_PUNCH_PROBE_PAYLOAD_LEN);
+        if (alen == STUN_PUNCH_PROBE_PAYLOAD_LEN) {
+            uint8_t kind = 0;
+            uint8_t got[STUN_PUNCH_PROBE_NONCE_LEN];
+            CHECK("A14", Stun_ParseProbePayload(abuf, alen, token, &kind, got));
+            CHECK("A14-kind", kind == STUN_PUNCH_PROBE_RESPONSE);
+            CHECK("A14-nonce", memcmp(got, k_nonce, sizeof(got)) == 0);
+        }
+        /* Answering a challenge is not a relearn. */
+        CHECK("A14-no-move", !LatePunch_TakeRelearn(rip, sizeof(rip), &rport));
+        LatePunch_Disarm();
+    }
+
+    /* ---- A15 (task #133): the OTHER side of the round trip. In the
+     * rescue the endpoint being challenged is a peer still RACING its
+     * punch, i.e. a StunPunchLeg, not this module — its handoff has not
+     * happened yet. If the leg does not answer, the challenge is never
+     * satisfied and the rescue this whole file exists to protect stops
+     * working. Proven over the wire: Offer parks the answer, Pump emits
+     * it to the port the challenge came from. */
+    {
+        StunPunchLeg leg;
+        CHECK("A15-setup",
+              Stun_PunchBegin(&leg, "127.0.0.1", portB, token, 0));
+        static const uint8_t k_nonce[STUN_PUNCH_PROBE_NONCE_LEN] = {
+            0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18
+        };
+        uint8_t inbound[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+        Stun_BuildProbePayload(token, STUN_PUNCH_PROBE_CHALLENGE, k_nonce,
+                               inbound);
+        CHECK("A15-consumed",
+              Stun_PunchOffer(&leg, NULL, inbound, (int)sizeof(inbound),
+                              "127.0.0.1", portC, 0));
+        /* A probe frame is as good as a punch for confirming the leg —
+         * it carries the same prefix and the same token — so the rescue
+         * does not get SLOWER because the other side now verifies. */
+        CHECK("A15-confirmed", Stun_PunchConfirmed(&leg));
+
+        /* Pump it out on sockA and read it at portC. */
+        Stun_PunchPump(&leg, sockA, 0);
+        int alen = -1;
+        uint8_t abuf[64];
+        for (int wait = 0; wait < 40 && alen < 0; wait++) {
+            NET_Datagram* d = NULL;
+            if (NET_ReceiveDatagram(sockC, &d) && d != NULL) {
+                int n = d->buflen < (int)sizeof(abuf) ? d->buflen
+                                                      : (int)sizeof(abuf);
+                memcpy(abuf, d->buf, (size_t)n);
+                alen = d->buflen;
+                NET_DestroyDatagram(d);
+                break;
+            }
+            SDL_Delay(5);
+        }
+        CHECK("A15-answered", alen == STUN_PUNCH_PROBE_PAYLOAD_LEN);
+        if (alen == STUN_PUNCH_PROBE_PAYLOAD_LEN) {
+            uint8_t kind = 0;
+            uint8_t got[STUN_PUNCH_PROBE_NONCE_LEN];
+            CHECK("A15", Stun_ParseProbePayload(abuf, alen, token, &kind, got));
+            CHECK("A15-kind", kind == STUN_PUNCH_PROBE_RESPONSE);
+            CHECK("A15-nonce", memcmp(got, k_nonce, sizeof(got)) == 0);
+        }
+
+        /* A RESPONSE is consumed but never echoed — no ping-pong. */
+        uint8_t resp[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+        Stun_BuildProbePayload(token, STUN_PUNCH_PROBE_RESPONSE, k_nonce, resp);
+        CHECK("A15-resp-consumed",
+              Stun_PunchOffer(&leg, NULL, resp, (int)sizeof(resp), "127.0.0.1",
+                              portC, 0));
+        Stun_PunchPump(&leg, sockA, 0);
+        /* Whatever Pump sent is the ordinary punch payload, never a probe. */
+        {
+            int n2 = -1;
+            uint8_t b2[64];
+            for (int wait = 0; wait < 20 && n2 < 0; wait++) {
+                NET_Datagram* d = NULL;
+                if (NET_ReceiveDatagram(sockC, &d) && d != NULL) {
+                    int n = d->buflen < (int)sizeof(b2) ? d->buflen
+                                                        : (int)sizeof(b2);
+                    memcpy(b2, d->buf, (size_t)n);
+                    n2 = d->buflen;
+                    NET_DestroyDatagram(d);
+                    break;
+                }
+                SDL_Delay(5);
+            }
+            CHECK("A15-no-pingpong", n2 != STUN_PUNCH_PROBE_PAYLOAD_LEN);
+        }
+
+        /* A probe frame from a DIFFERENT room's token is not answered. */
+        {
+            uint8_t other_token[STUN_PUNCH_TOKEN_LEN];
+            memcpy(other_token, token, sizeof(other_token));
+            other_token[0] ^= 0xFFu;
+            uint8_t foreign[STUN_PUNCH_PROBE_PAYLOAD_LEN];
+            Stun_BuildProbePayload(other_token, STUN_PUNCH_PROBE_CHALLENGE,
+                                   k_nonce, foreign);
+            StunResult diag;
+            memset(&diag, 0, sizeof(diag));
+            CHECK("A15-foreign-consumed",
+                  Stun_PunchOffer(&leg, &diag, foreign, (int)sizeof(foreign),
+                                  "127.0.0.1", portC, 0));
+            CHECK("A15-foreign-flagged", diag.diag_punch_bad_token);
+            Stun_PunchPump(&leg, sockA, 0);
+            int n3 = -1;
+            uint8_t b3[64];
+            for (int wait = 0; wait < 20 && n3 < 0; wait++) {
+                NET_Datagram* d = NULL;
+                if (NET_ReceiveDatagram(sockC, &d) && d != NULL) {
+                    n3 = d->buflen;
+                    (void)b3;
+                    NET_DestroyDatagram(d);
+                    break;
+                }
+                SDL_Delay(5);
+            }
+            CHECK("A15-foreign-unanswered",
+                  n3 != STUN_PUNCH_PROBE_PAYLOAD_LEN);
+        }
+        Stun_PunchEnd(&leg);
+        (void)recv_none(sockB);
     }
 
     /* ---- A11: Disarm ends everything; re-Arm starts clean. */

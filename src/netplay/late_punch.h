@@ -35,60 +35,92 @@
  *      SDLNetAdapter's receive_data), so they never reach GekkoNet as
  *      garbage and a valid one is answered promptly; and
  *   3. RELEARNS the peer's source port when a token-valid punch arrives
- *      from the established peer IP at a NEW port. That is the S2
- *      joiner auto-retry: join_thread_fn's second attempt binds a FRESH
- *      socket (direct_p2p.c JOIN_MAX_ATTEMPTS), so its punches arrive
- *      from a new NAT mapping, and GekkoNet — which registers the
- *      remote once, by "ip:port" string, at configure time, with no
- *      relearn API (gekkonet.h has no address-mutating entry point) —
- *      would silently ignore every datagram it sends. The relearn is
- *      surfaced to netplay.c via LatePunch_TakeRelearn, which retargets
- *      the MIST peer address and the adapter's send/present mapping.
- *      GekkoNet itself is never patched and never sees the change.
+ *      from the established peer IP at a NEW port AND that port answers
+ *      a liveness challenge (see below). That is the S2 joiner
+ *      auto-retry: join_thread_fn's second attempt binds a FRESH socket
+ *      (direct_p2p.c JOIN_MAX_ATTEMPTS), so its punches arrive from a new
+ *      NAT mapping, and GekkoNet — which registers the remote once, by
+ *      "ip:port" string, at configure time, with no relearn API
+ *      (gekkonet.h has no address-mutating entry point) — would silently
+ *      ignore every datagram it sends. The relearn is surfaced to
+ *      netplay.c via LatePunch_TakeRelearn, which retargets the MIST peer
+ *      address and the adapter's send/present mapping. GekkoNet itself is
+ *      never patched and never sees the change; and
+ *   4. ANSWERS a liveness challenge sent to it, because the peer runs
+ *      this same check in the other direction (late_punch.c:242-249, and
+ *      Stun_PunchOffer for a peer still racing its punch).
  *
- * WHAT THE RELEARN GATE IS AND IS NOT (corrected, task #133). Every
- * action above is gated on the exact 17-byte payload check
- * Stun_IsPunchPayload performs (constant-time token compare, stun.c),
- * and S4c return-routability (rendezvous cookies) is upstream of this
- * layer and untouched. But the relearn gate is NOT simply "stricter
- * than the pre-handoff host gate", which is what this comment used to
- * claim. It is narrower on ONE axis and strictly wider on another, and
- * the wider axis is the one that decides severity:
+ * WHAT THE RELEARN GATE IS, AND THE HOLE IT USED TO HAVE (task #133).
+ * Every action above is gated on the exact 17-byte payload check
+ * Stun_IsPunchPayload performs (constant-time token compare, stun.c), and
+ * S4c return-routability (rendezvous cookies) is upstream of this layer
+ * and untouched. Two properties of that gate matter, and until #133 the
+ * second one was load-bearing in the wrong direction:
  *
- *   NARROWER ON SOURCE IP. classify_host_datagram (direct_p2p.c:1065)
- *   accepts a valid-token punch from ANY source as the peer; the
- *   relearn only fires when strcmp(src_ip, s_peer_ip) == 0
- *   (late_punch.c:115), so a replay from a third-party ADDRESS is
- *   consumed, counted, and ignored.
+ *   NARROWER ON SOURCE IP than the pre-handoff host gate.
+ *   classify_host_datagram (direct_p2p.c:1065) accepts a valid-token
+ *   punch from ANY source as the peer; here a datagram is only ever
+ *   considered when strcmp(src_ip, s_peer_ip) == 0 (late_punch.c:280),
+ *   so a replay from a third-party ADDRESS is consumed, counted, ignored.
  *
- *   WIDER IN TIME, WHICH IS THE PROPERTY THAT MATTERS. The pre-handoff
- *   gate is reachable only from DIRECT_P2P_HOST_WAITING
- *   (direct_p2p.c:5748-5761), so once the host commits to a peer, a
- *   losing racer normally gets NO second attempt. This module is the
- *   only path that grants one, for the whole pre-session window (up to
- *   40 x 500 ms of MIST retries, mist_handshake.h:250, plus
- *   CONNECT_TIMEOUT_CONNECTING_MS = 15 s, connect_fail.h:359).
+ *   WIDER IN TIME. The pre-handoff gate is reachable only from
+ *   DIRECT_P2P_HOST_WAITING (direct_p2p.c:5748-5761), so once the host
+ *   commits to a peer, a losing racer normally gets NO second attempt.
+ *   This module is the only path that grants one, for the whole
+ *   pre-session window (up to 40 x 500 ms of MIST retries,
+ *   mist_handshake.h:250, plus CONNECT_TIMEOUT_CONNECTING_MS = 15 s,
+ *   connect_fail.h:359).
  *
  *   AND AN IP-STRING COMPARE CANNOT SEPARATE THE TWO CASES IT MUST.
- *   "the peer's NAT mapping moved" and "a different host behind the
- *   same public IP" are byte-identical to late_punch.c:115. The token
- *   does not separate them either: it is derived from the room code
- *   alone (SHA-256("3SXR-PT3" || ip || port || nonce)[0..7],
- *   rendezvous.c:146-152, nonce carried in the code's low 32 bits,
- *   room_code.h:231-236), so anyone holding the code can produce it
- *   without observing a single packet.
+ *   "the peer's NAT mapping moved" and "a different host behind the same
+ *   public IP" are byte-identical at late_punch.c:280. The token does not
+ *   separate them either: it is derived from the room code alone
+ *   (SHA-256("3SXR-PT3" || ip || port || nonce)[0..7], rendezvous.c:146-152,
+ *   nonce carried in the code's low 32 bits, room_code.h:233-236), so
+ *   anyone holding the code can produce it without observing a packet.
+ *   That is by design and cannot be fixed here; a same-IP code holder is
+ *   inside the token's trust boundary. Nothing downstream narrows it
+ *   either — the MIST compat gate (classify_peer_payload,
+ *   mist_handshake.c:314) checks only build/ROM constants (arch tag,
+ *   platform tag, proto_ver, state_ver, and the ROM-derived balance
+ *   digest, arcade_balance.c:152 / :179; build_hash is a warning, never a
+ *   reject), and GekkoNet authenticates nothing beyond the address string
+ *   the adapter already rewrote (sdl_net_adapter.c:288-290, :405).
  *
- * CONSEQUENCE: a same-public-IP party holding the room code can
- * re-point an already-committed peer, and nothing downstream stops it.
- * The MIST compat gate (classify_peer_payload, mist_handshake.c:314)
- * checks only build/ROM constants — arch tag, platform tag, proto_ver,
- * state_ver, and the ROM-derived balance digest (arcade_balance.c:152 /
- * :179); build_hash is a warning, never a reject. None of those is
- * session-bound, so a substitute running this same public build with
- * the same CPS3 ROM passes by construction, and GekkoNet authenticates
- * nothing beyond the address string the adapter already rewrote
- * (sdl_net_adapter.c:288-290, :405). This is a session TAKEOVER
- * capability, not merely a broken connect. See docs/queue.md #133.
+ * SO WHAT #133 CHANGED. Pre-#133 a single token-valid datagram from a new
+ * port WAS the relearn: send it and every outbound session datagram
+ * followed you, permanently. That is a session takeover, not a broken
+ * connect, and eight of them from eight ports made it deterministic (see
+ * LATE_PUNCH_MAX_RELEARNS below). Two changes, together:
+ *
+ *   THE BUDGET IS ONE, AND ONLY A VERIFIED MOVE SPENDS IT. First verified
+ *   mover wins instead of last mover wins, and an endpoint that merely
+ *   sends cannot burn the budget or freeze the target.
+ *
+ *   A NOMINATED PORT MUST ANSWER AN UNPREDICTABLE CHALLENGE BEFORE IT
+ *   BECOMES THE SEND TARGET. A token-valid punch from a new port now only
+ *   NOMINATES (late_punch.c:304 -> :95). We draw 8 CSPRNG bytes, send
+ *   them to the nominee as a 26-byte probe frame (STUN_PUNCH_PROBE_*,
+ *   stun.h) and retarget only on a RESPONSE that comes back from that
+ *   exact port carrying that exact nonce (late_punch.c:256-258). No
+ *   CSPRNG, no challenge, no relearn — fail closed (late_punch.c:116-124).
+ *
+ *   WHY THE NONCE, AND NOT "a second punch". The token is public to a
+ *   code holder, so any check made of things they can compute is a slower
+ *   version of the same hole. The nonce is the one value in the exchange
+ *   the nominee did not choose and cannot derive from the room code: to
+ *   produce it you must have RECEIVED our datagram at the address you
+ *   claim. That kills the off-path and blind-spoofed cases outright (a
+ *   forged source IP/port that cannot receive can never answer), and it
+ *   turns the same-IP case from "fire one datagram, own the session" into
+ *   "hold a live socket, win the race against the real peer's own retry,
+ *   and complete a round trip inside LATE_PUNCH_CHALLENGE_MS".
+ *
+ *   WHAT IT DOES NOT DO, stated plainly: a same-public-IP party holding
+ *   the room code and running this build can still answer, so it can
+ *   still win the single relearn if it gets there first. Raising the cost
+ *   is the goal; the token's trust boundary is the room code and cannot
+ *   be narrowed from inside this module. See docs/queue.md #133.
  *
  * THE PROMISED LISTENING INTERVAL (direct_p2p.c) is not given a fifth
  * enforcement site by this module because this module cannot end,
@@ -105,7 +137,10 @@
  * BOUNDED. Armed for at most one pre-session window (MIST retry window
  * + CONNECT_TIMEOUT_CONNECTING_MS); disarmed at GekkoSessionStarted and
  * at session teardown. The send cadence is LATE_PUNCH_TX_INTERVAL_MS,
- * so the worst case is a few hundred 17-byte datagrams per session.
+ * so the worst case is a few hundred 17-byte datagrams per session, plus
+ * the probe traffic: at most one challenge in flight at a time (so a
+ * flood of nominations cannot multiply it) and at most one parked echo
+ * per Tick.
  * Kill switch: CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_LATE_PUNCH (checked
  * by the caller at arm time, not here — this module has no config
  * dependency so the natmatrix probe can drive it directly).
@@ -115,7 +150,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "netplay/stun.h" /* STUN_PUNCH_TOKEN_LEN / STUN_PUNCH_PAYLOAD_LEN */
+#include "netplay/stun.h" /* STUN_PUNCH_TOKEN_LEN / _PAYLOAD_LEN / _PROBE_* */
 
 struct NET_DatagramSocket;
 
@@ -125,29 +160,44 @@ struct NET_DatagramSocket;
  * intervals, slow enough to be invisible next to the session traffic. */
 #define LATE_PUNCH_TX_INTERVAL_MS 200u
 
-/* A flapping source could otherwise bounce the retarget every packet.
- * 8 covers every legitimate sequence (one S2 retry moves the port ONCE;
- * a NAT rebind mid-connect adds one more) with a wide margin.
+/* THE RELEARN BUDGET (task #133 mitigation). ONE.
  *
- * WHAT THIS CAP DOES NOT DO (corrected, task #133). It does not "cap the
- * damage of a same-IP replayer at 8 send-target moves", which is what
- * this comment used to claim. The damage is ONE move: a single relearn
+ * What it used to be, and why that was backwards. At 8 the cap read as
+ * "bound the damage of a flapping source to 8 moves", and it did the
+ * opposite. One move is already the whole capability — a single relearn
  * retargets every outbound session datagram (sdl_net_adapter.c:288-290)
  * and presents the new endpoint under the canonical string on the way in
- * (:405), and it survives into the match — LatePunch_Disarm at
- * GekkoSessionStarted (netplay.c:1798) clears this module's state but
- * not the adapter's s_actual_peer / s_retarget_active. The cap bounds
- * FLAPPING, not capability.
+ * (:405), and it survives into the match, because LatePunch_Disarm at
+ * GekkoSessionStarted (netplay.c:1798) clears this module's state and not
+ * the adapter's. So the cap never bounded damage; and once it was reached
+ * the endpoint FROZE and every later move was refused, which made a
+ * same-IP capture deterministic rather than a contest: eight token-valid
+ * punches from eight source ports left the send target on the attacker's
+ * eighth port with no way for the real peer to be relearned back.
  *
- * Worse, the cap is what makes a same-IP capture DETERMINISTIC rather
- * than a coin flip. Once s_relearn_count reaches this value the current
- * endpoint is frozen and every later move is refused
- * (late_punch.c:135-141), so a same-IP party that fires 8 token-valid
- * punches from 8 different source ports locks the send target onto its
- * own 8th port; the legitimate peer, still punching from its original
- * mapping, can never be relearned back. Raising or lowering the number
- * does not fix that — only a stronger relearn binding does. */
-#define LATE_PUNCH_MAX_RELEARNS 8
+ * What it is now. The proven rescue needs exactly ONE move (a real
+ * FAILED_HANDSHAKE became a connect at +11.4 s, docs/queue.md:225), so
+ * one is what it gets: first VERIFIED mover wins, instead of last mover
+ * wins. And the budget is spent by late_punch_promote(), i.e. only by a
+ * candidate that answered the liveness challenge below — an endpoint
+ * that merely SENDS cannot consume it. That distinction is what stops
+ * "cap of 1" from becoming a one-datagram freeze: an unanswered
+ * nomination expires and the real peer can still be relearned after it.
+ *
+ * The cap therefore bounds CAPABILITY (how many times this module may
+ * ever move the send target in one pre-session window), not flapping,
+ * and it no longer pins the target to whoever spoke last. */
+#define LATE_PUNCH_MAX_RELEARNS 1
+
+/* How long a nominated endpoint has to answer its challenge, and how
+ * often the challenge is repeated inside that window. 1500 ms covers the
+ * >600 ms RTT residual band with a retransmit to spare; the retransmit
+ * cadence matches the punch protocol's slow interval. One candidate is
+ * held at a time, so the total challenge traffic for a pre-session window
+ * is bounded by (window / LATE_PUNCH_CHALLENGE_MS) x (1500/200) 26-byte
+ * datagrams. */
+#define LATE_PUNCH_CHALLENGE_MS 1500u
+#define LATE_PUNCH_CHALLENGE_RETX_MS 200u
 
 /* Arm for the pre-session window. `sock` is BORROWED (owned by
  * netplay.c); `token` is the S4a punch token both sides derived from the
@@ -187,6 +237,16 @@ bool LatePunch_TakeRelearn(char* ip_out, size_t ip_cap, uint16_t* port_out);
  * without a socket. Any pointer may be NULL. */
 void LatePunch_TestPeek(char* ip_out, size_t ip_cap, uint16_t* port_out,
                         bool* tx_prompt_out, int* relearn_count_out);
+
+/* Task #133, test-only: the pending liveness challenge (whether one is
+ * open, which port it was sent to, and its nonce) and the parked echo.
+ * The nonce is handed out so a test can forge a CORRECT response — the
+ * only way to pin that a live peer IS still relearnable. Read-only; any
+ * pointer may be NULL. */
+void LatePunch_TestPeekChallenge(bool* active_out, uint16_t* port_out,
+                                 uint8_t nonce_out[STUN_PUNCH_PROBE_NONCE_LEN],
+                                 bool* echo_pending_out,
+                                 uint16_t* echo_port_out);
 #endif
 
 #endif /* NETPLAY_LATE_PUNCH_H */
