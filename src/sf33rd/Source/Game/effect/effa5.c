@@ -40,7 +40,7 @@ void effect_A5_move(WORK_Other* ewk) {
         return;
     }
 
-#if DEBUG
+#if defined(DEBUG)
     if (Debug_w[24]) {
         return;
     }

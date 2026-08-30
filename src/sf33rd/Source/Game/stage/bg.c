@@ -5,7 +5,7 @@
 
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "common.h"
-#if DEBUG
+#if defined(DEBUG)
 #include <stdio.h>
 #endif
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
@@ -265,7 +265,7 @@ void Bg_Texture_Load_EX() {
     u32 assign2;
     u8 assign3;
 
-#if DEBUG
+#if defined(DEBUG)
     {
         static int s_btle_count = 0;
         extern const u8 stage_bgw_number[][3];
@@ -365,7 +365,7 @@ void Bg_Texture_Load_EX() {
         ppgSetupTexChunk_1st(NULL, loadAdrs, loadSize, (stg * 64) + 0x84, 32, 0, 0);
         ppgSetupTexChunk_1st_Accnum(0, accnum);
 
-#if DEBUG
+#if defined(DEBUG)
         fprintf(stderr,
                 "[Bg_Texture_Load_EX] main-loop j=%d stg=%d tgbix=0x%08x tex=%p\n",
                 (int)j, (int)stg, (unsigned)tgbix, (void*)ppgBgList[stg].tex);
@@ -1199,7 +1199,7 @@ void bgDrawOneScreen(s32 bgnum, s32 gixbase, s32* xx, s32* yy, s32 /* unused */,
 }
 
 void bgDrawOneChip(s32 x, s32 y, s32 xs, s32 ys, s32 gbix, u32 vtxCol, s32 ofsPal) {
-#if DEBUG
+#if defined(DEBUG)
     /* Black-BG investigation 2026-04-24 — Experiment 1 (outer gate).
      * Reset log budget on each Play_Game transition so we capture per-match
      * (not just per-process) — different stages may behave differently. */
@@ -1496,7 +1496,7 @@ void Family_Set_W(s8 fmnm, s16 x, s16 y) {
 }
 
 void Bg_On_R(u16 s_prm) {
-#if DEBUG
+#if defined(DEBUG)
     fprintf(stderr, "[Bg_On_R] prm=0x%x  Screen_Switch: 0x%x -> 0x%x\n",
             (unsigned)s_prm, (unsigned)Screen_Switch,
             (unsigned)(Screen_Switch | s_prm));

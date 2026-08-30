@@ -4,7 +4,7 @@
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
 
-#if DEBUG
+#if defined(DEBUG)
 #include "test/input_script.h"
 #endif
 
@@ -125,7 +125,7 @@ static bool read_training_config(FILE* f, TrainingConfigFile* out) {
 }
 
 bool TrainingConfig_Load(void) {
-#if DEBUG
+#if defined(DEBUG)
     /* Frame-data test harness: the caller (Default_Training_Data(0),
      * menu.c) already zero-filled Training[0]/[2].contents before calling
      * us, which is exactly the deterministic, machine-independent default
@@ -187,7 +187,7 @@ bool TrainingConfig_Load(void) {
 }
 
 void TrainingConfig_Save(void) {
-#if DEBUG
+#if defined(DEBUG)
     /* Mirror of the TrainingConfig_Load() harness gate above: a script
      * that presses START (pause resume - Setup_NTr_Data, menu.c) or
      * triggers a character change / soft reset would otherwise persist

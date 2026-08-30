@@ -1,4 +1,4 @@
-#if CRS_APP_DRIVER_ARM && !CRS_ARM_HAVE_MI_GFX
+#if defined(CRS_APP_DRIVER_ARM) && !defined(CRS_ARM_HAVE_MI_GFX)
 
 // Under CRS_ARM_HAVE_MI_GFX (Miyoo profile) the fbdev backend is
 // disabled and never selected by arm_display.c — the canvas is RGB565

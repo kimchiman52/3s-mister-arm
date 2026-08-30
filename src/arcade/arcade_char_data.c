@@ -409,7 +409,7 @@ static const void* read_catch_table(SDL_IOStream* rom, Location location) {
     return result;
 }
 
-#if DEBUG && DUMP_CHAR_DATA
+#if defined(DEBUG) && defined(DUMP_CHAR_DATA)
 static void dump(const void* buf, const char* name, size_t length, Character character) {
     char* path;
     SDL_asprintf(&path, "dump/%s_pl%02d", name, character);
@@ -545,7 +545,7 @@ void ArcadeCharData_Init() {
         coalesce_adjacent_sections(image, locations);
         update_table_pointers(image);
 
-#if DEBUG && DUMP_CHAR_DATA
+#if defined(DEBUG) && defined(DUMP_CHAR_DATA)
         dump_data(dst, character);
 #endif
     }

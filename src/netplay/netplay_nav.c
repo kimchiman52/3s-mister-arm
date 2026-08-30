@@ -450,7 +450,17 @@ void NetplayNav_Tick(void) {
              * -Werror, refused the 192-byte buffer this started with), plus up
              * to three int conversions. 320 covers the literal and INT_MIN in
              * all three slots (227 - 6 for the "%d"s + 3 * 11 = 254) with room
-             * to spare. */
+             * to spare.
+             *
+             * This widening was derived independently THREE times (task #103,
+             * task #67, and 86e812c0) against the same clang-20 diagnostic,
+             * and all three landed on char[320]. The two surviving derivations
+             * of the lower bound differ slightly in bookkeeping -- 227 - 6 +
+             * 3*11 = 254 here, 227 + 3*10 + 1 = 258 in the #67 branch -- and
+             * both sit well under 320, so the buffer is not sensitive to which
+             * one you accept. Do not "simplify" 320 down to either figure:
+             * the headroom is what lets the wording change without
+             * reintroducing the truncation. */
             char line[320];
             snprintf(line, sizeof(line),
                      "[netplay-connect] FAIL code=P2P_FAIL_TIMEOUT_ORCHESTRATOR "

@@ -108,7 +108,7 @@ static void open_file_dialog_callback(void* userdata, const char* const* filelis
     uint64_t bytes_remaining = stat->total_size;
     lsn_t current_lsn = stat->lsn;
 
-#if CHECKSUM
+#if defined(CHECKSUM)
     sha256 sha;
     sha256_init(&sha);
 #endif
@@ -120,7 +120,7 @@ static void open_file_dialog_callback(void* userdata, const char* const* filelis
         const long bytes_read = iso9660_iso_seek_read(iso, buffer, current_lsn, sectors_to_read);
         SDL_WriteIO(dst_io, buffer, bytes_read);
 
-#if CHECKSUM
+#if defined(CHECKSUM)
         sha256_append(&sha, buffer, bytes_read);
 #endif
 
@@ -132,7 +132,7 @@ static void open_file_dialog_callback(void* userdata, const char* const* filelis
     iso9660_close(iso);
     SDL_CloseIO(dst_io);
 
-#if CHECKSUM
+#if defined(CHECKSUM)
     char hex[SHA256_HEX_SIZE];
     sha256_finalize_hex(&sha, hex);
 
@@ -200,7 +200,7 @@ bool Resources_Check() {
         return false;
     }
 
-#if CHECKSUM
+#if defined(CHECKSUM)
     sha256 sha;
     sha256_init(&sha);
 

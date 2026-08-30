@@ -1,4 +1,4 @@
-#if DEBUG
+#if defined(DEBUG)
 
 #ifndef IMGUI_WRAPPER_H
 #define IMGUI_WRAPPER_H

@@ -456,7 +456,7 @@ void look_after_timers(PLW* wk) { // 🟡
         }
     }
 
-#if DEBUG
+#if defined(DEBUG)
     if (Debug_w[9]) {
         if (wk->sa->nmsa_g_ix != 0) {
             wk->cp->waza_flag[wk->sa->nmsa_g_ix] = 9;

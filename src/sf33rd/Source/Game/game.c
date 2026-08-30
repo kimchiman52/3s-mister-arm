@@ -370,7 +370,7 @@ void Game01() {
         Stop_Combo = 0;
 
         if (Mode_Type != MODE_NETWORK) {
-#if DEBUG
+#if defined(DEBUG)
             /* Step H3 (docs/plan-frame-data-harness.md section 1.5): the
              * frame-data test harness needs byte-identical RNG state
              * across runs of the same scripted .fdi input. Reuse network

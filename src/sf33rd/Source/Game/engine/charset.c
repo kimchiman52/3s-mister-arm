@@ -28,7 +28,7 @@
 #define HI_2_BYTES(_val) (((s16*)&_val)[1])
 #define WK_AS_PLW ((PLW*)wk)
 
-#if DEBUG
+#if defined(DEBUG)
 /* Phase 5 hygiene item 1 (docs/plan-frame-data-harness.md): the [CM]/
  * [CMX] stderr logs below fire per char_move()/check_cm_extended_code()
  * call for P1 in every mode (netplay/arcade included). `#if DEBUG`
@@ -75,7 +75,7 @@ void set_char_move_init(WORK* wk, s16 koc, s16 index) {
     wk->now_koc = koc;
     wk->char_index = index;
 
-#if CPS3
+#if defined(CPS3)
     wk->set_char_ad = (u32*)wk->char_table[koc][index];
 
     const u32* src = wk->set_char_ad;
@@ -103,7 +103,7 @@ void set_char_move_init(WORK* wk, s16 koc, s16 index) {
     wk->cmwk[8] = 0;
     wk->cmwk[15] = 0;
 
-#if !CPS3
+#if !defined(CPS3)
     wk->kow = wk->kind_of_waza;
 #endif
 
@@ -154,7 +154,7 @@ void set_char_move_init2(WORK* wk, s16 koc, s16 index, s16 ip, s16 scf) {
     u8 pst;
     u8 kow;
 
-#if !CPS3
+#if !defined(CPS3)
     if (index < 0) {
         index = 0;
     }
@@ -169,7 +169,7 @@ void set_char_move_init2(WORK* wk, s16 koc, s16 index, s16 ip, s16 scf) {
     wk->now_koc = koc;
     wk->char_index = index;
 
-#if CPS3
+#if defined(CPS3)
     wk->set_char_ad = (u32*)wk->char_table[koc][index];
 
     const u32* src = wk->set_char_ad;
@@ -202,7 +202,7 @@ void set_char_move_init2(WORK* wk, s16 koc, s16 index, s16 ip, s16 scf) {
         wk->pat_status = pst;
         wk->kind_of_waza = kow;
     } else {
-#if !CPS3
+#if !defined(CPS3)
         wk->kow = wk->kind_of_waza;
 #endif
     }
@@ -221,7 +221,7 @@ void exset_char_move_init(WORK* wk, s16 koc, s16 index) {
     wk->now_koc = koc;
     wk->char_index = index;
 
-#if CPS3
+#if defined(CPS3)
     wk->set_char_ad = (u32*)wk->char_table[koc][index];
 #else
     wk->set_char_ad = &wk->char_table[koc][wk->char_table[koc][index] / 4];
@@ -229,7 +229,7 @@ void exset_char_move_init(WORK* wk, s16 koc, s16 index) {
 
     now_ctr = wk->cg_ctr;
 
-#if CPS3
+#if defined(CPS3)
     u32* dst = (u32*)&wk->cg_ctr;
     const u32* src = wk->set_char_ad + wk->cg_ix;
 
@@ -292,7 +292,7 @@ void char_move_cmja(WORK* wk) {
     set_char_move_init2(wk, wk->cmja.koc, wk->cmja.ix, wk->cmja.pat, 0);
 }
 
-#if CPS3
+#if defined(CPS3)
 void char_move_cmj2(WORK* wk) {
     setup_comm_back(wk);
     set_char_move_init2(wk, wk->cmj2.koc, wk->cmj2.ix, wk->cmj2.pat, 0);
@@ -309,7 +309,7 @@ void char_move_cmj4(WORK* wk) {
     set_char_move_init2(wk, wk->cmj4.koc, wk->cmj4.ix, wk->cmj4.pat, 0);
 }
 
-#if CPS3
+#if defined(CPS3)
 void char_move_cmoa(WORK* wk) {
     set_char_move_init2(wk, wk->cmoa.koc, wk->cmoa.ix, wk->cmoa.pat, 0);
 }
@@ -330,7 +330,7 @@ void char_move_cmms2(WORK* wk) {
     wk->now_koc = wk->cmms.koc;
     wk->char_index = wk->cmms.ix;
 
-#if CPS3
+#if defined(CPS3)
     wk->set_char_ad = (u32*)wk->char_table[wk->now_koc][wk->char_index];
 
     const u32* src = wk->set_char_ad;
@@ -358,7 +358,7 @@ void char_move_cmms2(WORK* wk) {
     wk->old_cgnum = 0;
     wk->cg_wca_ix = 0;
 
-#if !CPS3
+#if !defined(CPS3)
     wk->kow = wk->kind_of_waza;
 #endif
 }
@@ -376,7 +376,7 @@ s32 char_move_cmms3(PLW* wk) {
     wk->wu.now_koc = wk->wu.cmms.koc;
     wk->wu.char_index = wk->wu.cmms.ix;
 
-#if CPS3
+#if defined(CPS3)
     wk->wu.set_char_ad = (u32*)wk->wu.char_table[wk->wu.now_koc][wk->wu.char_index];
 
     const u32* src = wk->wu.set_char_ad;
@@ -391,7 +391,7 @@ s32 char_move_cmms3(PLW* wk) {
 
     wk->wu.cg_ix = wk->wu.cmms.pat * wk->wu.cgd_type - wk->wu.cgd_type;
 
-#if !CPS3
+#if !defined(CPS3)
     wk->wu.kow = wk->wu.kind_of_waza;
 #endif
 
@@ -656,7 +656,7 @@ void char_move(WORK* wk) {
         }
     }
 
-#if DEBUG
+#if defined(DEBUG)
     /* DEBUG, FRAME_CM_LOG=1 only: log every char_move call for player 1 —
      * covering attack AND any frames after r1 leaves attack state, so we
      * can see the engine state at the move-end transition. See the
@@ -684,7 +684,7 @@ void check_cm_extended_code(WORK* wk) {
     while (1) {
         cpc = (UNK11*)(wk->set_char_ad + wk->cg_ix);
 
-#if DEBUG
+#if defined(DEBUG)
         /* DEBUG, FRAME_CM_LOG=1 only: log every cell-data extended-code
          * dispatch for player 1. Discriminates "comm_wca = arcade-counted
          * recovery anim" vs "comm_jmp/comm_ret = uncounted neutral return"

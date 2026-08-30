@@ -1,6 +1,6 @@
 #include "sf33rd/AcrSDK/ps2/flps2vram.h"
 #include "common.h"
-#if DEBUG
+#if defined(DEBUG)
 #include <stdio.h>
 #endif
 #include "sf33rd/AcrSDK/common/memfound.h"

@@ -1,7 +1,7 @@
 #include "sf33rd/Source/Common/PPGFile.h"
 #include "common.h"
 #include "main.h"
-#if DEBUG
+#if defined(DEBUG)
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include <stdio.h>
 #endif
@@ -1853,7 +1853,7 @@ s32 ppgGetUsingPaletteHandle(Palette* pch, s32 ixNums) {
 
 s32 ppgCheckTextureNumber(Texture* tex, s32 num) {
     u16 ix;
-#if DEBUG
+#if defined(DEBUG)
     /* Black-BG investigation 2026-04-24 — sub-gate breakdown. Reset log
      * budget on each Play_Game transition to catch per-match behavior. */
     static int s_pctn_log = 0;
@@ -1871,7 +1871,7 @@ s32 ppgCheckTextureNumber(Texture* tex, s32 num) {
         tex = ppg_w.cur->tex;
 
         if (tex == NULL) {
-#if DEBUG
+#if defined(DEBUG)
             if (Play_Game == 1 && s_pctn_log < 64) {
                 fprintf(stderr, "[ppgCheckTextureNumber] num=%d FAIL:null-tex\n", (int)num);
                 s_pctn_log++;
@@ -1881,12 +1881,12 @@ s32 ppgCheckTextureNumber(Texture* tex, s32 num) {
         }
     }
 
-#if DEBUG
+#if defined(DEBUG)
     dbg_tex_used = tex;
 #endif
 
     if (tex->be == 0) {
-#if DEBUG
+#if defined(DEBUG)
         if (s_pctn_log < 64) {
             fprintf(stderr,
                     "[ppgCheckTextureNumber] num=%d FAIL:be=0 tex=%p cur=%p\n",
@@ -1900,7 +1900,7 @@ s32 ppgCheckTextureNumber(Texture* tex, s32 num) {
     ix = num - tex->ixNum1st;
 
     if (ix >= tex->total) {
-#if DEBUG
+#if defined(DEBUG)
         if (s_pctn_log < 64) {
             fprintf(stderr,
                     "[ppgCheckTextureNumber] num=%d FAIL:ix-range ix=%d total=%d first=%d\n",
@@ -1912,7 +1912,7 @@ s32 ppgCheckTextureNumber(Texture* tex, s32 num) {
     }
 
     if (tex->handle[ix].b16[0]) {
-#if DEBUG
+#if defined(DEBUG)
         if (s_pctn_log < 64) {
             fprintf(stderr,
                     "[ppgCheckTextureNumber] num=%d OK ix=%d handle=%d\n",
@@ -1923,7 +1923,7 @@ s32 ppgCheckTextureNumber(Texture* tex, s32 num) {
         return 1;
     }
 
-#if DEBUG
+#if defined(DEBUG)
     if (s_pctn_log < 64) {
         fprintf(stderr,
                 "[ppgCheckTextureNumber] num=%d FAIL:handle=0 ix=%d total=%d tex=%p\n",

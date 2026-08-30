@@ -181,7 +181,7 @@ s32 Check_Pause_Term(u16 sw, u8 PL_id) {
         return PAUSE_X = 1;
     }
 
-#if DEBUG
+#if defined(DEBUG)
     // This skips checking controller connection status during gameplay testing
     if (configuration.test.enabled) {
         return 0;

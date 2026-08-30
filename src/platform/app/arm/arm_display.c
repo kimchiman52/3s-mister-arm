@@ -1,4 +1,4 @@
-#if CRS_APP_DRIVER_ARM
+#if defined(CRS_APP_DRIVER_ARM)
 
 #include "platform/app/arm/arm_display.h"
 #include "port/config/config.h"
@@ -21,7 +21,7 @@
 #define ARM_DISPLAY_MAYBE_UNUSED
 #endif
 
-#if CRS_ARM_HAVE_DRM
+#if defined(CRS_ARM_HAVE_DRM)
 bool arm_display_drm_init();
 void arm_display_drm_shutdown();
 void arm_display_drm_get_resolution(int* out_width, int* out_height);
@@ -45,7 +45,7 @@ ARM_DISPLAY_MAYBE_UNUSED static inline void arm_display_drm_present(const uint32
 }
 #endif
 
-#if CRS_ARM_HAVE_MI_GFX
+#if defined(CRS_ARM_HAVE_MI_GFX)
 bool arm_display_mi_gfx_init();
 void arm_display_mi_gfx_shutdown();
 void arm_display_mi_gfx_get_resolution(int* out_width, int* out_height);
@@ -72,7 +72,7 @@ ARM_DISPLAY_MAYBE_UNUSED static inline void arm_display_mi_gfx_present(const uin
 // fbdev backend: present only when MI_GFX is not the active backend.
 // Mirror the DRM/MI_GFX symmetric pattern above so we don't rely on
 // optimizer DCE to elide the unresolved symbol references at -O0.
-#if !CRS_ARM_HAVE_MI_GFX
+#if !defined(CRS_ARM_HAVE_MI_GFX)
 bool arm_display_fbdev_init();
 void arm_display_fbdev_shutdown();
 void arm_display_fbdev_get_resolution(int* out_width, int* out_height);
@@ -112,7 +112,7 @@ static bool use_stretch_present() {
 }
 
 bool ArmDisplay_Init() {
-#if CRS_ARM_HAVE_MI_GFX
+#if defined(CRS_ARM_HAVE_MI_GFX)
     // Miyoo profile: the giblet canvas is RGB565 (CRS_SW_CANVAS_16BPP=1).
     // The DRM and fbdev backends both write ARGB8888 to the framebuffer
     // via sw_present_scale_argb; passing an RGB565 buffer through them

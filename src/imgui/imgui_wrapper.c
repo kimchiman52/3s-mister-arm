@@ -1,4 +1,4 @@
-#if DEBUG
+#if defined(DEBUG)
 
 #include "imgui/imgui_wrapper.h"
 #include "port/paths.h"
