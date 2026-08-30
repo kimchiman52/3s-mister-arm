@@ -1115,6 +1115,18 @@ commit made and wrote down: moving a document must not itself become a repoint
 commit, and `docs/archive/` is not scanned at all, so nothing there is
 checkable any more.
 
+**Where to find it:** the move landed inside `c1233209`, whose subject is
+*"docs(queue): repoint the #108 romset citation to the digest lines
+themselves"* and says nothing about it. Two lanes were committing in the same
+checkout, and the other one ran an **unscoped** `git commit` while this change
+was staged, so it swept all ten files in under its own message. Nothing was
+lost or crossed — both lanes' content is intact in that commit — and it was
+left unrewritten on purpose: amending shared history under a live concurrent
+lane trades a cosmetic problem for a real one. Recorded here because
+`git log -- docs/archive/plan-netplay-phase6.md` otherwise leads to a subject
+line that disclaims the change. **The rule that would have prevented it:**
+always `git commit -- <paths>`, never bare `git commit`, in a shared checkout.
+
 ### CARRIED — R2. the black-BG bug is OPEN and its four documents say so
 
 Not a docs item — a defect item surfaced by classifying them. `Fix B` shipped
