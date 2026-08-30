@@ -391,12 +391,86 @@ worth anything until the instrument can fail:
   host applied no relearn`, exit **1**.
 
 **Still unproven.** Nothing was exercised on the MiSTer device (its lock is held
-by another session). Cross-version behaviour is a known degradation, not a
-regression: a peer on a build without the probe frame consumes the challenge as
-punch-shaped bad-token traffic and never answers, so no relearn happens and the
-pair falls back to the pre-#119 delayed failure. The rig exercises the
-LEGITIMATE mover only — it has no adversary namespace, so the same-IP capture
-itself is pinned at unit level, not on the wire.
+by another session). The rig exercises the LEGITIMATE mover only — it has no
+adversary namespace, so the same-IP capture itself is pinned at unit level, not
+on the wire.
+
+**Cross-version degradation — NO LONGER a code-reading claim. Tested by
+construction 2026-08-30, and it is confirmed with one thing the claim missed.**
+
+The claim was: a peer on a build without the probe frame consumes the 26-byte
+challenge as punch-shaped bad-token traffic and never answers, so no relearn
+happens and the pair falls back to the pre-#119 delayed failure — a lost
+rescue, not a new failure mode. The old peer was built from the **verbatim**
+pre-commit tree (`git archive e5527f5a^`; `stun.c`, `late_punch.c`,
+`direct_p2p.c` and `mist_handshake.c` each diffed byte-identical against
+`git show e5527f5a^:<path>`), and driven against a peer built from the current
+tree whose production `LatePunch` was armed at a stale port so it emitted real
+26-byte challenges over a real socket. `e5527f5a` touches neither
+`rendezvous.c` nor `room_code.c`, so a real cross-version pair derives the
+**same** token: the old peer really does see a correct-token, wrong-length
+frame, which is the hardest case for it.
+
+*Can the 26-byte frame be misparsed as a valid 17-byte punch?* **No, and not
+by accident either.** Old `Stun_IsPunchPayload` tests length **exactly, first**
+— `len != STUN_PUNCH_PAYLOAD_LEN` at `e5527f5a^:src/netplay/stun.c:149`, before
+the prefix compare. A sweep of lengths 0–64 carrying the correct token and
+prefix accepted **exactly one**, 17, and `classify_host_datagram` returned
+`DP2P_HOST_DGRAM_PEER_PUNCH` for exactly that one. No old predicate
+prefix-matches and ignores trailing bytes; `Stun_HasPunchPrefix`
+(`e5527f5a^:stun.c:142`) is prefix-only but grants nothing — it only routes to
+the drop paths. On the wire, 93 real challenges produced **zero** relearns,
+**zero** retargets, the leg never confirmed and `tx_prompt` was never set, so
+the old side never even schedules a reply. The old retarget
+(`e5527f5a^:stun.c:900`, `leg->target_port = src_port`) sits *below* the
+bad-token early return at `:865-879` and is unreachable from here. New side,
+same run: 12 nominations, 12 expiries, relearn budget never spent — the lost
+rescue, exactly as claimed.
+
+*Does the extra 9 bytes trip a length assumption?* **No.** `Stun_PunchOffer`
+consumes it, latches `local->diag_punch_bad_token` and returns
+(`e5527f5a^:stun.c:865-879`); `LatePunch_HandleDatagram` consumes it and counts
+a bad token; `classify_host_datagram` returns IGNORE; the MIST gate's
+`mist_handshake_parse_response` returns **-2 (not ours, drop)** on the exact
+wire bytes — *identically to a 17-byte punch*, so 26 bytes is not the more
+dangerous of the two — and the H-1 implicit-completion path cannot fire because
+`buf[0]` is `0x33`, outside its `[1,7]` range. Rebuilt under
+`-fsanitize=address,undefined` in a fresh build directory: 54 real frames
+through all three old receive paths, **0** findings. No fixed-size copy of
+received bytes exists on any of these paths.
+
+**WHAT THE CLAIM MISSED, and it is not nothing.** On the old *host-waiting*
+receive path the challenge stream is charged to the host punch-auth gate.
+`e5527f5a^:src/netplay/direct_p2p.c:5034` computes
+`punch_shaped = Stun_HasPunchPrefix(...)` — **true** for the 26-byte frame,
+since that predicate is prefix-only — and `:5059` therefore calls
+`host_punch_gate_note_bad`. Modelled call-for-call over 19 s: the challenge
+cadence is ~4.9/s (each nomination retransmits at `LATE_PUNCH_CHALLENGE_RETX_MS`
+inside its `LATE_PUNCH_CHALLENGE_MS` window, and nominations re-open
+indefinitely because `late_punch_nominate` gates on `s_relearn_count`, which
+never advances when nobody answers). That crosses `HOST_PUNCH_SRC_MAX_BAD` = 24
+in ~5 s and `HOST_PUNCH_TOTAL_REROLL` = 64 in ~13 s
+(`e5527f5a^:direct_p2p.c:672-675`). Observed: `punch-gate MUTE ... for 60000 ms`
+and a re-roll owed. So the honest statement is **not** "nothing happens" — our
+rescue attempt can mute our own IP at the old peer's gate for 60 s and force it
+to re-roll its room code (up to `HOST_PUNCH_REROLL_MAX` = 3).
+
+Two limits, stated rather than papered over:
+
+- **Reachability of that path is NOT established by construction.** In the
+  canonical #119 rescue the moved endpoint is the *joiner's* fresh socket,
+  which runs `Stun_PunchOffer`, not `host_tick_receive` — the clean path, and
+  the one fully proven above. The gate path additionally needs the old peer to
+  be a **host in `HOST_WAITING` whose observed source port changed** (a NAT
+  rebind). The code path and its inputs are proven; the state was not entered.
+- **Not examined at all:** whether a *same-version* pair can charge its own
+  gate the same way, i.e. whether a new peer's `host_tick_receive` can ever see
+  a challenge before `LatePunch_HandleDatagram` does. If it can, this is not a
+  cross-version issue at all. Nobody has looked.
+
+No source changed for this; the harness lived outside the repo. Re-open if the
+mute is ever seen in the field, or if the same-version question above is
+answered yes.
 
 ---
 
