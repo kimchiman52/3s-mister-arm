@@ -2,6 +2,23 @@
 
 Status: planning. Multi-week effort. Last refreshed 2026-05-03.
 
+> **⚠ CORRECTION 2026-08-30 — two premises below are false. Verify before following any step.**
+>
+> - **`THIRDSARM_USE_GIBLET_RENDERER` does not exist and never did.** This plan is
+>   structured around that cmake option. `git log --all -S THIRDSARM_USE_GIBLET_RENDERER`
+>   finds the identifier only in this document's own text — it was never in the
+>   build system in any revision.
+> - **`SoftwareRenderer_DrawUIBitmap` is not in `software_renderer.h`.** The plan
+>   states it is "already in tree" there. It is file-`static` in the `.c` and has
+>   never been in that header. Every overlay draws through it, so the plan is
+>   missing the step of un-`static`ing it — a step it skipped *because* the
+>   citation claimed it was done.
+>
+> The rip that actually happened was one shot at `b2c79d7c`; `src/port/sdl/sdl_app.c`
+> survived it and `src/platform/app/sdl/` was never created. This document is kept
+> live because the work is unfinished, not because its steps are executable as
+> written. **Re-derive every step against the tree.**
+
 ## Goal
 
 End state: our hand-rolled SDL app/present layer
