@@ -36,6 +36,10 @@ add_executable(p2p_probe
     ${SRC}/netplay/natpmp.c
     ${SRC}/netplay/upnp.c
     ${SRC}/netplay/connect_fail.c
+    # Task #119: the late-punch rescue layer. No GekkoNet dependency, so it
+    # is compiled UNCONDITIONALLY — a probe built without the session phase
+    # still catches compile breakage in the production module.
+    ${SRC}/netplay/late_punch.c
     # --- supporting port/util layers the cascade genuinely uses ---
     ${SRC}/port/config/config.c
     ${SRC}/port/config/config_helpers.c
@@ -69,6 +73,38 @@ target_compile_definitions(p2p_probe PRIVATE
 )
 
 target_link_libraries(p2p_probe PRIVATE SDL3_net::SDL3_net SDL3::SDL3)
+
+# ---------------------------------------------------------------------------
+# Task #119 -- optional post-handoff GekkoNet session phase (session_phase.c).
+#
+# The split-brain band under test ends in FAILED_HANDSHAKE, which lives PAST
+# the handoff boundary the pre-#119 probe stopped at. When the vendored
+# GekkoNet build is available (build-deps.sh installs it to
+# third_party/GekkoNet/build; override with -DGEKKONET_ROOT for a
+# platform-local build, e.g. the Linux netns container), the probe gains
+# --session: a real gekko_create/sync loop on the punched socket through the
+# production SDLNetAdapter + late_punch stack.
+#
+# Without the library the probe still builds and behaves exactly as before,
+# and --session REFUSES with a RIG_ERROR rather than pretending (exit-code
+# doctrine at the top of p2p_probe.c).
+# ---------------------------------------------------------------------------
+set(GEKKONET_ROOT "${REPO_ROOT}/third_party/GekkoNet/build" CACHE PATH
+    "GekkoNet install prefix (include/ + lib/libGekkoNet.a) for the session phase")
+if(EXISTS "${GEKKONET_ROOT}/lib/libGekkoNet.a")
+    enable_language(CXX) # libGekkoNet.a is C++; the link needs the C++ runtime
+    message(STATUS "p2p_probe: session phase ON (GekkoNet at ${GEKKONET_ROOT})")
+    target_sources(p2p_probe PRIVATE
+        session_phase.c
+        ${SRC}/netplay/sdl_net_adapter.c
+    )
+    target_compile_definitions(p2p_probe PRIVATE PROBE_HAS_SESSION)
+    target_include_directories(p2p_probe PRIVATE ${GEKKONET_ROOT}/include)
+    target_link_libraries(p2p_probe PRIVATE ${GEKKONET_ROOT}/lib/libGekkoNet.a)
+    set_target_properties(p2p_probe PROPERTIES LINKER_LANGUAGE CXX)
+else()
+    message(STATUS "p2p_probe: session phase OFF (no libGekkoNet.a under ${GEKKONET_ROOT})")
+endif()
 
 # ---------------------------------------------------------------------------
 # natpmp_probe -- acceptance instrument for rig/natpmp_mock.py.

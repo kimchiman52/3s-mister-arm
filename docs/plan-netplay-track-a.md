@@ -724,7 +724,7 @@ void dump_desync_state(int frame, uint32_t local_checksum, uint32_t remote_check
    - Port `sanitize_work_rendering(WORK* w)` — verbatim 3sxtra. Masks 0x2000 bits.
    - Port `sanitize_plw_pointers(PLW* p)`:
      - Start from 3sxtra's version (calls sanitize_work_pointers + sanitize_work_rendering + zeros `cp`, `dm_step_tbl`, `as`, `sa`, `py`).
-     - ADD: `p->cb = NULL; p->rp = NULL;` — our fork's PLW has these fields, 3sxtra's does not. Preserves the cleanup our `clean_plw_pointers` does at `netplay.c:293,295`.
+     - ADD: `p->cb = NULL; p->rp = NULL;` — our fork's PLW has these fields, 3sxtra's does not. Preserves the cleanup our `clean_plw_pointers` does at `netplay.c:311,295`.
      - Verify `cb` and `rp` exist by grep against our `structs.h`. If absent, remove those two lines.
    - Port `save_current_state(void* buffer, int frame)` — verbatim 3sxtra lines 1560-1714, with ONE addition: in the focused-checksum block (around 3sxtra line 1660 where `My_char` and `Super_Arts` are hashed), add:
      ```c

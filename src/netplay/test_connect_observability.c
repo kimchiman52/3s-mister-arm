@@ -690,7 +690,7 @@ static void test3_confirm_not_nat(void) {
      *   - The latest instant a leg can still be confirmed is therefore
      *     send_end + RACE_PUNCH_SETTLE_MS, i.e. at most
      *     budget + STUN_PUNCH_CONFIRM_MS (the two constants are asserted
-     *     equal at direct_p2p.c:1514).
+     *     equal at direct_p2p.c:1517).
      *   - A confirmed leg settles one tail later, and the loop's hard cap
      *     is budget + 2 * STUN_PUNCH_CONFIRM_MS (direct_p2p.c section 8).
      *     Settling therefore always precedes the cap, except at an exact

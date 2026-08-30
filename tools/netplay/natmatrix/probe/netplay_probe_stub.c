@@ -1,30 +1,47 @@
 /* Game-side symbols that src/netplay/direct_p2p.c references but which the probe
  * does not need: everything past the handoff boundary.
  *
- * The cascade under test ENDS at DIRECT_P2P_HANDOFF -- that is the moment the
- * orchestrator hands the punched socket to netplay.c and the rollback session
- * begins. Whether GekkoNet then syncs is a different question from whether the
- * two peers traversed their NATs, and it is the traversal we are measuring. So
- * these stubs record that the handoff happened and do nothing else.
+ * Pre-#119 the cascade under test ENDED at DIRECT_P2P_HANDOFF and every stub
+ * discarded its argument. Task #119 extends the probe past that boundary on
+ * request (p2p_probe --session): the split-brain failure it closes lives
+ * BETWEEN the handoff and GekkoSessionStarted, i.e. exactly in the phase the
+ * old probe declared out of scope. So the Netplay_Set* stubs now CAPTURE what
+ * do_handoff hands them — socket, peer endpoint, punch token, teardown
+ * callback — and session_phase.c drives the real GekkoNet + SDLNetAdapter +
+ * late_punch stack on the captured state. Without --session nothing reads the
+ * captures and the probe's behaviour is unchanged.
  *
  * Deliberately NOT stubbed: anything in the traversal path. stun.c, rendezvous.c,
  * room_code.c, natpmp.c, upnp.c, connect_fail.c and direct_p2p.c itself are all
  * compiled from src/ unmodified.
  */
+#include "netplay_probe_stub.h"
+
 #include <stdbool.h>
 #include <stdio.h>
-
-struct NET_DatagramSocket;
+#include <string.h>
 
 static void (*s_teardown_cb)(void) = NULL;
 static bool s_remote_ip_set = false;
 
+/* --- task #119 captures (see header) --- */
+static struct NET_DatagramSocket* s_captured_sock = NULL;
+static char s_captured_ip[64] = { 0 };
+static unsigned short s_captured_port = 0;
+static unsigned char s_captured_token[8] = { 0 };
+static bool s_captured_token_valid = false;
+
 void Netplay_SetParams(int player, const char* ip) {
     (void)player;
     s_remote_ip_set = (ip != NULL && ip[0] != '\0');
+    if (s_remote_ip_set) {
+        snprintf(s_captured_ip, sizeof(s_captured_ip), "%s", ip);
+    } else {
+        s_captured_ip[0] = '\0';
+    }
 }
 
-void Netplay_SetRemotePort(unsigned short port) { (void)port; }
+void Netplay_SetRemotePort(unsigned short port) { s_captured_port = port; }
 
 bool Netplay_IsRemoteIpSet(void) { return s_remote_ip_set; }
 
@@ -35,9 +52,46 @@ void Netplay_BeginDirectP2P(void) {
     fprintf(stderr, "[probe] Netplay_BeginDirectP2P: handoff reached\n");
 }
 
-void Netplay_SetStunSocket(struct NET_DatagramSocket* socket) { (void)socket; }
+void Netplay_SetStunSocket(struct NET_DatagramSocket* socket) {
+    s_captured_sock = socket;
+}
+
+/* Task #119: do_handoff hands the S4a punch token over with the socket.
+ * The probe's session phase feeds it to the production late_punch layer
+ * exactly as netplay.c does. Size is STUN_PUNCH_TOKEN_LEN (stun.h) = 8;
+ * mirrored literally here so this stub keeps zero src/ include deps. */
+void Netplay_SetPunchToken(const unsigned char* token, bool valid) {
+    if (token != NULL && valid) {
+        memcpy(s_captured_token, token, sizeof(s_captured_token));
+        s_captured_token_valid = true;
+    } else {
+        memset(s_captured_token, 0, sizeof(s_captured_token));
+        s_captured_token_valid = false;
+    }
+}
 
 void Netplay_SetSessionTeardownCallback(void (*cb)(void)) { s_teardown_cb = cb; }
+
+struct NET_DatagramSocket* ProbeStub_Socket(void) { return s_captured_sock; }
+const char* ProbeStub_RemoteIp(void) { return s_captured_ip; }
+unsigned short ProbeStub_RemotePort(void) { return s_captured_port; }
+const unsigned char* ProbeStub_PunchToken(bool* valid_out) {
+    if (valid_out != NULL) {
+        *valid_out = s_captured_token_valid;
+    }
+    return s_captured_token;
+}
+
+/* Task #119: production netplay.c fires this callback on session EXITING;
+ * direct_p2p_on_teardown converts a NotifySessionFailed latch into the
+ * terminal DIRECT_P2P_FAILED_HANDSHAKE park (direct_p2p.c). The probe's
+ * session phase invokes it through here so a session deadline produces
+ * the REAL parking state, via the REAL latch, not a probe-side imitation. */
+void ProbeStub_InvokeTeardown(void) {
+    if (s_teardown_cb != NULL) {
+        s_teardown_cb();
+    }
+}
 
 void Netplay_LogConnectEvent(const char* line) {
     if (line) fprintf(stderr, "[probe][connect] %s\n", line);
@@ -70,8 +124,9 @@ void Netplay_LogSinkInit(void) {
     fprintf(stderr, "[probe] Netplay_LogSinkInit\n");
 }
 
-/* Never called: the probe stops at the handoff and does not enter the game
- * loop. If it ever is called, say so loudly rather than silently spinning. */
+/* Never called: even in --session mode the probe drives GekkoNet through
+ * session_phase.c, not through the game loop. If it ever is called, say
+ * so loudly rather than silently spinning. */
 void Netplay_Run(void) {
     fprintf(stderr, "[probe] Netplay_Run called -- probe does not run a session\n");
 }

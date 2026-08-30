@@ -5,6 +5,7 @@
 #include "port/config/draw_players_above_hud.h"
 #include "netplay/connect_fail.h"
 #include "netplay/direct_p2p.h"
+#include "netplay/late_punch.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "netplay/game_state.h"
 #include "netplay/matchmaking.h"
@@ -87,6 +88,23 @@ static NET_DatagramSocket* stun_socket = NULL;
 // direct-P2P orchestrator can release its UPnP mapping while the STUN
 // socket is still valid (the callback may inspect it via getsockname).
 static void (*session_teardown_cb)(void) = NULL;
+// Task #119: the S4a punch-auth token, handed over by do_handoff
+// alongside the punched socket. While the pre-session window is open
+// (TRANSITIONING + CONNECTING) it arms the late-punch layer
+// (late_punch.h): the connected side keeps answering authenticated
+// punches so a peer whose race ended one-sided — the residual
+// split-brain bands — can still find us, instead of us waiting out
+// CONNECT_TIMEOUT_CONNECTING_MS against a peer that already tore down
+// and parking in FAILED_HANDSHAKE with the room code burned. Cleared
+// with the rest of the session state on teardown.
+static uint8_t s_punch_token[STUN_PUNCH_TOKEN_LEN];
+static bool s_punch_token_valid = false;
+// Task #119: a relearn arrived while a MIST pump attempt was mid-flight.
+// s_hs_peer_addr is shared with the live attempt's io template, so it
+// cannot be swapped under it; mist_pump_start honors this flag at the
+// next attempt arm (<= one 500 ms attempt of latency, the pump's own
+// budget) and re-resolves toward the updated endpoint.
+static bool s_hs_peer_refetch = false;
 static u16 input_history[2][INPUT_HISTORY_MAX] = { 0 };
 static float frames_behind = 0;
 static int frame_skip_timer = 0;
@@ -1185,6 +1203,21 @@ static int mist_netio_recv(void* vctx, uint8_t* buf, size_t cap, bool* from_sess
     if (!NET_ReceiveDatagram(io->sock, &dgram) || dgram == NULL) {
         return 0;
     }
+    // Task #119: during TRANSITIONING this drain is the socket's only
+    // reader, so a retrying peer's authenticated punch lands HERE, not in
+    // the GekkoNet adapter. Offer it to the late-punch layer first: a
+    // consumed datagram is punch traffic (answered / relearned / dropped
+    // by late_punch.c's rules) that the MIST magic gate would have
+    // silently discarded — which is exactly the one-sided-handoff hang
+    // this layer exists to close. Returning 0 just ends this slice; the
+    // pump re-polls next slice. Disarmed, this is a no-op.
+    if (dgram->buf != NULL &&
+        LatePunch_HandleDatagram(dgram->buf, dgram->buflen,
+                                 NET_GetAddressString(dgram->addr),
+                                 dgram->port)) {
+        NET_DestroyDatagram(dgram);
+        return 0;
+    }
     size_t n = (size_t)dgram->buflen;
     if (n > cap) {
         n = cap;
@@ -1267,6 +1300,19 @@ static bool mist_pump_start(void) {
         SDL_strlcpy(s_mist_reject_reason, "missing transport state", sizeof(s_mist_reject_reason));
         return false;
     }
+    // Task #119: a relearn moved the peer while an attempt was mid-flight
+    // (see s_hs_peer_refetch). This is the first point where no attempt
+    // holds the cached address, so drop it and re-resolve below. The
+    // relearn is same-IP by construction (late_punch.c), so today only
+    // peer_port actually changes — the refetch still runs so the cache
+    // discipline doesn't silently depend on that restriction.
+    if (s_hs_peer_refetch) {
+        s_hs_peer_refetch = false;
+        if (s_hs_peer_addr != NULL) {
+            NET_UnrefAddress(s_hs_peer_addr);
+            s_hs_peer_addr = NULL;
+        }
+    }
     if (s_hs_peer_addr == NULL) {
         s_hs_peer_addr = NET_ResolveHostname(remote_ip);
         if (s_hs_peer_addr == NULL) {
@@ -1309,6 +1355,42 @@ static bool mist_pump_start(void) {
     }
     s_hs_pump_active = true;
     return true;
+}
+
+// Task #119: one service call per pre-session frame, from Netplay_Run's
+// TRANSITIONING and CONNECTING cases — the window between do_handoff and
+// GekkoSessionStarted in which a one-sided race can still be rescued.
+// Drives the late-punch keepalive/answer stream and applies any relearn
+// to every send path that targets the peer:
+//   - remote_port      (configure_gekko's registration + MIST re-arm)
+//   - the MIST pump's cached peer address (via s_hs_peer_refetch)
+//   - the GekkoNet adapter's actual send target / inbound presentation
+//     (SDLNetAdapter_RetargetPeer — a no-op passthrough before
+//     configure_gekko has registered a canonical peer).
+// The relearn is late_punch.c's verdict, token-authenticated and
+// restricted to the established peer IP, so everything applied here is
+// a PORT move within the peer the handoff already committed to.
+static void late_punch_service(void) {
+    if (!LatePunch_IsArmed()) {
+        return;
+    }
+    LatePunch_Tick((uint32_t)SDL_GetTicks());
+    char ip[64];
+    uint16_t new_port = 0;
+    if (LatePunch_TakeRelearn(ip, sizeof(ip), &new_port) && new_port != 0) {
+        char line[160];
+        SDL_snprintf(line, sizeof(line),
+                     "[netplay sess=%08x] late-punch relearn: peer %s port "
+                     "%u -> %u (state=%s)",
+                     s_session_uuid, ip, (unsigned)remote_port,
+                     (unsigned)new_port,
+                     session_state == NETPLAY_SESSION_CONNECTING
+                         ? "connecting" : "transitioning");
+        Netplay_LogConnectEvent(line);
+        remote_port = new_port;
+        s_hs_peer_refetch = true;
+        SDLNetAdapter_RetargetPeer(ip, new_port);
+    }
 }
 
 // R-1: single source of truth for "which socket carries this session".
@@ -1477,6 +1559,15 @@ static void configure_gekko() {
     char remote_address_str[100];
     SDL_snprintf(remote_address_str, sizeof(remote_address_str), "%s:%hu", remote_ip, remote_port);
     GekkoNetAddress remote_address = { .data = remote_address_str, .size = strlen(remote_address_str) };
+
+    /* Task #119: record the canonical peer registration with the adapter.
+     * GekkoNet matches inbound packets against this exact string and has
+     * no relearn API, so if the authenticated peer later moves (S2 retry
+     * from a fresh socket), the adapter translates in both directions
+     * around this fixed registration — see sdl_net_adapter.c. A relearn
+     * that lands BEFORE this line already updated remote_port above, so
+     * canonical == actual again here. */
+    SDLNetAdapter_SetCanonicalPeer(remote_ip, remote_port);
 
     for (int i = 0; i < PLAYER_COUNT; i++) {
         const bool is_local_player = (i == player_number);
@@ -1700,6 +1791,11 @@ static void process_session() {
             SDL_Log("[netplay sess=%08x] event=session-started frame=%d",
                     s_session_uuid, s_last_advance_frame);
             session_state = NETPLAY_SESSION_RUNNING;
+            // Task #119: the rescue window closes the moment the session
+            // is real — from here GekkoNet's own traffic keeps the pair
+            // alive and a punch payload has nothing left to rescue. The
+            // running path is exactly as wide as it was pre-#119.
+            LatePunch_Disarm();
 #if ENABLE_PERF_TELEMETRY
             /* Task #69.3 — probed after session_state becomes RUNNING, so
              * the logged barrier= column reads 1 and the rest of the row
@@ -1708,7 +1804,7 @@ static void process_session() {
              * at: #72 widened Ldreq_BarrierActive() (gd3rd.c:652) to also
              * cover TRANSITIONING and CONNECTING, so the barrier has been
              * active since session_state first became TRANSITIONING
-             * (netplay.c:2072 / :2114). */
+             * (netplay.c:2168 / :2114). */
             Ldreq_LogSessionProbe("session-running", s_last_advance_frame);
 #endif
             // P-2.1 fix: re-seed last-advance now so the watchdog clock
@@ -2070,6 +2166,19 @@ void Netplay_TickDirectP2P() {
     s_mist_peer_hello_ok = false;
 
     session_state = NETPLAY_SESSION_TRANSITIONING;
+
+    // Task #119: the pre-session rescue window opens here — socket, peer
+    // endpoint and token are all committed (do_handoff ran before nav
+    // called Netplay_BeginDirectP2P). Arm the late-punch layer so a peer
+    // whose race ended one-sided can still confirm against us and, via
+    // the S2 retry's fresh socket, be relearned. Kill switch first: the
+    // pre-#119 behaviour is one config flip away, so any regression in
+    // the field is attributable in minutes.
+    if (s_punch_token_valid && remote_ip != NULL && remote_port != 0 &&
+        !Config_GetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_LATE_PUNCH)) {
+        LatePunch_Arm(acquire_active_socket(), s_punch_token,
+                      remote_ip, remote_port);
+    }
 }
 
 void Netplay_SetMatchmakingParams(const char* server_ip, int server_port) {
@@ -2174,6 +2283,11 @@ void Netplay_Run() {
 
     switch (session_state) {
     case NETPLAY_SESSION_TRANSITIONING:
+        /* Task #119: keep speaking the authenticated punch protocol for
+         * the whole pre-session window — see late_punch_service. During
+         * this phase the MIST drain (mist_netio_recv) is the receive-side
+         * hook. */
+        late_punch_service();
         /* S3: user-reachable abort — the MIST retry window below can
          * legitimately spend up to ~20 s waiting on a slow-booting peer,
          * and pre-S3 there was no way out but killing the process. Check
@@ -2283,6 +2397,10 @@ void Netplay_Run() {
         break;
 
     case NETPLAY_SESSION_CONNECTING: {
+        /* Task #119: still inside the rescue window — GekkoNet owns the
+         * socket now, so the receive-side hook has moved to the adapter's
+         * receive_data; the send/relearn side stays here. */
+        late_punch_service();
         /* S3 Part A: CONNECTING is now (a) user-abortable, (b) bounded
          * by a wall-clock deadline with an attributable reason, and
          * (c) log-visible via a 5 s progress line — see the S3 comment
@@ -2417,6 +2535,13 @@ void Netplay_Run() {
 
             s_session_uuid = 0;  // Mark closed so a stray re-entry doesn't double-log.
         }
+
+        // Task #119: stop answering punches BEFORE the socket dies, and
+        // retire the token with the session that owned it — the next
+        // session derives its own. Idempotent (SessionStarted usually
+        // already disarmed).
+        LatePunch_Disarm();
+        s_punch_token_valid = false;
 
         // Step 6 (plan P-2 #18): fire the orchestrator-registered teardown
         // callback before we touch the socket. The callback needs the STUN
@@ -2605,6 +2730,22 @@ void Netplay_SetStunSocket(struct NET_DatagramSocket* socket) {
         NET_DestroyDatagramSocket(stun_socket);
     }
     stun_socket = sock;
+}
+
+// Task #119 — do_handoff hands over the S4a punch token alongside the
+// punched socket, so the pre-session window can keep answering
+// authenticated punches (late_punch.h). NULL/false clears it, which is
+// what the non-direct-P2P session paths (matchmaking, LAN CLI) leave in
+// place: with no token the late-punch layer never arms and those paths
+// are bitwise unchanged.
+void Netplay_SetPunchToken(const uint8_t* token, bool valid) {
+    if (token != NULL && valid) {
+        SDL_memcpy(s_punch_token, token, sizeof(s_punch_token));
+        s_punch_token_valid = true;
+    } else {
+        SDL_memset(s_punch_token, 0, sizeof(s_punch_token));
+        s_punch_token_valid = false;
+    }
 }
 
 // Step 6 (plan P-2 #18) — single-slot teardown callback.
