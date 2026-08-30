@@ -932,6 +932,33 @@ int Netplay_Test_MistHandshake(void) {
                             hello, hello_len, MIST_MSG_REJECT,
                             MIST_REJECT_PROTO_MISMATCH);
 
+    /* (j2) THE v2 -> v3 BOUNDARY, PINNED TO A LITERAL.
+     *
+     * Case (j) above is version-RELATIVE (MIST_PROTO_VER + 1), so it stays
+     * green for any value of MIST_PROTO_VER and therefore says nothing about
+     * which versions are actually incompatible. This case pins the specific
+     * pairing task #115 exists to refuse: a peer still advertising proto_ver
+     * 2 -- i.e. any build from before task #111 replaced the desync
+     * checksum's PLW input with the canonical member image -- must be
+     * REJECTED, not merely warned at.
+     *
+     * That pairing is otherwise undetectable. build_hash difference is a
+     * warning only (mist_handshake.c), and state_ver is sizeof(GameState),
+     * which a checksum-semantics change need not move at all. Without this
+     * reject the two builds connect and then disagree on every frame's
+     * checksum.
+     *
+     * Deliberately a literal 2, not (MIST_PROTO_VER - 1): if MIST_PROTO_VER
+     * is ever reverted to 2, this case must FAIL rather than quietly follow
+     * it down. */
+    hello_len = mist_handshake_build_frame_ex(
+        MIST_MSG_HELLO, "armv7", "mister", "abcdef0",
+        (uint8_t)2, mist_handshake_local_state_ver(),
+        0, NULL, hello, sizeof(hello));
+    fails += run_reply_case("(j2) reply to pre-#111 proto_ver=2 hello -> reject",
+                            hello, hello_len, MIST_MSG_REJECT,
+                            MIST_REJECT_PROTO_MISMATCH);
+
     hello_len = mist_handshake_build_legacy_frame(MIST_MSG_HELLO, "armv7",
                                                   "mister", "abcdef0",
                                                   hello, sizeof(hello));
@@ -1015,8 +1042,20 @@ int Netplay_Test_MistHandshake(void) {
         v1[6] = (uint8_t)(new_payload_len & 0xFF);
         v1_len -= 8; /* drop the digest bytes entirely */
 
+        /* The expected text tracks MIST_PROTO_VER instead of hardcoding the
+         * local version. What this case asserts is that the PROTO check fires
+         * BEFORE the digest read on a frame with no digest to read -- the
+         * local version number is incidental to that. It was pinned to a
+         * literal "v2" and so broke on the task #115 bump to v3 while still
+         * testing exactly what it always did. Building the string keeps the
+         * assertion (v1 vs OURS, proto-mismatch wording) and drops only the
+         * false pin. The peer side stays a literal v1: that IS the subject. */
+        char want_proto_text[64];
+        snprintf(want_proto_text, sizeof(want_proto_text),
+                 "Handshake v1 vs v%u", (unsigned)MIST_PROTO_VER);
+
         if (mist_handshake_parse_response(v1, v1_len) != -1 ||
-            strstr(mist_handshake_last_reject_reason(), "Handshake v1 vs v2") == NULL) {
+            strstr(mist_handshake_last_reject_reason(), want_proto_text) == NULL) {
             fprintf(stderr,
                     "[test_mist_handshake] (q) digest-less v1 ack FAIL: expected the "
                     "proto-mismatch text, got '%s'\n",

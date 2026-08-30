@@ -31,7 +31,9 @@
 /* R-1: the state_ver compatibility field is sizeof(GameState), read
  * symbolically so it auto-tracks future re-pins of the rollback state
  * layout. On 32-bit builds this equals EXPECTED_GAME_STATE_SIZE via the
- * _Static_assert in game_state.c (17676 as of the #296 port). */
+ * _Static_assert in game_state.c (17772 as of task #109; the "17676 as of
+ * the #296 port" this comment used to quote had drifted four re-pins --
+ * 17684, 17688, 17784, 17772 -- behind the value it claimed to state). */
 #include "netplay/game_state.h"
 
 #include <errno.h>
@@ -301,7 +303,7 @@ static bool read_u64be(const uint8_t* payload, size_t payload_len, size_t* off,
  *     and the two sims would diverge mid-match.
  *
  * ORDER IS LOAD-BEARING: proto_ver is checked BEFORE the digest is even
- * read, so a v1 peer gets "Handshake v1 vs v2 - update one side" (the
+ * read, so a v1 peer gets "Handshake v1 vs v3 - update one side" (the
  * actionable message) rather than a confusing digest error about a
  * field its build never sent.
  *
@@ -356,7 +358,8 @@ static uint8_t classify_peer_payload(const uint8_t* payload, size_t payload_len,
 
     uint64_t peer_balance = 0;
     if (!read_u64be(payload, payload_len, &off, &peer_balance)) {
-        /* proto_ver matched ours (v2) but the mandatory digest field is
+        /* proto_ver matched ours (v2+; the field exists in v2 and v3)
+         * but the mandatory digest field is
          * missing — a truncated or hand-rolled frame. */
         snprintf(text, text_cap, "malformed handshake payload (no balance digest)");
         return MIST_REJECT_MALFORMED;

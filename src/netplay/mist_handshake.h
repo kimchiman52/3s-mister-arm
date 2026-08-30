@@ -17,11 +17,12 @@
  *   5       2      payload_len (big-endian, max MIST_PAYLOAD_MAX)
  *   7       N      payload
  *
- * Hello/ack payload (proto_ver 2 layout):
+ * Hello/ack payload (proto_ver 2 and 3 share this layout; v3 changed
+ * checksum semantics only — see MIST_PROTO_VER below):
  *   three null-terminated strings
  *     "armv7\0" "mister\0" "<build_hash_7chars>\0"
  *   followed by fixed-width compatibility fields:
- *     +0  u8   proto_ver      (MIST_PROTO_VER, currently 2)
+ *     +0  u8   proto_ver      (MIST_PROTO_VER, currently 3)
  *     +1  u16  state_ver      (big-endian; sizeof(GameState) — equals the
  *                              EXPECTED_GAME_STATE_SIZE pin on 32-bit builds
  *                              via the _Static_assert in game_state.c)
@@ -98,8 +99,27 @@ extern "C" {
  * v2: appended the u64 balance_digest field AND made arcade balance the
  * netplay-required default — v1 builds force PS2 balance in netplay, so a
  * v1<->v2 pair would desync on balance alone. The proto_ver reject is the
- * correct outcome for that pairing, not just a parsing concern. */
-#define MIST_PROTO_VER 2
+ * correct outcome for that pairing, not just a parsing concern.
+ *
+ * v3 (task #115, 2026-08-29): THE PAYLOAD LAYOUT IS UNCHANGED FROM v2.
+ * This is a compatibility bump, not a parsing one, and it is exactly the
+ * case the MIST_STATE_VER comment in mist_handshake.c says to bump for.
+ *
+ * Task #111 replaced the desync checksum's PLW input: it deleted the
+ * "pointer-like u64" sweep in GameState_SanitizePlwCopyForHash and now
+ * hashes a canonical member image (GameState_EmitPlwCanonical) instead of
+ * raw struct bytes. Pre- and post-#111 builds therefore compute DIFFERENT
+ * checksums for identical gameplay, every frame.
+ *
+ * Nothing else stopped that pairing. build_hash difference is a WARNING
+ * only and deliberately so. state_ver is sizeof(GameState), which task
+ * #109 does happen to move (17784 -> 17772) in the same merge queue — but
+ * that is an INCIDENTAL side effect of an unrelated change, not a guard:
+ * had #111 landed alone, or had a future checksum change leave the struct
+ * size untouched, state_ver would have matched and the two builds would
+ * have connected and desynced immediately. The guard has to be the one
+ * field whose whole job is "these builds are not compatible". */
+#define MIST_PROTO_VER 3
 
 /* Reject reason code at payload[0]. Sent as a single unsigned byte.
  * Values are wire-stable — append only, never renumber. */
