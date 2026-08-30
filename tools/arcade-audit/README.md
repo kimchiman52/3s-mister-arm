@@ -8,7 +8,7 @@ PS2.
 
 This is the tooling behind the root cause of upstream issue #363 ("Ryu's Denjin
 Hadoken crashes the game"). **Full findings, worklist and repro recipe:**
-`~/Desktop/3sx-arcade-rom-data-accuracy-2026-08-29.md`.
+[`docs/research-arcade-cg-data-accuracy.md`](../../docs/research-arcade-cg-data-accuracy.md).
 
 ## Run it
 
