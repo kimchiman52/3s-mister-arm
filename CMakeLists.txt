@@ -4,6 +4,47 @@ project(3s-arm LANGUAGES C CXX)
 include(${PROJECT_SOURCE_DIR}/cmake/imgui_sources.cmake)
 
 # ======================================
+# Compiler cache
+# ======================================
+#
+# ccache is wired as a compiler *launcher* rather than by pointing
+# CMAKE_C_COMPILER at a ccache shim. That distinction is what keeps it
+# compatible with this project's provenance guards:
+#
+#   - The compiler CMake probes, records in CMakeCache.txt and reports in the
+#     build log is still the real clang, so nothing about the toolchain
+#     identity becomes indirect.
+#   - Every -D stays on the command line ccache hashes. MIST_BUILD_HASH is
+#     attached to src/netplay/mist_handshake.c and src/netplay/netplay.c as a
+#     COMPILE_DEFINITION (see the MIST_BUILD_HASH_OVERRIDE block below), so a
+#     build of a different commit presents a different command line for
+#     exactly those two files and cannot hit an entry cached for another
+#     commit. Files that do not carry the hash are content-identical between
+#     those commits and reusing their objects is correct.
+#   - ccache's default sloppiness is deliberately left alone. In particular
+#     `time_macros` is NOT set, so a translation unit using __DATE__/__TIME__
+#     is never served from cache.
+#
+# The generated cmake/port_build_config.h.in carries feature flags only and no
+# build identity, so it does not force a full rebuild between commits.
+#
+# Must be set before the first add_executable(): a target captures
+# CMAKE_<LANG>_COMPILER_LAUNCHER at creation time.
+option(ENABLE_CCACHE "Use ccache as the compiler launcher when it is available" ON)
+if(ENABLE_CCACHE)
+    find_program(CCACHE_PROGRAM ccache)
+    if(CCACHE_PROGRAM)
+        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        message(STATUS "ccache: enabled (${CCACHE_PROGRAM})")
+    else()
+        message(STATUS "ccache: requested but not found; building uncached")
+    endif()
+else()
+    message(STATUS "ccache: disabled by -DENABLE_CCACHE=OFF")
+endif()
+
+# ======================================
 # Options and platform setup
 # ======================================
 
