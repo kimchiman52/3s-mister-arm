@@ -411,15 +411,15 @@ NatpmpParse Natpmp_ParsePmpMapResponse(const uint8_t* buf, int len,
  * PROBE, and that sequence is reachable:
  *
  *   - the probe times out and SDL_DetachThread abandons the worker while
- *     it is still inside Natpmp_AddMapping (direct_p2p.c:2490), and
+ *     it is still inside Natpmp_AddMapping (direct_p2p.c:2493), and
  *     try_portmap returns false WITHOUT adopting the result: the
  *     s_upnp_mapping assignment sits on the joined path only
- *     (direct_p2p.c:2584), so s_upnp_mapping.active stays false;
+ *     (direct_p2p.c:2587), so s_upnp_mapping.active stays false;
  *   - the FAILED_STUN auto-retry re-spawns host_thread_fn
- *     (direct_p2p.c:5700);
+ *     (direct_p2p.c:5719);
  *   - the "reuse the live mapping" shortcut is gated on that same
- *     s_upnp_mapping.active (direct_p2p.c:3446), so it is SKIPPED;
- *   - try_portmap runs a second time (direct_p2p.c:3482) and spawns a
+ *     s_upnp_mapping.active (direct_p2p.c:3449), so it is SKIPPED;
+ *   - try_portmap runs a second time (direct_p2p.c:3485) and spawns a
  *     SECOND worker into Natpmp_AddMapping while the straggler may still
  *     be inside it.
  *

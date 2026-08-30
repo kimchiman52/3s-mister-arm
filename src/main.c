@@ -1063,6 +1063,10 @@ int Netplay_Test_MistHandshake(void);
 // Same gating pattern as the other Phase 6 tests — ENABLE_NETPLAY gates
 // TU inclusion, ENABLE_NETPLAY_TESTS inside the TU gates the real body.
 int Netplay_Test_RoomCode(void);
+// Task #119: forward-decl of the late-punch rescue-layer unit harness
+// (src/netplay/test_late_punch.c). Pins the accept/reject/relearn
+// decision that the netns proof cannot see. Same gating pattern.
+int Netplay_Test_LatePunch(void);
 // STUN direct P2P Step 12 (docs/plan-stun-direct-p2p.md): forward-decl
 // of the STUN mock-server test harness (src/netplay/test_stun_mock.c).
 // Spawns a localhost UDP listener that echoes a crafted Binding Response
@@ -1130,7 +1134,8 @@ int main(int argc, const char* argv[]) {
     AFS_SetInjectedLatencyMs(configuration.test.afs_inject_latency_ms);
 
     if (configuration.test_netplay_event_queue || configuration.test_mist_handshake ||
-        configuration.test_room_code || configuration.test_stun_mock ||
+        configuration.test_room_code || configuration.test_late_punch ||
+        configuration.test_stun_mock ||
         configuration.test_sparse_effect_save || configuration.test_bilateral_punch ||
         configuration.test_connect_observability ||
         configuration.test_gs_coverage) {
@@ -1163,6 +1168,16 @@ int main(int argc, const char* argv[]) {
 #else
         fprintf(stderr,
                 "--test-room-code requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+    if (configuration.test_late_punch) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_LatePunch();
+#else
+        fprintf(stderr,
+                "--test-late-punch requires a build with ENABLE_NETPLAY=ON.\n");
         return 2;
 #endif
     }

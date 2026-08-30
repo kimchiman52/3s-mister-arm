@@ -193,6 +193,13 @@ typedef struct Configuration {
      * is defined (otherwise the stub returns 2). The test is pure
      * in-process — no socket or network dependency. */
     bool test_room_code;
+    /* Task #119: when true, main() runs the late-punch rescue-layer
+     * unit harness (src/netplay/test_late_punch.c) and exits. Honors
+     * the CLI flag --test-late-punch. Same gating pattern as the other
+     * netplay harnesses (stub returns 2 without ENABLE_NETPLAY_TESTS).
+     * In-process + loopback sockets only — no netns dependency; the
+     * accept/reject/relearn decision is what it pins. */
+    bool test_late_punch;
     /* Step 12 of docs/plan-stun-direct-p2p.md: when true, main() runs
      * the STUN mock-server test harness and exits. Honors the CLI flag
      * --test-stun-mock. Parsed unconditionally; the real test body is

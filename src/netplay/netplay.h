@@ -2,6 +2,7 @@
 #define NETPLAY_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Forward declaration so netplay.h does not pull in <SDL3_net/SDL_net.h>.
  * Mirrors upstream /tmp/3sxtra/src/netplay/netplay.h typedef hygiene. */
@@ -41,6 +42,13 @@ void Netplay_TickDirectP2P();
 // without an intervening teardown destroys the previously held socket
 // before replacing it. Pass NULL to clear.
 void Netplay_SetStunSocket(struct NET_DatagramSocket* socket);
+// Task #119: hand over the S4a punch-auth token (STUN_PUNCH_TOKEN_LEN =
+// 8 bytes, stun.h) alongside the punched socket, from do_handoff. It
+// arms the late-punch rescue layer (late_punch.h) for the pre-session
+// window so a peer whose race ended one-sided can still connect late.
+// Pass (NULL, false) to clear; paths that never call this (matchmaking,
+// LAN CLI) never arm the layer.
+void Netplay_SetPunchToken(const uint8_t* token, bool valid);
 // Step 6 (docs/plan-stun-direct-p2p.md, P-2 #18): register a single
 // callback fired at the top of NETPLAY_SESSION_EXITING teardown, before
 // the STUN socket is destroyed. Used by the direct-P2P orchestrator

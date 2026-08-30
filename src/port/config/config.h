@@ -89,6 +89,16 @@
 #define CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS "netplay-direct-p2p-register-interval-ms"
 #define CFG_KEY_NETPLAY_DIRECT_P2P_STUN_KEEPALIVE_MS "netplay-direct-p2p-stun-keepalive-ms"
 
+/* Task #119: kill switch for the late-punch rescue layer (late_punch.h)
+ * — the connected side answering token-authenticated punches between
+ * handoff and GekkoSessionStarted, so a one-sided race outcome degrades
+ * to a delayed connect instead of a 15 s hang + burned room code. Bool,
+ * default false (layer ON). Checked once, at arm time
+ * (Netplay_TickDirectP2P); flipping it restores the pre-#119 window
+ * behaviour exactly, which is what makes a field regression
+ * attributable to this layer in one config flip. */
+#define CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_LATE_PUNCH "netplay-direct-p2p-disable-late-punch"
+
 /* NOTE: the three S5 relay keys that used to live here
  * (netplay-direct-p2p-disable-relay / -force-relay / -relay-budget-ms)
  * were REMOVED with the relay rung itself. dict_iterator() in config.c

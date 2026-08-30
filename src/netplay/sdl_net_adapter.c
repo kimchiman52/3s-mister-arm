@@ -1,5 +1,6 @@
 #include "netplay/sdl_net_adapter.h"
 
+#include "netplay/late_punch.h"
 #include "netplay/rendezvous.h"
 #include "netplay/stun.h"
 #include "port/paths.h"
@@ -20,6 +21,68 @@ static int result_count = 0;
 
 static NET_Address* cached_remote = NULL;
 static Uint16 cached_port = 0;
+
+// === Task #119: peer-endpoint relearn, at the adapter seam ===
+//
+// GekkoNet registers the remote actor ONCE, by "ip:port" string, at
+// configure time (netplay.c configure_gekko), and its inbound handlers
+// match by a raw byte-compare of that string — NetAddress::Equals is a
+// size check + memcmp in the vendored library's backend (upstream
+// GekkoLib source @ 7be848c; only build/include + build/lib ship here) —
+// with no relearn API on the public surface (gekkonet.h). When the peer
+// legitimately moves — the S2 joiner auto-retry punches back in from a
+// FRESH socket, i.e. a new NAT mapping — GekkoNet would send to a dead
+// endpoint and ignore the live one forever. Rather than patch the
+// vendored library (pinned @ 7be848c), the adapter translates:
+//
+//   send:    the registered (canonical) address string keeps resolving
+//            to wherever the authenticated peer actually is now;
+//   receive: datagrams from the current actual endpoint are PRESENTED
+//            to GekkoNet under the canonical string it registered.
+//
+// GekkoNet never observes the move. The ONLY writer of the actual
+// endpoint is netplay.c's relearn application, which acts exclusively
+// on LatePunch's token-authenticated, same-IP-restricted verdict
+// (late_punch.h) — an unauthenticated source can shift nothing here.
+// Until SDLNetAdapter_RetargetPeer first diverges from the canonical
+// endpoint, every path below is byte-for-byte the pre-#119 behaviour.
+static char s_canonical_peer[64] = { 0 };
+static char s_actual_peer[64] = { 0 };
+static bool s_retarget_active = false;
+
+void SDLNetAdapter_SetCanonicalPeer(const char* ip, Uint16 port) {
+    if (ip == NULL || ip[0] == '\0') {
+        s_canonical_peer[0] = '\0';
+        s_actual_peer[0] = '\0';
+        s_retarget_active = false;
+        return;
+    }
+    // %d, not %u: must be byte-identical to the strings this file and
+    // configure_gekko build ("%s:%d" / "%s:%hu" agree for 0..65535).
+    SDL_snprintf(s_canonical_peer, sizeof(s_canonical_peer), "%s:%d", ip, (int)port);
+    SDL_strlcpy(s_actual_peer, s_canonical_peer, sizeof(s_actual_peer));
+    s_retarget_active = false;
+}
+
+void SDLNetAdapter_RetargetPeer(const char* ip, Uint16 port) {
+    if (ip == NULL || ip[0] == '\0' || port == 0) {
+        return;
+    }
+    SDL_snprintf(s_actual_peer, sizeof(s_actual_peer), "%s:%d", ip, (int)port);
+    s_retarget_active =
+        (SDL_strcmp(s_actual_peer, s_canonical_peer) != 0) &&
+        s_canonical_peer[0] != '\0';
+    // Force send_data's lazy resolver to re-resolve toward the actual
+    // endpoint on the next outbound packet.
+    if (cached_remote != NULL) {
+        NET_UnrefAddress(cached_remote);
+        cached_remote = NULL;
+    }
+    cached_port = 0;
+    SDL_Log("[sdl_net_adapter] retargeted peer sends to %s (canonical %s%s)",
+            s_actual_peer, s_canonical_peer,
+            s_retarget_active ? "" : " — identical, passthrough");
+}
 
 // === Tier-1 netplay diag — Item 3: per-packet-type counters ===
 // Indexed by (PacketType byte & 7). 8 slots cover the 7 enumerated types
@@ -217,7 +280,15 @@ static void send_data(GekkoNetAddress* addr, const char* data, int length) {
     if (cached_remote == NULL) {
         char ip[64];
         int port = 0;
-        SDL_sscanf((const char*)addr->data, "%63[^:]:%d", ip, &port);
+        // Task #119: after a relearn, the canonical string GekkoNet hands
+        // us still names the endpoint it registered at configure time; the
+        // authenticated peer now lives at s_actual_peer. Resolve toward
+        // where the peer IS, not where it WAS. Single-peer assumption
+        // unchanged (see the cached_remote comment above).
+        const char* target = s_retarget_active
+                                 ? s_actual_peer
+                                 : (const char*)addr->data;
+        SDL_sscanf(target, "%63[^:]:%d", ip, &port);
         cached_remote = NET_ResolveHostname(ip);
         cached_port = (Uint16)port;
     }
@@ -301,9 +372,39 @@ static GekkoNetResult** receive_data(int* length) {
             continue;
         }
         const char* ip_str = NET_GetAddressString(dgram->addr);
+
+        // Task #119: punch traffic belongs to the late-punch layer, never
+        // to GekkoNet. Armed, LatePunch_HandleDatagram answers / relearns /
+        // counts by its own rules (late_punch.c); armed or not, a
+        // punch-prefixed datagram is DROPPED here — "3SX_PUNCH" starts
+        // with 0x33, outside the 1..7 PacketType range, so this can only
+        // ever catch our own control traffic (the same argument as the
+        // '3SXR' drop above, which cannot match a punch: the prefixes
+        // diverge at byte 3, '_' vs 'R'). Pre-#119 a stray punch keepalive
+        // reached GekkoNet as a type-51 packet it had to ignore; now the
+        // peer's pre-session keepalive stream never reaches it at all.
+        if (dgram->buf != NULL &&
+            Stun_HasPunchPrefix(dgram->buf, dgram->buflen)) {
+            (void)LatePunch_HandleDatagram(dgram->buf, dgram->buflen,
+                                           ip_str, dgram->port);
+            NET_DestroyDatagram(dgram);
+            dgram = NULL;
+            continue;
+        }
+
         char addr_str[64];
 
         SDL_snprintf(addr_str, sizeof(addr_str), "%s:%d", ip_str, (int)dgram->port);
+
+        // Task #119: present datagrams from the relearned peer endpoint
+        // under the canonical string GekkoNet registered — its handlers
+        // match by byte-compare and would otherwise ignore the live peer
+        // (see the relearn block at the top of this file). Counters/ring
+        // below then log the canonical endpoint too, which keeps one
+        // peer identity per session in the diag stream.
+        if (s_retarget_active && SDL_strcmp(addr_str, s_actual_peer) == 0) {
+            SDL_strlcpy(addr_str, s_canonical_peer, sizeof(addr_str));
+        }
 
         // Tier-1 netplay diag — Item 3 + Item 4: account for every received
         // packet before we copy it into the result list. dgram->buflen is
@@ -358,4 +459,9 @@ void SDLNetAdapter_Destroy() {
         cached_remote = NULL;
     }
     cached_port = 0;
+    // Task #119: a stale retarget must not survive into the next session
+    // (whose canonical peer is a fresh configure_gekko registration).
+    s_canonical_peer[0] = '\0';
+    s_actual_peer[0] = '\0';
+    s_retarget_active = false;
 }

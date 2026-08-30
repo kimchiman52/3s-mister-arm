@@ -652,7 +652,7 @@ Individual phase commits: `36ffbb07` (Phase 7 — cross-compile GekkoNet + SDL3_
 4. Add `CFG_KEY_NETPLAY_PORT`, `CFG_KEY_NETPLAY_INPUT_DELAY`, `CFG_KEY_LOBBY_SERVER_URL`, `CFG_KEY_NETPLAY_ALLOW_CROSS_PLATFORM` to `src/port/config/` (research doc §18.4).
 5. Implement Layer 1 room-name prefix + client-side list filter.
 6. Implement Layer 2 `display_name` suffix + client-side strstr filter on `/rooms/list`, `/searching`, `/presence` responses (per §8.2.5).
-7. Implement Layer 3 `MIST` magic-prefix handshake on GekkoNet socket, mirroring chat `3SXC` pattern at `sdl_net_adapter.c:14` (see §8.2.4 for insertion point + wire format).
+7. Implement Layer 3 `MIST` magic-prefix handshake on GekkoNet socket, mirroring chat `3SXC` pattern at `sdl_net_adapter.c:15` (see §8.2.4 for insertion point + wire format).
 8. Explicitly gate `/match_result` + `/match_result/replay` POSTs off.
 9. Run internet match.
 
@@ -874,7 +874,7 @@ Goal: zero cross-arch matches get past matchmaking → no silent desyncs for use
 
 **Layer 2 — `display_name` suffix (PRIMARY mechanism).** The lobby server destructures a fixed field set in both `POST /presence` (`tools/lobby-server/lobby-server.js:2679-2710` — re-verified 2026-04-20: only `{ player_id, display_name, region, room_code, connect_to, rtt_ms, connection_type, ft }` make it to the stored record) and `POST /searching/start` (`lobby-server.js:2713-2727` — only `data.player_id` is read; all other keys are silently dropped). **Extra JSON fields ARE stripped.** Therefore the arch tag cannot ride on an arbitrary field; encode it in `display_name` as a `" [MiSTer]"` suffix instead. Display name is capped at 31 chars server-side (see `lobby-server.js:2694` `.slice(0,31)`) so budget the 9-char suffix (user_name up to 22 chars). Clients browsing `/presence` or `/searching` filter by substring match on the returned `display_name`. Cost: ~15 LOC (build suffix on publish; strstr filter on read). See §8.2.5 for the wire format detail.
 
-**Layer 3 — Authoritative handshake rejection.** After STUN pairing, before GekkoNet starts exchanging inputs, exchange a `MIST` magic-prefix packet on the GekkoNet socket containing `{build_hash, arch="armv7", platform="mister"}`. If opponent doesn't respond with a matching profile within a short timeout (say 500 ms), abort session with user-facing error: "Opponent is not running a MiSTer build. Match cancelled." Uses the same pattern as 3sxtra's OOB chat magic (`3SXC` at `sdl_net_adapter.c:14`). **This is the actual desync preventer.** Cost: ~80 LOC.
+**Layer 3 — Authoritative handshake rejection.** After STUN pairing, before GekkoNet starts exchanging inputs, exchange a `MIST` magic-prefix packet on the GekkoNet socket containing `{build_hash, arch="armv7", platform="mister"}`. If opponent doesn't respond with a matching profile within a short timeout (say 500 ms), abort session with user-facing error: "Opponent is not running a MiSTer build. Match cancelled." Uses the same pattern as 3sxtra's OOB chat magic (`3SXC` at `sdl_net_adapter.c:15`). **This is the actual desync preventer.** Cost: ~80 LOC.
 
 **Config override:** `CFG_KEY_NETPLAY_ALLOW_CROSS_PLATFORM=false` default. Advanced users can disable the handshake guard only for 32-bit armv7 peers (e.g., experimental Android 32-bit crossplay — see research doc §9.7.7 niche case). Enabling produces a prominent warning. Default stays false.
 
@@ -908,7 +908,7 @@ Reject payload: one-byte reason code + human-readable string.
 
 **Timeout & retry:** 5× retransmit hellos at 100 ms each; accept ack from opponent any time inside the 500 ms window. If no ack, session teardown with user-facing "Opponent is not running a compatible MiSTer build. Match cancelled."
 
-**Collision with GekkoNet:** GekkoNet's `zpp::serializer` wraps `MsgHeader { PacketType type; u16 magic; }` (`/tmp/GekkoNet-head/GekkoLib/include/net.h:38-46`). The serialized wire bytes start with the type enum (packed) then the magic u16. A 4-byte `"MIST"` prefix cannot collide because GekkoNet's type enum at byte 0 is in range `[0, 6]` (`net.h:26-36`) — never `0x4D` ('M'). Same reasoning the existing `3SXC` (`0x33`) relies on at `sdl_net_adapter.c:14`.
+**Collision with GekkoNet:** GekkoNet's `zpp::serializer` wraps `MsgHeader { PacketType type; u16 magic; }` (`/tmp/GekkoNet-head/GekkoLib/include/net.h:38-46`). The serialized wire bytes start with the type enum (packed) then the magic u16. A 4-byte `"MIST"` prefix cannot collide because GekkoNet's type enum at byte 0 is in range `[0, 6]` (`net.h:26-36`) — never `0x4D` ('M'). Same reasoning the existing `3SXC` (`0x33`) relies on at `sdl_net_adapter.c:15`.
 
 **Pseudocode (do NOT copy verbatim; illustrative only):**
 

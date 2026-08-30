@@ -44,10 +44,20 @@
 #endif
 
 #include "netplay/direct_p2p.h"
+#include "netplay/connect_fail.h"
 #include "netplay/natpmp.h"
 #include "netplay/stun.h"
 #include "port/config/config.h"
 #include "port/paths.h"
+
+#include "netplay_probe_stub.h"
+#ifdef PROBE_HAS_SESSION
+/* Task #119: optional post-handoff GekkoNet session phase. Compiled only
+ * when the probe build found libGekkoNet.a; a --session request against
+ * a probe built without it is a RIG_ERROR at argument parse — "did not
+ * run" must never look like "passed" (see the exit-code block above). */
+#include "session_phase.h"
+#endif
 
 #include <SDL3/SDL.h>
 #include <SDL3_net/SDL_net.h>
@@ -143,7 +153,8 @@ static void usage(void) {
         "                 --signal udp://IP:PORT --code-file PATH\n"
         "  [--port N] [--timeout-ms N] [--punch-ms N] [--signal-ms N]\n"
         "  [--race-ms N] [--register-ms N] [--stun-ms N] [--disable-bilateral]\n"
-        "  [--natpmp-gateway IP[:PORT]]\n");
+        "  [--natpmp-gateway IP[:PORT]]\n"
+        "  [--session] [--late-punch 0|1] [--session-grace-ms N]   (task #119)\n");
 }
 
 int main(int argc, char** argv) {
@@ -158,6 +169,13 @@ int main(int argc, char** argv) {
     /* #121: "IP" or "IP:PORT" of the NAT-PMP mock in this side's NAT
      * namespace. NULL keeps the historical behaviour exactly. */
     const char* natpmp_gw = NULL;
+    /* #119: run the post-handoff GekkoNet session phase; late_punch picks
+     * whether the rescue layer arms (1, the shipped default) or the probe
+     * models the pre-#119 window (0 — equivalent by construction to the
+     * production kill switch, both simply skip LatePunch_Arm). */
+    bool session_mode = false;
+    int late_punch_on = 1;
+    int session_grace_ms = 2000;
 
     for (int i = 1; i < argc; i++) {
         const char* a = argv[i];
@@ -175,12 +193,25 @@ int main(int argc, char** argv) {
         else if (!strcmp(a, "--stun-ms"))    stun_ms = atoi(NEXT());
         else if (!strcmp(a, "--disable-bilateral")) disable_bilateral = true;
         else if (!strcmp(a, "--natpmp-gateway")) natpmp_gw = NEXT();
+        else if (!strcmp(a, "--session"))    session_mode = true;
+        else if (!strcmp(a, "--late-punch")) late_punch_on = atoi(NEXT());
+        else if (!strcmp(a, "--session-grace-ms")) session_grace_ms = atoi(NEXT());
         else { fprintf(stderr, "p2p_probe: unknown arg %s\n", a); usage(); return EXIT_RIG_ERROR; }
         #undef NEXT
     }
     if (!role || !stun_arg || !code_file) { usage(); return EXIT_RIG_ERROR; }
     bool is_host = !strcmp(role, "host");
     if (!is_host && strcmp(role, "join")) { usage(); return EXIT_RIG_ERROR; }
+#ifndef PROBE_HAS_SESSION
+    if (session_mode) {
+        fprintf(stderr, "p2p_probe: --session requested but this probe was built "
+                        "without GekkoNet (PROBE_HAS_SESSION off). Refusing to "
+                        "fake a session result.\n");
+        return EXIT_RIG_ERROR;
+    }
+    (void)late_punch_on;
+    (void)session_grace_ms;
+#endif
 
     /* Parse --stun into the test-hook server pool. */
     static StunServerDesc servers[MAX_STUN];
@@ -306,15 +337,64 @@ int main(int argc, char** argv) {
         SDL_Delay(5);
     }
 
+    /* ---- task #119: optional post-handoff session phase -------------------
+     * The pre-#119 probe declared everything past HANDOFF out of scope; the
+     * split brain under test lives exactly there. On HANDOFF, drive the real
+     * GekkoNet/adapter/late_punch stack on the captured socket; on the
+     * CONNECTING deadline, park through the production latch so the JSON's
+     * final_state is the REAL FAILED_HANDSHAKE, produced by the real
+     * direct_p2p_on_teardown. */
+    const char* session_str = "";
+    unsigned ms_to_session = 0;
+    int session_relearns = 0;
+    int exit_override = -1;
+#ifdef PROBE_HAS_SESSION
+    if (session_mode && !timed_out && st == DIRECT_P2P_HANDOFF) {
+        bool tok_valid = false;
+        const unsigned char* tok = ProbeStub_PunchToken(&tok_valid);
+        ProbeSessionReport rep;
+        const int src = ProbeSession_Run(is_host, late_punch_on != 0,
+                                         (unsigned)session_grace_ms,
+                                         ProbeStub_Socket(), ProbeStub_RemoteIp(),
+                                         ProbeStub_RemotePort(), tok, tok_valid,
+                                         &rep);
+        ms_to_session = rep.ms_to_session;
+        session_relearns = rep.relearns;
+        if (src == PROBE_SESSION_STARTED) {
+            session_str = "STARTED";
+        } else if (src == PROBE_SESSION_DEADLINE) {
+            session_str = "DEADLINE";
+            DirectP2P_NotifySessionFailed(CONNECT_FAIL_TIMEOUT_CONNECTING, NULL);
+            ProbeStub_InvokeTeardown();
+            for (int i = 0; i < 5; i++) { DirectP2P_Tick(); SDL_Delay(5); }
+            st = DirectP2P_GetState(); /* the production FAILED_HANDSHAKE park */
+            if (ntrans < MAX_TRANSITIONS) {
+                trans[ntrans].name = state_name(st);
+                trans[ntrans].ms = SDL_GetTicks() - t0;
+                ntrans++;
+            }
+            exit_override = EXIT_NOT_CONNECTED;
+        } else {
+            session_str = "RIG_ERROR";
+            exit_override = EXIT_RIG_ERROR;
+        }
+    } else if (session_mode) {
+        session_str = "SKIPPED"; /* the cascade itself never handed off */
+    }
+#endif
+
     Uint64 total = SDL_GetTicks() - t0;
     const char* outcome = timed_out ? "TIMEOUT"
                         : (st == DIRECT_P2P_HANDOFF ? "CONNECTED" : "NOT_CONNECTED");
 
     printf("{\"ran\":true,\"role\":\"%s\",\"outcome\":\"%s\",\"final_state\":\"%s\","
-           "\"ms_total\":%llu,\"ms_to_handoff\":%llu,\"code\":\"%s\",\"status\":\"%s\","
+           "\"ms_total\":%llu,\"ms_to_handoff\":%llu,"
+           "\"session\":\"%s\",\"ms_to_session\":%u,\"relearns\":%d,"
+           "\"code\":\"%s\",\"status\":\"%s\","
            "\"transitions\":[",
            is_host ? "host" : "join", outcome, state_name(st),
            (unsigned long long)total, (unsigned long long)t_handoff,
+           session_str, ms_to_session, session_relearns,
            code, DirectP2P_GetStatusText() ? DirectP2P_GetStatusText() : "");
     for (int i = 0; i < ntrans; i++)
         printf("%s{\"s\":\"%s\",\"ms\":%llu}", i ? "," : "",
@@ -324,6 +404,7 @@ int main(int argc, char** argv) {
 
     DirectP2P_Cancel();
 
+    if (exit_override >= 0) return exit_override;
     if (timed_out) return EXIT_TIMEOUT;
     return (st == DIRECT_P2P_HANDOFF) ? EXIT_CONNECTED : EXIT_NOT_CONNECTED;
 }

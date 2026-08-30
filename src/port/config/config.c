@@ -118,6 +118,8 @@ static const ConfigEntry default_entries[] = {
      * mapping so drift never happens, which beats detecting it. Still
      * only 0.067 pkt/s toward the STUN server; floor clamp is 5000. */
     { .key = CFG_KEY_NETPLAY_DIRECT_P2P_STUN_KEEPALIVE_MS, .type = CFG_INT, .value.i = 15000 },
+    /* Task #119: late-punch rescue layer kill switch (see config.h). */
+    { .key = CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_LATE_PUNCH, .type = CFG_BOOL, .value.b = false },
     /* S6 candidate racing (docs/plan-netplay-connection.md §8). 8000 ms
      * bounds the whole post-STUN cascade now that its legs overlap:
      * a room-code punch leg and a DELIVER punch leg (each

@@ -129,9 +129,12 @@ typedef struct {
      * (re-derived by the drift handler when the code is re-encoded);
      * consumed by host_tick_receive's datagram gate and the bilateral
      * punch worker. JOINER: derived per join_attempt from the decoded
-     * code into a worker-stack copy — this field stays host-only.
-     * token_valid gates the host's punch gate fail-closed: with no
-     * valid token NO datagram is ever accepted as the peer. */
+     * code into a worker-stack copy, and — task #119 — mirrored into
+     * this field so do_handoff can hand it to netplay.c's late-punch
+     * rescue layer (both roles keep answering authenticated punches
+     * until the session starts; late_punch.h). token_valid gates the
+     * host's punch gate fail-closed: with no valid token NO datagram is
+     * ever accepted as the peer. */
     uint8_t punch_token[STUN_PUNCH_TOKEN_LEN];
     bool punch_token_valid;
 
@@ -3906,6 +3909,15 @@ static DirectP2PState join_attempt(uint16_t bind_port) {
             set_fail(CONNECT_FAIL_INTERNAL);
             return DIRECT_P2P_FAILED_STUN;
         }
+        /* Task #119: mirror the token into s_work so do_handoff can arm
+         * netplay's late-punch rescue layer on the JOINER too (the field
+         * was host-only before this; see its declaration comment).
+         * Worker-thread write, but by the time the main thread reads it
+         * in do_handoff this worker has published HANDOFF and been
+         * joined — the same ordering every other s_work field relies
+         * on. The race below keeps using the stack copy, unchanged. */
+        memcpy(s_work.punch_token, punch_token, sizeof(s_work.punch_token));
+        s_work.punch_token_valid = true;
     }
 
     /* ---- S6: the bypasses move UP FRONT --------------------------------
@@ -4374,13 +4386,20 @@ static void do_handoff(int player, const char* peer_ip, uint16_t peer_port) {
      * remote_port from (player, ip). The STUN socket we hand off below is a
      * plain datagram socket with no connected-peer state, so GekkoNet sends
      * go to whatever remote_ip:remote_port configure_gekko stringifies
-     * (netplay.c:1474). For direct-P2P over the internet the real peer
+     * (netplay.c:1556). For direct-P2P over the internet the real peer
      * endpoint is the STUN-translated peer_port from the hole-punch, not
      * SetParams' hardcoded 50000. Override remote_port here so outbound
      * Gekko frames reach the actual punched endpoint instead of oblivion. */
     Netplay_SetParams(player, peer_ip);
     Netplay_SetRemotePort(peer_port);
     Netplay_SetStunSocket(s_work.stun.socket);
+    /* Task #119: hand the S4a punch token over with the socket so the
+     * pre-session window keeps answering authenticated punches (the
+     * late-punch rescue layer, late_punch.h). NOT a fifth site under THE
+     * PROMISED LISTENING INTERVAL: that layer arms only after this
+     * handoff, i.e. after the race returned and finished every leg by
+     * its own rules — it can only ADD listening time, never end a leg. */
+    Netplay_SetPunchToken(s_work.punch_token, s_work.punch_token_valid);
     /* Ownership transferred — prevent direct_p2p_on_teardown or a
      * subsequent Cancel from double-closing. */
     s_work.stun.socket = NULL;
