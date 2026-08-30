@@ -17,6 +17,17 @@ character-numbering scheme — `effect_L8_init`'s `player_number != 16`
 gate is Makoto in the 3SX enum, not Chun-Li). A machine that observes
 every byte does not make that class of mistake.
 
+The same sweep's confident POSITIVE fared no better, which is the other half
+of the argument: its top candidate, `chainex_check`, was fixed without ever
+running the discriminating experiment the document itself proposed, so nothing
+records whether it was the cause of anything. Upstream `4485a438` has since put
+all nine of its write sites behind `!ArcadeBalance_IsEnabled()`, and netplay
+arms only in verified-arcade state (`Netplay_ArmAllowed`), so in a netplay
+session that array is provably all-zero. It stays live under the PS2 balance
+`ArcadeBalance_Init` pins for `--test-enable` -- which is the balance THIS
+harness runs. See the STATUS block at the top of
+`docs/research-desync-deep-investigation.md`.
+
 ## READ THIS BEFORE YOU RUN IT: the gate is macOS-only, by policy
 
 **This harness is a macOS-only gate. A run on Linux is not comparable to a
