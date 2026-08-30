@@ -64,6 +64,72 @@ Coverage: `__test_protocol.js` 39 tests (was 36) — `liveHostSlotNotHijackable`
 `joinerPortReclaimSameIp` and `portReclaimSlotA` reworked to assert both
 directions.
 
+**That result stands, and answers a narrower question than the review asked.**
+See #133 below: it settles composition, not separate exercise.
+
+---
+
+## #133 — both-caps, exercised SEPARATELY — OPEN, NEEDS A DESIGN DECISION
+
+**Do not treat this as documented-and-closed. It is not a fix, and nothing was
+changed for it.**
+
+The question: can a same-public-IP room-code holder exercise `MAX_PORT_RECLAIMS`
+(`rendezvous-server.js:194`) and `LATE_PUNCH_MAX_RELEARNS`
+(`src/netplay/late_punch.h:98`) **separately** in one session? #130 proved only
+that one datagram cannot drive both.
+
+**Answer: yes, and the relearn grants a capability a plain room-code join does
+not.** Verified:
+
+- **The room code is sufficient to derive the punch token.** The token is
+  `SHA-256("3SXR-PT3" || ip || port || nonce)[0..7]` (`src/netplay/rendezvous.c:146-152`,
+  derivation `:86-133`), and all three inputs are carried *inside* the room code
+  (`src/netplay/room_code.h:9`, `:129`, `:207`; the nonce is the low 32 bits,
+  `room_code.h:231-236`). No wire observation and no server access is needed.
+- **The caps sit in different session phases**, so they are independently
+  reachable: a reclaim acts on the server during signalling, while late-punch is
+  armed only *after* `do_handoff` (`src/netplay/netplay.c:2177-2181`).
+- **Baseline — what the room code already authorises.** A holder from *any* IP
+  can already become the peer: `classify_host_datagram` returns `PEER_PUNCH` on
+  token match with no source-IP test (`src/netplay/direct_p2p.c:1065`), captured
+  at `:5108-5121`. That is inside the trust boundary, as expected.
+- **What exceeds it: post-commitment displacement.** After capture the host
+  leaves `HOST_WAITING` (`direct_p2p.c:5118`) and `host_tick_receive` is
+  reachable only from that state (`direct_p2p.c:5748-5761`) — so a racing loser
+  normally gets no second attempt. `LatePunch_HandleDatagram` is the only path
+  that re-points an already-committed peer, and its sole identity check is
+  `strcmp(src_ip, s_peer_ip)` (`src/netplay/late_punch.c:115`) — an IP compare
+  that **cannot distinguish "the peer's NAT mapping moved" from "a different
+  host behind the same public IP"**. One relearn sets `remote_port` and calls
+  `SDLNetAdapter_RetargetPeer` (`netplay.c:1390-1392`), after which every
+  outbound session datagram goes to the attacker
+  (`src/netplay/sdl_net_adapter.c:288-290`).
+- **It survives into the match.** `LatePunch_Disarm` (`late_punch.c:82-89`)
+  clears the token and arming but **never touches `s_actual_peer` /
+  `s_retarget_active`**; only `SDLNetAdapter_SetCanonicalPeer`
+  (`sdl_net_adapter.c:53-64`) and `SDLNetAdapter_Destroy` (`:465-466`) do.
+- **No persistence past teardown** — teardown disarms and destroys the adapter,
+  and the nonce re-rolls per hosting attempt (`direct_p2p.c:3740`). This half of
+  the original expectation held.
+- **One relearn is enough; the cap of 8 bounds flapping, not capability.**
+
+Two comments are contradicted by the above and must NOT be left as-is if this
+area is touched: `late_punch.h:49-57` ("The relearn is STRICTER than the
+pre-handoff host gate" — it is narrower on source IP but strictly *wider in
+time*, being the only path that acts after commitment) and `late_punch.h:94-98`
+("caps the damage of a same-IP replayer at 8 send-target moves" — the damage is
+one move).
+
+**Not verified:** whether a substituted attacker can complete the MIST
+handshake and drive a GekkoNet session (`netplay.c:1351` compat gate) — read but
+not exercised. The CGNAT premise itself is a network property, taken as given.
+
+**No test distinguishes the two same-IP cases.** `src/netplay/test_punch_predicates.c`
+and `src/netplay/test_late_punch.c` cover the cap and the foreign-IP refusal;
+none separates "the peer moved" from "a second host on the same NAT", and
+`late_punch.c:115` cannot.
+
 ---
 
 ## #129 — ROM search trim + a legible miss — CLOSED
