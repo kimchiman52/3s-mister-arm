@@ -2051,3 +2051,15 @@ configure dirs (`build/host-bgfix` Debug, `build/host-np137` with
 Edit set: `src/sf33rd/Source/Game/stage/{bg.c,bg.h,tate00.c}`,
 `src/netplay/{direct_p2p.c,direct_p2p.h,test_punch_predicates.c}`,
 `docs/fix-plan-bg-texture-rollback.md`, this file.
+
+## #139 — is the LDREQ rollback leak actually fixed, or only its log line? — IN PROGRESS
+
+Auditing whether the `[ldreq-dedupe]` guard (`Push_LDREQ_Queue`, io/gd3rd.c) and
+the #72-widened `Ldreq_BarrierActive()` (io/gd3rd.c) actually close the task-50
+duplicate-load leak, or merely suppress the duplicate PUSH while the ramcnt
+ledger keeps accumulating. Twelve dedupe drops in #138's rollback leg is the
+observation under test, not the answer.
+
+**Build tree**: NOT taking `build/host`. Private configure dir
+`build/host-ldreq139` (Debug, stock options) for every run in this lane.
+Edit set so far: this file only.
