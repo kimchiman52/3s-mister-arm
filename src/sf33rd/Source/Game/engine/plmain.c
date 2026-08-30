@@ -182,25 +182,32 @@ void player_mv_0000(PLW* wk) { // 🟡
 
     if (!ArcadeBalance_IsEnabled()) {
         wk->omop_vital_timer = 40;
+    }
 
-        switch (wk->spmv_ng_flag2 & (DIP2_SA_GAUGE_ROUND_RESET_DISABLED | DIP2_SA_GAUGE_MAX_START_DISABLED)) {
-        case DIP2_SA_GAUGE_MAX_START_DISABLED:
-            clear_super_arts_point(wk);
-            spgauge_cont_init();
-            break;
+    /* [TM-05] The per-round SA-gauge handler was inside the arcade gate above,
+     * so the system Extra Options "SA gauge MAX START" and "SA gauge ROUND
+     * RESET" did nothing under arcade balance -- their only reader in the tree
+     * is this switch. Safe in both modes: Dir_Default_Data.contents[7] is all
+     * zeroes, so init_omop() sets BOTH DIP bits by default and the masked
+     * value matches no case here. It only acts once the player turns one of
+     * those options on. */
+    switch (wk->spmv_ng_flag2 & (DIP2_SA_GAUGE_ROUND_RESET_DISABLED | DIP2_SA_GAUGE_MAX_START_DISABLED)) {
+    case DIP2_SA_GAUGE_MAX_START_DISABLED:
+        clear_super_arts_point(wk);
+        spgauge_cont_init();
+        break;
 
-        case DIP2_SA_GAUGE_ROUND_RESET_DISABLED:
-            if (Round_num != 0) {
-                break;
-            }
-
-            /* fallthrough */
-
-        case 0:
-            demo_set_sa_full(wk->sa);
-            spgauge_cont_demo_init();
+    case DIP2_SA_GAUGE_ROUND_RESET_DISABLED:
+        if (Round_num != 0) {
             break;
         }
+
+        /* fallthrough */
+
+    case 0:
+        demo_set_sa_full(wk->sa);
+        spgauge_cont_demo_init();
+        break;
     }
 
     about_gauge_process(wk);
