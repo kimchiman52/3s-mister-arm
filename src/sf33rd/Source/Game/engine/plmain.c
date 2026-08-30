@@ -180,9 +180,10 @@ void player_mv_0000(PLW* wk) { // 🟡
         metamor_color_restore(wk->wu.id);
     }
 
-    if (!ArcadeBalance_IsEnabled()) {
-        wk->omop_vital_timer = 40;
-    }
+    /* [TM-06] Round-start reset for the vitality-recovery timer. Ungated
+     * alongside check_omop_vital below -- the timer is that feature's, and
+     * leaving it gated would starve it. */
+    wk->omop_vital_timer = 40;
 
     /* [TM-05] The per-round SA-gauge handler was inside the arcade gate above,
      * so the system Extra Options "SA gauge MAX START" and "SA gauge ROUND
@@ -339,9 +340,15 @@ void player_mv_4000(PLW* wk) { // 🟡
             wk->zuru_flag = false;
         }
 
-        if (!ArcadeBalance_IsEnabled()) {
-            check_omop_vital(wk);
-        }
+        /* [TM-06] The Extra Options vitality-recovery setting (omop_vital_ix)
+         * has exactly one consumer -- check_omop_vital -- and it was skipped
+         * under arcade balance, so the recovery half of that option did
+         * nothing. (The *initial* vitality option was always honoured, in
+         * setup_vitality.) Safe in both modes: Game_Default_Data ships
+         * extra_option.contents[0][0] = 1 (NORMAL), and the switch inside
+         * check_omop_vital has cases 0/2/3/4 with no case 1 and no default,
+         * so the default setting is a no-op. */
+        check_omop_vital(wk);
     }
 
     if (Timer_Freeze == 0) {
