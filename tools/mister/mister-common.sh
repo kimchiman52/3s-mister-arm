@@ -36,27 +36,68 @@ mister_ssh_connect_timeout() {
     printf '%s\n' "${MISTER_SSH_CONNECT_TIMEOUT:-10}"
 }
 
+# ConnectTimeout/ConnectionAttempts govern connection *setup* only. Once a
+# session is established they are never consulted again, so a remote that dies
+# mid-command -- box wedged, sshd killed, the flow silently dropped -- leaves
+# the local ssh (and the expect that spawned it) blocked forever on a socket
+# that will never speak again. That is not hypothetical: on 2026-08-30 a local
+# expect/ssh pair sat on an established session for 7h48m consuming 0:00.01 CPU
+# between them, holding the MiSTer lock the whole time, after a 6-minute remote
+# harness run died at frame 19082 of 21809. Nothing noticed, because nothing
+# was watching the connection.
+#
+# ServerAliveInterval is the mechanism that distinguishes the two states a
+# quiet session can be in. Every INTERVAL seconds of channel silence ssh sends
+# an encrypted keepalive over the *transport*; a live sshd answers it whether
+# or not the remote command is producing output. Only COUNTMAX consecutive
+# unanswered probes end the session. So a legitimately long and silent remote
+# run -- the harness sweeps are minutes long, and sweep.plan budgets 365.9 s --
+# is never at risk, while a dead remote is reaped in INTERVAL * COUNTMAX.
+#
+# 15 x 8 = 120 s. Long enough to ride out a transient blip on this LAN (the
+# host DHCP-flips between .171 and .188 and a renewal can stall a flow for a
+# few seconds), short enough that a wedge costs two minutes instead of eight
+# hours. Do NOT solve this with an expect `timeout` branch that kills the
+# spawn: expect's timeout measures silence from the *command*, which cannot
+# tell a busy quiet run from a dead one, and would kill exactly the long
+# harness runs this tooling exists to run.
+mister_ssh_keepalive_interval() {
+    printf '%s\n' "${MISTER_SSH_KEEPALIVE_INTERVAL:-15}"
+}
+
+mister_ssh_keepalive_count() {
+    printf '%s\n' "${MISTER_SSH_KEEPALIVE_COUNT:-8}"
+}
+
 mister_ssh_password_args() {
-    local timeout_seconds
+    local timeout_seconds keepalive_interval keepalive_count
     timeout_seconds="$(mister_ssh_connect_timeout)"
+    keepalive_interval="$(mister_ssh_keepalive_interval)"
+    keepalive_count="$(mister_ssh_keepalive_count)"
 
     printf '%s\n' \
         -o StrictHostKeyChecking=no \
         -o ConnectTimeout="${timeout_seconds}" \
         -o ConnectionAttempts=1 \
+        -o ServerAliveInterval="${keepalive_interval}" \
+        -o ServerAliveCountMax="${keepalive_count}" \
         -o PubkeyAuthentication=no \
         -o PreferredAuthentications=password \
         -o NumberOfPasswordPrompts=1
 }
 
 mister_ssh_key_only_args() {
-    local timeout_seconds
+    local timeout_seconds keepalive_interval keepalive_count
     timeout_seconds="$(mister_ssh_connect_timeout)"
+    keepalive_interval="$(mister_ssh_keepalive_interval)"
+    keepalive_count="$(mister_ssh_keepalive_count)"
 
     printf '%s\n' \
         -o StrictHostKeyChecking=no \
         -o ConnectTimeout="${timeout_seconds}" \
         -o ConnectionAttempts=1 \
+        -o ServerAliveInterval="${keepalive_interval}" \
+        -o ServerAliveCountMax="${keepalive_count}" \
         -o BatchMode=yes \
         -o IdentitiesOnly=yes \
         -o IdentityAgent=none \
@@ -65,19 +106,23 @@ mister_ssh_key_only_args() {
 }
 
 mister_rsync_ssh_password_command() {
-    local timeout_seconds
+    local timeout_seconds keepalive_interval keepalive_count
     timeout_seconds="$(mister_ssh_connect_timeout)"
+    keepalive_interval="$(mister_ssh_keepalive_interval)"
+    keepalive_count="$(mister_ssh_keepalive_count)"
 
     printf '%s\n' \
-        "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=${timeout_seconds} -o ConnectionAttempts=1 -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1"
+        "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=${timeout_seconds} -o ConnectionAttempts=1 -o ServerAliveInterval=${keepalive_interval} -o ServerAliveCountMax=${keepalive_count} -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1"
 }
 
 mister_rsync_ssh_key_only_command() {
-    local timeout_seconds
+    local timeout_seconds keepalive_interval keepalive_count
     timeout_seconds="$(mister_ssh_connect_timeout)"
+    keepalive_interval="$(mister_ssh_keepalive_interval)"
+    keepalive_count="$(mister_ssh_keepalive_count)"
 
     printf '%s\n' \
-        "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=${timeout_seconds} -o ConnectionAttempts=1 -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none -o PreferredAuthentications=publickey -o NumberOfPasswordPrompts=0"
+        "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=${timeout_seconds} -o ConnectionAttempts=1 -o ServerAliveInterval=${keepalive_interval} -o ServerAliveCountMax=${keepalive_count} -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none -o PreferredAuthentications=publickey -o NumberOfPasswordPrompts=0"
 }
 
 mister_normalize_remote_path() {
@@ -325,8 +370,20 @@ MISTER_LOCK_HELD=0
 MISTER_LOCK_OWNER_FILE=""
 MISTER_LOCK_DIR_VALUE=""
 
+# Seconds since a path was last modified, or empty if it cannot be determined.
+# BSD stat (macOS) and GNU stat (Linux) disagree on the flag, so try both.
+mister_epoch_age_of() {
+    local path="$1" mtime now
+    mtime="$(stat -f %m "${path}" 2>/dev/null || stat -c %Y "${path}" 2>/dev/null || true)"
+    case "${mtime}" in
+        ''|*[!0-9]*) printf '' ; return 0 ;;
+    esac
+    now="$(date +%s)"
+    printf '%s\n' "$((now - mtime))"
+}
+
 mister_lock_status() {
-    local lock_dir owner_file owner_pid owner_live
+    local lock_dir owner_file owner_pid owner_live lock_age
     lock_dir="$(mister_lock_dir)"
     owner_file="${lock_dir}/owner"
     owner_pid=""
@@ -349,6 +406,22 @@ mister_lock_status() {
     printf 'lock_dir=%s\n' "${lock_dir}"
     printf 'owner_pid=%s\n' "${owner_pid}"
     printf 'owner_live=%s\n' "${owner_live}"
+
+    # Age is reported, never enforced. A max-age that *reclaims* cannot tell a
+    # wedged holder from a legitimately slow one -- a package deploy may run to
+    # MISTER_TRANSFER_TIMEOUT (1200 s) and a harness sweep for minutes more --
+    # and stealing the lock from a healthy job puts two writers on the device,
+    # which is worse than any stale lock. Liveness is the correct predicate and
+    # mister_lock_acquire already applies it. What was actually missing on
+    # 2026-08-30 was the number: the lock had been held for 7h48m and nothing
+    # said so, because the owner file records a wall-clock date and leaves the
+    # subtraction to whoever reads it.
+    lock_age="$(mister_epoch_age_of "${lock_dir}")"
+    if [ -n "${lock_age}" ]; then
+        printf 'owner_age_seconds=%s\n' "${lock_age}"
+        printf 'owner_age_human=%dh%02dm%02ds\n' \
+            "$((lock_age / 3600))" "$(((lock_age % 3600) / 60))" "$((lock_age % 60))"
+    fi
 
     if [ -f "${owner_file}" ]; then
         cat "${owner_file}"
