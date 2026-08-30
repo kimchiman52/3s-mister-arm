@@ -14,8 +14,40 @@ Hadoken crashes the game"). **Full findings, worklist and repro recipe:**
 
 ```sh
 python3 tools/arcade-audit/cg_audit.py        # ~40 s -> cg_audit.json + table
+python3 tools/arcade-audit/data_audit.py      # ~1 s  -> data_audit.json + table
+python3 tools/arcade-audit/residual_audit.py  # ~1 s  -> residual_audit.json + report
 python3 tools/arcade-audit/counterfactual.py  # re-runs with historical fixes reverted
 ```
+
+`cg_audit.py` covers sprite indices in the 10 script tables (plus OVCT/OVIX
+coverage). `data_audit.py` covers **the other 13 sections** — STXY MVXY SERND
+RICT HIIT BODA HANA CATA CAUA ATTA HOSA ATIT PROT — where hitboxes, throw
+placement and attack properties live (upstream issue #325). It imports
+`cg_audit.py` for the shared constants and does not modify it. Its invariant:
+
+```
+bounds hazards ... verdict ARCADE_ONLY: 0
+```
+
+None of those 13 sections is translated, so an arcade-vs-PS2 content difference
+there is the balance change itself, not a defect. See the doc, §15.
+
+`residual_audit.py` covers the **second door**: `cg_audit.py` only checks the
+raw `cg_number` against `obj_group_table`'s bound. Past that, the renderer
+computes an unchecked residual into the resolved group's own offset table
+(`n -= texgrpdat[i].num_of_1st`) and dereferences it — a second, larger index
+that `cg_audit.py` never checks. It re-derives every group's offset-table
+length statically from `SF33RD.AFS`, bounds-checks the residual for all
+133,901 cells plus the OVCT `parts_char` path, and derives which texture
+groups are reachable from `ldreq_tbl[]`/`ldreq_ix[]`. It imports `cg_audit.py`
+for shared constants and does not modify it. Its invariant:
+
+```
+residual < 0                    : 0
+residual >= offset-table length : 0
+```
+
+See the doc, §17.
 
 Expected at the time of writing (`fix/arcade-cg-mapping` branch point):
 
@@ -61,12 +93,14 @@ answer automatically — which is the point.
 
 | File | Purpose |
 |---|---|
-| `cg_audit.py` | the audit; writes `cg_audit.json` |
+| `cg_audit.py` | the CG audit; writes `cg_audit.json` |
+| `data_audit.py` | the 13-section audit; writes `data_audit.json` |
+| `residual_audit.py` | the second-door residual-bounds audit; writes `residual_audit.json` |
 | `counterfactual.py` | reverts #290/#359/#360 in-memory to prove the audit catches them |
 | `decrypt.py` | rebuilds `rom.bin` from the ROM zip |
 | `afs.py` | AFS container parser |
 | `parse.py`, `scan.py`, `cgscan.py` | arcade-side script decoders / sweeps |
 | `ps2scan.py`, `cmpovct.py`, `fulldiff.py` | PS2-side decode, OVCT compare, full script diff |
-| `cg_audit.json`, `cg_counterfactual.json` | machine-readable results |
+| `cg_audit.json`, `cg_counterfactual.json`, `data_audit.json`, `residual_audit.json` | machine-readable results |
 | `audit_summary.txt`, `audit_run.txt` | human-readable results |
 | `denjin_oobcount.log` | the 19 OOB hits from the ASan repro |
