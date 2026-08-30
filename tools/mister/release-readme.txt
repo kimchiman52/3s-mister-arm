@@ -67,6 +67,19 @@ INSTALLATION
      [3S-ARM]
      main=MiSTer_3S-ARM
 
+4. (Optional) Arcade balance. If you have a CPS3 arcade core installed,
+   3S-ARM reads that core's own romset and switches to verified arcade
+   (CPS3) balance automatically at boot. No copy of the ROM is shipped
+   with this release and none needs to be placed under games/3s-arm/.
+   The romset is read from whichever of these your core already uses:
+
+     /media/fat/games/mame/sfiii3nr1.zip
+     /media/fat/games/mame/sfiii3.zip
+
+   With neither present the game runs PS2 balance, which is the normal
+   default; the choice and its reason are written to
+   /media/fat/games/3s-arm/balance.status on every launch.
+
 
 CRT TROUBLESHOOTING
 -------------------
