@@ -5,6 +5,11 @@
  */
 #include "netplay/connect_fail.h"
 
+/* Task #122: REND_NACK_* wire values. rendezvous.h is itself
+ * dependency-free (stdbool/stdint only), so including it here does not
+ * cost this TU the "pure, no SDL" property the header claims. */
+#include "netplay/rendezvous.h"
+
 #include <stddef.h>
 
 const char* ConnectFail_Code(ConnectFailCode code) {
@@ -30,6 +35,11 @@ const char* ConnectFail_Code(ConnectFailCode code) {
     case CONNECT_FAIL_CODE_VERSION_NEWER:   return "P2P_FAIL_CODE_VERSION_NEWER";
     case CONNECT_FAIL_INTERNAL:             return "P2P_FAIL_INTERNAL";
     case CONNECT_FAIL_BALANCE_UNAVAILABLE:  return "P2P_FAIL_BALANCE_UNAVAILABLE";
+    case CONNECT_FAIL_RENDEZVOUS_ROOM_FULL: return "P2P_FAIL_RENDEZVOUS_ROOM_FULL";
+    case CONNECT_FAIL_RENDEZVOUS_TABLE_FULL:return "P2P_FAIL_RENDEZVOUS_TABLE_FULL";
+    case CONNECT_FAIL_RENDEZVOUS_BUSY:      return "P2P_FAIL_RENDEZVOUS_BUSY";
+    case CONNECT_FAIL_RENDEZVOUS_BADFRAME:  return "P2P_FAIL_RENDEZVOUS_BADFRAME";
+    case CONNECT_FAIL_RENDEZVOUS_REFUSED:   return "P2P_FAIL_RENDEZVOUS_REFUSED";
     }
     return "P2P_FAIL_UNKNOWN";
 }
@@ -108,6 +118,47 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
          * ArcadeBalance_GetReason() text through set_status instead;
          * this is the generic fallback. */
         return "Netplay needs the arcade ROM.";
+
+    /* --- Task #122: the typed refusals ---------------------------------
+     * Every string below is written to survive being WRONG about the
+     * cause it cannot see. See ConnectFail_ClassifyNackReason for which
+     * reason bytes reach each one. */
+    case CONNECT_FAIL_RENDEZVOUS_ROOM_FULL:
+        /* Covers BOTH SESSION_FULL populations and says nothing that is
+         * false of either: someone else's two endpoints hold the code,
+         * or our OWN same-IP retry ran past MAX_PORT_RECLAIMS and the
+         * server stopped treating it as a reclaim. A fresh code fixes
+         * both (a new session key is a new server entry), so the remedy
+         * is asserted while the cause is not. Deliberately NOT "someone
+         * else took your room" — that would be a guess. */
+        return "Room is full. Ask host for a new code.";
+    case CONNECT_FAIL_RENDEZVOUS_TABLE_FULL:
+        /* A fact about the SERVER's capacity. A new room code does not
+         * help here — the table has no free entry for any key — so the
+         * remedy differs from ROOM_FULL and the code has to as well. */
+        return "Matchmaking server is full. Try again.";
+    case CONNECT_FAIL_RENDEZVOUS_BUSY:
+        /* THE AMBIGUITY, STATED. Four reasons land here and not one of
+         * them tells us WHO spent the budget: RATE_IP and RATE_PREGATE
+         * are per-source-address and a CGNAT egress pools them across
+         * strangers; KEY_QUOTA counts keys created by our address, which
+         * is the same address those strangers share; RATE_KEY is per-room
+         * and a busy room is not the reader's doing either. So the string
+         * names the LIMITER (measured) and no party at all (not
+         * measured), and the remedy it gives — wait — is the only one
+         * that is true whoever spent it. */
+        return "Matchmaking is busy. Wait and retry.";
+    case CONNECT_FAIL_RENDEZVOUS_BADFRAME:
+        /* The server refused the BYTES, not the request. Two live causes
+         * with two different remedies and no way to tell them apart from
+         * one frame: a build older than the server, or a middlebox that
+         * truncated/mangled the datagram in flight. Both are named. */
+        return "Server rejected our packet. Update or retry.";
+    case CONNECT_FAIL_RENDEZVOUS_REFUSED:
+        /* A reason byte this build has no name for. The one honest thing
+         * to say is that the server refused us and the number is in the
+         * log; inventing a cause would be exactly the H-1 error. */
+        return "Matchmaking refused us. See log.";
     }
     return "Connection failed.";
 }
@@ -133,6 +184,115 @@ ConnectFailCode ConnectFail_ClassifyStunDiscover(int servers_probed,
     /* Nothing was probed or every send failed at the socket layer —
      * the box has no usable network path at all. */
     return CONNECT_FAIL_DNS_ALLDOWN;
+}
+
+/* Task #122 — THE MAPPING TABLE, and the argument for every grouping.
+ *
+ * Nine server reasons, five verdicts. The count is the point: a verdict
+ * is a sentence shown to a person, so two reasons share one only when
+ * the person would do the same thing about both, and they get separate
+ * ones the moment the remedy diverges.
+ *
+ *   reason         | verdict                  | why this grouping
+ *   ---------------+--------------------------+---------------------------
+ *   SESSION_FULL   | RENDEZVOUS_ROOM_FULL     | Distinct because the fix
+ *                  |                          | is a NEW CODE and nothing
+ *                  |                          | else. Two populations reach
+ *                  |                          | it (a third party on a full
+ *                  |                          | key, and our OWN retry past
+ *                  |                          | MAX_PORT_RECLAIMS -- see
+ *                  |                          | rendezvous-server.js
+ *                  |                          | handleRegister) and a fresh
+ *                  |                          | key fixes both, so one
+ *                  |                          | verdict is honest for both.
+ *   TABLE_FULL     | RENDEZVOUS_TABLE_FULL    | Distinct from ROOM_FULL
+ *                  |                          | because a new code does NOT
+ *                  |                          | help: the table has no free
+ *                  |                          | entry for any key. Same
+ *                  |                          | word ("full"), opposite
+ *                  |                          | remedy.
+ *   RATE_IP        | RENDEZVOUS_BUSY          | COLLAPSED, deliberately.
+ *   RATE_KEY       | RENDEZVOUS_BUSY          | All four say a limiter
+ *   RATE_PREGATE   | RENDEZVOUS_BUSY          | fired; NONE says who spent
+ *   KEY_QUOTA      | RENDEZVOUS_BUSY          | the budget. RATE_IP,
+ *                  |                          | RATE_PREGATE and KEY_QUOTA
+ *                  |                          | are all keyed on our
+ *                  |                          | SOURCE ADDRESS, which under
+ *                  |                          | CGNAT is shared with
+ *                  |                          | strangers, and the pre-gate
+ *                  |                          | budget is additionally
+ *                  |                          | spendable by anyone willing
+ *                  |                          | to spoof our address (that
+ *                  |                          | is precisely why the server
+ *                  |                          | keeps it separate from the
+ *                  |                          | cookied one). RATE_KEY is
+ *                  |                          | keyed on the ROOM. Minting
+ *                  |                          | four verdicts here would be
+ *                  |                          | inventing four causes out
+ *                  |                          | of one measurement, which
+ *                  |                          | is the H-1 error. The reason
+ *                  |                          | byte itself is NOT lost --
+ *                  |                          | it goes to the log line via
+ *                  |                          | Rendezvous_NackReasonText,
+ *                  |                          | which is where triage (not
+ *                  |                          | the user) reads it.
+ *   BAD_VERSION    | RENDEZVOUS_BADFRAME      | COLLAPSED, and this one
+ *   BAD_LENGTH     | RENDEZVOUS_BADFRAME      | needs the reachability
+ *   BAD_TYPE       | RENDEZVOUS_BADFRAME      | argument. A BAD_VERSION
+ *                  |                          | NACK is stamped with the
+ *                  |                          | SERVER's version byte
+ *                  |                          | (encodeNack in
+ *                  |                          | rendezvous-server.js), and
+ *                  |                          | Rendezvous_ParseNack refuses
+ *                  |                          | any frame whose version is
+ *                  |                          | not ours -- so the only
+ *                  |                          | server whose BAD_VERSION we
+ *                  |                          | can read is one that speaks
+ *                  |                          | our version and still found
+ *                  |                          | our version byte wrong.
+ *                  |                          | That is not version skew;
+ *                  |                          | it is our bytes arriving
+ *                  |                          | changed, exactly like
+ *                  |                          | BAD_LENGTH (truncation) and
+ *                  |                          | BAD_TYPE (a mangled or
+ *                  |                          | stale type byte). Real
+ *                  |                          | version skew never reaches
+ *                  |                          | this function at all: it is
+ *                  |                          | the badver_n path in
+ *                  |                          | p2p_race, which already
+ *                  |                          | yields the DEFINITE
+ *                  |                          | CONNECT_ATTRIB_VERSION_SKEW
+ *                  |                          | and is untouched here.
+ *   anything else  | RENDEZVOUS_REFUSED       | A newer server naming a
+ *                  |                          | reason we have no word for.
+ *                  |                          | Reported as "refused, see
+ *                  |                          | log" -- never coerced onto
+ *                  |                          | the nearest name we do
+ *                  |                          | have.
+ *
+ * REND_NACK_NONE (0) lands in the default arm on purpose. It is not a
+ * reason; a caller that reaches here with 0 has read an out-parameter it
+ * should have gated on `nack_any`, and returning a refusal verdict is the
+ * conservative answer to that (it cannot manufacture a SUCCESS).
+ */
+ConnectFailCode ConnectFail_ClassifyNackReason(uint8_t reason) {
+    switch (reason) {
+    case REND_NACK_SESSION_FULL:
+        return CONNECT_FAIL_RENDEZVOUS_ROOM_FULL;
+    case REND_NACK_TABLE_FULL:
+        return CONNECT_FAIL_RENDEZVOUS_TABLE_FULL;
+    case REND_NACK_RATE_IP:
+    case REND_NACK_RATE_KEY:
+    case REND_NACK_RATE_PREGATE:
+    case REND_NACK_KEY_QUOTA:
+        return CONNECT_FAIL_RENDEZVOUS_BUSY;
+    case REND_NACK_BAD_VERSION:
+    case REND_NACK_BAD_LENGTH:
+    case REND_NACK_BAD_TYPE:
+        return CONNECT_FAIL_RENDEZVOUS_BADFRAME;
+    default:
+        return CONNECT_FAIL_RENDEZVOUS_REFUSED;
+    }
 }
 
 ConnectFailCode ConnectFail_ClassifyJoin(const ConnectJoinEvidence* ev) {
@@ -162,6 +322,25 @@ ConnectFailCode ConnectFail_ClassifyJoin(const ConnectJoinEvidence* ev) {
          *                     REGISTER for a non-auth reason. Blaming
          *                     auth here sends the user to "update the
          *                     game" for a dropped datagram. */
+        /* Task #122: a typed NACK OUTRANKS both of the inferences below,
+         * and it outranks them for the same reason in each case — they
+         * are inferences and it is a statement. A CHALLENGE proves only
+         * that the server is alive; a NACK proves the server is alive AND
+         * names the refusal, which is strictly more evidence about the
+         * same question. Total silence proves nothing at all.
+         *
+         * This is also the arm that closes the reclaim case. When the
+         * server rate-caps a reclaiming retry (portReclaims past
+         * MAX_PORT_RECLAIMS in handleRegister) the retry falls through to
+         * the third-party arm and draws SESSION_FULL — and because the S2
+         * retry runs join_attempt() again on freshly cleared evidence,
+         * that whole attempt sees ZERO DELIVERs and lands exactly here.
+         * Before #122's client half it reported "Matchmaking server
+         * unreachable" about a server that had answered every single
+         * REGISTER. */
+        if (ev->nack_any) {
+            return ConnectFail_ClassifyNackReason(ev->nack_reason);
+        }
         if (ev->challenge_any) {
             return ev->cookie_rechallenged ? CONNECT_FAIL_COOKIE_REJECTED
                                            : CONNECT_FAIL_RENDEZVOUS_NOPAIR;
@@ -179,11 +358,40 @@ ConnectFailCode ConnectFail_ClassifyJoin(const ConnectJoinEvidence* ev) {
         return CONNECT_FAIL_RENDEZVOUS_DOWN;
     }
     if (!ev->deliver_real) {
+        /* Task #122, and this arm is DELIBERATELY NARROWER than the one
+         * above: only SESSION_FULL overrides HOST_OFFLINE here.
+         *
+         * HOST_OFFLINE asserts "the server never had this host". A
+         * SESSION_FULL NACK asserts "both slots of this room are live and
+         * neither is yours", which is a flat CONTRADICTION of that — the
+         * server does have endpoints for the key — so the measured claim
+         * displaces the inferred one.
+         *
+         * Nothing else does. The rate family can arrive alongside
+         * sentinel DELIVERs and explains a STALL, but it does not
+         * contradict "the host never registered" and it is not what the
+         * user must act on; TABLE_FULL cannot coexist with a live key at
+         * all (it is refused before any entry is created); and a
+         * BAD_LENGTH/BAD_TYPE drawn by ONE mangled datagram in a run that
+         * was otherwise talking to the server would, if it won here,
+         * replace a correct HOST_OFFLINE with "update the game". That is
+         * the misattribution this whole feature is under orders not to
+         * commit, so the narrow rule is the one that ships. */
+        if (ev->nack_any && ev->nack_reason == REND_NACK_SESSION_FULL) {
+            return CONNECT_FAIL_RENDEZVOUS_ROOM_FULL;
+        }
         /* Server alive, but it only ever reported "peer not
          * registered": the host is gone or the code is stale. */
         return CONNECT_FAIL_HOST_OFFLINE;
     }
     if (!ev->bilateral_punched) {
+        /* Task #122: a NACK does NOT reach here, on purpose. Past this
+         * point a real-endpoint DELIVER has arrived — the rendezvous
+         * conversation SUCCEEDED and handed us the host — and the failure
+         * that remains is the punch. A refusal the server issued about
+         * some other datagram says nothing about why two NATs would not
+         * open, and letting it win would send a NAT-blocked user to the
+         * matchmaking server. */
         /* S4a: bad-token evidence outranks the NAT diagnoses — the
          * peer's datagrams REACHED us (connectivity fine), they just
          * failed authentication. Blaming NAT here would send the user
@@ -298,7 +506,16 @@ ConnectAttribution ConnectFail_Attribute(ConnectFailCode code,
      * peer can answer us perfectly while the server still rejects our
      * cookie. Marking it ambiguous would be inventing doubt about a
      * verdict the evidence fully supports, which is the same class of
-     * error as inventing certainty. */
+     * error as inventing certainty.
+     *
+     * ALSO DELIBERATELY NOT IN THIS SET, and for the identical reason:
+     * the five task-#122 CONNECT_FAIL_RENDEZVOUS_* refusal codes. Each of
+     * them is the SERVER's own statement about our conversation with the
+     * SERVER. A punch confirm is a fact about our conversation with the
+     * PEER. The peer can answer us perfectly while the rendezvous server
+     * refuses us for a full room or a spent budget, so there is no
+     * contradiction to mark. They fall through to SUPPORTED below, which
+     * is the truth: the server told us the reason. */
     if (race_confirm_seen &&
         (code == CONNECT_FAIL_NAT_BLOCKED ||
          code == CONNECT_FAIL_SYMMETRIC_BOTH ||

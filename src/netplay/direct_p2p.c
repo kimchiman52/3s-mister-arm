@@ -198,6 +198,12 @@ typedef struct {
     uint16_t ev_deliver_n;
     uint16_t ev_challenge_n;
     uint16_t ev_badver_n;
+    /* Task #122: the typed refusal the race ended on. Per-attempt like
+     * every other ev_* field — cleared in join_reset_attempt_evidence()
+     * — so the S2 retry can never report attempt 1's refusal. */
+    bool     ev_nack_any;
+    uint8_t  ev_nack_reason;
+    uint16_t ev_nack_n;
     /* Largest gap between two DELIVERs inside ONE race. The joiner
      * re-REGISTERs every 500 ms while the signal leg is live (section 5
      * of p2p_race) and the server pushes one DELIVER per REGISTER, so
@@ -1352,6 +1358,14 @@ typedef struct {
     uint16_t challenge_n;         /* CHALLENGE frames answered              */
     uint16_t badver_n;            /* '3SXR' magic, version byte != ours,
                                      FROM THE RENDEZVOUS ENDPOINT ONLY     */
+    /* Task #122: typed server refusals. `nack_reason` is the LATEST one
+     * accepted, as a raw RendezvousNackReason wire byte — see the
+     * ConnectJoinEvidence comment in connect_fail.h for why "latest" and
+     * why it is not range-checked into the enum. Only meaningful when
+     * nack_any is set; nack_n is the count for the report line. */
+    bool     nack_any;
+    uint16_t nack_n;
+    uint8_t  nack_reason;
     /* Largest observed inter-DELIVER gap. Baseline ~500 ms — that is the
      * joiner's in-race REGISTER cadence in section 5 below, and the
      * server pushes one DELIVER per REGISTER. NOT 5000 ms: that is the
@@ -1776,6 +1790,13 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
     uint32_t last_deliver_ms = 0;
     /* #36: one line per race for the version-skew arm below. */
     bool logged_badver = false;
+    /* Task #122: one line per DISTINCT reason for the NACK arm below.
+     * Not one line per race: the reasons progress (RATE_PREGATE while we
+     * are uncookied, then RATE_IP/RATE_KEY once we hold a cookie), and
+     * collapsing that to the first one would hide the transition a
+     * triager needs. Bounded by the nine reasons, so it is still O(1)
+     * lines per race whatever the server sends. */
+    uint8_t logged_nack_reason = 0xFFu;
     /* #36 (F5): the rendezvous endpoint as a string, resolved ONCE. The
      * skew arm below compares an inbound datagram's source against it,
      * so an off-path host cannot fabricate "server skew" evidence. NULL
@@ -2071,6 +2092,75 @@ static void p2p_race(const RaceCfg* cfg, RaceResult* out) {
                         signal_active = false;
                     }
                 }
+            } else if (ft == REND_FRAME_NACK) {
+                /* TASK #122 — THE CLIENT HALF.
+                 *
+                 * Before this arm existed the server's typed refusal
+                 * matched no branch and fell straight through to
+                 * NET_DestroyDatagram below, so SESSION_FULL, RATE_KEY,
+                 * RATE_IP, KEY_QUOTA, TABLE_FULL, BAD_LENGTH, BAD_TYPE
+                 * and RATE_PREGATE all still collapsed into
+                 * CONNECT_FAIL_RENDEZVOUS_DOWN — the pre-#122 behaviour,
+                 * with the wire change deployed and unread.
+                 *
+                 * TWO GATES, and both are load-bearing because a NACK
+                 * DECIDES A VERDICT. This is the badver_n argument (F5)
+                 * one step further along: badver_n only counts, while a
+                 * reason byte names a cause and puts a sentence on the
+                 * user's screen, so a NACK an attacker can choose is a
+                 * DIAGNOSIS an attacker can choose — strictly worse than
+                 * the silence it replaced (H-1).
+                 *
+                 *   1. Rendezvous_ParseNack requires the frame to echo
+                 *      OUR session key, exactly as ParseChallenge and
+                 *      ParseDeliverEx do. The key embeds the S4b nonce
+                 *      and is derived, never transmitted by us in the
+                 *      clear beyond the REGISTER itself.
+                 *   2. SOURCE GATE, the same normalizing comparison the
+                 *      self-DELIVER and skew arms use: the datagram must
+                 *      come from the very endpoint this signal leg is
+                 *      REGISTERing to. Gate 1 alone stops an OFF-PATH
+                 *      sender; it does not stop one that has SEEN a
+                 *      REGISTER, since the key sits in plaintext at
+                 *      bytes [8..24] of every one we send. Gate 2 raises
+                 *      that to "and spoof the server's address".
+                 *
+                 * A frame that fails either gate falls out of this arm
+                 * uncounted — the same silent drop as before, which is
+                 * the correct failure mode for evidence we cannot trust.
+                 *
+                 * The reason byte is stored RAW. A server newer than us
+                 * may name a reason we have no word for, and
+                 * Rendezvous_NackReasonText renders those as "unknown"
+                 * while ConnectFail_ClassifyNackReason maps them to the
+                 * honest catch-all; coercing an unknown number onto the
+                 * nearest name we do have is the one thing that must not
+                 * happen here. */
+                uint8_t reason = REND_NACK_NONE;
+                if (src_port == cfg->signal_port &&
+                    signal_ip_str[0] != '\0' &&
+                    direct_p2p_ip_eq_normalized(src_ip, signal_ip_str) &&
+                    Rendezvous_ParseNack(dgram->buf, dgram->buflen,
+                                         cfg->session_key, &reason)) {
+                    out->nack_any = true;
+                    out->nack_reason = reason;
+                    if (out->nack_n < UINT16_MAX) out->nack_n++;
+                    /* A NACK is proof of life as strong as a CHALLENGE:
+                     * the server parsed enough of our frame to echo our
+                     * own session key back at us. It is NOT a DELIVER,
+                     * so nothing here touches deliver_any/deliver_real —
+                     * those two still mean exactly what they meant, and
+                     * the taxonomy reads the refusal from nack_any
+                     * instead. */
+                    if (logged_nack_reason != reason) {
+                        logged_nack_reason = reason;
+                        SDL_Log("[direct_p2p] S6 race: rendezvous NACK from %s:%u "
+                                "reason=%u (%s) at t+%u ms",
+                                src_ip, (unsigned)src_port, (unsigned)reason,
+                                Rendezvous_NackReasonText(reason),
+                                (unsigned)(now - t0));
+                    }
+                }
             } else if (ft == 0 && dgram->buflen >= 6 &&
                        dgram->buf[4] != (uint8_t)Rendezvous_WireVersion() &&
                        src_port == cfg->signal_port &&
@@ -2303,7 +2393,7 @@ done:;
     SDL_snprintf(line, sizeof(line),
                  "[direct_p2p] S6 race done in %u ms: outcome=%s punch=%u bilateral=%u "
                  "signal=%u deliver=any:%d,real:%d "
-                 "confirm=%d@%ums badver=%u dgap=%u",
+                 "confirm=%d@%ums badver=%u dgap=%u nack=%u:%u(%s)",
                  (unsigned)out->t_race_ms,
                  ((int)out->outcome >= 0 &&
                   (size_t)out->outcome < SDL_arraysize(k_outcome_name))
@@ -2311,7 +2401,10 @@ done:;
                  out->t_punch_ms, out->t_bilateral_ms, out->t_signal_ms,
                  (int)out->deliver_any, (int)out->deliver_real,
                  (int)out->confirm_seen, (unsigned)out->confirm_ms,
-                 (unsigned)out->badver_n, (unsigned)out->deliver_gap_max_ms);
+                 (unsigned)out->badver_n, (unsigned)out->deliver_gap_max_ms,
+                 (unsigned)out->nack_n, (unsigned)out->nack_reason,
+                 out->nack_any ? Rendezvous_NackReasonText(out->nack_reason)
+                               : "none");
     Netplay_LogConnectEventMT(line);
 }
 
@@ -2385,6 +2478,9 @@ void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* pcfg,
     pout->challenge_n = res.challenge_n;
     pout->badver_n = res.badver_n;
     pout->deliver_gap_max_ms = res.deliver_gap_max_ms;
+    pout->nack_any = res.nack_any;      /* #122 */
+    pout->nack_n = res.nack_n;
+    pout->nack_reason = res.nack_reason;
 }
 
 bool DirectP2P_TestHook_RaceBudgetExpired(uint32_t now, uint32_t t0,
@@ -3358,6 +3454,14 @@ static int SDLCALL host_bilateral_punch_thread_fn(void* data) {
     s_work.ev_challenge_n = res.challenge_n;
     s_work.ev_badver_n = res.badver_n;
     s_work.ev_deliver_gap_max_ms = res.deliver_gap_max_ms;
+    /* #122: copied for uniformity, and it is structurally always zero
+     * here. This race runs with cfg.signal_addr == NULL (the host is
+     * already paired), so signal_ip_str stays empty and the NACK arm's
+     * source gate matches nothing. Copying anyway means the report line
+     * cannot go stale if the host ever grows a signal leg again. */
+    s_work.ev_nack_any = res.nack_any;
+    s_work.ev_nack_reason = res.nack_reason;
+    s_work.ev_nack_n = res.nack_n;
 
     if (res.outcome == RACE_CANCELLED ||
         SDL_GetAtomicInt(&s_bilateral_punch_cancel) || cancel_requested()) {
@@ -3755,6 +3859,14 @@ static void join_reset_attempt_evidence(void) {
     s_work.ev_challenge_n = 0;
     s_work.ev_badver_n = 0;
     s_work.ev_deliver_gap_max_ms = 0;
+    /* #122: a refusal is per-attempt evidence like every field above it.
+     * The S2 retry binds a FRESH source port, which is precisely what
+     * changes the answer for the reclaim family — attempt 2 may be
+     * accepted where attempt 1 drew SESSION_FULL — so carrying attempt
+     * 1's reason forward would report a refusal that is no longer true. */
+    s_work.ev_nack_any = false;
+    s_work.ev_nack_reason = 0;
+    s_work.ev_nack_n = 0;
 }
 
 #ifdef NETPLAY_TEST_HOOKS
@@ -3773,6 +3885,9 @@ void DirectP2P_TestHook_JoinAttemptEvidenceReset(const DirectP2PAttemptEvidence*
         s_work.ev_challenge_n = in->challenge_n;
         s_work.ev_badver_n = in->badver_n;
         s_work.ev_deliver_gap_max_ms = in->deliver_gap_max_ms;
+        s_work.ev_nack_any = in->nack_any;   /* #122 */
+        s_work.ev_nack_reason = in->nack_reason;
+        s_work.ev_nack_n = in->nack_n;
     }
     join_reset_attempt_evidence();
     if (out != NULL) {
@@ -3788,6 +3903,9 @@ void DirectP2P_TestHook_JoinAttemptEvidenceReset(const DirectP2PAttemptEvidence*
         out->challenge_n = s_work.ev_challenge_n;
         out->badver_n = s_work.ev_badver_n;
         out->deliver_gap_max_ms = s_work.ev_deliver_gap_max_ms;
+        out->nack_any = s_work.ev_nack_any;  /* #122 */
+        out->nack_reason = s_work.ev_nack_reason;
+        out->nack_n = s_work.ev_nack_n;
     }
 }
 #endif
@@ -4093,6 +4211,9 @@ static DirectP2PState join_attempt(uint16_t bind_port) {
     s_work.ev_challenge_n = res.challenge_n;
     s_work.ev_badver_n = res.badver_n;
     s_work.ev_deliver_gap_max_ms = res.deliver_gap_max_ms;
+    s_work.ev_nack_any = res.nack_any;   /* #122 */
+    s_work.ev_nack_reason = res.nack_reason;
+    s_work.ev_nack_n = res.nack_n;
 
     if (res.outcome == RACE_CANCELLED || cancel_requested()) {
         Stun_CloseSocket(&s_work.stun);
@@ -4168,16 +4289,20 @@ static DirectP2PState join_attempt(uint16_t bind_port) {
         ev.bilateral_punched = false;
         ev.port_disagreement = s_work.stun.port_disagreement;
         ev.punch_bad_token = s_work.stun.diag_punch_bad_token; /* S4a */
+        ev.nack_any = res.nack_any;       /* #122 */
+        ev.nack_reason = res.nack_reason;
         const ConnectFailCode jc = ConnectFail_ClassifyJoin(&ev);
         /* #105: rechal is in the line because it is the bit that decides
          * between COOKIE_REJECTED and RENDEZVOUS_NOPAIR — a triager
          * reading a tester log must be able to see which branch was
          * taken, not just the verdict. */
         SDL_Log("[direct_p2p] joiner race exhausted (deliver_any=%d real=%d "
-                "challenge_any=%d rechal=%d portdis=%d) -> %s",
+                "challenge_any=%d rechal=%d portdis=%d nack=%d:%s) -> %s",
                 (int)res.deliver_any, (int)res.deliver_real,
                 (int)res.challenge_any, (int)res.cookie_rechallenged,
                 (int)s_work.stun.port_disagreement,
+                (int)res.nack_any,
+                res.nack_any ? Rendezvous_NackReasonText(res.nack_reason) : "none",
                 ConnectFail_Code(jc));
         set_fail(jc);
         return DIRECT_P2P_FAILED_BILATERAL;
@@ -5539,7 +5664,8 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
                      "stun=%d/%d sends_ok=%d dns_all_failed=%d portdis=%d "
                      "deliver=any:%d,real:%d "
                      "portmap=%s/%d confirm=%d@%ums race_deliver_n=%u "
-                     "race_challenge_n=%u race_badver_n=%u race_dgap=%u attrib=%s",
+                     "race_challenge_n=%u race_badver_n=%u race_dgap=%u "
+                     "race_nack_n=%u race_nack=%s attrib=%s",
                      ConnectFail_Code(s_work.fail_code),
                      (int)st,
                      s_work.role == ROLE_HOST ? "host"
@@ -5564,6 +5690,15 @@ static void report_connect_outcome(DirectP2PState st, bool success) {
                      (unsigned)s_work.ev_deliver_n, (unsigned)s_work.ev_challenge_n,
                      (unsigned)s_work.ev_badver_n,
                      (unsigned)s_work.ev_deliver_gap_max_ms,
+                     /* #122: the reason NAME, not the number. This is the
+                      * field that separates "the matchmaking server was
+                      * unreachable" from "the matchmaking server told us
+                      * why", and it is the whole reason the collapse into
+                      * four BUSY verdicts costs triage nothing. */
+                     (unsigned)s_work.ev_nack_n,
+                     s_work.ev_nack_any
+                         ? Rendezvous_NackReasonText(s_work.ev_nack_reason)
+                         : "none",
                      ConnectFail_AttributionText(attrib));
         Netplay_LogConnectEvent(line);
         /* Exactly ONE extra line per failed attempt, and only when the

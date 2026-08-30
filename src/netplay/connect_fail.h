@@ -30,13 +30,13 @@
  *                                  | "Reply to source with the OTHER
  *                                  | endpoint (or zeroes)"; silence
  *                                  | therefore means server/path down)
- *                                  | HONESTY NOTE (review L-3): a live
- *                                  | server SILENTLY DROPS a REGISTER in
- *                                  | four real cases, all of which this
- *                                  | inference then misfiles as "server
- *                                  | down": (1) the 10 pkt/s/IP rate
- *                                  | limiter (rendezvous-server.js
- *                                  | onMessage) — shared/CGNAT egress IPs
+ *                                  | HONESTY NOTE (review L-3), NOW
+ *                                  | LARGELY DISCHARGED — task #122. A
+ *                                  | live server used to SILENTLY DROP a
+ *                                  | REGISTER in four real cases, all of
+ *                                  | which this inference misfiled as
+ *                                  | "server down": (1) the per-IP rate
+ *                                  | limiter — shared/CGNAT egress IPs
  *                                  | pool that budget across users;
  *                                  | (2) the MAX_NEW_KEYS_PER_IP live-key
  *                                  | quota — reachable by one joiner
@@ -45,12 +45,21 @@
  *                                  | attempt CREATES a key; (3) session
  *                                  | table full of PAIRED sessions;
  *                                  | (4) third-party REGISTER on a fully
- *                                  | paired key. All four are rare and
- *                                  | none is distinguishable client-side
- *                                  | today (a distinct NACK needs a wire
- *                                  | change — S4/S5 territory), so
- *                                  | RENDEZVOUS_DOWN remains the honest
- *                                  | best guess, not a certainty.
+ *                                  | paired key. The wire change this
+ *                                  | note called "S4/S5 territory" is the
+ *                                  | typed NACK, and all four now arrive
+ *                                  | as a named reason that the joiner
+ *                                  | race records and
+ *                                  | ConnectFail_ClassifyNackReason maps
+ *                                  | (RENDEZVOUS_BUSY / _TABLE_FULL /
+ *                                  | _ROOM_FULL below). RENDEZVOUS_DOWN
+ *                                  | keeps its old meaning for TRUE
+ *                                  | silence only — a NACK never lands
+ *                                  | here — and stays a best guess, not a
+ *                                  | certainty, because a server that
+ *                                  | speaks a version we cannot parse
+ *                                  | still produces exactly no frame we
+ *                                  | can read.
  *   host offline / code stale      | DELIVERs arrived but ALL were the
  *                                  | zero-sentinel for the whole budget
  *   host online, NAT-blocked       | a real-endpoint DELIVER arrived,
@@ -174,6 +183,57 @@ typedef enum ConnectFailCode {
                                      connectivity failure: nothing was ever
                                      sent.                                    */
 
+    /* --- Task #122 (client half): the typed rendezvous NACK -------------
+     *
+     * The server names NINE refusals (RendezvousNackReason in
+     * rendezvous.h). These are the FIVE verdicts they map onto, and the
+     * count is deliberately not nine: a verdict exists to tell the user
+     * what to do, and four of the nine reasons do not distinguish
+     * anything the user can act on differently.
+     *
+     * The rule applied — and it is #36's, not a shortcut. A NACK that
+     * says the wrong thing is worse than the silence it replaced (H-1:
+     * ~7.5% of races were once discarded and blamed on the user's NAT
+     * after the punch had confirmed late). So a reason gets its own code
+     * only where the REMEDY differs; where the reason describes server
+     * LOAD rather than anything about this user, the four are collapsed
+     * into one verdict whose text blames nobody. The exact reason byte
+     * is never lost: it goes to the log line and to
+     * Rendezvous_NackReasonText, which is where triage reads it.
+     *
+     * See ConnectFail_ClassifyNackReason for the per-reason table and
+     * the argument for each grouping. */
+    CONNECT_FAIL_RENDEZVOUS_ROOM_FULL,  /* SESSION_FULL: the room code's two
+                                           slots are both live and neither is
+                                           ours — someone else's room, or our
+                                           own retry past the server's
+                                           port-reclaim budget. Both remedies
+                                           are the same: a fresh code.       */
+    CONNECT_FAIL_RENDEZVOUS_TABLE_FULL, /* TABLE_FULL: the server's session
+                                           table is saturated with PAIRED
+                                           rooms. Nothing about us; a new code
+                                           does NOT help, waiting does.      */
+    CONNECT_FAIL_RENDEZVOUS_BUSY,       /* RATE_IP / RATE_KEY / RATE_PREGATE /
+                                           KEY_QUOTA: a limiter fired. WHO
+                                           spent the budget is not knowable
+                                           client-side (CGNAT neighbours, our
+                                           own retries, or a spoofer in the
+                                           uncookied pre-gate all look the
+                                           same), so the verdict names the
+                                           limiter and no one else.          */
+    CONNECT_FAIL_RENDEZVOUS_BADFRAME,   /* BAD_VERSION / BAD_LENGTH / BAD_TYPE:
+                                           the server could not accept the
+                                           BYTES we sent. Two live causes — a
+                                           stale build, or a middlebox that
+                                           mangled the datagram in flight —
+                                           and the text names both.          */
+    CONNECT_FAIL_RENDEZVOUS_REFUSED,    /* A well-formed NACK carrying a reason
+                                           byte THIS build has no name for: a
+                                           server newer than us. Reported as
+                                           "refused, see log" rather than
+                                           coerced onto a name that would be a
+                                           guess.                            */
+
     /* Append new codes ABOVE this marker and bump the bound in
      * test_bilateral_punch.c test 7f (which sweeps NONE..LAST proving
      * every code has a distinct machine string).
@@ -183,7 +243,7 @@ typedef enum ConnectFailCode {
      * their removal renumbered nothing — every surviving code keeps the
      * numeric value it had, which is what the append-only rule at the
      * top of this file protects. */
-    CONNECT_FAIL_LAST_ = CONNECT_FAIL_BALANCE_UNAVAILABLE,
+    CONNECT_FAIL_LAST_ = CONNECT_FAIL_RENDEZVOUS_REFUSED,
 } ConnectFailCode;
 
 /* Stable machine code string, e.g. "P2P_FAIL_STUN_ALLDOWN". Never NULL.
@@ -232,6 +292,23 @@ typedef struct ConnectJoinEvidence {
     bool port_disagreement;  /* StunResult.port_disagreement (S2 symmetric signal) */
     bool punch_bad_token;    /* S4a: StunResult.diag_punch_bad_token — peer spoke
                                 the punch protocol but failed the token check */
+    /* Task #122: a typed refusal arrived from the rendezvous endpoint.
+     *
+     * `nack_reason` is a RendezvousNackReason wire value (rendezvous.h),
+     * carried as a plain uint8_t so this header keeps its "no
+     * dependencies" property — and deliberately NOT range-checked into
+     * the enum on the way in: a server newer than us may name a reason
+     * we have no word for, and the honest handling is to surface the
+     * number, not to coerce it onto a name.
+     *
+     * It is the LATEST reason the race saw, not the first. The server's
+     * refusals progress (an uncookied source is refused RATE_PREGATE
+     * before it holds a cookie and RATE_IP/RATE_KEY after), so the last
+     * word is the server's current answer to "why not"; the earlier ones
+     * are a state the attempt has already left. `nack_any` is what gates
+     * every read of it — reason 0 is REND_NACK_NONE and never valid. */
+    bool    nack_any;
+    uint8_t nack_reason;
 } ConnectJoinEvidence;
 
 /* Classify a failed joiner fallback. Precedence: hairpin > rendezvous
@@ -240,6 +317,18 @@ typedef struct ConnectJoinEvidence {
  * symmetric vs plain NAT block).
  * Returns NONE when the evidence says the attempt succeeded. */
 ConnectFailCode ConnectFail_ClassifyJoin(const ConnectJoinEvidence* ev);
+
+/* Task #122. Map one RendezvousNackReason wire value onto the verdict it
+ * supports. Pure, total (every uint8_t returns a code), and never
+ * CONNECT_FAIL_NONE — a NACK is by construction a refusal.
+ *
+ * Exposed rather than kept static because it is the whole client half of
+ * #122 and it is what the cross-repo parity check in
+ * tools/rendezvous-server/__test_protocol.js reads out of connect_fail.c:
+ * the server and this client DEPLOY INDEPENDENTLY, so a reason the server
+ * learns to send and this table never learns to name would silently
+ * degrade to the catch-all instead of failing a build. */
+ConnectFailCode ConnectFail_ClassifyNackReason(uint8_t reason);
 
 /* Host-side advisory classifier, evaluated periodically while
  * HOST_WAITING. The rendezvous server answers every REGISTER with a

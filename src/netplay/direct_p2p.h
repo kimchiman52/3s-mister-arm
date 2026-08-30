@@ -485,6 +485,13 @@ typedef struct DirectP2PRaceProbeOut {
     uint16_t challenge_n;
     uint16_t badver_n;
     uint32_t deliver_gap_max_ms;
+    /* Task #122: the typed rendezvous refusal. `nack_reason` is a raw
+     * RendezvousNackReason wire byte and is only meaningful when
+     * `nack_any` is set. Appended at the END, like the #36 block above:
+     * nothing reads this struct positionally. */
+    bool     nack_any;
+    uint16_t nack_n;
+    uint8_t  nack_reason;
 } DirectP2PRaceProbeOut;
 
 void DirectP2P_TestHook_RunRace(const DirectP2PRaceProbeCfg* cfg,
@@ -515,6 +522,9 @@ typedef struct DirectP2PAttemptEvidence {
     uint16_t challenge_n;
     uint16_t badver_n;
     uint32_t deliver_gap_max_ms;
+    bool     nack_any;      /* #122 */
+    uint8_t  nack_reason;
+    uint16_t nack_n;
 } DirectP2PAttemptEvidence;
 
 /* Seeds s_work's per-attempt evidence from `in` (NULL = leave as-is),
