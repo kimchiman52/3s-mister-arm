@@ -4763,7 +4763,23 @@ static void apply_training_hitbox_display(bool force_off) {
 }
 
 void Dummy_Move_Sub_LR(u16 sw, s16 id, s16 type, s16 cursor_id) {
-    s16 max = Menu_Max_Data_Tr[id][type][Menu_Cursor_Y[cursor_id]];
+    s16 max;
+
+    /* [TM-08] Menu_Max_Data_Tr is 9 wide because it is indexed by the raw menu
+     * cursor, which includes the trailing DEFAULT SETTING and EXIT rows.
+     * TrainingData.contents is only 7 wide, and every write below indexes it
+     * with that same cursor. Until now the only thing stopping rows 7/8 from
+     * writing past the end of contents[] was that those two columns happen to
+     * hold 0, so the max == 0 early-out fired first -- an incidental guard that
+     * a single table edit would silently remove. Bound the cursor against
+     * contents[] explicitly instead. */
+    if (Menu_Cursor_Y[cursor_id] < 0 ||
+        Menu_Cursor_Y[cursor_id] >=
+            (s16)(sizeof(Training[2].contents[id][type]) / sizeof(Training[2].contents[id][type][0]))) {
+        return;
+    }
+
+    max = Menu_Max_Data_Tr[id][type][Menu_Cursor_Y[cursor_id]];
 
     if (max == 0) {
         return;
