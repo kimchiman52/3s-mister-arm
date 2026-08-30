@@ -1,5 +1,9 @@
 # Review: perf-2 RGB565 canvas (commit f70d99bd)
 
+> **ARCHIVED 2026-08-30** — true at a752e2ca, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 Reviewer: independent review agent (read source files, not just diff).
 Scope: 1405 lines of changes across renderer + parity + presenter for the
 RGB565 software_frame canvas mode.

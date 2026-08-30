@@ -1,5 +1,9 @@
 # Track B (Netplay UI) — Phase 6 blocked after session-budget cap
 
+> **ARCHIVED 2026-08-30** — true at a752e2ca, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 **Branch:** `feat/netplay-phase-4-6-track-b` off `mister` HEAD `17ab61e7`.
 **Worktree:** `/Users/sb/Developer/3sx-mister/.claude/worktrees/agent-a5e24d84`.
 **Date:** 2026-04-20.

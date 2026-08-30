@@ -1,5 +1,9 @@
 # Vsync Feedback Relay — Implementation Summary
 
+> **ARCHIVED 2026-08-30** — true at 50359cce, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 **Date:** 2026-04-13
 **Status:** Deployed, validating
 

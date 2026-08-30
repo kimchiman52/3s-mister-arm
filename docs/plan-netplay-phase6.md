@@ -11,8 +11,8 @@
 
 Tier-3 detailed implementation plan for the `netplay` branch of `3sx-mister`.
 
-- **Parent tier-2 plan:** `docs/plan-netplay-port.md` §5 Phase 6, §7.3, §8.2, §15 locked decisions.
-- **Parent tier-1 research:** `docs/research-3sxtra-netplay-port.md` §5, §9.7, §11.4, §12, §16.
+- **Parent tier-2 plan:** `docs/archive/plan-netplay-port.md` §5 Phase 6, §7.3, §8.2, §15 locked decisions.
+- **Parent tier-1 research:** `docs/archive/research-3sxtra-netplay-port.md` §5, §9.7, §11.4, §12, §16.
 - **Upstream source-of-truth:** `/tmp/3sxtra/` (HEAD `a18eae1`, per §16.2).
 - **Our branch:** `netplay`, 29 commits above `mister`. Phases 1–5 and 7 already merged.
 - **Effort budget (re-scored post-review 2026-04-20):** XL = 15–20 focused days. Tier-2 §5 Phase 6 originally sized this as L; review confirmed three LOC/reconciliation under-estimates (see Summary "Estimated effort" for the breakdown) that push into XL.
@@ -245,7 +245,7 @@ Dependencies:
 **Files to read first:**
 - `/Users/sb/Developer/3sx-mister/include/structs.h:1-45` (the F25 guard).
 - `/Users/sb/Developer/3sx-mister/include/structs.h:224-234` — the field is declared `u8 operator;` at line 234 inside `struct WORK`, with the in-source comment at `:225-233` describing exactly why 3sxtra renamed it to `pl_operator` in their fork and recommending we mechanical-rename when we need C++ inclusion.
-- `docs/research-3sxtra-netplay-port.md` §9.5 (options A / B for the C++ reserved-word collision).
+- `docs/archive/research-3sxtra-netplay-port.md` §9.5 (options A / B for the C++ reserved-word collision).
 - Run `grep -rnE '\.operator\b' src/ | wc -l` to re-verify the call-site count (137 at time of planning; mostly in `src/sf33rd/` engine code).
 
 **Files to create/modify:**
@@ -288,7 +288,7 @@ Dependencies:
 - Upstream-only (do NOT try to read in our tree): `src/port/sdl/renderer/*` — the entire `renderer/` subtree (`gl_compat.h`, `radix_sort.h`, `renderer.c`, `sdl_game_renderer_classic.c`) exists only in `/tmp/3sxtra/` (verified `ls /Users/sb/Developer/3sx-mister/src/port/sdl/renderer` → ENOENT on 2026-04-20). When the upstream wrapper references these, take the SDL renderer via `SDL_GetRenderer(window)` instead.
 - Our fork: `src/port/sdl/rmlui/rmlui_blend_fix.{cpp,h}` — the MiSTer subclass we already have; reuse as the RenderInterface.
 - `src/port/sdl/rmlui/rmlui_first_light_test.cpp:1-60` — existing pattern for wiring RmlUi + vendored renderer + SDL3-software on MiSTer. The wrapper takes the same MiSTerSystemInterface and MiSTerFileInterface patterns.
-- `docs/research-3sxtra-netplay-port.md` §12 (MiSTer shared-lib reality; no GPU path).
+- `docs/archive/research-3sxtra-netplay-port.md` §12 (MiSTer shared-lib reality; no GPU path).
 
 **Mid-step evaluation gate (twin-context):** After reading the full upstream wrapper, decide before coding: implement full twin-context (`window_context` for menus + `game_context` for in-match overlays) OR start with single-context and alias `*_game_document` → `*_document`. The twin-context is only exercised by `rmlui_netplay_ui` and `rmlui_ingame_chat` (Step 12). If either (a) upstream's twin-context has ordering / focus bugs we'd inherit, or (b) a single context is provably sufficient for our 60-FPS SDL3-software path, choose single-context and document the choice in the step commit message. If unsure, default to single-context — it's the smaller commitment and can be expanded later. This decision is load-bearing for Step 12 and MUST be made before Step 6 is marked done.
 
@@ -329,15 +329,15 @@ Dependencies:
 
 **What it does:** Copy 3sxtra's lobby HTTP client (2229 + 438 LOC) plus the `identity.c` (player-id persistence) and `sha256.c` helper into `src/netplay/`. No source changes; our URL default becomes the shared 3sxtra lobby at `152.67.75.184:3000` (Decision #12).
 
-**Why it matters:** `menu_network.c` and all `ms_*` screens call lobby APIs — `lobby_search_start`, `lobby_room_create`, `lobby_room_list`, `lobby_sse_poll`, etc. This is the network backbone the UI drives. The lobby client depends on `libcurl`, which our MiSTer target ships as a shared `/usr/lib/libcurl.so.4` (verified `docs/plan-netplay-port.md` §16.4 — live `ls` confirmed present).
+**Why it matters:** `menu_network.c` and all `ms_*` screens call lobby APIs — `lobby_search_start`, `lobby_room_create`, `lobby_room_list`, `lobby_sse_poll`, etc. This is the network backbone the UI drives. The lobby client depends on `libcurl`, which our MiSTer target ships as a shared `/usr/lib/libcurl.so.4` (verified `docs/archive/plan-netplay-port.md` §16.4 — live `ls` confirmed present).
 
 **Files to read first:**
 - `/tmp/3sxtra/src/netplay/lobby_server.h:1-438`.
 - `/tmp/3sxtra/src/netplay/lobby_server.c:1-200` (init + curl setup), then skim rest.
 - `/tmp/3sxtra/src/netplay/identity.c:1-end`, `identity.h`.
 - `/tmp/3sxtra/src/netplay/sha256.c/h`.
-- `docs/plan-netplay-port.md` §8.3 (endpoints we USE), §8.4 (endpoints we DO NOT use — compile-time assert these are never called).
-- `docs/plan-netplay-port.md` §16.4 (libcurl present as shared on MiSTer).
+- `docs/archive/plan-netplay-port.md` §8.3 (endpoints we USE), §8.4 (endpoints we DO NOT use — compile-time assert these are never called).
+- `docs/archive/plan-netplay-port.md` §16.4 (libcurl present as shared on MiSTer).
 
 **Files to create/modify:**
 - `src/netplay/lobby_server.{c,h}`.
@@ -379,7 +379,7 @@ Dependencies:
 **Why it matters:** Cross-arch crossplay is BLOCKED by the `SessionHealthMsg` checksum (research §9.7). Without this layered defense a MiSTer user clicking "Find Match" against the shared lobby will be paired with a desktop peer and desync within seconds, corrupting state. Layer 3 is the authoritative guard; Layers 1–2 reduce the hit rate before Layer 3 fires.
 
 **Files to read first:**
-- `docs/plan-netplay-port.md:865-928` — §8.2 (three-layer defense), §8.2.4 (MIST handshake wire format + hello/ack/reject message types + 500ms timeout + 5× retransmit at 100ms), §8.2.5 (display_name suffix encoding).
+- `docs/archive/plan-netplay-port.md:865-928` — §8.2 (three-layer defense), §8.2.4 (MIST handshake wire format + hello/ack/reject message types + 500ms timeout + 5× retransmit at 100ms), §8.2.5 (display_name suffix encoding).
 - `/tmp/3sxtra/src/netplay/sdl_net_adapter.c:10-30` — the `3SXC` chat filter pattern; note this is a simpler prefix, not what we're implementing.
 - `/Users/sb/Developer/3sx-mister/src/netplay/sdl_net_adapter.c` — our equivalent.
 - `src/netplay/lobby_server.c` after Step 7 — find the `/room/create` POST body construction and the `/rooms/list` response parse.
@@ -622,7 +622,7 @@ Do not add entries to this list piecemeal — if another include needs stripping
 - `/tmp/3sxtra/src/port/sdl/rmlui/rmlui_leaderboard.{cpp,h}` (full).
 - `/tmp/3sxtra/src/port/sdl/rmlui/rmlui_player_profile.{cpp,h}` (full).
 - `/tmp/3sxtra/src/port/sdl/rmlui/rmlui_network_replay_picker.{cpp,h}` (full).
-- `docs/plan-netplay-port.md` §15 #15 — "ship as-is, no MiSTer-specific customization".
+- `docs/archive/plan-netplay-port.md` §15 #15 — "ship as-is, no MiSTer-specific customization".
 
 **Files to create/modify:**
 - `src/port/sdl/rmlui/rmlui_leaderboard.{cpp,h}` (new).
@@ -661,7 +661,7 @@ Do not add entries to this list piecemeal — if another include needs stripping
 - `/tmp/3sxtra/assets/flags_icons/` → 173 files, 692K (smaller icon set for in-game overlays).
 - `/tmp/3sxtra/assets/fonts/` — `BoldPixels.ttf` (160 KB), `district_italic.ttf` (60 KB). We ship both. Do NOT copy `NotoSansJP-Regular.ttf` (4.5 MB) or `NotoEmoji-Regular.ttf` (1.9 MB) per Decision #5.
 - Verify district usage: `grep -rln 'DistrictTF\|district_italic' /tmp/3sxtra/assets/ui/ /tmp/3sxtra/src/port/sdl/rmlui/` before finalising. Expect hits in `base.rcss:11`, `menu_shared.rcss`, `ingame_chat.rcss`, and `rmlui_wrapper.cpp:1033` (`LoadFontFace` call).
-- `docs/plan-netplay-port.md` §7.3, §13 #10 — sysctl hook placement.
+- `docs/archive/plan-netplay-port.md` §7.3, §13 #10 — sysctl hook placement.
 - `docs/mister-runbook.md` for path layout on device.
 
 **Files to create/modify:**
@@ -773,7 +773,7 @@ No source changes required for Step 15; the gate was satisfied incrementally acr
 - `/Users/sb/.claude/projects/-Users-sb-Developer-3sx-mister/memory/feedback-read-runbooks-before-deploy.md`.
 - `/Users/sb/.claude/projects/-Users-sb-Developer-3sx-mister/memory/feedback-no-rsync-delete.md`.
 - `tools/mister/misterctl.sh` (the `deploy` subcommand).
-- `docs/plan-netplay-port.md` §8.2.4 (MIST handshake wire format) for the rejection test design.
+- `docs/archive/plan-netplay-port.md` §8.2.4 (MIST handshake wire format) for the rejection test design.
 
 **Files to create/modify:**
 - None in-source. This step deploys artifacts produced by Step 15 and executes on device.

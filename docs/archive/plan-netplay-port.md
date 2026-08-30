@@ -1,5 +1,9 @@
 # 3sxtra Netplay Port — Tier-2 Implementation Plan
 
+> **ARCHIVED 2026-08-30** — true at 922e84d2, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 ## 1. Document metadata and purpose
 
 **Tier:** 2 (architectural roadmap / workstream plan).

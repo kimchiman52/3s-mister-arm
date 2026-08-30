@@ -90,5 +90,5 @@ Expect both instances to show `[netplay_nav] state X -> Y` transitions through t
 ## Related
 
 - `docs/plan-stun-direct-p2p.md` — the plan that introduced the orchestrator this nav module sits on top of.
-- `docs/STUN-PORT-STATUS.md` — orchestrator status snapshot.
+- `docs/archive/STUN-PORT-STATUS.md` — orchestrator status snapshot.
 - Commit `42347261` — the three earlier fixes (TASK_INIT guard, `Netplay_SetRemotePort`, `remote_ip_buf`) this module depends on.

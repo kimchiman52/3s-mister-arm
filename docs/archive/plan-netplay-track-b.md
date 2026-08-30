@@ -1,5 +1,9 @@
 # Track B (UI) — Phases 4, 5, 6 — Combined Execution Plan
 
+> **ARCHIVED 2026-08-30** — true at a752e2ca, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 **Status:** Draft. Branch `feat/netplay-phase-4-6-track-b` off `mister` at `17ab61e7`.
 **Date:** 2026-04-20.
 **Scope:** UI-side netplay port for 3s-mister-arm. Three phases, one worktree.

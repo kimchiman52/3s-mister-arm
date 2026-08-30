@@ -1,5 +1,9 @@
 # Review: perf-1 color-key loose-form INDEX8 fast path (commit 7b0d9dba)
 
+> **ARCHIVED 2026-08-30** — true at a752e2ca, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 Reviewed by reading the actual committed source (not just git diff). Worktree:
 `/Users/sb/Developer/3sx-mister-perf`. Build was reported passing; this review
 is correctness-only.

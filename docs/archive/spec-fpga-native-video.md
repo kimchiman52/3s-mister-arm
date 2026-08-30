@@ -1,5 +1,9 @@
 # Implementation Specification: FPGA Native Video Output
 
+> **ARCHIVED 2026-08-30** — true at b2c79d7c, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 > **Post-Phase-C update (2026-05-03):** `src/port/sdl/fbdev_presenter.{c,h}`
 > have been removed. References below to `fbdev_presenter` (file paths,
 > `FBDevPresenter_Present*` calls, NEON helpers) are historical context for

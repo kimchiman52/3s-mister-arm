@@ -2,7 +2,7 @@
  * mist_handshake.c — Phase 6 Step 8: Layer-3 MiSTer-arch handshake.
  *
  * Implements the 2-way "MIST" magic-prefix handshake described in tier-2
- * §8.2.4 of docs/plan-netplay-port.md. Intended to run on the STUN /
+ * §8.2.4 of docs/archive/plan-netplay-port.md. Intended to run on the STUN /
  * matchmaking UDP socket BETWEEN hole-punch completion and gekko_create()
  * in src/netplay/netplay.c. See mist_handshake.h for wire format.
  *

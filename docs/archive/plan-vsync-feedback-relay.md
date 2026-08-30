@@ -1,5 +1,9 @@
 # Vsync Feedback Relay — Implementation Plan
 
+> **ARCHIVED 2026-08-30** — true at db8e63f7, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 **Date:** 2026-04-13
 **Status:** Plan
 **Approach:** Wrapper relays FPGA frame counter to DDR3 shared memory; game app reads it for closed-loop phase locking

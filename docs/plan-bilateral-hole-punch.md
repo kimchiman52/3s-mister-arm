@@ -429,7 +429,7 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 **Why:** the server must exist before any client code can be tested end-to-end. A single-host Node.js service is the cheapest path and matches the runtime used by 3sxtra (we do NOT ship our own lobby server in this repo — see `project-netplay-port-strategy.md`; we piggyback on 3sxtra's hosted lobby for matchmaking). This step introduces a NEW top-level tooling directory `tools/rendezvous-server/`.
 
 **Read first:**
-- `/Users/sb/Developer/3sx-mister/docs/plan-netplay-port.md` — §8 for the general Node-service deployment recipe (matchmaking lobby, not bilateral — just shape)
+- `/Users/sb/Developer/3sx-mister/docs/archive/plan-netplay-port.md` — §8 for the general Node-service deployment recipe (matchmaking lobby, not bilateral — just shape)
 - `/Users/sb/Developer/3sx-mister/docs/plan-bilateral-hole-punch.md` §Decision 2 (wire format)
 - No Node.js reference is available locally (the upstream `tools/lobby-server/` directory in `/tmp/3sxtra/` is empty as of 2026-04-26 — `ls /tmp/3sxtra/tools/lobby-server/` returns no files). Design from §Decision 2's wire format directly. For systemd unit and `deploy.sh` idioms, use any standard reference (e.g., the systemd `man systemd.service` documentation).
 
@@ -814,19 +814,19 @@ Ordered by dependency. Steps 1 and 2 are deployable independently (infra + a new
 
 **Read first:**
 - `/Users/sb/.claude/projects/-Users-sb-Developer-3sx-mister/memory/project-netplay-port-strategy.md`
-- `/Users/sb/Developer/3sx-mister/docs/STUN-PORT-STATUS.md`
+- `/Users/sb/Developer/3sx-mister/docs/archive/STUN-PORT-STATUS.md`
 - `/Users/sb/Developer/3sx-mister/docs/config.md` (already updated in Step 2)
 
 **Changes:**
 - Add a new memory entry `project-bilateral-hole-punch.md` under `/Users/sb/.claude/projects/-Users-sb-Developer-3sx-mister/memory/` — one paragraph summary of: feature intent, where it lives in the state machine, kill switch, what's NOT implemented (TURN, port prediction).
 - Update the memory index at `/Users/sb/.claude/projects/-Users-sb-Developer-3sx-mister/memory/MEMORY.md` with a new line for the bilateral entry.
-- Update `docs/STUN-PORT-STATUS.md` to note that `FAILED_SYMMETRIC` now has a bilateral-punch fallback (with a forward reference to `docs/plan-bilateral-hole-punch.md`).
+- Update `docs/archive/STUN-PORT-STATUS.md` to note that `FAILED_SYMMETRIC` now has a bilateral-punch fallback (with a forward reference to `docs/plan-bilateral-hole-punch.md`).
 - Do NOT update `project-netplay-port-strategy.md` — that memo is about matchmaking, not transport fallback; cross-reference only.
 
 **Success criteria:**
 - `ls /Users/sb/.claude/projects/-Users-sb-Developer-3sx-mister/memory/project-bilateral-hole-punch.md` exists.
 - `grep -n 'project-bilateral-hole-punch' /Users/sb/.claude/projects/-Users-sb-Developer-3sx-mister/memory/MEMORY.md` prints 1 line.
-- `grep -n 'bilateral\|FAILED_BILATERAL' docs/STUN-PORT-STATUS.md` prints ≥ 1 line.
+- `grep -n 'bilateral\|FAILED_BILATERAL' docs/archive/STUN-PORT-STATUS.md` prints ≥ 1 line.
 
 **Depends on:** Step 5c (must be complete and functional — docs follow code).
 

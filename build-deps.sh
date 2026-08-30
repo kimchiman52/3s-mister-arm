@@ -53,7 +53,7 @@ fi
 #
 # REMOVED — do not re-add without a consumer:
 #   FreeType 2.13.3 and RmlUi 6.2 were added for the 3sxtra RmlUi lobby
-#   port (docs/plan-netplay-port.md Phase 4, TRACK_B_BLOCKED.md), which was
+#   port (docs/archive/plan-netplay-port.md Phase 4, docs/archive/TRACK_B_BLOCKED.md), which was
 #   abandoned in April 2026. Neither library was ever referenced by
 #   CMakeLists.txt or cmake/, so neither ever reached the binary; FreeType
 #   existed only because RmlUi needed it. They were cross-compiled on every

@@ -1,5 +1,9 @@
 # Plan — perf-1 — Loose-form binary-α color-key fast path for INDEX8 raster kernels
 
+> **ARCHIVED 2026-08-30** — true at a752e2ca, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 **Worktree:** `/Users/sb/Developer/3sx-mister-perf` (branch `perf`)
 **Source-of-truth:** all paths in this plan are relative to that worktree.
 **Background:** see `/Users/sb/Developer/3sx-mister/docs/research-renderer-external-comparison.md`,

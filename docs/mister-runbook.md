@@ -102,7 +102,7 @@ Build flavors:
 
 Netplay builds:
 
-- Netplay is **ON by default** for MiSTer builds (`CMakeLists.txt` `PORT_MISTER` block, changed 2026-07-25). `tools/mister/build-game.sh --flavor telemetry` already produces a netplay-capable package — it bundles `libminiupnpc` and the direct-P2P + bilateral hole-punch stack. The RmlUi lobby cascade was dropped and is NOT required; there is no `ENABLE_RMLUI` option, and the RmlUi + FreeType `build-deps.sh` recipes were removed 2026-08-29 (neither library was ever referenced by `CMakeLists.txt`). See `docs/plan-netplay-port.md` §15 #8 for the `CFG_KEY_NETPLAY_*` runtime-config key convention.
+- Netplay is **ON by default** for MiSTer builds (`CMakeLists.txt` `PORT_MISTER` block, changed 2026-07-25). `tools/mister/build-game.sh --flavor telemetry` already produces a netplay-capable package — it bundles `libminiupnpc` and the direct-P2P + bilateral hole-punch stack. The RmlUi lobby cascade was dropped and is NOT required; there is no `ENABLE_RMLUI` option, and the RmlUi + FreeType `build-deps.sh` recipes were removed 2026-08-29 (neither library was ever referenced by `CMakeLists.txt`). See `docs/archive/plan-netplay-port.md` §15 #8 for the `CFG_KEY_NETPLAY_*` runtime-config key convention.
 - Never ship a netplay-off MiSTer build: a netplay-off package omits `libminiupnpc`, and the deploy then prunes it (plus any other netplay libs) off-device — correctly, since the previous deploy's manifest claims it, but the result is still a device without netplay libraries. For the rare deliberate exception, pass `EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=OFF"`; the inner build prints the final cmake invocation so you can confirm the flag landed in the container log.
 
 Validated dual-flavor Docker build/package commands:

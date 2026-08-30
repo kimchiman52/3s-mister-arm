@@ -1,5 +1,9 @@
 # 3sxtra Netplay Port — Technical Research Document
 
+> **ARCHIVED 2026-08-30** — true at a752e2ca, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 **Status:** Research only; no code written. Informs planning and implementation decisions for porting 3sxtra's rollback netplay to 3sx-mister (MiSTer ARM target).
 
 **Date:** 2026-04-20

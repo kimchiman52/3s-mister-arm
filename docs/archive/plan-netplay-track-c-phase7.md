@@ -1,5 +1,9 @@
 # Track C (Deps) Phase 7 — Implementation Plan
 
+> **ARCHIVED 2026-08-30** — true at a752e2ca, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 **Scope:** Move GekkoNet and SDL3_net ARM cross-compile recipes out of the
 desktop-only profile gate in `build-deps.sh`, verify armhf linkage, and confirm
 an end-to-end MiSTer build with `-DENABLE_NETPLAY=ON` produces a working armhf

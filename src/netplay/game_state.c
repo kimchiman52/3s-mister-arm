@@ -157,7 +157,7 @@ _Static_assert(sizeof(struct _TASK) == EXPECTED_TASK_SIZE,
                "GameState and verifying rollback compatibility.");
 #else
 // 64-bit build: tripwires are disabled because cross-arch determinism is
-// unsupported (see docs/research-3sxtra-netplay-port.md §9.7 and the
+// unsupported (see docs/archive/research-3sxtra-netplay-port.md §9.7 and the
 // cross-arch research agent report). A MiSTer (32-bit) peer and a desktop
 // (64-bit) peer will desync on GekkoNet's SessionHealthMsg checksum within
 // seconds regardless of struct layout, so pinning the 64-bit expected size

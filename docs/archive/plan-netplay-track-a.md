@@ -1,5 +1,9 @@
 # Track A — Netplay Port (Phases 1–3) Implementation Plan
 
+> **ARCHIVED 2026-08-30** — true at a752e2ca, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 **Status:** Ready for implementation
 **Scope:** Engine critical path — GameState backfill, setup_vs_mode expansion, focused checksum + sanitizers + dump
 **Audience:** Autonomous implementer agent

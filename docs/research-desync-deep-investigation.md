@@ -19,7 +19,7 @@ Author: deep-investigation agent
 
 - `file build/mister-runtime-package/bin/3s-arm` reports: `ELF 32-bit LSB pie executable, ARM, EABI5 version 1 ... BuildID[sha1]=ff65afb75fad2cb04ead9cda63ad124278486aac`. **PIE is enabled** — every process load has a different base address, so every function/const-data pointer differs between the two peers. This is important for anything that compares or memcpy's pointer bytes into cross-peer hashable state.
 - Focused checksum lives in `src/netplay/game_state.c:1596-1750`. **Release builds compute and emit the checksum** (see the `#if DEBUG` split at `game_state.c:1608,1729-1747`). The DEBUG-gated part is only the per-subsystem ring-buffer + file dumps, NOT the hash itself.
-- 32-bit ARM makes the "suspicious pointer sweep" at `src/netplay/game_state.c:1658-1665` a no-op in practice: the heuristic compares a `uint64_t` fused from two adjacent 32-bit words against `0x100000000ULL`. Confirmed in `docs/research-3sxtra-netplay-port.md:559-576`.
+- 32-bit ARM makes the "suspicious pointer sweep" at `src/netplay/game_state.c:1658-1665` a no-op in practice: the heuristic compares a `uint64_t` fused from two adjacent 32-bit words against `0x100000000ULL`. Confirmed in `docs/archive/research-3sxtra-netplay-port.md:559-576`.
   - **[REVISED 2026-04-24]**: this claim is partially wrong. On little-endian 32-bit ARM, `(uint64_t*)&plw_scratch[p]` reads pairs of adjacent 32-bit words. The fused value `v = (high32 << 32) | low32` exceeds `0x100000000` whenever the upper 32 bits are nonzero (i.e. whenever the second 32-bit field in the pair is any value ≥ 1 *and* the pair as a whole exceeds 2³²). The `(v >> 47) == 0` gate then zeros only pairs where the top 17 bits are zero — still matches a huge swath of legitimate 32-bit game-state pairs (any field pair where the second field is in `[0x0001..0x7FFF]`). The sweep therefore **actively rewrites non-pointer PLW bytes on 32-bit**, not zero of them. Both 32-bit peers rewrite the same bytes deterministically given the same state, so this does not by itself cause divergence — but it shrinks the effective hashed surface and could mask or reveal state drift unpredictably when combined with other divergences.
 
 ## Evidence refinement (2026-04-24, rollback-axis) [REVISED 2026-04-24 rollback-axis]
@@ -689,7 +689,7 @@ Given the analysis above, candidate mechanisms that could produce a CHECKSUM MIS
 
 ### E.2 Research doc §19 risks cross-reference
 
-From `docs/research-3sxtra-netplay-port.md:1303-1344`:
+From `docs/archive/research-3sxtra-netplay-port.md:1303-1344`:
 
 | Risk | Status in our code |
 |---|---|
@@ -702,8 +702,8 @@ From `docs/research-3sxtra-netplay-port.md:1303-1344`:
 
 ### E.3 Other netplay docs
 
-- `docs/plan-netplay-port.md` — implementation plan, no additional risks listed.
-- `docs/research-3sxtra-netplay-port.md` §9.7 "Cross-architecture netplay compatibility" — 64-bit/32-bit cross-play fundamentally broken because focused checksum hashes PLW as BYTES not as SEMANTICS, and struct layouts diverge between word sizes. Not relevant for our MiSTer↔MiSTer case (both ARMv7 32-bit).
+- `docs/archive/plan-netplay-port.md` — implementation plan, no additional risks listed.
+- `docs/archive/research-3sxtra-netplay-port.md` §9.7 "Cross-architecture netplay compatibility" — 64-bit/32-bit cross-play fundamentally broken because focused checksum hashes PLW as BYTES not as SEMANTICS, and struct layouts diverge between word sizes. Not relevant for our MiSTer↔MiSTer case (both ARMv7 32-bit).
 - `docs/agent-memory/netplay-*.md` — exist but mostly process notes.
 
 ### E.4 Upstream non-determinism sources the port doesn't fully address

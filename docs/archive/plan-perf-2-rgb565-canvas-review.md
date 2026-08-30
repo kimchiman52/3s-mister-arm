@@ -1,5 +1,9 @@
 # Review — perf-2 RGB565 canvas plan
 
+> **ARCHIVED 2026-08-30** — true at a752e2ca, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 **Plan reviewed:** `/Users/sb/Developer/3sx-mister-perf/docs/plan-perf-2-rgb565-canvas.md`
 **Branch:** `perf` @ `4d58c909`
 **Reviewer mode:** independent-verify against source. Every claim below was checked

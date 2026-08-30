@@ -1,7 +1,7 @@
 /*
  * mist_handshake.h — Phase 6 Step 8: Layer-3 MiSTer-arch handshake.
  *
- * Ports tier-2 §8.2.4 of docs/plan-netplay-port.md. After STUN pairing and
+ * Ports tier-2 §8.2.4 of docs/archive/plan-netplay-port.md. After STUN pairing and
  * BEFORE GekkoNet starts on the paired socket, peers exchange a 2-way
  * "MIST" magic-prefix frame to confirm both sides are 32-bit armv7 MiSTer
  * builds. If the opponent fails to ack within 500 ms — or sends a reject —

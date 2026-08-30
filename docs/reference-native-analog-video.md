@@ -311,7 +311,7 @@ Offset 0x40:  bits[31:8] = ARM CLOCK_MONOTONIC timestamp (bottom 24 bits, micros
 Offset 0x44:  32-bit sequence number (monotonically increasing, for torn-read detection)
 ```
 
-See `docs/summary-vsync-feedback-relay.md` for full implementation details.
+See `docs/archive/summary-vsync-feedback-relay.md` for full implementation details.
 
 ---
 
@@ -537,7 +537,7 @@ Closed-loop phase locking with vsync feedback from the wrapper:
 - Kill switch: `THIRDSARM_VSYNC_FEEDBACK=0`
 - Lead time tuning: `THIRDSARM_LEAD_TIME_US` (default 2000)
 
-See `docs/summary-vsync-feedback-relay.md` for full architecture.
+See `docs/archive/summary-vsync-feedback-relay.md` for full architecture.
 
 ---
 
@@ -680,7 +680,7 @@ See `docs/native-analog-svideo-plan.md` for full design rationale.
 |------|-------------|
 | `docs/reference-native-analog-video.md` | This document |
 | `docs/plan-frame-pacing-fix.md` | PLL retune + vsync feedback implementation plan |
-| `docs/spec-fpga-native-video.md` | Original FPGA native video design spec |
+| `docs/archive/spec-fpga-native-video.md` | Original FPGA native video design spec |
 | `docs/design-fpga-native-video.md` | Architecture overview and design decisions |
 | `docs/native-analog-svideo-plan.md` | 384-native TV mode design |
 | `docs/research-video-output-paths.md` | Video path routing research |

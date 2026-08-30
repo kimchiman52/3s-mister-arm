@@ -1,5 +1,9 @@
 # Research — Rendering pipeline vs. external 6 ms/frame reference
 
+> **ARCHIVED 2026-08-30** — true at b2c79d7c, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 > **Post-Phase-C update (2026-05-03):** `src/port/sdl/fbdev_presenter.{c,h}`
 > have been removed. References below to `FBDevPresenter_*` /
 > `fbdev_presenter` describe the path as it existed at the time of this

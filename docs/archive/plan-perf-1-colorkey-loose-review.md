@@ -1,5 +1,9 @@
 # Review — plan-perf-1-colorkey-loose.md
 
+> **ARCHIVED 2026-08-30** — true at 3f020a54, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 Reviewer pass. All line-number citations below are against the worktree `/Users/sb/Developer/3sx-mister-perf/` at the current branch HEAD (`7ed2c2d3`). Files were opened directly; no file:line claim is forwarded without verification.
 
 The plan is overall well-structured and most factual claims hold up. The findings below are the ones that, if not addressed, would either make a step fail to compile, fail to produce a valid binary, or produce a measurement with no usable A/B comparison.

@@ -1,5 +1,9 @@
 # STUN + UPnP Direct-P2P Port — Status Snapshot
 
+> **ARCHIVED 2026-08-30** — true at c803dfbb, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 Wake-time status report. All plan steps implemented and committed on
 branch `netplay`. The only outstanding action is deploying to the
 MiSTer at `192.168.1.171`, which was offline at session end (device
