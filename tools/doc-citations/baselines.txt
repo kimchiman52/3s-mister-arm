@@ -116,14 +116,22 @@
 # thing released is docs/*.md that is not one of the eight: the archive.
 #
 # WHAT THIS DELIBERATELY NO LONGER COVERS: the 19 remaining unanchored
-# citations all live in archived research and plan documents
-# (research-desync-deep-investigation.md, research-3sxtra-netplay-port.md,
-# plan-netplay-port.md, plan-netplay-track-a.md, plan-fcade-replay-browser.md).
-# Those are dated historical records -- several correctly describe the tree
-# their own commit replaced -- not live pointers, and holding them at exactly
-# 19 forced every unrelated lane to re-audit them. They are released on
-# purpose. A NEW archived document is likewise not covered; that is the cost
-# of the drop and it is recorded here rather than hidden.
+# citations all live in research and plan documents that are dated historical
+# records -- several correctly describe the tree their own commit replaced --
+# rather than live pointers, and holding them at exactly 19 forced every
+# unrelated lane to re-audit them. They are released on purpose.
+#
+# UPDATE 2026-08-30: three of the five documents that hold them
+# (research-3sxtra-netplay-port.md, plan-netplay-port.md,
+# plan-netplay-track-a.md) have since moved into docs/archive/, which is no
+# longer scanned at all -- docs/archive/ is in SKIP_SCAN_DIRS, proven by
+# check_archive_is_not_scanned() in test_doc_citations.py. So those citations
+# are not merely un-ceilinged now, they are invisible. The two that remain in
+# the live corpus (research-desync-deep-investigation.md, which
+# rollback-determinism-harness.md still cites as its §A source, and
+# plan-fcade-replay-browser.md) are still scanned and still un-ceilinged.
+# A NEW document placed in docs/ and not listed above is likewise not covered;
+# that is the cost of the drop and it is recorded here rather than hidden.
 
 0    src       unanchored-citation   # no source file may cite src/netplay/game_state.c by bare line number
 0    include   unanchored-citation   # ditto for headers

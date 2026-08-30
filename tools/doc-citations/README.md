@@ -183,9 +183,38 @@ they are reported and left alone. `--fix` does not touch this code, and cannot:
 there is no anchor to derive a target from.
 
 Nineteen of them survive, and as of task #117 they are no longer under a
-ceiling: every one lives in an archived research or plan document, and holding
+ceiling: every one lives in a historical research or plan document, and holding
 those at an exact count made each unrelated lane re-audit citations that
 describe a tree their own commit replaced. The rule itself is still enforced —
 `baselines.txt` holds `src` at zero `unanchored-citation` findings, and the
 eight document ceilings are all-codes and so forbid the shape too. What was
 dropped is the archive, not the check.
+
+## `docs/archive/` is not scanned
+
+Task #117 released archived documents from the ceilings. It did not stop the
+linter reading them, so they went on producing `drift` findings that were
+repaired by hand in commits whose entire subject was "repoint N citations" —
+and repairing one means editing a historical record so that it describes a tree
+it was not written against, which makes the record worse, not better.
+
+So `docs/archive/` is in `SKIP_SCAN_DIRS`. An archived document carries a
+header naming the commit it was true at; its line numbers are correct about
+that commit and are not claims about now. This is strictly stronger than the
+RECORD class in `record-documents.txt`, which only demotes *existence* findings
+to advisory and leaves `drift` and `line-out-of-range` as errors — those two
+being exactly the backlog the archive accumulated.
+
+The exclusion is asserted, not asked for. `check_archive_is_not_scanned()` in
+`test_doc_citations.py` plants the same file twice in a throwaway worktree,
+once inside `docs/archive/` and once outside it, and requires silence on the
+first **and** a finding on the second. The positive control is the point: a
+linter that has stopped scanning anything at all is also silent, and without
+the second probe this assertion would pass for that reason. It also plants the
+probes as *tracked* files, because `scan_targets` reads `git ls-files` — an
+untracked probe would be skipped whether or not the exclusion existed, and the
+test would prove nothing.
+
+Verified by mutation rather than assumed: deleting `"docs/archive/"` from the
+tuple makes the test report three findings on the inside probe (`drift`,
+`line-out-of-range`, `phantom-identifier`) and fail.

@@ -208,7 +208,22 @@ CODE_CORPUS_EXTS = {
 # "// dear imgui, v1.92.7") and gets the same treatment as vendor/ for the same
 # reason: its comments cite an upstream layout we do not control and must not
 # edit.
-SKIP_SCAN_DIRS = ("vendor/", "src/imgui/", "tools/doc-citations/testdata/")
+#
+# docs/archive/ is here for a different reason, and it is the load-bearing one.
+# An archived document is a dated record: it was true at the commit stamped in
+# its header and is not maintained after that. Its line numbers are therefore
+# not wrong -- they are correct about a tree that has moved on, which is the
+# whole point of keeping the file. Scanning it produced a standing pile of
+# `drift` findings that could only ever be discharged by rewriting history to
+# match the present, and the repair commits that resulted ("repoint N
+# citations ...") were 15% of one 30-hour window's commits while changing
+# nothing a reader relies on. So the archive is not scanned, and repointing a
+# citation inside it is not work. This is enforced by construction rather than
+# by asking people not to: see check_archive_is_not_scanned() in
+# test_doc_citations.py, which proves the exclusion fires AND that the same
+# citation outside the archive is still caught.
+SKIP_SCAN_DIRS = ("vendor/", "src/imgui/", "tools/doc-citations/testdata/",
+                  "docs/archive/")
 
 # File extensions that make a bare token look like a path reference. Used only
 # to RECOGNISE a filename (so `menu_network.c` is not mistaken for a symbol).  # doccite:quote
@@ -616,7 +631,7 @@ def doc_class(relpath, record_globs):
     defect or the document's entire point.
 
     A plan document names files and functions that do not exist BECAUSE IT IS
-    PROPOSING THEM. docs/plan-netplay-port.md cites src/netplay/lobby_server.c  # doccite:quote
+    PROPOSING THEM. docs/archive/plan-netplay-port.md cites src/netplay/lobby_server.c  # doccite:quote
     throughout; that port was abandoned and the file was never written. Calling
     that an error demands that every finished proposal be rewritten to match a
     tree that overtook it, and it is (measured on this tree) the largest single
@@ -653,7 +668,7 @@ class History:
     """What this repo has EVER contained, used to separate two different
     failures that look identical to a naive checker.
 
-        docs/plan-perf-2-rgb565-canvas.md cites src/port/sdl/sdl_game_renderer.c  # doccite:quote
+        docs/archive/plan-perf-2-rgb565-canvas.md cites src/port/sdl/sdl_game_renderer.c  # doccite:quote
         -- that file had 86 commits and was deleted by the renderer rip-out.
 
         an agent brief cited tools/mister/build-deps.sh  # doccite:quote

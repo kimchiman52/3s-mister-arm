@@ -790,8 +790,8 @@ All interaction bugs, where a mocked unit passes vacuously.
   test isolation is the wrong trade.
 - **#128** — five reproducible file-load failures (file numbers 9, 10, 1454,
   1456, 1458) plus 379 ms startup outliers. Pre-existing.
-- **#108** — `--test-enable` pins PS2, so no corpus run exercises the shipping
-  engine; `Present_Mode` 4/5 hides the select screen.
+- **#108** — CLOSED 2026-08-30, both mechanisms. Two residuals remain open and
+  are named below; see the full "#108" section further down this file.
 
 ---
 
@@ -920,3 +920,184 @@ the other — which is the concrete form of the hazard that sank the previous
   check concretely was a false positive — bare line numbers in prose, markdown
   table row bleed, or a value the code computes rather than spells. **Value
   duplication is not a significant staleness surface in the enforced scopes.**
+
+---
+
+## #108 — the corpus suite could not exercise the engine that ships — CLOSED (two residuals named)
+
+Both mechanisms in the original report were real, are independent, and are
+now both addressed. Everything below is measured on this tree, not inferred.
+
+### 1. The balance pin — replaced by a DECLARED balance
+
+`arcade_balance.c` used to pin PS2 for any process with
+`configuration.test.enabled`, before `ArcadeCharData_Init` was even called.
+`tools/frame-data/run.sh` passes `--test-enable`, so all 94 corpora measured
+the PORT engine while a device auto-selects ARCADE the moment its romset
+verifies. `sag_union_0/1/3` (`src/sf33rd/Source/Game/engine/plmain.c:642`,
+`:691`, `:790`) were unreachable from automation by construction.
+
+What changed:
+
+- `--test-balance ps2|arcade` (`src/args.c`) — the balance a harness run
+  exercises is now STATED. `--test-scene-preset training-frame-data` REFUSES
+  to start without it, so the frame-data suite cannot go back to inheriting
+  its engine by omission.
+- PS2 remains the DEFAULT for `--test-enable` with no `--test-balance`, so the
+  netplay / perf / rollback harnesses resolve identically on every machine
+  whether or not a romset is installed. That default is now a documented
+  choice rather than an unnoticed side effect.
+- `--test-balance arcade` is a REQUIREMENT, not a preference: a run that
+  cannot reach 20/20-adapted arcade balance logs the reason and exits **6**
+  (distinct from 1 args / 3 `input_script.c` / 4 `rollback_determinism.c` /
+  5 `ldreq_timing_trace.c`). It cannot fall back to PS2 and report green.
+- Corpora declare `balance:` (`tools/frame-data/compile_corpus.py`); it is
+  written into every `meta.json` unconditionally, and `run.sh` always passes
+  it. `run-suite.sh` preflights the romset once instead of REDing N times.
+
+Verified: `/Users/sb/Developer/fbneo-replay-runner/roms/sfiii3nr1.zip` carries
+all four SIMM slices matching the SHA-256s pinned at
+`src/arcade/rom_load.c:40-45` (`sfiii3.zip` in the same directory matches
+none). Under the harness it yields `Arcade balance auto-selected: CPS3 ROM
+verified, 20/20 characters adapted (digest eab701778c8b20ad)` — the same
+digest the device reports. Negative control, same command with no romset:
+exit 6, `--test-balance arcade was requested but arcade balance is
+UNAVAILABLE`.
+
+### 2. The RED proof — re-runnable, and it fails as required
+
+`corpus-yun-sa3-arcade.yaml` reaches `sag_union_1`. Re-apply the pre-`ad411df5`
+sign at that function's activation arm (`store -= 1` → `store -= -1`),
+rebuild, and run it:
+
+```
+shipped fix   3 PASS                                        GREEN
+flip reverted yun-sa3-arc-stock-spent   PASS->SHAPE  HIT->WHIFF  S 22->9  A 6->0  R 17->0
+              yun-sa3-arc-stock-spent-2 PASS->SHAPE  HIT->WHIFF  S 22->9  A 6->0  R 17->0
+              checker exit 1, golden.py exit 1        RED
+```
+
+i.e. with the bug restored the install re-activates from a stock that should
+be empty — the shipped-hardware behaviour — and the corpus fails. A green run
+with the flip reverted would have meant the arcade path still was not
+executing.
+
+`gauge_type` census, measured under arcade balance with a temporary probe in
+`sag_union`'s arcade branch (probe removed; `plmain.c` is unmodified). Exactly
+seven (character, super-art) pairs dispatch to `sag_union_1`, all with
+`store_max=1` — independently reproducing the seven install supers named in
+the report: **yun SA3, oro SA1, oro SA3, yang SA3, makoto SA3, q SA3,
+twelve SA3**.
+
+### 3. The present-mode early return — got past, not removed
+
+`effa5.c:49-51` early-returns for `Present_Mode` 4/5, and the frame-data
+preset boots training mode, so the select-timer runner is ENTERED and does
+nothing. Reproduced exactly: **280 entries, 280 early returns,
+`Present_Mode=[4]`, 0 ticks** — the reported baseline, to the entry.
+
+The early return is correct game behaviour (a training select screen has no
+countdown) and is NOT touched. Instead:
+
+- `frame_select_timer_probe()` (`src/sf33rd/Source/Game/ui/frame_trace.c`),
+  env-gated on `FD_SELECT_PROBE`, records one row per `effect_A5_move()`
+  entry including whether it returned early. Deliberately not routed through
+  `frame_trace_annotate()`, which is training-mode-gated — the exact state a
+  select observation must not be in.
+- `--test-select-dwell-frames N` makes the runner idle on select before
+  driving cursors. Without it the runner clears select in a handful of
+  frames, far short of `UNIT_OF_TIMER_MAX` (50, `src/constants.h:6`).
+- `tools/frame-data/check-select-timer.py` runs both engines and checks the
+  observation instead of assuming it.
+
+Measured:
+
+```
+PASS  ps2     -- entries=622 early_returns=0 Present_Mode=[1] select_timer_ticks=11 Select_Timer=0x30->0x18
+PASS  arcade  -- entries=622 early_returns=0 Present_Mode=[1] select_timer_ticks=11 Select_Timer=0x30->0x18
+BASELINE training-frame-data -- entries=280 early_returns=280 Present_Mode=[4] select_timer_ticks=0
+```
+
+### Canon — regenerated, not typed
+
+`96` corpora / `1,403` rows / `1,348` PASS / `55` XFAIL, summed from
+`tools/frame-data/golden/*.tsv` by `check-canon-numbers.py`. All nine
+`<!-- canon:KEY -->` markers updated with their values; `--check` reports
+`status=OK ... mismatched=0 unbound=0`.
+
+### RESIDUALS — open, not closed
+
+- **R1. Arcade dummy BLOCK is not trustworthy.** Under arcade balance the
+  port's `check_illegal_lever_data()` normalization is skipped
+  (`plmain.c:52-55`), and a `dummy: stand` entry that BLOCKs under PS2 was
+  observed to HIT under arcade with every numeric field unchanged
+  (`corpus-smoke.yaml`'s `close-lp-block-vs-stand`). Cause not isolated. Per
+  `CORPUS-AUTHORING.md` Phase 6 an unexplained divergence is a STOP, so all
+  22 of `corpus-q.yaml`'s BLOCK entries are OMITTED from
+  `corpus-q-arcade.yaml` rather than papered over with 22 xfails. **Arcade
+  BLOCK coverage is not claimed.**
+- **R2. `q-crmp-hit-capture-a/-b` measure `adv=-2` under arcade** where the
+  PS2 twin measures the oracle's `-1`; outcome/S/A/R identical. Carried as
+  the 2 XFAILs of the new ARCADE-VS-PORT-DIVERGENCE class with a stated
+  reopen condition. A work item, not a completion state.
+- **R3. Arcade coverage is 2 corpora of 96.** 49 of `corpus-q.yaml`'s 51
+  non-BLOCK entries pass under arcade with the PS2-authored expectations
+  unchanged, which is evidence the remaining 18 characters would port
+  cheaply — but that is an argument, not a measurement. The other 18
+  characters have no arcade corpus.
+- **R4. `--test-balance arcade` needs a romset**, so the arcade corpora
+  cannot run in an environment that has none. They RED loudly there rather
+  than skipping, which is the correct failure but is not a CI story.
+
+---
+
+## #135 — docs/archive/, and the end of the repoint tax — CLOSED, with two carried items
+
+Measured at `9a6a7f1f` before the change: **1,207 citation errors tree-wide**,
+against 22 commits on this branch whose subject is "repoint" — 15% of a 30-hour
+window spent moving line numbers. Enforcement had already been narrowed to 11
+zero-ceiling scopes (#117) and that worked: every recent repoint commit touched
+files *outside* those scopes. The remaining cost was voluntary.
+
+**Moved** (`e052550e`): 17 documents into `docs/archive/`, each stamped with the
+commit it was last substantively true at — derived by walking history for the
+last diff that changed something other than digits, so a repoint commit cannot
+pass itself off as the document being current. No citation was repointed on the
+way in.
+
+**Excluded**: `docs/archive/` is in `SKIP_SCAN_DIRS`
+(`tools/doc-citations/check_doc_citations.py`). This is strictly stronger than
+the RECORD class it replaces there, which left `drift` and `line-out-of-range`
+as errors. Proven by `check_archive_is_not_scanned()` in
+`test_doc_citations.py`: the same file planted twice in a throwaway worktree,
+inside and outside the archive, requiring silence on one and a finding on the
+other. Mutation-checked — removing the tuple entry makes it fail with three
+findings on the inside probe.
+
+**Written down**: `AGENTS.md` §Documentation and `CLAUDE.md` — read the archive
+for *why* and for negative results, never for current facts; do not repoint
+citations in unenforced files (`tools/doc-citations/baselines.txt` is the
+enforced set and nothing else); write the assertion, not prose restating code.
+
+### CARRIED — R1. `docs/plan-netplay-phase6.md` should be archived and was not
+
+It self-declares "**HISTORICAL — deprecated**" in its own header and the RmlUi
+lobby it plans was removed. It stays in `docs/` only because three of its six
+inbound references (`src/configuration.h`, `src/netplay/netplay.c`,
+`src/netplay/netplay.h`) are in files another lane held uncommitted edits in on
+2026-08-30; moving it would have left dangling paths that lane could not have
+been expected to fix. The other three are `include/structs.h`,
+`src/netplay/test_event_queue.c`, `src/netplay/test_mist_handshake.c`.
+**Do it when `src/netplay` is quiet**: `git mv`, stamp, update those six.
+
+### CARRIED — R2. the black-BG bug is OPEN and its four documents say so
+
+Not a docs item — a defect item surfaced by classifying them. `Fix B` shipped
+(`src/sf33rd/Source/Game/stage/bg.c:295-315`, forced texture-handle teardown
+before repopulate) but `docs/fix-plan-bg-texture-rollback.md` demotes it to a
+safety net in its own post-mortem, because `Bg_Texture_Load_EX` is not reached
+on most resim frames. Its named winner is **Fix E.3** — force `bg_routine = 0`
+at the top of `TATE00` when the cache is detectably torn down. That guard does
+not exist: `src/sf33rd/Source/Game/stage/tate00.c` has three pre-2026 commits
+and `TATE00()` is the unmodified "before" state the doc quotes. The bug appears
+nowhere in this queue and has no owner.

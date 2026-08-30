@@ -414,6 +414,91 @@ def check_fix_anchors_to_definition_not_mention():
     return failures
 
 
+def check_archive_is_not_scanned():
+    """docs/archive/ must be invisible to the linter, and only docs/archive/.
+
+    WHY THE EXCLUSION EXISTS. An archived document is stamped with the commit
+    it was true at and is not maintained after that. Its line numbers do not
+    rot into wrongness; they stay correct about a tree that moved on. Scanning
+    it turned that into a standing `drift` backlog whose only discharge was
+    rewriting a historical record to match the present -- work that produced
+    "repoint N citations" commits and no reader-visible benefit.
+
+    WHY THIS IS A TEST AND NOT A COMMENT. "docs/archive/ is excluded" is a
+    claim that can be checked by running something, so it is checked by
+    running something. A silent linter is also what a BROKEN linter looks
+    like, so silence on its own proves nothing: the same file, byte for byte,
+    is planted twice -- once inside docs/archive/ and once outside it -- and
+    the test demands silence on the first AND a finding on the second. Without
+    the positive control this assertion would still pass if scan_targets()
+    stopped returning anything at all.
+
+    Both probes live in a throwaway linked worktree (scan_targets reads `git
+    ls-files`, so an untracked file proves nothing -- it would be skipped
+    whether or not the exclusion exists, and the test would be vacuous).
+    """
+    wt_parent = tempfile.mkdtemp(prefix="doccite-archive-test-")
+    wt_dir = os.path.join(wt_parent, "wt")
+    failures = []
+    # Two independently-flagged defects, so the positive control does not rest
+    # on one finding code: a drifted anchored citation (the same one as
+    # known-bad case 3) and a line number past the end of a real file.
+    probe = (
+        "# Fixture: docs/archive/ is not scanned\n\n"
+        "NOT A REAL DOCUMENT. Planted twice by check_archive_is_not_scanned "
+        "in a throwaway worktree.\n\n"
+        "| Symbol | Declared |\n"
+        "| --- | --- |\n"
+        "| `spmv_ng_save[2]` (u32) | "
+        "`sf33rd/Source/Game/effect/effl8.c:11` |\n\n"
+        "The `SKIP_SCAN_DIRS` tuple is at "
+        "tools/doc-citations/check_doc_citations.py:99999999.\n"
+    )
+    inside_rel = "docs/archive/zz-exclusion-probe.md"
+    outside_rel = "docs/zz-exclusion-probe.md"
+    try:
+        subprocess.run(
+            ["git", "worktree", "add", "--detach", wt_dir, "HEAD"],
+            cwd=REPO_ROOT, capture_output=True, text=True, check=True)
+        for rel in (inside_rel, outside_rel):
+            full = os.path.join(wt_dir, rel)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8") as fh:
+                fh.write(probe)
+        subprocess.run(["git", "add", inside_rel, outside_rel], cwd=wt_dir,
+                       check=True, capture_output=True)
+
+        proc = subprocess.run(
+            [sys.executable, CHECKER, "--root", wt_dir, "--json",
+             inside_rel, outside_rel],
+            cwd=wt_dir, capture_output=True, text=True)
+        if proc.returncode not in (0, 1):
+            sys.stderr.write("checker failed (rc=%d):\n%s\n"
+                             % (proc.returncode, proc.stderr))
+            raise SystemExit(2)
+        findings = json.loads(proc.stdout)["findings"]
+
+        inside = [f for f in findings if f["path"] == inside_rel]
+        outside = [f for f in findings if f["path"] == outside_rel]
+
+        if inside:
+            failures.append(
+                "ARCHIVE WAS SCANNED: %s produced %d finding(s) -- "
+                "docs/archive/ must be in SKIP_SCAN_DIRS; got %s"
+                % (inside_rel, len(inside),
+                   [(f["code"], f["message"]) for f in inside]))
+        if not outside:
+            failures.append(
+                "POSITIVE CONTROL FAILED: the identical probe at %s produced "
+                "no finding, so the silence on %s proves nothing about the "
+                "archive exclusion -- the linter is not looking at either one"
+                % (outside_rel, inside_rel))
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", wt_dir],
+                       cwd=REPO_ROOT, capture_output=True)
+    return failures
+
+
 def main():
     failures = []
 
@@ -444,6 +529,7 @@ def main():
 
     failures.extend(check_fix_refuses_range_citations())
     failures.extend(check_fix_anchors_to_definition_not_mention())
+    failures.extend(check_archive_is_not_scanned())
 
     good = run(GOOD)
     for f in good:

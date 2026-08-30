@@ -18,15 +18,23 @@
 # been told to stop looking; that is a cost, not a convenience.
 
 docs/plan-*.md          # proposals: they name the files they intend to create
-docs/archive/*.md       # explicitly archived; superseded by construction
 docs/*-review.md        # reviews OF proposals, quoting their not-yet-real names
 docs/fix-plan-*.md      # proposals under a different prefix
 
-# --- individually justified: abandoned or superseded efforts -----------------
-# The 3sxtra netplay port was abandoned; its research doc names lobby_server.c
-# and the RmlUi lobby UI, none of which were ever written.
-docs/research-3sxtra-netplay-port.md
-TRACK_B_BLOCKED.md      # a blocked-status note for that same abandoned port
+# --- what USED to be listed here, and why it no longer needs to be ----------
+# `docs/archive/*.md`, plus individually-justified entries for the abandoned
+# 3sxtra netplay port (its research doc names lobby_server.c and an RmlUi lobby
+# UI that were never written) and TRACK_B_BLOCKED.md, its blocked-status note.
+#
+# All three are gone because docs/archive/ is no longer SCANNED -- it is in
+# SKIP_SCAN_DIRS (check_doc_citations.py), which is strictly stronger than
+# RECORD class: RECORD only demotes existence findings to advisory and leaves
+# `drift` and `line-out-of-range` as errors, which is exactly the backlog that
+# archived documents accumulated and that nobody could discharge without
+# rewriting a historical record. The 3sxtra research doc and TRACK_B_BLOCKED.md
+# now live under docs/archive/ and are covered by the skip.
+#
+# If the skip is ever removed, these four lines have to come back.
 
 # Dated research memos. Each is a snapshot of one investigation on one day
 # (filenames carry the date), citing the scratch artifacts of that session.

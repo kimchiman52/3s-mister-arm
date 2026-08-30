@@ -28,6 +28,33 @@
 - For planning tasks, use the `/plan` skill (three-agent plan → review → fix loop).
 - For mature MiSTer perf queues, use [docs/agent-memory/mister-ralph-loop-v2.md](docs/agent-memory/mister-ralph-loop-v2.md) to choose the right loop type (`runtime`, `measurement`, or `workload-fidelity`) before starting another Ralph pass.
 
+## Documentation
+
+- **`docs/archive/` is where finished and abandoned work is kept. Read it for
+  *why*.** Go there for the decision that was taken and what it was taken
+  instead of, and above all for the negative results — the approach that was
+  tried, measured, and did not work. Code has nowhere to record a thing that
+  isn't there, so the archive is usually the only place that knowledge exists,
+  and re-deriving it costs hours. **Never read it for current facts.** An
+  archived document is stamped with the commit it was true at and is not
+  maintained after that; for what the code does now, read the code.
+- **Do not repoint citations in unenforced files.** The enforced set is
+  `tools/doc-citations/baselines.txt` and nothing else — eight documents, plus
+  the anchor-required rule over `src`, `include` and `tools`. If a file is not
+  in that list, its line numbers are not your problem: leave them alone, in
+  passing and on purpose. Repointing them is not tidying, it is 15% of one
+  recent 30-hour window's commits spent changing numbers nobody reads. Fix a
+  citation outside the enforced set only when you are already editing that
+  passage for its content. Nothing under `docs/archive/` is scanned at all.
+- **Don't write prose that restates what the code does — write the assertion
+  instead.** If a fact can be verified by running something, it belongs in a
+  test, where it fails loudly when it stops being true. Prose that duplicates
+  code is a second copy that drifts silently and then has to be groomed.
+  What legitimately stays prose is what no test can hold: negative results,
+  operator procedure, external facts (router NAT behaviour, kernel
+  capabilities, the CPS3 core), and decisions. None of those cite our line
+  numbers, so none of them can drift.
+
 ## Memory Index
 
 - Load [docs/mister-runbook.md](docs/mister-runbook.md) when building, packaging, deploying, probing, or perf-sampling the MiSTer runtime on device. **This is the most important doc for fresh agents doing MiSTer work.**
