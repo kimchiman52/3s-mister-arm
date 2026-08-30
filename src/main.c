@@ -1097,6 +1097,12 @@ int Netplay_Test_ConnectObservability(void);
 // GS_SAVE/GS_LOAD misses fails loudly with its exact offset. Same
 // gating pattern as the other harnesses.
 int Netplay_Test_GsCoverage(void);
+// Task #122: forward-decl of the rendezvous wire-codec unit harness
+// (src/netplay/test_rendezvous_wire.c). Same gating pattern as the other
+// Phase 6 tests. Pure: no sockets, no threads, no NETPLAY_TEST_HOOKS —
+// it pins Rendezvous_ParseNack (which shipped with zero callers) and the
+// reason -> ConnectFailCode verdict mapping.
+int Netplay_Test_RendezvousWire(void);
 #endif
 
 /* Tasks #59/#61: forward-decl of the ext texture-cache brick-prevention
@@ -1138,7 +1144,7 @@ int main(int argc, const char* argv[]) {
         configuration.test_stun_mock ||
         configuration.test_sparse_effect_save || configuration.test_bilateral_punch ||
         configuration.test_connect_observability ||
-        configuration.test_gs_coverage) {
+        configuration.test_gs_coverage || configuration.test_rendezvous_wire) {
         SDL_SetAssertionHandler(test_harness_assert_handler, NULL);
     }
 
@@ -1228,6 +1234,16 @@ int main(int argc, const char* argv[]) {
 #else
         fprintf(stderr,
                 "--test-gs-coverage requires a build with ENABLE_NETPLAY=ON.\n");
+        return 2;
+#endif
+    }
+
+    if (configuration.test_rendezvous_wire) {
+#ifdef ENABLE_NETPLAY
+        return Netplay_Test_RendezvousWire();
+#else
+        fprintf(stderr,
+                "--test-rendezvous-wire requires a build with ENABLE_NETPLAY=ON.\n");
         return 2;
 #endif
     }

@@ -430,9 +430,15 @@ int Netplay_Test_SparseEffectSave(void) {
 #else /* !ENABLE_NETPLAY_TESTS */
 
 int Netplay_Test_SparseEffectSave(void) {
+    /* "not compiled in", spelled exactly that way. This stub used to say
+     * "not compiled WITH", which reads identically to a human and is
+     * invisible to tools/gates/run-gates.sh, whose harness gate greps for
+     * the literal phrase "not compiled in" to turn an exit-2 misbuild
+     * into RED. For this harness's whole life a netplay-tests-off build
+     * would have exited 2 and been annotated as a plain non-zero exit
+     * with no cause. Found while adding test_rendezvous_wire.c (#122). */
     fprintf(stderr,
-            "[test_sparse_effect_save] this build was not compiled with "
-            "-DENABLE_NETPLAY_TESTS. Re-run cmake with "
+            "[test_sparse_effect_save] not compiled in; rebuild with "
             "EXTRA_CMAKE_ARGS=\"-DENABLE_NETPLAY=ON -DCMAKE_C_FLAGS='-DENABLE_NETPLAY_TESTS "
             "-DNETPLAY_TEST_HOOKS'\".\n");
     return 2;

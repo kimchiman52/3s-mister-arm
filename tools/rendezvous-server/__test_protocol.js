@@ -1872,6 +1872,60 @@ async function testNackPerReason(handle) {
         }
     }
 
+    // ...and, task #122 JOB 1, that the client actually DOES something
+    // with each one.
+    //
+    // WHY THIS CHECK EXISTS AT ALL. The parity block above passed for the
+    // whole life of the feature while the client half was DEAD: eaf72865
+    // shipped nine reasons and Rendezvous_ParseNack to read them, and
+    // ParseNack had no caller anywhere -- so every reason still collapsed
+    // into P2P_FAIL_RENDEZVOUS_DOWN. Matching NUMBERS was never the
+    // property that mattered; a reason reaching a VERDICT is.
+    //
+    // Nothing at build time links these files (no TU sees both a JS const
+    // and a C case label), and they deploy independently, so a reason the
+    // server learns to send and connect_fail.c never learns to name would
+    // degrade silently to the catch-all rather than failing anything.
+    // Same hazard, same remedy, as the value parity above.
+    {
+        const cfPath = require('path').join(__dirname, '..', '..', 'src', 'netplay', 'connect_fail.c');
+        let cf = null;
+        try {
+            cf = require('fs').readFileSync(cfPath, 'utf8');
+        } catch (err) {
+            assert(false, `nack/verdict-parity: cannot read ${cfPath}: ${err.message}`);
+        }
+        if (cf !== null) {
+            // The mapper's own body, not the whole file: a REND_NACK_*
+            // mentioned in a comment somewhere else must not count as
+            // coverage.
+            const fnStart = cf.indexOf('ConnectFailCode ConnectFail_ClassifyNackReason(uint8_t reason) {');
+            assert(fnStart >= 0,
+                'nack/verdict-parity: connect_fail.c defines ConnectFail_ClassifyNackReason');
+            if (fnStart >= 0) {
+                const fnEnd = cf.indexOf('\n}', fnStart);
+                assert(fnEnd > fnStart, 'nack/verdict-parity: the mapper body is delimited');
+                const body = cf.slice(fnStart, fnEnd);
+                const named = new Set();
+                const caseRe = /case\s+REND_NACK_([A-Z_]+)\s*:/g;
+                let cm;
+                while ((cm = caseRe.exec(body)) !== null) named.add(cm[1]);
+                for (const name of Object.keys(NACK)) {
+                    assert(named.has(name),
+                        `nack/verdict-parity: ConnectFail_ClassifyNackReason has no case for REND_NACK_${name} -- the server can send it and the client would report the catch-all`);
+                }
+                assertEq(named.size, Object.keys(NACK).length,
+                    'nack/verdict-parity: the mapper names exactly the reasons the server sends');
+                // A default arm is REQUIRED, not optional: a server newer
+                // than us will send a reason this table has no name for,
+                // and falling out of the switch would return whatever the
+                // compiler left behind.
+                assert(/default\s*:/.test(body),
+                    'nack/verdict-parity: the mapper has a default arm for an unnamed reason');
+            }
+        }
+    }
+
     const stub = makeStubSocket();
     const fresh = () => { handle._resetSessions(); handle._resetRate(); stub.sent.length = 0; };
     const record = (want) => { seen.add(want); };

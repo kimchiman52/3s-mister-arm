@@ -225,12 +225,24 @@ static char* obs_read_file(const char* path, size_t* out_len) {
 
 typedef enum {
     OBS_REPLY_BADVER = 0, /* '3SXR' + version byte 1 + type DELIVER + pad */
-    OBS_REPLY_RUNT        /* '3SXR' + one byte: magic matches, len < 6    */
+    OBS_REPLY_RUNT,       /* '3SXR' + one byte: magic matches, len < 6    */
+    OBS_REPLY_NACK        /* #122: a real 28-byte typed refusal            */
 } ObsReplyMode;
 
 typedef struct {
     int             sock;
     ObsReplyMode    mode;
+    /* --- #122, OBS_REPLY_NACK only ---------------------------------- */
+    uint8_t         nack_reason;  /* the reason byte to send             */
+    bool            nack_bad_key; /* corrupt the echoed session key      */
+    int             alt_sock;     /* > 0: reply from THIS socket instead,
+                                     which puts the NACK on a different
+                                     source PORT and is how the source
+                                     gate gets a negative control. Zero,
+                                     not -1, is "unset" so the memset-0
+                                     initialisation every other ctx in
+                                     this file uses stays correct — fd 0
+                                     is stdin and is never a socket here. */
     SDL_AtomicInt   stop;
     SDL_AtomicInt   replies;
 } ObsServerCtx;
@@ -261,7 +273,33 @@ static int obs_server_thread(void* arg) {
         reply[2] = 0x58; /* 'X' */
         reply[3] = 0x52; /* 'R' */
         size_t reply_len;
-        if (ctx->mode == OBS_REPLY_BADVER) {
+        if (ctx->mode == OBS_REPLY_NACK) {
+            /* #122. Byte-for-byte encodeNack() from
+             * tools/rendezvous-server/rendezvous-server.js:693-705, built
+             * here rather than through any client helper because the
+             * client HAS no NACK encoder — only the server emits one, and
+             * a mock that shared code with the parser would be testing
+             * the parser against itself.
+             *
+             * The version is Rendezvous_WireVersion(), NOT a literal: a
+             * real server stamps the NACK with the version it speaks, and
+             * the case under test is a server that speaks OURS. (The
+             * foreign-version case is test1's badver arm and reaches a
+             * different branch entirely.) */
+            reply[4] = (uint8_t)Rendezvous_WireVersion();
+            reply[5] = (uint8_t)REND_FRAME_NACK;
+            reply[6] = ctx->nack_reason;
+            reply[7] = 0; /* reserved */
+            /* The server ECHOES the sender's own session key from
+             * [8..24]; nothing server-side is disclosed. */
+            if (n >= 24) {
+                memcpy(&reply[8], &buf[8], 16);
+                if (ctx->nack_bad_key) {
+                    reply[8 + 15] ^= 0x01u; /* one bit — the strongest form */
+                }
+            }
+            reply_len = 28; /* REND_NACK_LEN */
+        } else if (ctx->mode == OBS_REPLY_BADVER) {
             /* Version 1: deliberately NOT Rendezvous_WireVersion(). If
              * this build's wire version ever became 1, the frame would
              * stop being a skew and this test would (correctly) fail. */
@@ -277,8 +315,8 @@ static int obs_server_thread(void* arg) {
             reply[4] = 1u;
             reply_len = 5;
         }
-        (void)sendto(ctx->sock, reply, reply_len, 0,
-                     (struct sockaddr*)&src, sl);
+        (void)sendto((ctx->alt_sock > 0) ? ctx->alt_sock : ctx->sock,
+                     reply, reply_len, 0, (struct sockaddr*)&src, sl);
         SDL_AddAtomicInt(&ctx->replies, 1);
     }
     return 0;
@@ -352,7 +390,8 @@ static const uint8_t k_obs_token[STUN_PUNCH_TOKEN_LEN] = {
 /* Run one signal-only race against `signal_port`. No punch legs are
  * armed (seed_port 0), so the race is purely the rendezvous
  * conversation — which is exactly the leg under test. */
-static bool obs_run_signal_race(uint16_t signal_port, DirectP2PRaceProbeOut* out) {
+static bool obs_run_signal_race_ms(uint16_t signal_port, int budget_ms,
+                                   DirectP2PRaceProbeOut* out) {
     uint16_t my_pub = 0;
     NET_DatagramSocket* sock = obs_open_client_socket(&my_pub);
     if (sock == NULL) {
@@ -370,13 +409,17 @@ static bool obs_run_signal_race(uint16_t signal_port, DirectP2PRaceProbeOut* out
     cfg.session_key = k_obs_key;
     cfg.my_public_port = my_pub;
     cfg.signal_leg = true;
-    cfg.signal_budget_ms = OBS_RACE_BUDGET_MS;
+    cfg.signal_budget_ms = budget_ms;
     cfg.punch_leg_ms = 100;
-    cfg.race_budget_ms = OBS_RACE_BUDGET_MS;
+    cfg.race_budget_ms = budget_ms;
 
     DirectP2P_TestHook_RunRace(&cfg, out);
     NET_DestroyDatagramSocket(sock);
     return true;
+}
+
+static bool obs_run_signal_race(uint16_t signal_port, DirectP2PRaceProbeOut* out) {
+    return obs_run_signal_race_ms(signal_port, OBS_RACE_BUDGET_MS, out);
 }
 
 /* ======================================================================
@@ -1796,6 +1839,263 @@ static void test8_report_rotation(const char* report_dir) {
 
 /* ====================================================================== */
 
+
+/* ======================================================================
+ * Test 10 — #122: a typed NACK, induced on a real socket, carried all
+ *           the way to the VERDICT
+ * ======================================================================
+ *
+ * THE HOLE THIS FILLS. eaf72865 shipped nine typed refusals and 36
+ * server-side tests proving the server emits the right reason for the
+ * right condition. Nothing on either side asserted that the CLIENT does
+ * anything with them, and it did not: a valid v2 NACK matched no branch
+ * in the joiner race loop and was destroyed with its datagram, so every
+ * reason still collapsed into P2P_FAIL_RENDEZVOUS_DOWN — the pre-#122
+ * behaviour, with the wire change deployed and unread.
+ *
+ * So the assertion here is NOT "the frame parses". It is "the frame
+ * reaches the right verdict", per reason, over a real socket, through
+ * the production classifier. The chain it completes:
+ *
+ *   server condition -> reason byte   __test_protocol.js testNackPerReason
+ *   reason byte on the wire -> verdict  THIS TEST (end to end) and
+ *                                       test_rendezvous_wire.c (pure)
+ *
+ * and the two halves are welded by the C-parity block inside
+ * testNackPerReason, which reads the REND_NACK_* values straight out of
+ * src/netplay/rendezvous.h. Neither side can renumber alone.
+ *
+ * Both negative controls are here too, because a NACK that says the
+ * wrong thing is worse than silence (H-1) and the two gates that stop
+ * one are exactly what a test must be able to break:
+ *   10b — a NACK echoing a session key that is not ours (one bit off)
+ *         must be ignored, and the verdict must fall back to
+ *         RENDEZVOUS_DOWN.
+ *   10c — a NACK from the right IP but the WRONG SOURCE PORT must be
+ *         ignored for the same reason.
+ */
+
+/* Every reason, with the verdict it must produce. Hand-written, not
+ * derived: a table generated from the mapping under test proves nothing.
+ * The trailing row is a reason byte no build names — a server newer than
+ * us — and must reach the honest catch-all rather than the nearest name
+ * we happen to have. */
+typedef struct {
+    uint8_t         reason;
+    const char*     name;
+    ConnectFailCode want;
+} ObsNackCase;
+
+static const ObsNackCase k_obs_nack_cases[] = {
+    { 1, "BAD_VERSION",  CONNECT_FAIL_RENDEZVOUS_BADFRAME },
+    { 2, "BAD_LENGTH",   CONNECT_FAIL_RENDEZVOUS_BADFRAME },
+    { 3, "BAD_TYPE",     CONNECT_FAIL_RENDEZVOUS_BADFRAME },
+    { 4, "RATE_IP",      CONNECT_FAIL_RENDEZVOUS_BUSY },
+    { 5, "RATE_KEY",     CONNECT_FAIL_RENDEZVOUS_BUSY },
+    { 6, "RATE_PREGATE", CONNECT_FAIL_RENDEZVOUS_BUSY },
+    { 7, "KEY_QUOTA",    CONNECT_FAIL_RENDEZVOUS_BUSY },
+    { 8, "TABLE_FULL",   CONNECT_FAIL_RENDEZVOUS_TABLE_FULL },
+    { 9, "SESSION_FULL", CONNECT_FAIL_RENDEZVOUS_ROOM_FULL },
+    { 200, "unnamed",    CONNECT_FAIL_RENDEZVOUS_REFUSED },
+};
+#define OBS_NACK_CASES 10
+
+/* The race only has to survive long enough for one REGISTER and one
+ * reply; the mock answers the first datagram. Kept well under
+ * OBS_RACE_BUDGET_MS because this test runs it twelve times. */
+#define OBS_NACK_BUDGET_MS 450
+
+/* Exactly what join_attempt() builds, from exactly the same fields, so a
+ * verdict proved here is the verdict the joiner reports. */
+static ConnectFailCode obs_verdict_for(const DirectP2PRaceProbeOut* out) {
+    ConnectJoinEvidence ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.deliver_any = false;   /* a signal-only race against a NACK-only mock */
+    ev.deliver_real = false;
+    ev.challenge_any = false;
+    ev.cookie_rechallenged = false;
+    ev.bilateral_punched = false;
+    ev.port_disagreement = false;
+    ev.punch_bad_token = false;
+    ev.nack_any = out->nack_any;
+    ev.nack_reason = out->nack_reason;
+    return ConnectFail_ClassifyJoin(&ev);
+}
+
+/* Stand up a NACK mock, run one signal race against it, tear it down.
+ * `alt` sends the reply from a second socket (the source-gate control). */
+static bool obs_run_nack_race(uint8_t reason, bool bad_key, bool alt,
+                              DirectP2PRaceProbeOut* out, int* out_replies) {
+    unsigned short port = 0;
+    const int sock = obs_open_udp_loopback(&port);
+    if (sock < 0) {
+        return false;
+    }
+    int alt_sock = 0;
+    if (alt) {
+        unsigned short alt_port = 0;
+        alt_sock = obs_open_udp_loopback(&alt_port);
+        if (alt_sock < 0) {
+            close(sock);
+            return false;
+        }
+    }
+    ObsServerCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.sock = sock;
+    ctx.mode = OBS_REPLY_NACK;
+    ctx.nack_reason = reason;
+    ctx.nack_bad_key = bad_key;
+    ctx.alt_sock = alt_sock;
+    SDL_SetAtomicInt(&ctx.stop, 0);
+    SDL_Thread* tid = SDL_CreateThread(obs_server_thread, "obs_nack", &ctx);
+    if (tid == NULL) {
+        close(sock);
+        if (alt_sock > 0) close(alt_sock);
+        return false;
+    }
+
+    memset(out, 0, sizeof(*out));
+    const bool ran = obs_run_signal_race_ms(port, OBS_NACK_BUDGET_MS, out);
+
+    SDL_SetAtomicInt(&ctx.stop, 1);
+    SDL_WaitThread(tid, NULL);
+    close(sock);
+    if (alt_sock > 0) close(alt_sock);
+    if (out_replies != NULL) {
+        *out_replies = SDL_GetAtomicInt(&ctx.replies);
+    }
+    return ran;
+}
+
+static void test10_nack_per_reason(void) {
+    const char* tag = "test10-nack-per-reason";
+    int cases = 0;
+
+    /* --- 10a. every reason, induced, carried to its verdict ---------- */
+    for (int i = 0; i < OBS_NACK_CASES; i++) {
+        const ObsNackCase* c = &k_obs_nack_cases[i];
+        DirectP2PRaceProbeOut out;
+        int replies = 0;
+        if (!obs_run_nack_race(c->reason, false, false, &out, &replies)) {
+            fail(tag, "could not stand up the NACK mock");
+            return;
+        }
+        if (replies < 1) {
+            fprintf(stderr,
+                    "[test_connect_observability] FAIL: %s: %s: the mock sent no "
+                    "reply — the race never REGISTERed\n", tag, c->name);
+            fail_count++;
+            continue;
+        }
+        if (!out.nack_any) {
+            fprintf(stderr,
+                    "[test_connect_observability] FAIL: %s: %s: reason %u was on the "
+                    "wire (%d replies) and the race recorded NO nack — this is the "
+                    "#122 defect\n",
+                    tag, c->name, (unsigned)c->reason, replies);
+            fail_count++;
+            continue;
+        }
+        if (out.nack_reason != c->reason) {
+            fprintf(stderr,
+                    "[test_connect_observability] FAIL: %s: %s: recorded reason %u, "
+                    "sent %u\n",
+                    tag, c->name, (unsigned)out.nack_reason, (unsigned)c->reason);
+            fail_count++;
+        }
+        EXPECT_TRUE(tag, out.nack_n >= 1);
+        /* A NACK is NOT a DELIVER and must not be miscounted as one:
+         * deliver_any drives a completely different arm of the taxonomy. */
+        EXPECT_TRUE(tag, out.deliver_n == 0);
+        EXPECT_TRUE(tag, out.challenge_n == 0);
+        /* ...and it is not a version skew either. The frame carries OUR
+         * version, so badver_n must stay 0 — otherwise the report would
+         * claim a definite version mismatch on top of the refusal. */
+        EXPECT_TRUE(tag, out.badver_n == 0);
+
+        const ConnectFailCode got = obs_verdict_for(&out);
+        if (got != c->want) {
+            fprintf(stderr,
+                    "[test_connect_observability] FAIL: %s: %s: verdict %s, want %s\n",
+                    tag, c->name, ConnectFail_Code(got), ConnectFail_Code(c->want));
+            fail_count++;
+        }
+        if (got == CONNECT_FAIL_RENDEZVOUS_DOWN) {
+            fprintf(stderr,
+                    "[test_connect_observability] FAIL: %s: %s: still collapsed to "
+                    "RENDEZVOUS_DOWN\n", tag, c->name);
+            fail_count++;
+        }
+        cases++;
+    }
+    /* SWEEP FLOOR: a table row that stops running must fail the test, not
+     * shrink it. */
+    if (cases != OBS_NACK_CASES) {
+        fprintf(stderr,
+                "[test_connect_observability] FAIL: %s: ran %d of %d reason cases\n",
+                tag, cases, OBS_NACK_CASES);
+        fail_count++;
+    } else {
+        pass(tag, "all ten induced reasons reached their own verdict");
+    }
+
+    /* --- 10b. NEGATIVE: a NACK echoing someone else's session key ----
+     * The key gate is what stops an off-path sender choosing our
+     * diagnosis. One bit is enough to make the frame not ours. */
+    {
+        DirectP2PRaceProbeOut out;
+        int replies = 0;
+        if (!obs_run_nack_race(9 /* SESSION_FULL */, true, false, &out, &replies)) {
+            fail(tag, "could not stand up the wrong-key NACK mock");
+            return;
+        }
+        EXPECT_TRUE(tag, replies > 0);
+        if (out.nack_any) {
+            fprintf(stderr,
+                    "[test_connect_observability] FAIL: %s: a NACK carrying a "
+                    "one-bit-wrong session key was ACCEPTED (reason=%u)\n",
+                    tag, (unsigned)out.nack_reason);
+            fail_count++;
+        } else {
+            const ConnectFailCode got = obs_verdict_for(&out);
+            if (got != CONNECT_FAIL_RENDEZVOUS_DOWN) {
+                fprintf(stderr,
+                        "[test_connect_observability] FAIL: %s: an ignored NACK must "
+                        "leave the verdict at RENDEZVOUS_DOWN, got %s\n",
+                        tag, ConnectFail_Code(got));
+                fail_count++;
+            } else {
+                pass(tag, "a wrong-key NACK is ignored and the verdict falls back");
+            }
+        }
+    }
+
+    /* --- 10c. NEGATIVE: a NACK from the wrong SOURCE PORT ------------
+     * Right host, right key, wrong port: not the endpoint this signal leg
+     * is REGISTERing to, so it is not the server and its diagnosis is not
+     * evidence. This is the badver source gate (F5) applied to a frame
+     * that decides a VERDICT rather than merely a counter. */
+    {
+        DirectP2PRaceProbeOut out;
+        int replies = 0;
+        if (!obs_run_nack_race(8 /* TABLE_FULL */, false, true, &out, &replies)) {
+            fail(tag, "could not stand up the alt-port NACK mock");
+            return;
+        }
+        EXPECT_TRUE(tag, replies > 0);
+        if (out.nack_any) {
+            fprintf(stderr,
+                    "[test_connect_observability] FAIL: %s: a NACK from a source port "
+                    "that is not the rendezvous endpoint was ACCEPTED (reason=%u)\n",
+                    tag, (unsigned)out.nack_reason);
+            fail_count++;
+        } else {
+            pass(tag, "a NACK from the wrong source port is ignored");
+        }
+    }
+}
+
 int Netplay_Test_ConnectObservability(void) {
     fail_count = 0;
 
@@ -1826,6 +2126,10 @@ int Netplay_Test_ConnectObservability(void) {
     test3_confirm_not_nat();
     test4_mt_sink(before_ts);
     test5_attempt_evidence_reset();
+    /* #122: induced NACKs on a real socket. Runs before the log-file
+     * tests for the same reason test5 does — it neither reads nor
+     * freezes the shared session log. */
+    test10_nack_per_reason();
     /* #104: drives the real host ladder and reads the tester report
      * back. Before test6 (which freezes the shared session log) and
      * before test8 (which floods and rotates the tester report). */

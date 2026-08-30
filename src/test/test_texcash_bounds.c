@@ -62,7 +62,8 @@ int Texcash_Test_Bounds(void);
 
 int Texcash_Test_Bounds(void) {
     fprintf(stderr,
-            "--test-texcash-bounds requires a build with -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS.\n");
+            "[test_texcash_bounds] not compiled in; rebuild with "
+            "-DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS.\n");
     return 2;
 }
 

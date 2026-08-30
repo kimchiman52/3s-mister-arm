@@ -240,6 +240,16 @@ typedef struct Configuration {
      * ENABLE_NETPLAY_TESTS, otherwise the stub returns 2. Pure
      * in-process — no session, no sockets. */
     bool test_gs_coverage;
+    /* Task #122: when true, main() runs the rendezvous wire-codec unit
+     * harness (src/netplay/test_rendezvous_wire.c) and exits. Honors the
+     * CLI flag --test-rendezvous-wire. Parsed unconditionally; the real
+     * body is gated by ENABLE_NETPLAY=ON && ENABLE_NETPLAY_TESTS,
+     * otherwise the stub returns 2. Pure in-process — no session, no
+     * sockets, and no NETPLAY_TEST_HOOKS: it exercises Rendezvous_*
+     * (NACK parse, reason text, frame routing, signal-URL parse) and the
+     * reason -> ConnectFailCode verdict mapping, all of which are in the
+     * shipped build. */
+    bool test_rendezvous_wire;
     /* Tasks #59/#61: when true, main() runs the ext texture-cache
      * brick-prevention harness (src/test/test_texcash_bounds.c) and exits.
      * Honors --test-texcash-bounds. Parsed unconditionally; the real body is
