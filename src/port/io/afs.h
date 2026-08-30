@@ -59,6 +59,14 @@ void AFS_SetInjectedLatencyMs(int ms);
 int AFS_GetInjectedLatencyMs(void);
 
 #if ENABLE_PERF_TELEMETRY
+/// Task #141 boot-stall attribution: per-frame ledger of the blocking
+/// archive reads (AFS_ReadSync, AFS_ReadRange) issued inside one game
+/// frame. src/main.c resets it at the top of game_step_0() and reports it
+/// on the [step0] line it prints when a frame exceeds 50 ms, which is the
+/// same threshold sdl_app.c's FRAME OUTLIER line uses. Diagnostic only.
+void AFS_ResetSyncReadLedger(void);
+void AFS_GetSyncReadLedger(unsigned long long* ns_out, unsigned long long* bytes_out, unsigned int* count_out);
+
 /// Task #69.3 probe. `*open_out` receives the number of request slots
 /// that are currently allocated (AFS_Open'd and not yet fully closed);
 /// the return value is how many of those are still AFS_READ_STATE_READING,

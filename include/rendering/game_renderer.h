@@ -8,6 +8,7 @@
 #ifndef RENDERING_GAME_RENDERER_H
 #define RENDERING_GAME_RENDERER_H
 
+#include "port/build_config.h"
 #include "rendering/primitives.h"
 
 #include <stdbool.h>
@@ -18,6 +19,19 @@ void Renderer_UnlockTexture(unsigned int th);
 void Renderer_CreatePalette(unsigned int ph);
 void Renderer_DestroyPalette(unsigned int palette_handle);
 void Renderer_UnlockPalette(unsigned int th);
+
+#if ENABLE_PERF_TELEMETRY
+/* Task #141 boot-stall attribution: monotonic, process-lifetime ledger of
+ * every Renderer_CreateTexture() call -- which is also every
+ * Renderer_UnlockTexture(), since the software backend implements the
+ * second as the first. Sampled around the phases of OPBG_Init()
+ * (src/sf33rd/Source/Game/opening/opening.c) so the texture-conversion
+ * share of the ~415 ms boot-frame outlier is measured rather than read off
+ * the call graph. Diagnostic only; the software backend is the only
+ * implementation of this interface in the tree. */
+void Renderer_GetCreateTextureLedger(unsigned long long* calls_out, unsigned long long* pixels_out,
+                                     unsigned long long* ns_out);
+#endif
 void Renderer_SetTexture(unsigned int th);
 void Renderer_DrawTexturedQuad(const Sprite* sprite, unsigned int color);
 void Renderer_DrawSprite(const Sprite* sprite, unsigned int color);

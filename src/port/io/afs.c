@@ -52,6 +52,61 @@ static int afs_injected_latency_ms = 0;
 /* Monotonic bytes-requested counter; see AFS_GetTotalBytesRequested(). */
 static unsigned long long afs_total_bytes_requested = 0;
 
+#if ENABLE_PERF_TELEMETRY
+/* Task #141 boot-stall attribution. Blocking archive reads are the only
+ * I/O the frame loop cannot overlap: AFS_ReadSync() below waits on
+ * SDL_WaitAsyncIOResult with an infinite timeout, and AFS_ReadRange()
+ * open/seek/read/closes synchronously. Whatever they cost lands inside
+ * the frame that issued them and is reported as update= on sdl_app.c's
+ * FRAME OUTLIER line, with nothing to say which file it was. This ledger
+ * says which file. src/main.c zeroes it at the top of game_step_0() and
+ * prints it on the [step0] line at the bottom. Diagnostic only: no read
+ * is added, removed, reordered or resized. */
+static unsigned long long afs_sync_read_ns_frame = 0;
+static unsigned long long afs_sync_read_bytes_frame = 0;
+static unsigned int afs_sync_read_count_frame = 0;
+
+void AFS_ResetSyncReadLedger(void) {
+    afs_sync_read_ns_frame = 0;
+    afs_sync_read_bytes_frame = 0;
+    afs_sync_read_count_frame = 0;
+}
+
+void AFS_GetSyncReadLedger(unsigned long long* ns_out, unsigned long long* bytes_out, unsigned int* count_out) {
+    if (ns_out != NULL) {
+        *ns_out = afs_sync_read_ns_frame;
+    }
+
+    if (bytes_out != NULL) {
+        *bytes_out = afs_sync_read_bytes_frame;
+    }
+
+    if (count_out != NULL) {
+        *count_out = afs_sync_read_count_frame;
+    }
+}
+
+/* Per-call line for anything that blocks the frame loop for 2 ms or more.
+ * `name` is the archive member, so a boot log names the asset rather than
+ * an index the reader then has to resolve by hand. */
+static void afs_note_sync_read(int file_num, unsigned long long bytes, Uint64 start_ns, const char* what) {
+    const Uint64 elapsed_ns = SDL_GetTicksNS() - start_ns;
+
+    afs_sync_read_ns_frame += elapsed_ns;
+    afs_sync_read_bytes_frame += bytes;
+    afs_sync_read_count_frame += 1;
+
+    if (elapsed_ns >= 2 * SDL_NS_PER_MS) {
+        const char* name = ((file_num >= 0) && ((unsigned int)file_num < afs.entry_count) && (afs.entries != NULL))
+                               ? afs.entries[file_num].name
+                               : "?";
+
+        SDL_Log(
+            "[afs-sync] %s fnum=%d name=%s bytes=%llu ms=%.1f", what, file_num, name, bytes, (double)elapsed_ns / 1e6);
+    }
+}
+#endif
+
 static bool is_valid_attribute_data(Uint32 attributes_offset, Uint32 attributes_size, Sint64 file_size,
                                     Uint32 entries_end_offset, Uint32 entry_count) {
     if ((attributes_offset == 0) || (attributes_size == 0)) {
@@ -196,7 +251,8 @@ void AFS_Finish() {
                 break;
             }
         }
-        if (!any_pending) break;
+        if (!any_pending)
+            break;
 
         SDL_AsyncIOOutcome outcome;
         if (!SDL_WaitAsyncIOResult(asyncio_queue, &outcome, -1)) {
@@ -236,6 +292,10 @@ bool AFS_ReadRange(int file_num, unsigned int offset, unsigned int size, void* b
         return false;
     }
 
+#if ENABLE_PERF_TELEMETRY
+    const Uint64 range_start_ns = SDL_GetTicksNS();
+#endif
+
     SDL_IOStream* io = SDL_IOFromFile(afs.file_path, "rb");
 
     if (io == NULL) {
@@ -249,6 +309,9 @@ bool AFS_ReadRange(int file_num, unsigned int offset, unsigned int size, void* b
     }
 
     SDL_CloseIO(io);
+#if ENABLE_PERF_TELEMETRY
+    afs_note_sync_read(file_num, size, range_start_ns, "range");
+#endif
     return ok;
 }
 
@@ -425,9 +488,7 @@ void AFS_Read(AFSHandle handle, int sectors, void* buf) {
 
     request->state = AFS_READ_STATE_READING;
     request->release_ticks_ns =
-        (afs_injected_latency_ms > 0)
-            ? SDL_GetTicksNS() + (Uint64)afs_injected_latency_ms * SDL_NS_PER_MS
-            : 0;
+        (afs_injected_latency_ms > 0) ? SDL_GetTicksNS() + (Uint64)afs_injected_latency_ms * SDL_NS_PER_MS : 0;
 
     afs_total_bytes_requested += (unsigned long long)sectors * 2048ull;
 
@@ -465,6 +526,10 @@ void AFS_ReadSync(AFSHandle handle, int sectors, void* buf) {
 #if defined(AFS_DEBUG)
     printf("📂 %d: read sync\n", handle);
 #endif
+#if ENABLE_PERF_TELEMETRY
+    const Uint64 sync_start_ns = SDL_GetTicksNS();
+    const int sync_file_num = requests[handle].file_num;
+#endif
 
     AFS_Read(handle, sectors, buf);
 
@@ -475,6 +540,9 @@ void AFS_ReadSync(AFSHandle handle, int sectors, void* buf) {
      * wait must not be entered at all. The caller polls AFS_GetState() and
      * sees the ERROR, which is what it is there for. */
     if (requests[handle].state == AFS_READ_STATE_ERROR) {
+#if ENABLE_PERF_TELEMETRY
+        afs_note_sync_read(sync_file_num, 0, sync_start_ns, "sync-error");
+#endif
         return;
     }
 
@@ -519,6 +587,10 @@ void AFS_ReadSync(AFSHandle handle, int sectors, void* buf) {
             break;
         }
     }
+
+#if ENABLE_PERF_TELEMETRY
+    afs_note_sync_read(sync_file_num, (unsigned long long)sectors * 2048ULL, sync_start_ns, "sync");
+#endif
 }
 
 void AFS_Stop(AFSHandle handle) {

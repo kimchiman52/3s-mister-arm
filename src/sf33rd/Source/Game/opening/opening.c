@@ -35,6 +35,10 @@
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 
+#include "rendering/game_renderer.h"
+
+#include <SDL3/SDL.h>
+
 typedef const f32* ro_f32_ptr;
 
 static const f32 title00[25] = { 0.0f, 0.0f, 0.75f, 0.75f, -192.0f, -96.0f, 384.0f, 192.0f, -1.0f,
@@ -212,19 +216,91 @@ void OPBG_Init() {
 
     loadSize = Get_size_data_ramcnt_key(key);
     loadAdrs = (void*)Get_ramcnt_address(key);
+
+#if ENABLE_PERF_TELEMETRY
+    /* Task #141. This function is one frame's worth of work and it is the
+     * frame that sdl_app.c reports as the ~415 ms boot outlier: it runs
+     * once, from opening_demo() case 0 (this file, above), reached from
+     * Title() case 1 after its 20-frame countdown (demo01.c). Everything
+     * below is a one-shot build of the opening-demo background: decompress
+     * Opening.ppg into its 90 textures, allocate the stage-9 texture cache,
+     * then melt the whole tilemap into it. Split it four ways so a device
+     * log says which of those four is the stall rather than leaving it to
+     * inference. Measurement only -- no call is added, removed or
+     * reordered. */
+    const Uint64 opbg_t0_ns = SDL_GetTicksNS();
+    unsigned long long opbg_texcalls0 = 0;
+    unsigned long long opbg_texpx0 = 0;
+    unsigned long long opbg_texns0 = 0;
+
+    Renderer_GetCreateTextureLedger(&opbg_texcalls0, &opbg_texpx0, &opbg_texns0);
+#endif
     ppgSetupTexChunk_1st(NULL, loadAdrs, loadSize, 602, 91, 0, 0);
+#if ENABLE_PERF_TELEMETRY
+    const Uint64 opbg_t1_ns = SDL_GetTicksNS();
+#endif
 
     for (i = 0; i < ppgOpnBgTex.textures; i++) {
         ppgSetupTexChunk_2nd(NULL, i + 602);
         ppgSetupTexChunk_3rd(NULL, i + 602, 1);
     }
 
+#if ENABLE_PERF_TELEMETRY
+    const Uint64 opbg_t2_ns = SDL_GetTicksNS();
+    unsigned long long opbg_texcalls2 = 0;
+    unsigned long long opbg_texpx2 = 0;
+    unsigned long long opbg_texns2 = 0;
+
+    Renderer_GetCreateTextureLedger(&opbg_texcalls2, &opbg_texpx2, &opbg_texns2);
+#endif
+
     Opening_Now = 1;
     make_texcash_work(9);
+#if ENABLE_PERF_TELEMETRY
+    const Uint64 opbg_t3_ns = SDL_GetTicksNS();
+#endif
     mlt_obj_melt2(&mts[9], 0x8C40);
+#if ENABLE_PERF_TELEMETRY
+    const Uint64 opbg_t4_ns = SDL_GetTicksNS();
+    unsigned long long opbg_texcalls4 = 0;
+    unsigned long long opbg_texpx4 = 0;
+    unsigned long long opbg_texns4 = 0;
+
+    Renderer_GetCreateTextureLedger(&opbg_texcalls4, &opbg_texpx4, &opbg_texns4);
+#endif
     sound_trg_init();
     opening_init();
     Zoom_Value_Set(0x40);
+
+#if ENABLE_PERF_TELEMETRY
+    {
+        const Uint64 opbg_t5_ns = SDL_GetTicksNS();
+
+        SDL_Log("[opbg-init] total=%.1fms chunk1st=%.1f tex_loop=%.1f textures=%d texcash9=%.1f melt=%.1f tail=%.1f "
+                "src_bytes=%u",
+                (double)(opbg_t5_ns - opbg_t0_ns) / 1e6,
+                (double)(opbg_t1_ns - opbg_t0_ns) / 1e6,
+                (double)(opbg_t2_ns - opbg_t1_ns) / 1e6,
+                (int)ppgOpnBgTex.textures,
+                (double)(opbg_t3_ns - opbg_t2_ns) / 1e6,
+                (double)(opbg_t4_ns - opbg_t3_ns) / 1e6,
+                (double)(opbg_t5_ns - opbg_t4_ns) / 1e6,
+                (unsigned)loadSize);
+
+        /* Split by phase: how many Renderer_CreateTexture() conversions each
+         * phase paid for, and what they cost. The tex_loop figure is the
+         * unavoidable one (91 textures have to be built once); the melt
+         * figure is the re-conversion Renderer_UnlockTexture() forces on
+         * every page the melt dirties. */
+        SDL_Log("[opbg-tex] tex_loop calls=%llu px=%llu ms=%.1f | melt calls=%llu px=%llu ms=%.1f",
+                opbg_texcalls2 - opbg_texcalls0,
+                opbg_texpx2 - opbg_texpx0,
+                (double)(opbg_texns2 - opbg_texns0) / 1e6,
+                opbg_texcalls4 - opbg_texcalls2,
+                opbg_texpx4 - opbg_texpx2,
+                (double)(opbg_texns4 - opbg_texns2) / 1e6);
+    }
+#endif
 }
 
 s16 OPBG_Move(s32 /* unused */) {

@@ -1011,10 +1011,14 @@ All interaction bugs, where a mocked unit passes vacuously.
   hardware under #140 (five before, zero after, on the device). The 379 ms
   startup outliers bundled into this item were **not** the same bug and are
   still open — see #141.
-- **#141** — an unexplained ~400 ms stall at **frame 449**, every boot, on
-  device. Survives the AFS fix unchanged (376.5–416.7 ms with the load failures
-  present, 413.0–415.0 ms with them gone), so it is not the doubled reads it was
-  assumed to be. Reproducible and now frame-addressable; cause unknown.
+- **#141** — the ~415 ms stall at **frame 449** is **identified and CLOSED**
+  2026-08-30: it is `OPBG_Init()` (`src/sf33rd/Source/Game/opening/opening.c`),
+  the one-shot build of the opening-demo background, reached at a fixed sequence
+  position via `Title()`. It contains **no disk I/O** — 271 ms tilemap melt,
+  105 ms PPG decompress, 33 ms texture-cache build — which is why the AFS fix
+  never moved it. Inherent one-shot work; **no fix applied** (moving it off a
+  displayed frame is a state-machine restructure for a cosmetic boot hitch).
+  See the full "#141" section below.
 - **#108** — CLOSED 2026-08-30, both mechanisms. Two residuals remain open and
   are named below; see the full "#108" section further down this file.
 
@@ -2637,3 +2641,209 @@ running a harness. Recorded so it is not rediscovered as a surprise.
 (`1b6dc20f37a720b563345709301b6702`); no tmpfs mounted; scratch files removed;
 no processes left running. Nothing was deleted from the device at any point and
 no `rsync --delete` was issued.
+
+---
+
+## #141 — the frame-449 boot stall, named — CLOSED (identified; no fix applied)
+
+Device `192.168.1.171`, six bounded boots of an instrumented telemetry build
+(three per instrumentation round). The stall is **`OPBG_Init()`** — the
+one-shot build of the opening-demo background — and it contains **no disk I/O
+at all**.
+
+### 1. What frame 449 is doing
+
+`update_ns` (`src/port/sdl/sdl_app.c:3413`) brackets exactly one call,
+`game_step_0()` (`src/main.c`), so a `FRAME OUTLIER ... update=` line already
+localised the stall to that function. Phase checkpoints inside it, and four
+brackets inside `OPBG_Init()`, name it precisely. Round 2, three consecutive
+runs, verbatim:
+
+```
+[opbg-init] total=407.7ms chunk1st=0.0 tex_loop=104.9 textures=90 texcash9=32.8 melt=270.1 tail=0.0 src_bytes=449032
+[step0] total=412.7ms afs=0.0 input=0.1 nav=0.0 engine=412.6 seqs=0.0 netplay=0.0 probes=0.0 trace=0.0 effect=0.0 flip=0.0 | syncread=0.0ms n=0 bytes=0 | G_No=1/2/0/0 E_No=0/3/0/0 menu_cond=0 menu_r_no=0/0/0/0 Play_Mode=0 Mode_Type=0
+FRAME OUTLIER: frame=449 total=435.1ms update=429.8 render=0.3 present=5.1
+
+[opbg-init] total=409.2ms chunk1st=0.0 tex_loop=105.4 textures=90 texcash9=32.7 melt=271.0 tail=0.0 src_bytes=449032
+[step0] total=414.7ms afs=0.0 input=0.1 nav=0.0 engine=414.6 ... | syncread=0.0ms n=0 bytes=0 | G_No=1/2/0/0 E_No=0/3/0/0 ...
+FRAME OUTLIER: frame=449 total=422.1ms update=416.8 render=0.3 present=5.1
+
+[opbg-init] total=409.0ms chunk1st=0.0 tex_loop=104.9 textures=90 texcash9=32.5 melt=271.6 tail=0.0 src_bytes=449032
+[step0] total=415.8ms afs=0.0 input=0.1 nav=0.0 engine=415.7 ... | syncread=0.0ms n=0 bytes=0 | G_No=1/2/0/0 E_No=0/3/0/0 ...
+FRAME OUTLIER: frame=449 total=422.9ms update=417.3 render=0.3 present=5.4
+```
+
+Every phase but `engine` is 0.0–0.1 ms, and `engine` is within 5 ms of
+`OPBG_Init`'s own total. The breakdown of that ~408 ms, stable to ±1 ms across
+six runs:
+
+| phase | site | cost |
+| --- | --- | --- |
+| `ppgSetupTexChunk_1st` | `src/sf33rd/Source/Game/opening/opening.c:238` | 0.0 ms |
+| 90× `ppgSetupTexChunk_2nd`/`_3rd` | `opening.c:243-246` | **105 ms** |
+| `make_texcash_work(9)` | `opening.c:258` | 33 ms |
+| `mlt_obj_melt2(&mts[9], 0x8C40)` | `opening.c:262` | **271 ms** |
+| `sound_trg_init` + `opening_init` + `Zoom_Value_Set` | `opening.c:271-273` | 0.0 ms |
+
+The source is AFS entry 76, `Opening.ppg`, **449,032 bytes** — `src_bytes` above
+matches the archive exactly (parsed from `SF33RD.AFS` per the format at
+`src/port/io/afs.c:144-221`). Note `textures=90`, not the 91 that
+`ppgSetupTexChunk_1st` is passed.
+
+**There is no I/O in this frame.** The per-frame blocking-read ledger reports
+`syncread=0.0ms n=0 bytes=0` on frame 449 in all six runs. This is pure CPU:
+PPG decompression, tile decompression, and swizzled copies.
+
+### 2. It is NOT the renderer's redundant re-conversion — measured, and refuted
+
+`Renderer_UnlockTexture()` is literally `Renderer_CreateTexture()`
+(`src/platform/video/software/software_renderer.c`), which for PSMT8 rescans
+the whole surface for `max_index` and for PSMCT16 mallocs and converts it. That
+made "the melt re-converts every page it dirties" a natural suspect. A ledger
+of every `Renderer_CreateTexture()` call, sampled per phase, says otherwise:
+
+```
+[opbg-tex] tex_loop calls=90 px=5898240 ms=8.1 | melt calls=76 px=4980736 ms=7.2
+[opbg-tex] tex_loop calls=90 px=5898240 ms=8.2 | melt calls=76 px=4980736 ms=7.2
+[opbg-tex] tex_loop calls=90 px=5898240 ms=7.9 | melt calls=76 px=4980736 ms=7.4
+```
+
+**15 ms of 408.** Texture conversion is 3.7% of the stall. The remaining ~97 ms
+of `tex_loop` is `ppgDecompress` + `ppgChangeDataEndian`
+(`src/sf33rd/Source/Common/PPGFile.c`), and the remaining ~264 ms of the melt is
+`lz_ext_p6_fx` per tile, `njReLoadTexturePartNumG`'s swizzled copies, and
+`search_trsptr` (`src/sf33rd/Source/Game/rendering/mtrans.c:131-157`), which
+rescans the tail of the whole tilemap once per melted tile.
+
+### 3. Why 449 specifically
+
+`G_No=1/2` on the outlier frame is the answer, read out of the running game
+rather than inferred: `Main_Jmp_Tbl` (`src/sf33rd/Source/Game/game.c:120`) is
+`{ Wait_Auto_Load, Loop_Demo, Game }`, so `G_No[0]=1` is `Loop_Demo`;
+and the `G_No[1]==2` arm of that dispatcher calls `Title()`
+(`src/sf33rd/Source/Game/game.c:1699`). `Title()` case
+1 (`src/sf33rd/Source/Game/demo/demo01.c:32-40`) counts `D_Timer` from 20 down
+to 0 and then calls `opening_demo()`, whose `D_No[3]==0` arm
+(`src/sf33rd/Source/Game/opening/opening.c:73-78`) calls `OPBG_Init()` once.
+
+Everything upstream of that is a fixed frame count, which is why the number
+never moves. The warning screen is dead code: `D_No[1] = 5` is overwritten by
+`D_No[1] = 9` on the next statement (`src/sf33rd/Source/Game/demo/demo00.c:45-46`),
+so the 120- and 180-frame warning holds never run. That leaves the Capcom-logo
+sequence, which is all constant timers and fades — `D_Timer = 10`, a 62-frame
+logo move, two 43-frame fades, `D_Timer = 256`
+(`src/sf33rd/Source/Game/demo/demo00.c:114-197`). The only variable step in the
+whole chain is a two-frame LDREQ wait. 449 is a **sequence position**, not a
+time.
+
+### 4. The smaller boot outliers are a DIFFERENT cause
+
+Frame 2 reproduced in round 2 and carries its own ledger:
+
+```
+[afs-sync] sync fnum=7 name=SE.bd bytes=1345536 ms=4.6
+[afs-sync] sync fnum=1456 name=ef06.bin bytes=595968 ms=2.7
+[afs-sync] sync fnum=10 name=scrscrn.ppg bytes=51200 ms=20.0
+[step0] total=66.4ms ... engine=66.2 ... | syncread=25.5ms n=7 bytes=1019904 | G_No=0/0/0/0 E_No=0/0/0/0 ...
+FRAME OUTLIER: frame=2 total=75.4ms update=69.9 render=0.3 present=5.2
+```
+
+`G_No=0/0/0/0` is `Wait_Auto_Load`, i.e. still inside `Init_Task`. **25.5 ms of
+that 66 ms is seven blocking archive reads** — the exact opposite of frame 449,
+which has zero. That is also why the small outliers are intermittent (frame 2
+was 75.4 / 50.2 / 51.1 ms in round 2 and below the 50 ms threshold in all three
+runs of round 1, and #140's table shows the same flicker): their size is set by
+how the SD card and the page cache behave on that boot. Frame 9's outlier is the
+same class: the case-0 arm of `CAPCOM_Logo`
+(`src/sf33rd/Source/Game/demo/demo00.c:114`) fires `checkAdxFileLoaded()`,
+`preloadIntroBgm()` and `checkSelObjFileLoaded()`
+(`src/sf33rd/Source/Game/demo/demo00.c:121-123`) — all blocking, back to
+back.
+
+**Verdict: 52.0 / 83.0 ms and 415 ms are unrelated.** The small ones are disk;
+the big one has no disk in it.
+
+### 5. A third, previously unreported outlier
+
+`FRAME OUTLIER: frame=2812 total=57.8ms update=22.5 render=29.7 present=5.5`
+appeared in **all six runs**, ±1 ms. It is render-dominated, so it is neither of
+the two classes above. Not investigated here; recorded so it is not rediscovered
+as a surprise.
+
+### 6. Fixable or inherent
+
+**Inherent as work, movable as placement — but only by a restructure.**
+
+The 408 ms is real one-shot work that must finish before the opening demo can
+draw a frame, and it does not repeat: `opening_demo()` case 1 tears it down with
+`purge_texcash_work(9)` / `TexRelease_OP()` when the demo ends
+(`opening.c:80-86`). It is not avoidable work in the sense of being wasted — the
+one plausible waste, the renderer re-conversion, was measured at 15 ms.
+
+It *can* be taken off a displayed frame. The frame immediately before it is idle
+by construction: `Title()` case 1 spends 20 frames doing nothing but
+`D_Timer -= 1` (`demo01.c:32-40`) — roughly 334 ms of budget sitting directly in
+front of a 415 ms stall. The 90-texture loop (105 ms) is a plain `for` over
+independent textures and would chunk into it trivially. `mlt_obj_melt2` (271 ms)
+would not: it carries loop state (`cd16`/`cd32`) and mutates the tilemap in
+place, so spreading it needs a resumable form plus a new `D_No[3]` state.
+
+**Recommendation: do not fix it now.** It is one hitch, once per boot, during a
+fade between the Capcom logo and the title, in offline attract — it cannot reach
+gameplay or a netplay session, and it does not grow. The restructure buys a
+cosmetic boot improvement in exchange for reordering the opening state machine,
+which is the class of change that introduces init bugs. If it is ever taken up,
+the order is: chunk the 90-texture loop into the existing 20-frame countdown
+first (25% of the stall, no state machine change), and treat the melt separately.
+
+Nothing was hoisted or reordered in this lane.
+
+### 7. What was added
+
+Diagnostic instrumentation only, all under `ENABLE_PERF_TELEMETRY`, all of it
+counters and clock reads around calls that are otherwise untouched — no call is
+added, removed, reordered or made conditional:
+
+- `src/main.c` — ten phase checkpoints across `game_step_0()` and a `[step0]`
+  line above the same 50 ms threshold `src/port/sdl/sdl_app.c:3638` uses.
+- `src/port/io/afs.c` / `.h` — a per-frame ledger of blocking archive reads
+  (`AFS_ReadSync`, `AFS_ReadRange`) plus an `[afs-sync]` line naming the archive
+  member for any that blocks ≥ 2 ms.
+- `src/sf33rd/Source/Game/opening/opening.c` — four brackets in `OPBG_Init()`.
+- `src/platform/video/software/software_renderer.c` and
+  `include/rendering/game_renderer.h` — a monotonic `Renderer_CreateTexture()`
+  ledger, sampled per `OPBG_Init` phase.
+
+Measured overhead of the renderer ledger: 15.3 ms across 166 calls in the frame
+it measures, i.e. ~92 µs/call, of which two `SDL_GetTicksNS()` reads are ~0.1 µs
+— 0.1%.
+
+### 8. Correction to the brief
+
+The brief said the 50 ms threshold sits at `sdl_app.c:3627` with a stale "25 ms"
+comment. Neither holds at `ca9a6b3b`: the test is `sdl_app.c:3638` and its
+comment at `:3633` already reads "exceed 50 ms of work". No comment was changed.
+
+### 9. Gates
+
+- **ARM cross-build: run.** `--flavor telemetry`, `mode=arm-cross-build`,
+  `platform=linux/arm64`, lane `mister`. The binary that produced every
+  measurement above is that build's `build/mister-telemetry-package/bin/3s-arm`,
+  `md5 9fb3045599bf0e235fbea08d52878445`, confirmed byte-identical on-device
+  after upload.
+- **Shipped-config build: run.** `--flavor clean` selects `build_one clean OFF`
+  (`tools/mister/build-game.sh:812`), which reaches the cmake flag at
+  `tools/mister/build-game.sh:772`; the run logged
+  `-- ENABLE_PERF_TELEMETRY=OFF`. That is the configuration in which every block
+  above compiles out, including `game_step_0()`'s no-op macro forms.
+- **Frame-data: skipped, correctly.** Nothing in this lane touches simulation —
+  the changes are boot-path asset timing, a renderer counter, and log lines.
+  Canon untouched: 99 corpora / 1,488 rows / 1,435 PASS / 53 XFAIL.
+
+### 10. Device left clean
+
+Binary saved on-device before each round and restored after both; final
+`md5sum bin/3s-arm` = `1b6dc20f37a720b563345709301b6702`, 4,521,348 bytes —
+identical to the pre-lane hash. `ls bin/ | grep task141` → no leftovers. Nothing
+was deleted, no `rsync --delete` was issued, `menu.rbf` was never touched, and
+no process was left running.

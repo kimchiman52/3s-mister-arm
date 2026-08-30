@@ -631,8 +631,112 @@ static void configure_slow_timer() {
 }
 #endif
 
+#if ENABLE_PERF_TELEMETRY
+/* Task #141 -- boot-stall attribution inside game_step_0().
+ *
+ * sdl_app.c measures update_ns from SDLApp_BeginFrame() to SDLApp_EndFrame()
+ * (src/port/sdl/sdl_app.c:3413), and the only thing between those two calls
+ * is game_step_0() (below, called from MAIN_PHASE_INITIALIZED). So a
+ * "FRAME OUTLIER: ... update=408.3" line means 408 ms was spent somewhere in
+ * this function, and nothing in the existing telemetry says where. These
+ * checkpoints say where.
+ *
+ * Cost on a normal frame: one SDL_GetTicksNS() per phase plus one compare at
+ * the end. Nothing is reordered, skipped or made conditional -- every call
+ * runs in exactly the order it ran before, so this cannot move the
+ * simulation. The report fires only above the same 50 ms threshold
+ * sdl_app.c's FRAME OUTLIER line uses, so a healthy frame logs nothing. */
+enum Step0Phase {
+    STEP0_PHASE_AFS = 0,
+    STEP0_PHASE_INPUT,
+    STEP0_PHASE_NAV,
+    STEP0_PHASE_ENGINE,
+    STEP0_PHASE_SEQS,
+    STEP0_PHASE_NETPLAY,
+    STEP0_PHASE_PROBES,
+    STEP0_PHASE_TRACE,
+    STEP0_PHASE_EFFECT,
+    STEP0_PHASE_FLIP,
+    STEP0_PHASE_COUNT
+};
+
+static Uint64 step0_phase_ns[STEP0_PHASE_COUNT];
+static Uint64 step0_phase_mark_ns;
+static Uint64 step0_start_ns;
+
+static void step0_phase_begin(void) {
+    SDL_memset(step0_phase_ns, 0, sizeof(step0_phase_ns));
+    step0_start_ns = SDL_GetTicksNS();
+    step0_phase_mark_ns = step0_start_ns;
+    AFS_ResetSyncReadLedger();
+}
+
+static void step0_phase_end(enum Step0Phase phase) {
+    const Uint64 now_ns = SDL_GetTicksNS();
+
+    step0_phase_ns[phase] += now_ns - step0_phase_mark_ns;
+    step0_phase_mark_ns = now_ns;
+}
+
+static void step0_phase_report(void) {
+    const Uint64 total_ns = SDL_GetTicksNS() - step0_start_ns;
+
+    if (total_ns <= 50 * SDL_NS_PER_MS) {
+        return;
+    }
+
+    unsigned long long sync_read_ns = 0;
+    unsigned long long sync_read_bytes = 0;
+    unsigned int sync_read_count = 0;
+
+    AFS_GetSyncReadLedger(&sync_read_ns, &sync_read_bytes, &sync_read_count);
+
+    /* One line, printed immediately before sdl_app.c's own FRAME OUTLIER
+     * line for the same frame, so the two land adjacent in a captured log
+     * and the frame ordinal on the second labels the first. */
+    SDL_Log("[step0] total=%.1fms afs=%.1f input=%.1f nav=%.1f engine=%.1f seqs=%.1f netplay=%.1f probes=%.1f "
+            "trace=%.1f effect=%.1f flip=%.1f | syncread=%.1fms n=%u bytes=%llu | G_No=%d/%d/%d/%d "
+            "E_No=%d/%d/%d/%d menu_cond=%d menu_r_no=%d/%d/%d/%d Play_Mode=%d Mode_Type=%d",
+            (double)total_ns / 1e6,
+            (double)step0_phase_ns[STEP0_PHASE_AFS] / 1e6,
+            (double)step0_phase_ns[STEP0_PHASE_INPUT] / 1e6,
+            (double)step0_phase_ns[STEP0_PHASE_NAV] / 1e6,
+            (double)step0_phase_ns[STEP0_PHASE_ENGINE] / 1e6,
+            (double)step0_phase_ns[STEP0_PHASE_SEQS] / 1e6,
+            (double)step0_phase_ns[STEP0_PHASE_NETPLAY] / 1e6,
+            (double)step0_phase_ns[STEP0_PHASE_PROBES] / 1e6,
+            (double)step0_phase_ns[STEP0_PHASE_TRACE] / 1e6,
+            (double)step0_phase_ns[STEP0_PHASE_EFFECT] / 1e6,
+            (double)step0_phase_ns[STEP0_PHASE_FLIP] / 1e6,
+            (double)sync_read_ns / 1e6,
+            sync_read_count,
+            sync_read_bytes,
+            G_No[0],
+            G_No[1],
+            G_No[2],
+            G_No[3],
+            E_No[0],
+            E_No[1],
+            E_No[2],
+            E_No[3],
+            task[TASK_MENU].condition,
+            task[TASK_MENU].r_no[0],
+            task[TASK_MENU].r_no[1],
+            task[TASK_MENU].r_no[2],
+            task[TASK_MENU].r_no[3],
+            (int)Play_Mode,
+            (int)Mode_Type);
+}
+#else
+#define step0_phase_begin() ((void)0)
+#define step0_phase_end(phase) ((void)0)
+#define step0_phase_report() ((void)0)
+#endif
+
 static void game_step_0() {
+    step0_phase_begin();
     AFS_RunServer();
+    step0_phase_end(STEP0_PHASE_AFS);
 
     /* Reset the engine's per-frame "active hitbox" capture flag before
      * the engine tick runs. set_jugde_area() will set it during the
@@ -665,6 +769,7 @@ static void game_step_0() {
     appSetupTempPriority();
     flPADGetALL();
     keyConvert();
+    step0_phase_end(STEP0_PHASE_INPUT);
 
 #if defined(DEBUG)
     if (configuration.test.enabled) {
@@ -699,14 +804,17 @@ static void game_step_0() {
     }
 
     appCopyKeyData();
+    step0_phase_end(STEP0_PHASE_NAV);
 
     mpp_w.inGame = false;
 
     if (Netplay_GetSessionState() != NETPLAY_SESSION_IDLE) {
         Netplay_Run();
+        step0_phase_end(STEP0_PHASE_ENGINE);
         // Flush the 2D polygon buffer each frame when the game's normal render
         // loop isn't running, preventing the NJDP2D_PRIM_MAX limit from overflowing.
         njdp2d_draw();
+        step0_phase_end(STEP0_PHASE_SEQS);
         /* S1 host liveness (docs/plan-netplay-connection.md): keep the
          * orchestrator ticking during the active session so the UPnP
          * lease renewal (half of the 1-hour lease) fires mid-session —
@@ -714,17 +822,21 @@ static void game_step_0() {
          * state this is one atomic state read + one bool check per
          * frame; renewal itself runs on a side thread. */
         DirectP2P_Tick();
+        step0_phase_end(STEP0_PHASE_NETPLAY);
     } else {
         njUserMain();
+        step0_phase_end(STEP0_PHASE_ENGINE);
         seqsBeforeProcess();
         njdp2d_draw();
         seqsAfterProcess();
+        step0_phase_end(STEP0_PHASE_SEQS);
         Netplay_TickMatchmaking();
         Netplay_TickDirectP2P();
 #if defined(ENABLE_NETPLAY)
         defer_direct_p2p_handoff_tick();
 #endif
         DirectP2P_Tick();
+        step0_phase_end(STEP0_PHASE_NETPLAY);
     }
 
     /* Freeze-boundary probe (fit.md §5), env-gated on FD_SPAWN_PROBE.
@@ -742,6 +854,7 @@ static void game_step_0() {
      * post-overlay-latch state. Observation only; inert unless FD_IDLE_PROBE
      * is set (and, like the trace, only in training + overlay-enabled). */
     fd_idle_probe_tick();
+    step0_phase_end(STEP0_PHASE_PROBES);
 #if ENABLE_PERF_TELEMETRY
     {
         const Uint64 _ft0 = SDL_GetTicksNS();
@@ -752,8 +865,13 @@ static void game_step_0() {
     frame_trace_tick();
 #endif
 
+    step0_phase_end(STEP0_PHASE_TRACE);
+
     disp_effect_work();
+    step0_phase_end(STEP0_PHASE_EFFECT);
     flFlip(0);
+    step0_phase_end(STEP0_PHASE_FLIP);
+    step0_phase_report();
 }
 
 static void game_step_1() {

@@ -15,6 +15,13 @@
 
 #include "stb/stb_ds.h"
 
+#if ENABLE_PERF_TELEMETRY
+/* Task #141: SDL is not otherwise used in this translation unit; it is
+ * pulled in only for SDL_GetTicksNS() in the diagnostic ledger below, and
+ * only in the telemetry configuration. */
+#include <SDL3/SDL.h>
+#endif
+
 #if defined(PORT_MIYOO_MINI_PLUS) && defined(CRS_ARM_HAVE_MI_GFX)
 #include "platform/app/arm/arm_display_mi_gfx.h"
 #endif
@@ -1392,6 +1399,34 @@ static void render_band(RBCtx* ctx) {
     }
 }
 
+#if ENABLE_PERF_TELEMETRY
+/* Task #141. Renderer_UnlockTexture() is Renderer_CreateTexture(), so every
+ * page a tilemap melt dirties re-runs the whole conversion below -- the
+ * PSMT8 max_index scan over W*H, or a malloc + full PSMCT16 convert. During
+ * OPBG_Init() (opening.c) that happens once per created texture AND once per
+ * unlocked page, and OPBG_Init is the ~415 ms boot outlier. This ledger says
+ * how much of that frame is this function, so "redundant rescan" is a
+ * measurement rather than a reading of the call graph. Counters only. */
+static unsigned long long sw_create_texture_calls = 0;
+static unsigned long long sw_create_texture_pixels = 0;
+static Uint64 sw_create_texture_ns = 0;
+
+void Renderer_GetCreateTextureLedger(unsigned long long* calls_out, unsigned long long* pixels_out,
+                                     unsigned long long* ns_out) {
+    if (calls_out != NULL) {
+        *calls_out = sw_create_texture_calls;
+    }
+
+    if (pixels_out != NULL) {
+        *pixels_out = sw_create_texture_pixels;
+    }
+
+    if (ns_out != NULL) {
+        *ns_out = (unsigned long long)sw_create_texture_ns;
+    }
+}
+#endif
+
 void Renderer_CreateTexture(unsigned int th) {
     const int texture_index = LO_16_BITS(th) - 1;
     const FLTexture* fl_texture = &flTexture[texture_index];
@@ -1400,6 +1435,13 @@ void Renderer_CreateTexture(unsigned int th) {
     if (pixels == NULL) {
         return;
     }
+
+#if ENABLE_PERF_TELEMETRY
+    const Uint64 create_texture_start_ns = SDL_GetTicksNS();
+
+    sw_create_texture_calls += 1;
+    sw_create_texture_pixels += (unsigned long long)fl_texture->width * (unsigned long long)fl_texture->height;
+#endif
 
     SWTexture* slot = &textures[texture_index];
 
@@ -1457,6 +1499,10 @@ void Renderer_CreateTexture(unsigned int th) {
         fatal_error("Unhandled pixel format: %d", fl_texture->format);
         break;
     }
+
+#if ENABLE_PERF_TELEMETRY
+    sw_create_texture_ns += SDL_GetTicksNS() - create_texture_start_ns;
+#endif
 }
 
 void Renderer_DestroyTexture(unsigned int texture_handle) {
