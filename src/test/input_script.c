@@ -171,7 +171,7 @@ static void input_script_apply_guard_mode(int mode) {
      *
      *   hitcheck.c:1365-1366  ags = (ds->spmv_ng_flag & DIP_AUTO_GUARD_DISABLED) == 0;
      *   hitcheck.c:1496       if (!ds->auto_guard && !ags && (...)) { lever checks }
-     *   hitcheck.c:1508/1516  case 8 / case 16: ... && ags == 0
+     *   hitcheck.c:1508/1516  case 8 / case 16 sw_lvbt tests, each `&& ags == 0`
      *
      * defense_ground_cps3() has no `ags` term at all - it never reads
      * DIP_AUTO_GUARD_DISABLED - so its equivalent gate is just
@@ -194,9 +194,9 @@ static void input_script_apply_guard_mode(int mode) {
      *
      * High/low correctness is NOT papered over: defense_ground_cps3's
      * `switch (as->wu.att.guard & 0x18)` still requires the crouch bit for a
-     * low (case 8, hitcheck.c:1320-1321) and its absence for an overhead
-     * (case 16, hitcheck.c:1328-1329), which is what `dummy: crouch` vs
-     * `dummy: stand` supplies. That is a REAL engine difference from PS2,
+     * low (hitcheck.c:1320-1321, case 8's sw_lvbt test) and its absence for an
+     * overhead (hitcheck.c:1328-1329, case 16's sw_lvbt test), which is what
+     * `dummy: crouch` vs `dummy: stand` supplies. That is a REAL engine difference from PS2,
      * whose `ags` escapes at :1508/:1516 let a standing ALL-GUARD dummy block
      * a low - so an arcade corpus must spell the stance out where its PS2
      * twin did not have to. PS2 itself is unaffected by this write: its gate
@@ -247,7 +247,8 @@ static void input_script_apply_guard_mode(int mode) {
  * under PS2 it is a no-op in steady state, since check_omop_vital has already
  * restored 160 by the time the next `L` runs - verified by re-running all 73
  * entries of corpus-q.yaml under --test-balance ps2 with this in place, zero
- * golden drift. 160 is check_omop_vital's own ceiling (plmain.c:1212/1238). */
+ * golden drift. 160 is the ceiling that call clamps to itself
+ * (plmain.c:1212/1238, `vital_new > 160`). */
 static void input_script_restore_vitality(void) {
     plw[0].wu.vital_new = 160;
     plw[1].wu.vital_new = 160;
