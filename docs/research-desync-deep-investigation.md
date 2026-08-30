@@ -164,6 +164,33 @@ Implications for the prior ranking (pre-revision):
 
 ## Section A — State-coverage audit
 
+> **⚠ CORRECTION 2026-08-30 — §A.2.2 / §A.2.3 / §A.2.4 are cited as the source
+> of 16 live suppressions in `tools/rollback-determinism/allowlist.txt`. Three
+> of those sixteen were re-derived against the code on 2026-08-30 and FAILED.**
+>
+> - **The classification method here is a category judgement, not a read
+>   trace.** §A.2.2/.3/.4 sort globals by subsystem and conclude "write-only
+>   fan-out; not fed back" from the subsystem name. Re-tracing the reads found
+>   `cseSysWork` gating `ldreq_result` and hence `Exit_No`/`Exit_Timer`/`G_No`/
+>   `G_Timer`; `mts_ok` gating PLW canon fields `my_clear_level`/
+>   `current_colcd` and the saved `frw` field `my_trans_mode`; and `ppwork`
+>   gating a write into `Convert_Buff`. All four destinations are in the
+>   rollback save set. That is on top of `spmv_ng_save` (§A.2.1, exonerated on
+>   the wrong character enum) and `ColorRAM` (§A.2.2, which fed saved `frw[]`).
+> - **The subsystem lists do not cover what cites them.** Of the 16 allowlist
+>   entries filed under these three sections, only five — `ColorRAM`,
+>   `colPalBuffDC`, `mts_ok`, `ppwork`, `vib_req` — are actually NAMED here.
+>   §A.2.3 names `bgm_*`/`adx_*` and none of the six sound entries; §A.2.4
+>   names `PrioBase`/`cmtx`/`bg_priority`/`TopHUD*` and none of the eight
+>   render entries. Eight of the sixteen are outside this sweep's universe
+>   (`src/sf33rd/Source/Game/`) altogether — they live in `src/port/`,
+>   `src/platform/`, `src/main.c` and `AcrSDK/`, so §A never examined them.
+>
+> **Do not use §A.2.x to justify a new suppression.** The per-entry read traces
+> now live in `tools/rollback-determinism/allowlist.txt`, next to the
+> suppressions they license. Every "NOT in `GS_SAVE`" claim below is also stale
+> since 2026-04-24 — see the STATUS block at the top of this document.
+
 This section enumerates every mutable global in `src/sf33rd/Source/Game/` and classifies it by (a) whether it is copied into the save/restore `State` struct via `GS_SAVE/GS_LOAD` in `src/netplay/game_state.c`, (b) whether it feeds the focused checksum that GekkoNet compares across peers at `src/netplay/game_state.c:1670-1728`, and (c) whether it is simulation-mutated during battle.
 
 ### A.1 Complete State struct inventory

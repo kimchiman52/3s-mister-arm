@@ -1683,12 +1683,12 @@ void GameState_Load(const GameState* src) {
      *     coherent row. The remedy for that case would be widening the slice or
      *     saving those writers' rows, not a ghost push.
      *
-     *     Note the tear cannot feed back into simulation state: the only path
-     *     from ColorRAM into saved state is effl8's save_old_color_data
-     *     (effl8.c:47), which reads exactly the EFFL8_COLOR_ENTRIES prefix this
-     *     loop restores. effj7 has no save_old_color_data at all. So the save
-     *     window is the right width for correctness even though it is narrower
-     *     than the widest writer.
+     *     effj7 cannot feed its tear back: it has no save_old_color_data, and
+     *     get_new_color_data never reads ColorRAM (it writes tram from a const
+     *     ROM table). But this comment used to say save_old_color_data was the
+     *     ONLY path from ColorRAM into saved state, and that is FALSE —
+     *     meta_col.c's metamor_color_store/_restore launder rows through the
+     *     unsaved metamor_original. See tools/rollback-determinism/allowlist.txt.
      *  3. Cost and blast radius. palUpdateGhostCP3 is VRAM work
      *     (flLockPalette/palConvRowTim2CI8Clut/flUnlockPalette, color3rd.c:531)
      *     — four lock/copy-64/unlock round trips on every rollback tick on a

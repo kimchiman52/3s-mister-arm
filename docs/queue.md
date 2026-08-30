@@ -1796,3 +1796,106 @@ each and are worth knowing before the next batch:
   Two bare `main.c:NNN` numbers in one sentence share every anchor and
   manufacture a false drift; spelling one of them `src/main.c:NNN` separates
   them.
+
+## #137 — the black-BG fix that was never implemented, and the punch-gate charge — IN PROGRESS
+
+Taking `build/host-bgfix` (a private configure dir, NOT the shared `build/host`)
+for the rollback-determinism-style repro of the black-BG symptom. The shared
+`build/host` tree is left alone for the allowlist lane. Working-tree edits are
+confined to `src/sf33rd/Source/Game/stage/tate00.c`,
+`src/netplay/direct_p2p.c`, `src/netplay/test_punch_predicates.c` and this file
+while that lane runs.
+
+### CLOSED — the 16 §A-derived allowlist entries, re-derived; three failed
+
+Answers the OPEN item above ("section A's confident positive was never tested
+either, and 16 allowlist entries rest on its method"). Each of the sixteen was
+given the one question that matters — does any simulation read reach it — and
+the read traces now live per-entry in `tools/rollback-determinism/allowlist.txt`
+rather than in a document that drifts. **No suppression was removed**; three
+need a decision first.
+
+**Provenance, and how weak it turned out to be.** The 16 are the whole of three
+blocks: sound (`ram`, `sdeb`, `sdbd`, `cseSysWork`, `PhdAddr`, `gpTsb`),
+render/palette (`palettes`, `ColorRAM`, `colPalBuffDC`, `latest_texture_spec`,
+`mts_ok`, `texcash_melt_buffer_mem`, `tpu_free_mem`, `sa_frame`), rumble
+(`ppwork`, `vib_req`). All 16 have been there since `837e2ba0` and the
+provenance IS recorded — as a §A citation on each block header, never
+per-entry. Checking it: only **five** (`ColorRAM`, `colPalBuffDC`, `mts_ok`,
+`ppwork`, `vib_req`) are named anywhere in §A.2.2/.3/.4. §A.2.3 names `bgm_*`
+and `adx_*`, not one of the six sound entries; §A.2.4 names `PrioBase`/`cmtx`/
+`bg_priority`/`TopHUD*`, not one of the eight render entries. And **eight** sit
+outside §A.2's stated sweep universe (`src/sf33rd/Source/Game/`) entirely —
+`ram` (`port/sound/`), `cseSysWork`/`PhdAddr`/`gpTsb` (`AcrSDK/…/CapSndEng/`),
+`palettes`/`latest_texture_spec` (`platform/video/software/`),
+`texcash_melt_buffer_mem`/`tpu_free_mem` (`src/main.c`). Eleven of the sixteen
+were category extrapolations from a block header, not findings.
+
+**12 CONFIRMED write-only, each with its read trace recorded.** `ram`, `sdeb`,
+`sdbd`, `PhdAddr`, `gpTsb`, `palettes`, `latest_texture_spec`, `colPalBuffDC`,
+`sa_frame`, `texcash_melt_buffer_mem`, `tpu_free_mem`, `vib_req`. Two reason
+strings were wrong about the mechanism while reaching the right verdict:
+`latest_texture_spec` is not a batching memo — nothing ever compares it, so no
+stale value can gate work; and nothing in the pad pipeline reads `vib_req`.
+
+**3 WRONG.**
+
+- **`cseSysWork` — a live feedback path, and the highest-value finding here.**
+  `SpuBankId[]` is read by `cseGetIdStoredBd` and gates the head of
+  `q_ldreq_color_data`'s `type == 10` arm (`rendering/color3rd.c`): taking it
+  retires the request in-frame via `*curr->result |= lpr_wrdata[curr->id]`,
+  skipping `fsOpen`, `Pull_ramcnt_key`, the async read and the SPU upload.
+  `curr->result` is `&ldreq_result[i]`, which `Check_LDREQ_Queue_Player/_Union`
+  read, which gate `Exit_6th` (`Exit_No`, `Exit_Timer`) and `Bonus_Sub`'s stage
+  wait (`G_No`, `G_Timer`) — all four in `GS_SAVE`. The write that makes it
+  stateful, `cseSendBd2SpuWithId`, runs on the simulation tick, so a
+  speculative leg flips the bank id, the rollback does not rewind it, and the
+  confirmed leg takes the other arm. **This also collapses a standing
+  mis-reading**: `docs/rollback-determinism-harness.md` describes `PhdAddr`,
+  `cseSysWork`, `gpTsb`, `ldreq_result`, `ram`, `rckeyctr`, `sdbd` as a
+  seven-member "wall-clock cluster" of independent sinks paced by disk timing.
+  All seven are written on the one `q_ldreq_color_data` type-10 path this
+  branch gates. One mechanism, not seven.
+- **`mts_ok`.** `get_my_trans_mode` returns `-1` on `be == 0`, latched into
+  `ewk->wu.my_trans_mode` (a PLW canon field, in the saved `frw` pool, not
+  sanitized) at ~110 effect sites. And `Mtrans_use_trans_mode`'s
+  `if (mts_ok[wk->my_mts].be == 0) return;` sits **above** the `No_Trans` early
+  return, defeating the invariant the comment two lines below it was written to
+  protect, and skipping `wk->my_clear_level = 0x90` and
+  `wk->current_colcd &= 0x1FF` — both `GS_SAVE(plw)` canon fields.
+- **`ppwork`.** `ok_dev` gates `Convert_Buff[1][id][8] = 0` in
+  `Button_Config_Sub`, and `Convert_Buff` is saved. Blocked today by three
+  independent gates (`Pause_Task`'s `Mode_Type != MODE_NETWORK`,
+  `cpExitTask(TASK_MENU)` in `setup_vs_mode`, and `SDL_zeroa(Convert_Buff)`
+  making the write a no-op). Kept on **unreachability**, which is weaker than
+  write-only-ness; a voiding condition naming all three gates is on the entry.
+
+**1 CANNOT DETERMINE — `ColorRAM`'s residual claim.** The entry said the array
+outside the saved `effl8` window has "no path back into simulation state".
+A second path exists: `metamor_color_store` reads ColorRAM rows into
+`metamor_original` (**not** in `GS_SAVE`), and `metamor_color_restore` writes it
+back to `ColorRAM[i + wkid*16]` and `[+8]` — for `i == 0`, exactly the saved
+rows, and the second arm is a cross-row launder (row 8 receives what was stored
+from row 0). `effl8`'s `save_old_color_data` then latches those bytes into
+saved `frw`. What is unproven is realizability: `metamor_color_store`'s only
+callers are in `init_trans_color_ram` case 3, the async LDREQ completion path,
+and whether a type-3 colour load can complete inside a rollback window with
+Twelve in the match was not established by reading. Settle it with a harness run
+on a Twelve mirror with `ColorRAM` de-allowlisted. The same false "only path"
+sentence in `src/netplay/game_state.c`'s `GameState_Load` comment was corrected
+in place (comment-only, line-count neutral).
+
+**What removing the three would unhide.** `cseSysWork` should surface as
+DIVERGENT ahead of `ldreq_result`/`rckeyctr` on the select-phase scenarios —
+the technique that convicted `ColorRAM` (compare the suspect's `last` divergent
+frame against the consumer's `first`). `mts_ok` needs a scenario that straddles
+a `make_texcash_work` call with a rollback window; the two fast scenarios report
+`feedback=0` today, which is scenario-bounded evidence, not exoneration — that
+is exactly the state `ColorRAM` was in before `makoto-sa3-super` was added.
+`ppwork` should surface as DIVERGENT with no FEEDBACK consumer, matching the
+unreachability argument.
+
+**Carried, not fixed.** `docs/rollback-determinism-harness.md` says "41
+entries" in six places; the count has been 40 since `830784e2` removed
+`perf_super_art_command_telemetry`. Left alone — the file is outside
+`tools/doc-citations/baselines.txt` and this lane did not otherwise edit it.
