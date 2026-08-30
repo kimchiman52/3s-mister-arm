@@ -233,8 +233,15 @@ void effect_E3_move(WORK_Other* ewk) {
             sw2_case_3:
                 mwk->spmv_ng_flag |= DIP_AUTO_GUARD_DISABLED;
                 mwk->spmv_ng_flag &= ~DIP_AUTO_PARRY_DISABLED;
+                /* Missing '~'. The structurally identical PARRYING setup at the
+                 * top of this file does `&= 0xFFFFF0FF`, i.e. CLEAR bits 8-11.
+                 * Without the complement this KEEPS only bits 8-11 and wipes
+                 * every other DIP1 bit -- including the DIP_AUTO_GUARD_DISABLED
+                 * set two lines above, so PARRYING silently also enabled
+                 * auto-guard. Latent until [TM-01] made the CPS3 path actually
+                 * read these bits. */
                 mwk->spmv_ng_flag &=
-                    (DIP_UNKNOWN_8 | DIP_UNKNOWN_9 | DIP_AIR_PARRY_DISABLED | DIP_ANTI_AIR_PARRY_DISABLED);
+                    ~(DIP_UNKNOWN_8 | DIP_UNKNOWN_9 | DIP_AIR_PARRY_DISABLED | DIP_ANTI_AIR_PARRY_DISABLED);
                 break;
 
             case 4:
