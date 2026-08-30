@@ -77,6 +77,11 @@ static bool g_exit_requested = false;
 
 static bool g_guard_default_applied = false;
 
+/* Task #133 (R1). The dummy's blocking state, re-asserted every tick by
+ * InputScript_Tick(). See input_script_apply_guard_mode() for why the
+ * training ALL-GUARD DIP alone is not enough under arcade balance. */
+static s8 g_dummy_auto_guard = 0;
+
 /* Fatal parse/setup error: print to stderr and terminate the process
  * immediately (never returns). Used both for file/line-level errors
  * during InputScript_Load() and for the "wrong mode" check in
@@ -154,6 +159,98 @@ static void input_script_apply_guard_mode(int mode) {
     Training[2].contents[0][0][0] = stance_slot;
     Training[2].contents[0][0][1] = guard_slot;
     control_pl_rno = (u8)stance_slot;
+
+    /* Task #133 (R1): guard slot 2 (ALL GUARD) is not sufficient to make the
+     * dummy block under ARCADE balance, and that is the whole reason
+     * corpus-q-arcade.yaml originally shipped with all 22 of corpus-q.yaml's
+     * BLOCK entries omitted.
+     *
+     * Guard slot 2 clears DIP_AUTO_GUARD_DISABLED and DIP_GUARD_DISABLED
+     * (effe3.c:211-216, sw2_case_2). The PS2 ground-defense path reads the
+     * former back as its `ags` term and lets it stand in for holding back:
+     *
+     *   hitcheck.c:1365-1366  ags = (ds->spmv_ng_flag & DIP_AUTO_GUARD_DISABLED) == 0;
+     *   hitcheck.c:1496       if (!ds->auto_guard && !ags && (...)) { lever checks }
+     *   hitcheck.c:1508/1516  case 8 / case 16: ... && ags == 0
+     *
+     * defense_ground_cps3() has no `ags` term at all - it never reads
+     * DIP_AUTO_GUARD_DISABLED - so its equivalent gate is just
+     *
+     *   hitcheck.c:1309       if (!ds->auto_guard) { lever checks }
+     *
+     * and Control_Player_Tr() forces the dummy's input word to neutral for
+     * DUMMY_ACTION_STAND (menu.c:3798-3827), so `saishin_lvdir & gddir` is
+     * false and defense_ground_cps3() returns 2 (= took the hit). Measured:
+     * corpus-smoke.yaml's close-lp-block-vs-stand reads outcome=BLOCK under
+     * --test-balance ps2 and outcome=HIT under --test-balance arcade with
+     * every numeric field unchanged.
+     *
+     * `auto_guard` is the field CPS3's own defense path already provides for
+     * exactly this - "guard without holding back". Nothing in a normal round
+     * sets it (player_mv_0000 zeroes it at round init, plmain.c:123; only the
+     * bonus-stage init sets it, plmain2.c:101) because CPS3 has no training
+     * mode to set it from. So the harness sets it, the same way it already
+     * pokes control_pl_rno and Training[] rather than going through a menu.
+     *
+     * High/low correctness is NOT papered over: defense_ground_cps3's
+     * `switch (as->wu.att.guard & 0x18)` still requires the crouch bit for a
+     * low (case 8, hitcheck.c:1320-1321) and its absence for an overhead
+     * (case 16, hitcheck.c:1328-1329), which is what `dummy: crouch` vs
+     * `dummy: stand` supplies. That is a REAL engine difference from PS2,
+     * whose `ags` escapes at :1508/:1516 let a standing ALL-GUARD dummy block
+     * a low - so an arcade corpus must spell the stance out where its PS2
+     * twin did not have to. PS2 itself is unaffected by this write: its gate
+     * is `!ds->auto_guard && !ags && ...`, already false via ags.
+     *
+     * Applied to plw[1] (P2 = the dummy) - the harness never switches sides,
+     * the same fixed convention input_script_apply_teleport() uses. */
+    g_dummy_auto_guard = (mode == INPUT_SCRIPT_GUARD_NONE) ? 0 : 1;
+    plw[1].auto_guard = g_dummy_auto_guard;
+}
+
+/* Task #133 (R2). Restores both players to full vitality; called once per
+ * corpus entry, at the entry's `L` directive.
+ *
+ * The PS2 balance path gets this for free: check_omop_vital() walks
+ * vital_new back up to 160 every frame the dummy is idle
+ * (plmain.c:1134-1244, omop_vital_ix cases 2/3/4 at :1197-1243), and 90
+ * frames of inter_entry_wait is more than enough to undo one normal's
+ * damage. That call is arcade-skipped by construction -
+ * `if (!ArcadeBalance_IsEnabled()) { check_omop_vital(wk); }`,
+ * plmain.c:335-337 - because it implements the port's EXTRA OPTIONS vitality
+ * setting (sysdir.c:126-127), which CPS3 has no menu for. So under arcade the
+ * dummy's health only ever goes DOWN, and a long corpus grinds it to zero
+ * partway through.
+ *
+ * That is not cosmetic. same_dm_stop() (hitcheck.c:1023-1039) overrides the
+ * defender's hitstop with -att.hs_me whenever
+ * `(ds->vital_new - ds->dm_vital) < -2`, i.e. whenever the defender is nearly
+ * dead. Measured on corpus-q-arcade.yaml's q-crmp-hit-capture-a with a
+ * temporary probe inside same_dm_stop:
+ *
+ *   arcade  vnew=0    dmvital=10  delta=-10  hsme=9  hsyou=-10  fires=1
+ *   ps2     vnew=160  dmvital=13  delta=147  hsme=9  hsyou=-10  fires=0
+ *
+ * att.dipsw, att.hs_me and att.hs_you are IDENTICAL across the two engines
+ * there - the only differing input is the dummy's vitality. With the rule
+ * firing, dm_stop becomes -9 instead of -10, the dummy leaves hitstun one
+ * frame early (def_idle_F 5818 vs 5819 against an identical atk_idle_F 5820),
+ * and cr.MP reads adv=-2 instead of the oracle's -1. Those were the two
+ * ARCADE-VS-PORT-DIVERGENCE xfails: a dead dummy, not a balance difference.
+ *
+ * Deliberately NOT fixed by re-enabling check_omop_vital under arcade - that
+ * call is a shipping-behaviour decision and the harness has no business
+ * changing which engine ships. Restoring vitality from the test harness is
+ * the same class of poke as control_pl_rno and Training[] above.
+ *
+ * Unconditional (not arcade-gated) so both engines run the identical harness;
+ * under PS2 it is a no-op in steady state, since check_omop_vital has already
+ * restored 160 by the time the next `L` runs - verified by re-running all 73
+ * entries of corpus-q.yaml under --test-balance ps2 with this in place, zero
+ * golden drift. 160 is check_omop_vital's own ceiling (plmain.c:1212/1238). */
+static void input_script_restore_vitality(void) {
+    plw[0].wu.vital_new = 160;
+    plw[1].wu.vital_new = 160;
 }
 
 /* Teleport both players to absolute X positions, writing the same WORK
@@ -402,6 +499,14 @@ void InputScript_Tick(u16* p1sw, u16* p2sw) {
         input_script_apply_guard_mode(INPUT_SCRIPT_GUARD_NONE);
     }
 
+    /* Re-assert the dummy's auto-guard every tick rather than only at the `G`
+     * directive: plmain.c:123 zeroes auto_guard in player_mv_0000 (round init)
+     * and the PS2 ground/sky defense paths zero it outright whenever
+     * Play_Mode != 0 (hitcheck.c:1106, :1371), so a one-shot write is not
+     * guaranteed to survive to the next contact. Same reasoning as the
+     * control_pl_rno poke in input_script_apply_guard_mode(). */
+    plw[1].auto_guard = g_dummy_auto_guard;
+
     if (g_quit_seen) {
         if (g_quit_grace_remaining > 0) {
             g_quit_grace_remaining -= 1;
@@ -444,6 +549,7 @@ void InputScript_Tick(u16* p1sw, u16* p2sw) {
             return;
 
         case INPUT_SCRIPT_DIRECTIVE_LABEL:
+            input_script_restore_vitality();
             frame_trace_annotate("SCRIPT %s", directive->data.label.text);
             break;
 
