@@ -70,6 +70,23 @@
 # green run with the flip reverted would mean the arcade path still is not
 # executing.
 #
+# WALL-CLOCK MARGIN (read this before believing a RED from this corpus)
+# --------------------------------------------------------------------
+# run.sh sizes its cap by LABEL COUNT alone: 3 labels x 6 s/label -> under the
+# 90 s floor, so this corpus gets 90 s. That formula assumes every corpus's
+# per-label wait is roughly the default; this one's `inter_entry_wait: 900` is
+# ten times the default 90, so it is the first corpus where the WAIT, not the
+# label count, sets the run length. Measured 2026-08-30: **56 s wall**, taken
+# while an unrelated ARM Docker build was saturating the machine -- ~38 %
+# margin under the 90 s cap, which is tighter than any other corpus's.
+#
+# So: a `timeout`/exit-124 RED here is far more likely lane contention than a
+# real hang. Re-run it uncontended before concluding anything, exactly as the
+# task-#79 note at the top of run.sh prescribes. The cap formula was left
+# alone deliberately -- teaching it about `inter_entry_wait` would loosen hang
+# detection for all 96 corpora to fix one, and that trade was not this task's
+# to make.
+#
 # DUMMY GUARD, DELIBERATELY UNUSED
 # --------------------------------
 # Every entry is `dummy: none`. Under arcade balance the port's
