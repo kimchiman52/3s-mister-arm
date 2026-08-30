@@ -118,7 +118,7 @@ void Netplay_GetNetworkStats(NetworkStats* stats);
 
 // === 3SX-private extensions ===
 // Phase 6 Step 2: port of the 8-slot event queue from 3sxtra
-// (/tmp/3sxtra/src/netplay/netplay.h:37-51). See docs/plan-netplay-phase6.md
+// (/tmp/3sxtra/src/netplay/netplay.h:37-51). See docs/archive/plan-netplay-phase6.md
 // Step 2.
 
 typedef enum {

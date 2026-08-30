@@ -1,5 +1,9 @@
 # Phase 6 — Port menu_network.c, ms_* glue, 9 RmlUi screens, assets
 
+> **ARCHIVED 2026-08-30** — true at a752e2ca, not maintained.
+> Read for rationale and for what was tried and failed. Do not read for current facts; read the code.
+
+
 > **HISTORICAL — deprecated.** This document reads as a live roadmap but is no
 > longer current. The RmlUi in-game lobby UI, the HTTP lobby client, identity
 > persistence, and the ingame chat surface this plan targeted were all removed

@@ -969,7 +969,7 @@ What changed:
 
 Verified: `/Users/sb/Developer/fbneo-replay-runner/roms/sfiii3nr1.zip` carries
 all four SIMM slices matching the SHA-256s pinned at
-`src/arcade/rom_load.c:40-45` (`sfiii3.zip` in the same directory matches
+`src/arcade/rom_load.c:42-45` (`sfiii3.zip` in the same directory matches
 none). Under the harness it yields `Arcade balance auto-selected: CPS3 ROM
 verified, 20/20 characters adapted (digest eab701778c8b20ad)` — the same
 digest the device reports. Negative control, same command with no romset:
@@ -1091,16 +1091,29 @@ for *why* and for negative results, never for current facts; do not repoint
 citations in unenforced files (`tools/doc-citations/baselines.txt` is the
 enforced set and nothing else); write the assertion, not prose restating code.
 
-### CARRIED — R1. `docs/plan-netplay-phase6.md` should be archived and was not
+### DONE 2026-08-30 — R1. `docs/plan-netplay-phase6.md` is archived
 
-It self-declares "**HISTORICAL — deprecated**" in its own header and the RmlUi
-lobby it plans was removed. It stays in `docs/` only because three of its six
+It self-declared "**HISTORICAL — deprecated**" in its own header and the RmlUi
+lobby it planned was removed. It stayed in `docs/` only because three of its six
 inbound references (`src/configuration.h`, `src/netplay/netplay.c`,
-`src/netplay/netplay.h`) are in files another lane held uncommitted edits in on
+`src/netplay/netplay.h`) were in files another lane held uncommitted edits in on
 2026-08-30; moving it would have left dangling paths that lane could not have
-been expected to fix. The other three are `include/structs.h`,
+been expected to fix. The other three were `include/structs.h`,
 `src/netplay/test_event_queue.c`, `src/netplay/test_mist_handshake.c`.
-**Do it when `src/netplay` is quiet**: `git mv`, stamp, update those six.
+
+That lane committed (`b5f03f8a`) and `src/netplay` went quiet, so this is
+done: `git mv` into `docs/archive/`, the standard stamp (*true at* `a752e2ca`
+— its last substantively-true commit; `21ea5411` was a citation repoint and
+`e052550e` only rewrote its two parent-document paths, and neither may
+masquerade as the doc being current), and all **eight** inbound path references
+updated — the six above plus `docs/plan-fcade-replay-browser.md` and
+`docs/plan-stun-direct-p2p.md`, which both cite it with line ranges.
+
+Those two line ranges are deliberately **not** repointed even though the stamp
+shifted the archived file by four lines. Same call the 17-document archive
+commit made and wrote down: moving a document must not itself become a repoint
+commit, and `docs/archive/` is not scanned at all, so nothing there is
+checkable any more.
 
 ### CARRIED — R2. the black-BG bug is OPEN and its four documents say so
 

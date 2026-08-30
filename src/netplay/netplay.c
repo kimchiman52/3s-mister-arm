@@ -1876,7 +1876,7 @@ static void process_session() {
             // treat a detected desync like a disconnect — push DISCONNECTED so
             // the lobby UI can react, then clean input buffers and soft-reset
             // via handle_disconnection(). Event queue arrived in Phase 6 Step 2
-            // (see docs/plan-netplay-phase6.md).
+            // (see docs/archive/plan-netplay-phase6.md).
             printf("[netplay] desync at frame %d — terminating session\n", frame);
             push_event(NETPLAY_EVENT_DISCONNECTED);
             handle_disconnection();

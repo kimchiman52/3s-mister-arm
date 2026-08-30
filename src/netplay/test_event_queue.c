@@ -1,6 +1,6 @@
 /*
  * test_event_queue.c — Phase 6 Step 2 test harness for the netplay event
- * queue (docs/plan-netplay-phase6.md Step 2).
+ * queue (docs/archive/plan-netplay-phase6.md Step 2).
  *
  * Exercises the 8-slot queue by reaching the static push_event() through a
  * non-public trampoline Netplay_Test_PushEvent() exposed by netplay.c.

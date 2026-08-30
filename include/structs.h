@@ -203,7 +203,7 @@ typedef struct {
     u8 blink_timing;
     /*
      * Renamed in Phase 6 Step 5 to avoid the C++ reserved-word
-     * collision (see docs/plan-netplay-phase6.md). C-only
+     * collision (see docs/archive/plan-netplay-phase6.md). C-only
      * `#define operator wu_operator` at end of this header keeps
      * legacy `.operator` call sites working until a post-phase6
      * rename cleanup.

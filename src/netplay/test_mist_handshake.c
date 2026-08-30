@@ -1,6 +1,6 @@
 /*
  * test_mist_handshake.c — Phase 6 Step 8 unit test for the Layer 3 MIST
- * handshake (docs/plan-netplay-phase6.md Step 8).
+ * handshake (docs/archive/plan-netplay-phase6.md Step 8).
  *
  * Four cases, all driven on a localhost UDP socket pair so the test has
  * no external dependencies:

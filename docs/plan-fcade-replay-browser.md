@@ -341,7 +341,7 @@ defined go/no-go (§6, Step B3).
   the `TestRunner_Prologue` injection point. **The fork has never run
   upstream's Fightcade statcheck; its replay-fidelity pass rate is
   unknown** and is the single most important number Stage A produces.
-- `docs/plan-netplay-phase6.md:619-651` (Step 13) shows a previous
+- `docs/archive/plan-netplay-phase6.md:619-651` (Step 13) shows a previous
   "remote replay browser" concept — RmlUi `rmlui_network_replay_picker`
   against the 3sxtra lobby server. That entire RmlUi/3sxtra port was
   **abandoned 2026-04-29** (memory: project-netplay-port-strategy;
