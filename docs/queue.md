@@ -3733,3 +3733,77 @@ in `backend.cpp`, `game_session.cpp` and `zpp/serializer.h` — files not copied
 into the cached include tree. Defensible only because every patch applies in
 the same atomic rebuild block; a `.patch` series would make that structural
 rather than argued.
+
+## #155 — room code v4: drop the nonce, keep version + check (12 chars) — OPEN
+
+**Maintainer decision, 2026-08-31.** The v3 code is 18 chars (20 displayed with
+its two hyphen groups) and that is hurting the thing the code exists for:
+being read aloud to a friend and typed on a controller with an on-screen
+keyboard.
+
+Where the length actually went (v1 was 11 = 10 payload + 1 check):
+
+- **+6 payload chars = the 32-bit nonce.** `ROOM_CODE_NONCE_BITS 32`;
+  48 fixed bits (ip 32 + port 16) + 32 = 80 = 16 × 5.
+- **+1 = the version prefix.**
+- **The check digit cost NOTHING.** v1 already had one. v3 fixed its
+  arithmetic (the ISO 7064 recurrence was summed mod 37 instead of mod 36,
+  collapsing 37 product states onto 36 outputs). Do not "save" a character
+  here: without it the payload is dense, every well-formed string decodes to
+  *some* real ip:port, and a typo silently becomes a code for somewhere else —
+  measured 1 in 781 undetected substitutions on v1/v2, versus 0 of 2,520,000
+  on v3.
+
+### v4 shape
+
+`1 version + 10 payload + 1 check = 12 chars`, no hyphen groups needed.
+Length map stays collision-free: 11 = v1, **12 = v4**, 14 = v2, 18 = v3, all
+legacy lengths still recognized so old codes report OLD_FORMAT rather than
+failing as garbage.
+
+Version char and length dispatch are **kept deliberately, having been
+questioned**: they are not what stops an incompatible *build* from pairing
+(the MIST handshake's `state_ver`/`proto_ver`/arch/digest gate does that, and
+a format change implies a build change, so the handshake would have rejected
+the session anyway). What the local check buys is that a misparse produces a
+**wrong address, not a wrong peer** — there is no handshake to defer to,
+because nobody is there. Length dispatch already makes different-length
+formats fail clean as MALFORMED; the version char covers the same-length case.
+Cheap, so it stays.
+
+### The consequence to accept, in writing
+
+The rendezvous session key and the S4a punch token are **derived from the code
+payload**. Removing the nonce makes both a pure function of (ip, port), which
+is public. That reopens exactly v1's exposure: someone who knows or scans your
+IP can derive the session key and **squat or race the pairing**.
+
+Accepted, because the ceiling is "a stranger joins your match" or "your friend
+has to retry", this is friend-to-friend P2P, and the host-side punch-gate mute
+(S4-review HIGH-1b) now backstops it — a defence v1 never had. Not accepted
+silently: if the punch gate is ever weakened, this decision reopens.
+
+### Keep the nonce machinery ALIVE
+
+`RoomCode_GenerateNonce`, the `Csprng_Bytes` hard-fail, and the
+domain-separated `3SXR-SK3` / `3SXR-PT3` derivations stay **compiled and
+unit-tested** — merely unused by the code string. **Do not park them behind an
+`#if`.** `LOSSY_ADAPTER` was exactly that shape and silently stopped compiling
+when the warning set tightened (see `4ca4c0de`); the rot cost us the only
+local way to exercise rollback. Dormant-but-built is the requirement.
+
+Why they will be wanted: a **room list** changes the delivery channel. Today
+the nonce must ride in the code, because the joiner derives the punch token
+before any contact and the session key is what *indexes* the rendezvous slot,
+so the server cannot deliver it. A list breaks that circularity — pick a room,
+receive the nonce out-of-band — restoring unguessable derivations at **zero
+character cost**.
+
+### Notes for the implementer
+
+- Breaking change: a v4 client cannot pair with a v3 client (the punch-token
+  derivation changes, not just the string). Assess whether `MIST_PROTO_VER`
+  should bump.
+- `ROOM_CODE_REDACT_CHARS` (8) was sized for an 18-char code; re-derive for 12.
+- Keep the corrected ISO 7064 recurrence and its full-alphabet sweep; extend
+  the sweep to the new length rather than trusting the old result.
