@@ -283,26 +283,6 @@ void Menu_Init(struct _TASK* task_ptr) {
     cpReadyTask(TASK_SAVER, Saver_Task);
 }
 
-#if NETPLAY_ENABLED
-// Returns true while matchmaking is pending, consuming input to cancel.
-// Caller should skip normal menu logic when this returns true.
-static bool check_netplay_cancelled() {
-    if (!Netplay_IsMatchmakingPending()) {
-        return false;
-    }
-
-    // I dont know if we want users to be able to cancel mm on their own?
-    // s16 sw = (~plsw_01[0] & plsw_00[0]) | (~plsw_01[1] & plsw_00[1]);
-
-    // if (sw & (SWK_SOUTH | SWK_EAST)) {
-    //     Netplay_CancelMatchmaking();
-    //     SE_selected();
-    // }
-
-    return true;
-}
-#endif
-
 void Mode_Select(struct _TASK* task_ptr) {
     s16 ix;
     s16 PL_id;
@@ -433,7 +413,6 @@ void Mode_Select(struct _TASK* task_ptr) {
                 /* Netplay arms only in verified-arcade balance state; on
                  * refusal the reason renders via the direct-P2P overlay. */
                 if (Netplay_ArmAllowed()) {
-                    Netplay_BeginMatchmaking();
                     Netplay_BeginDirectP2P();
                 } else {
                     Netplay_RefuseArm();
@@ -1392,17 +1371,12 @@ void Netplay_Menu(struct _TASK* task_ptr) {
                 Order[0x70] = 4;
                 Order_Timer[0x70] = 4;
 
-                if (check_netplay_cancelled()) {
-                    Netplay_CancelMatchmaking();
-                }
-
                 break;
             }
 
-            if (Menu_Cursor_Y[0] == 0 && !check_netplay_cancelled()) {
+            if (Menu_Cursor_Y[0] == 0) {
                 /* Same arm-time gate as the mode-select entry. */
                 if (Netplay_ArmAllowed()) {
-                    Netplay_BeginMatchmaking();
                     Netplay_BeginDirectP2P();
                 } else {
                     Netplay_RefuseArm();

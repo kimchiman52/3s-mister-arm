@@ -220,15 +220,10 @@ static void verify_configuration(Configuration* configuration) {
     {
         const NetplayConfiguration* netplay = &configuration->netplay;
         const bool p2p_specified = netplay->p2p_local_player > 0 || netplay->p2p_remote_ip != NULL;
-        const bool matchmaking_specified = netplay->matchmaking_ip != NULL || netplay->matchmaking_port != 0;
         const bool handoff_specified = netplay->direct_p2p_handoff_set;
 
-        if (p2p_specified && matchmaking_specified) {
-            error_out("Can't specify P2P and matchmaking at the same time.");
-        }
-
-        if (handoff_specified && (p2p_specified || matchmaking_specified)) {
-            error_out("--direct-p2p-handoff cannot be combined with --p2p-* or --matchmaking-* flags.");
+        if (handoff_specified && p2p_specified) {
+            error_out("--direct-p2p-handoff cannot be combined with --p2p-* flags.");
         }
 
         if (p2p_specified) {
@@ -238,16 +233,6 @@ static void verify_configuration(Configuration* configuration) {
 
             if (netplay->p2p_remote_ip == NULL) {
                 error_out("You must specify --p2p-remote-ip.");
-            }
-        }
-
-        if (matchmaking_specified) {
-            if (netplay->matchmaking_ip == NULL) {
-                error_out("You must specify --matchmaking-ip.");
-            }
-
-            if (netplay->matchmaking_port == 0) {
-                error_out("You must specify --matchmaking-port.");
             }
         }
     }
@@ -275,9 +260,6 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     0,
                     0),
         OPT_STRING(0, "p2p-remote-ip", &configuration->netplay.p2p_remote_ip, "Remote player IP.", NULL, 0, 0),
-        OPT_STRING(0, "matchmaking-ip", &configuration->netplay.matchmaking_ip, "Matchmaking server IP.", NULL, 0, 0),
-        OPT_INTEGER(
-            0, "matchmaking-port", &configuration->netplay.matchmaking_port, "Matchmaking server port.", NULL, 0, 0),
         OPT_STRING(0,
                    "direct-p2p-handoff",
                    &direct_p2p_handoff_arg,
@@ -296,13 +278,6 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
                     0,
                     0),
         OPT_BOOLEAN(0, "headless", &configuration->headless, "Run with non-interactive event handling.", NULL, 0, 0),
-        OPT_BOOLEAN(0,
-                    "test-netplay-event-queue",
-                    &configuration->test_netplay_event_queue,
-                    "Run the netplay event-queue test harness and exit.",
-                    NULL,
-                    0,
-                    0),
         OPT_BOOLEAN(0,
                     "test-mist-handshake",
                     &configuration->test_mist_handshake,

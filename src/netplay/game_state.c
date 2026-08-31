@@ -2837,8 +2837,7 @@ void dump_desync_state(int frame, uint32_t local_checksum, uint32_t remote_check
  * sparse pack/unpack helpers are file-static. These trampolines expose
  * them for the round-trip parity tests without leaking the wire format
  * into the public header. Gated by the same ENABLE_NETPLAY_TESTS macro
- * as the other Phase 6 test harnesses (test_event_queue, test_room_code,
- * test_stun_mock). */
+ * used by the other Phase 6 test harnesses. */
 unsigned int Netplay_Test_PackSparseState(unsigned char* out_buf,
                                           const GameState* gs_src);
 bool Netplay_Test_UnpackSparseState(const unsigned char* in_buf,

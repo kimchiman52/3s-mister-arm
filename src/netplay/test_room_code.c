@@ -14,7 +14,9 @@
  * (NETPLAY_TEST_HOOKS is required because this build links every
  * src/netplay/test_*.c TU, including test_bilateral_punch.c, which needs
  * that macro to declare DirectP2P_TestHook_IsLanPeer.)
- * Mirrors src/netplay/test_event_queue.c pattern.
+ * Mirrors the other Phase 6 test harnesses' pattern: gated behind
+ * ENABLE_NETPLAY_TESTS, with an #else stub that logs "not compiled in"
+ * and returns 2.
  */
 
 #include <stdio.h>

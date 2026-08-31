@@ -15,7 +15,8 @@
  * the implementation into the test.
  *
  * Gated behind ENABLE_NETPLAY_TESTS; under #else the entry point prints
- * "not compiled in" and returns 2. Mirrors test_event_queue.c pattern.
+ * "not compiled in" and returns 2. Mirrors the other Phase 6 test
+ * harnesses' gating pattern.
  * Enable with:
  *   EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON \
  *                     -DCMAKE_C_FLAGS='-DENABLE_NETPLAY_TESTS -DNETPLAY_TEST_HOOKS'"

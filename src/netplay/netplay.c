@@ -8,7 +8,6 @@
 #include "netplay/late_punch.h"
 #include "sf33rd/AcrSDK/common/pad.h"
 #include "netplay/game_state.h"
-#include "netplay/matchmaking.h"
 #include "netplay/mist_handshake.h"
 #include "netplay/net_tuning.h"
 // #44: Rendezvous_WireVersion() for the report header — the wire version is
@@ -58,9 +57,6 @@
 // Uncomment to enable packet drops
 // #define LOSSY_ADAPTER
 
-// 3SX-private: forward declaration for event queue (defined at end of file).
-// Phase 6 Step 2: port of /tmp/3sxtra/src/netplay/netplay.c:70.
-static void push_event(NetplayEventType type);
 // S3: forward declaration — connect_abort_tick (defined with the S3 state
 // above Netplay_Run's helpers) tears down via handle_disconnection.
 static void handle_disconnection(void);
@@ -73,10 +69,6 @@ static const char* remote_ip = NULL;
 static int player_number = 0;
 static int player_handle = 0;
 static NetplaySessionState session_state = NETPLAY_SESSION_IDLE;
-static char matched_ip[64];
-static const char* matchmaking_server_ip = NULL;
-static int matchmaking_server_port = 9000;
-static bool matchmaking_pending = false;
 static bool direct_p2p_pending = false;
 static NET_DatagramSocket* p2p_sock = NULL;
 // Step 6 (docs/plan-stun-direct-p2p.md): pre-punched STUN socket set by
@@ -853,8 +845,8 @@ void Netplay_TestHook_ReportDir(const char* dir) {
 // UI was removed), which made the handshake dead code on every real
 // session — two peers with different GameState layouts would connect,
 // sync, and desync mid-match with no explanation. The gate now runs
-// unconditionally for every session (direct P2P, matchmaking, LAN CLI)
-// on the same socket configure_gekko() hands to GekkoNet.
+// unconditionally for every session (direct P2P, LAN CLI) on the same
+// socket configure_gekko() hands to GekkoNet.
 static bool s_mist_handshake_done = false;
 static char s_mist_reject_reason[128] = { 0 };
 // Consecutive silent-timeout attempts. Retry policy (peer-skew
@@ -868,8 +860,8 @@ static int s_mist_handshake_attempts = 0;
 // peer completes the handshake; see mist_handshake_run_attempt docs for
 // the stranded-completion race and the bypass-safety argument). Must
 // persist ACROSS the retry attempts of one session and reset wherever
-// s_mist_handshake_attempts resets: session start (direct-P2P tick,
-// matchmaking match) and session EXITING.
+// s_mist_handshake_attempts resets: session start (direct-P2P tick)
+// and session EXITING.
 static bool s_mist_peer_hello_ok = false;
 
 // === S3 Part A (docs/plan-netplay-connection.md §5): CONNECTING deadline
@@ -919,7 +911,6 @@ static bool connect_abort_tick(const char* stage) {
         SDL_strlcpy(s_session_end_reason, "user-abort-connect", sizeof(s_session_end_reason));
         s_session_end_frame = s_last_advance_frame;
     }
-    push_event(NETPLAY_EVENT_DISCONNECTED);
     handle_disconnection();
     return true;
 }
@@ -1072,8 +1063,9 @@ static void setup_vs_mode() {
     // CFG_DRAW_PLAYERS_ABOVE_HUD's gameplay-affecting reads (effect-table
     // population, scr_trans/scr_calc selection) are still a local config
     // peers never negotiate — suppress for the session at the common
-    // session-setup chokepoint (covers matchmaking entries, which skip
-    // NetplayNav_Arm). Released when the session finishes tearing down.
+    // session-setup chokepoint (covers the in-game network menu's direct
+    // Netplay_BeginDirectP2P call, which skips NetplayNav_Arm). Released
+    // when the session finishes tearing down.
     DrawPlayersAboveHud_SetNetplaySuppressed(true);
 
     E_Timer = 0; // E_Timer can have different values depending on when the session was initiated.
@@ -1470,9 +1462,9 @@ static bool mist_pump_start(void) {
             return false;
         }
         /* Wait briefly for resolution. One-time per session; remote_ip
-         * is a numeric dotted-quad on the orchestrator/matchmaking
-         * paths, so this resolves immediately — the bounded poll only
-         * matters for a hostname passed via the LAN CLI. */
+         * is a numeric dotted-quad on the orchestrator path, so this
+         * resolves immediately — the bounded poll only matters for a
+         * hostname passed via the LAN CLI. */
         for (int spin = 0; spin < 50; spin++) {
             if (NET_GetAddressStatus(s_hs_peer_addr) != NET_WAITING) break;
             SDL_Delay(2);
@@ -1551,19 +1543,14 @@ static void late_punch_service(void) {
 static NET_DatagramSocket* acquire_active_socket(void) {
     if (stun_socket != NULL) {
         // Step 6: pre-punched STUN socket (internet play via orchestrator).
-        // Takes priority over matchmaking — if the STUN socket is set, the
-        // orchestrator has already hole-punched through NAT and the remote
-        // peer is expecting the STUN-discovered mapping. Mirrors upstream
+        // If the STUN socket is set, the orchestrator has already
+        // hole-punched through NAT and the remote peer is expecting the
+        // STUN-discovered mapping. Mirrors upstream
         // /tmp/3sxtra/src/netplay/netplay.c:440-444.
         // NetTuning_SetRecvBuf is a plain setsockopt — calling it again on
         // the configure_gekko() pass after the handshake pass is harmless.
         NetTuning_SetRecvBuf(stun_socket, 256 * 1024);
         return stun_socket;
-    }
-    NET_DatagramSocket* mm_sock = Matchmaking_GetSocket();
-    if (mm_sock != NULL) {
-        // Matchmaking path: reuse the socket that was registered with the server.
-        return mm_sock;
     }
     // Direct P2P CLI/LAN path: create a dedicated UDP socket on local_port.
     if (p2p_sock == NULL) {
@@ -1950,13 +1937,11 @@ static void process_session() {
             printf("🔴 player syncing\n"); fflush(stdout);
             SDL_Log("[netplay sess=%08x] event=syncing", s_session_uuid);
             // FIXME: Show status to the player
-            push_event(NETPLAY_EVENT_SYNCHRONIZING);
             break;
 
         case GekkoPlayerConnected:
             printf("🔴 player connected\n"); fflush(stdout);
             SDL_Log("[netplay sess=%08x] event=connected", s_session_uuid);
-            push_event(NETPLAY_EVENT_CONNECTED);
             break;
 
         case GekkoPlayerDisconnected:
@@ -1969,7 +1954,7 @@ static void process_session() {
             // Task #144: this is a post-handoff (RUNNING-phase) session
             // failure exactly like the MIST reject / CONNECTING-deadline
             // cases below already route through DirectP2P_NotifySessionFailed
-            // — latch BEFORE push_event/handle_disconnection so the teardown
+            // — latch BEFORE handle_disconnection so the teardown
             // callback that handle_disconnection's EXITING pass eventually
             // fires (direct_p2p_on_teardown) sees the latch and parks
             // FAILED_HANDSHAKE with a distinct "Opponent disconnected."
@@ -2004,7 +1989,6 @@ static void process_session() {
                     s_session_uuid);
             }
 
-            push_event(NETPLAY_EVENT_DISCONNECTED);
             handle_disconnection();
             break;
 
@@ -2066,10 +2050,8 @@ static void process_session() {
             s_session_end_frame = frame;
             // F8 — netplay Track A review finding. Port of 3sxtra's
             // GekkoDesyncDetected handler (/tmp/3sxtra/src/netplay/netplay.c:633-651):
-            // treat a detected desync like a disconnect — push DISCONNECTED so
-            // the lobby UI can react, then clean input buffers and soft-reset
-            // via handle_disconnection(). Event queue arrived in Phase 6 Step 2
-            // (see docs/archive/plan-netplay-phase6.md).
+            // treat a detected desync like a disconnect — clean input buffers
+            // and soft-reset via handle_disconnection().
             //
             // Task #144: also latch a taxonomy code, same rationale as
             // GekkoPlayerDisconnected above — without this, teardown parks
@@ -2079,7 +2061,6 @@ static void process_session() {
             // desynced" no longer read identically on screen.
             DirectP2P_NotifySessionFailed(session_fail_code_for_event(event->type), NULL);
             printf("[netplay] desync at frame %d — terminating session\n", frame);
-            push_event(NETPLAY_EVENT_DISCONNECTED);
             handle_disconnection();
             break;
         }
@@ -2417,64 +2398,6 @@ void Netplay_TickDirectP2P() {
     }
 }
 
-void Netplay_SetMatchmakingParams(const char* server_ip, int server_port) {
-    matchmaking_server_ip = server_ip;
-    matchmaking_server_port = server_port;
-}
-
-void Netplay_BeginMatchmaking() {
-    if (matchmaking_server_ip == NULL) {
-        return;
-    }
-    // session_state stays IDLE so the menu keeps running normally.
-    // setup_vs_mode() and the session transition happen in Netplay_TickMatchmaking.
-    Matchmaking_Start(matchmaking_server_ip, matchmaking_server_port, 9001);
-    matchmaking_pending = true;
-}
-
-void Netplay_TickMatchmaking() {
-    if (!matchmaking_pending) {
-        return;
-    }
-
-    Matchmaking_Run();
-
-    const MatchmakingState mm = Matchmaking_GetState();
-
-    if (mm == MATCHMAKING_MATCHED) {
-        const MatchResult* r = Matchmaking_GetResult();
-        player_number = r->player - 1;
-        SDL_strlcpy(matched_ip, r->ip, sizeof(matched_ip));
-        remote_ip = matched_ip;
-        remote_port = (unsigned short)r->remote_port;
-        SDL_zeroa(input_history);
-        frames_behind = 0;
-        frame_skip_timer = 0;
-        transition_ready_frames = 0;
-        s_mist_handshake_done = false;
-        s_mist_handshake_attempts = 0;
-        s_mist_peer_hello_ok = false;
-        matchmaking_pending = false;
-        setup_vs_mode();
-        session_state = NETPLAY_SESSION_TRANSITIONING;
-    } else if (mm == MATCHMAKING_ERROR) {
-        matchmaking_pending = false;
-        Soft_Reset_Sub();
-    }
-}
-
-bool Netplay_IsMatchmakingPending() {
-    // Returns false once matched so cancel is ignored during the display countdown.
-    return matchmaking_pending && Matchmaking_GetState() != MATCHMAKING_MATCHED;
-}
-
-void Netplay_CancelMatchmaking() {
-    if (Matchmaking_GetState() != MATCHMAKING_IDLE) {
-        Matchmaking_Reset();
-    }
-    matchmaking_pending = false;
-}
-
 void Netplay_Run() {
 #if ENABLE_PERF_TELEMETRY
     /* Task #69.3 — the whole session-start window as a timeline, not two
@@ -2549,7 +2472,7 @@ void Netplay_Run() {
 
         if (transition_ready_frames >= 2) {
             // R-1 — Layer 3 MIST handshake, unconditional for every live
-            // session path (direct-P2P punch, matchmaking, LAN CLI). Runs
+            // session path (direct-P2P punch, LAN CLI). Runs
             // AFTER the punch/handoff produced the session socket and
             // BEFORE gekko_create() takes it over, on the exact socket
             // configure_gekko() will hand to GekkoNet. Non-MIST frames
@@ -2615,7 +2538,6 @@ void Netplay_Run() {
                     // overlay shows ERROR + reason instead of a silent
                     // drop back to attract mode.
                     DirectP2P_NotifySessionRejected(s_mist_reject_reason);
-                    push_event(NETPLAY_EVENT_DISCONNECTED);
                     session_state = NETPLAY_SESSION_EXITING;
                     clean_input_buffers();
                     Soft_Reset_Sub();
@@ -2675,7 +2597,6 @@ void Netplay_Run() {
              * orchestrator in FAILED_HANDSHAKE at teardown so the
              * overlay shows ERROR + the reason on every entry path. */
             DirectP2P_NotifySessionFailed(CONNECT_FAIL_TIMEOUT_CONNECTING, NULL);
-            push_event(NETPLAY_EVENT_DISCONNECTED);
             handle_disconnection();
             break;
         }
@@ -2820,7 +2741,6 @@ void Netplay_Run() {
             NET_Quit();
         }
 
-        Netplay_CancelMatchmaking();
         // R-1: clear handshake state so the next session (direct P2P,
         // LAN, etc.) starts without carrying stale flags.
         // S3: also release anything the incremental pump still holds
@@ -2918,8 +2838,8 @@ bool Netplay_ArmAllowed(void) {
 }
 
 // Refusal path shared by every entry site (nav arm, direct-P2P handoff
-// dispatch, matchmaking CLI, in-game network menu): log, then surface the
-// reason on screen through the existing direct-P2P overlay mechanism —
+// dispatch, in-game network menu): log, then surface the reason on
+// screen through the existing direct-P2P overlay mechanism —
 // the same route the MIST handshake reject path uses (ERROR + status
 // text, rendered by NetplayScreen_Render -> DirectP2P_DrawOverlay).
 void Netplay_RefuseArm(void) {
@@ -2937,8 +2857,6 @@ void Netplay_RefuseArm(void) {
 }
 
 void Netplay_HandleMenuExit() {
-    Netplay_CancelMatchmaking();
-
     // A refused arm (or a post-session MIST reject) parks the direct-P2P
     // overlay in the terminal FAILED_HANDSHAKE state so the reason stays
     // readable. Leaving the network menu is the user acknowledging it —
@@ -3027,9 +2945,9 @@ void Netplay_SetStunSocket(struct NET_DatagramSocket* socket) {
 // Task #119 — do_handoff hands over the S4a punch token alongside the
 // punched socket, so the pre-session window can keep answering
 // authenticated punches (late_punch.h). NULL/false clears it, which is
-// what the non-direct-P2P session paths (matchmaking, LAN CLI) leave in
-// place: with no token the late-punch layer never arms and those paths
-// are bitwise unchanged.
+// what the non-orchestrator LAN CLI session path leaves in place: with
+// no token the late-punch layer never arms and that path is bitwise
+// unchanged.
 void Netplay_SetPunchToken(const uint8_t* token, bool valid) {
     if (token != NULL && valid) {
         SDL_memcpy(s_punch_token, token, sizeof(s_punch_token));
@@ -3163,50 +3081,12 @@ void Netplay_FlushDiagnostics(void) {
     s_session_uuid = 0;
 }
 
-// === 3SX-private extensions ===
-// Phase 6 Step 2: port of /tmp/3sxtra/src/netplay/netplay.c:1088-1121.
-// Single-producer (netplay thread) / single-consumer (main game-loop poll)
-// contract inherited from upstream; no mutex.
-
-#define EVENT_QUEUE_MAX 8
-static NetplayEvent event_queue[EVENT_QUEUE_MAX];
-static int event_queue_count = 0;
-
-static void push_event(NetplayEventType type) {
-    if (event_queue_count < EVENT_QUEUE_MAX) {
-        event_queue[event_queue_count].type = type;
-        event_queue_count++;
-    }
-}
-
-bool Netplay_PollEvent(NetplayEvent* out) {
-    if (!out || event_queue_count == 0)
-        return false;
-    *out = event_queue[0];
-    // shift queue
-    for (int i = 1; i < event_queue_count; i++) {
-        event_queue[i - 1] = event_queue[i];
-    }
-    event_queue_count--;
-    return true;
-}
-
 #ifdef ENABLE_NETPLAY_TESTS
-// Test-only hook so src/netplay/test_event_queue.c can reach the static
-// push_event(). Not declared in netplay.h; test TU forward-declares it.
-// Gated behind ENABLE_NETPLAY_TESTS so release builds don't carry the
-// symbol. Enable with
-// EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS".
-void Netplay_Test_PushEvent(NetplayEventType type) {
-    push_event(type);
-}
-
 // Task #143 (queue.md #143): expose setup_vs_mode() itself so
 // test_gs_coverage.c can probe whether the full equalizer is safe to call
 // from the --test-* dispatch position (immediately after read_args(),
 // before any SDL/engine bootstrap — see main.c). Not declared in
-// netplay.h; test TU forward-declares it, same pattern as
-// Netplay_Test_PushEvent above.
+// netplay.h; test TU forward-declares it.
 void Netplay_Test_RunSetupVsMode(void) {
     setup_vs_mode();
 }

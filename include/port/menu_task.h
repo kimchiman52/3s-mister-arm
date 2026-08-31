@@ -32,7 +32,7 @@
 typedef enum MenuTaskPhase {
     MTP_AFTER_TITLE = 0,     /**< menu.c: After_Title() — initial post-title dispatcher */
     MTP_IDLE = 1,            /**< pause.c: re-activate menu after pause exit */
-    MTP_NETPLAY_IDLE = 5,    /**< netplay.c: park menu in idle routine during matchmaking */
+    MTP_NETPLAY_IDLE = 5,    /**< netplay.c: park menu in idle routine during a netplay session */
     MTP_IN_GAME = 7,         /**< manage.c: in-game menu (pause UI, training, etc.) */
     MTP_SCREEN_DISPATCH = 8, /**< game.c: post-match/pre-match screen dispatch */
     MTP_GOTO_GAME = 9,       /**< game.c: transition into gameplay */

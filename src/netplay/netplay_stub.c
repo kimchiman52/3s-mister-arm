@@ -70,24 +70,6 @@ void Netplay_TestHook_ReportDir(const char* dir) {
 }
 #endif
 
-void Netplay_SetMatchmakingParams(const char* server_ip, int server_port) {
-    (void)server_ip;
-    (void)server_port;
-}
-
-void Netplay_BeginMatchmaking() {
-}
-
-void Netplay_TickMatchmaking() {
-}
-
-bool Netplay_IsMatchmakingPending() {
-    return false;
-}
-
-void Netplay_CancelMatchmaking() {
-}
-
 void Netplay_Run() {
 }
 
@@ -113,11 +95,6 @@ void Netplay_GetNetworkStats(NetworkStats* stats) {
     if (stats != NULL) {
         memset(stats, 0, sizeof(*stats));
     }
-}
-
-bool Netplay_PollEvent(NetplayEvent* out) {
-    (void)out;
-    return false;
 }
 
 void Netplay_FlushDiagnostics(void) {

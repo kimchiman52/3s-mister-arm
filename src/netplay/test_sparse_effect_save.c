@@ -1,7 +1,9 @@
 /*
  * test_sparse_effect_save.c — Option A round-trip parity tests for the
  * sparse effect-pool save path (game_state.c). Mirrors the gating pattern
- * used by test_event_queue.c / test_room_code.c / test_stun_mock.c.
+ * used by the other Phase 6 test harnesses: gated behind
+ * ENABLE_NETPLAY_TESTS, with an #else stub that logs "not compiled in"
+ * and returns 2.
  * Enable with:
  *   EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON \
  *                     -DCMAKE_C_FLAGS='-DENABLE_NETPLAY_TESTS -DNETPLAY_TEST_HOOKS'"

@@ -283,10 +283,9 @@ static void set_netplay_params() {
      * one. DirectP2P_Init registers the session-teardown callback that
      * converts a latched session failure (MIST reject, CONNECTING
      * deadline) into DIRECT_P2P_FAILED_HANDSHAKE + the on-screen reason;
-     * pre-S3 it only ran on the handoff branch, so the matchmaking and
-     * LAN-CLI paths surfaced reject reasons on stdout ONLY and the
-     * player saw a silent drop to attract. Init is idempotent and spawns
-     * no worker. */
+     * pre-S3 it only ran on the handoff branch, so the LAN-CLI path
+     * surfaced reject reasons on stdout ONLY and the player saw a
+     * silent drop to attract. Init is idempotent and spawns no worker. */
     DirectP2P_Init();
     if (configuration.netplay.p2p_remote_ip != NULL) {
         Netplay_SetParams(configuration.netplay.p2p_local_player, configuration.netplay.p2p_remote_ip);
@@ -295,15 +294,6 @@ static void set_netplay_params() {
          * Netplay_IsRemoteIpSet() true immediately and only gate on
          * the menu-nav frames above it. */
         NetplayNav_Arm();
-    } else if (configuration.netplay.matchmaking_ip != NULL) {
-        /* Arm-time predicate: matchmaking reaches setup_vs_mode without
-         * NetplayNav_Arm, so gate it here (see Netplay_ArmAllowed). */
-        if (Netplay_ArmAllowed()) {
-            Netplay_SetMatchmakingParams(configuration.netplay.matchmaking_ip,
-                                         configuration.netplay.matchmaking_port);
-        } else {
-            Netplay_RefuseArm();
-        }
     } else {
         /* Direct-P2P dispatch is deferred to the main game loop tick. The
          * orchestrator's worker thread publishes state transitions the
@@ -337,7 +327,6 @@ static void defer_direct_p2p_handoff_tick(void) {
     static bool dispatched = false;
     if (dispatched) return;
     dispatched = true;
-    if (configuration.netplay.matchmaking_ip != NULL) return;
     /* Arm-time predicate: the handoff dispatch (BeginHost/BeginJoin) runs
      * independently of NetplayNav_Arm, so it needs its own gate — without
      * this the orchestrator would still host/join even though nav refused.
@@ -830,7 +819,6 @@ static void game_step_0() {
         njdp2d_draw();
         seqsAfterProcess();
         step0_phase_end(STEP0_PHASE_SEQS);
-        Netplay_TickMatchmaking();
         Netplay_TickDirectP2P();
 #if defined(ENABLE_NETPLAY)
         defer_direct_p2p_handoff_tick();
@@ -1169,12 +1157,9 @@ static int loop() {
     return exit_code;
 }
 
-// Phase 6 Step 2: forward-decl of the netplay event-queue test harness
-// (src/netplay/test_event_queue.c). Not in netplay.h — test-only symbol.
 // Only defined when ENABLE_NETPLAY is on; otherwise the CLI flag prints a
 // diagnostic and exits.
 #ifdef ENABLE_NETPLAY
-int Netplay_Test_EventQueue(void);
 // Phase 6 Step 8: forward-decl of the MIST handshake test harness
 // (src/netplay/test_mist_handshake.c). Same gating as above.
 int Netplay_Test_MistHandshake(void);
@@ -1275,23 +1260,13 @@ int main(int argc, const char* argv[]) {
     Ldreq_SetBarrierForced(configuration.test.ldreq_barrier_force);
     AFS_SetInjectedLatencyMs(configuration.test.afs_inject_latency_ms);
 
-    if (configuration.test_netplay_event_queue || configuration.test_mist_handshake ||
+    if (configuration.test_mist_handshake ||
         configuration.test_room_code || configuration.test_late_punch ||
         configuration.test_stun_mock ||
         configuration.test_sparse_effect_save || configuration.test_bilateral_punch ||
         configuration.test_connect_observability ||
         configuration.test_gs_coverage || configuration.test_rendezvous_wire) {
         SDL_SetAssertionHandler(test_harness_assert_handler, NULL);
-    }
-
-    if (configuration.test_netplay_event_queue) {
-#ifdef ENABLE_NETPLAY
-        return Netplay_Test_EventQueue();
-#else
-        fprintf(stderr,
-                "--test-netplay-event-queue requires a build with ENABLE_NETPLAY=ON.\n");
-        return 2;
-#endif
     }
 
     if (configuration.test_mist_handshake) {

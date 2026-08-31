@@ -1,20 +1,15 @@
 #include "port/sdl/netplay_screen.h"
 #include "main.h"
 #include "netplay/direct_p2p.h"
-#include "netplay/matchmaking.h"
 #include "netplay/netplay.h"
 #include "netplay/netplay_nav.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 #include <SDL3/SDL.h>
 
-// Frames to hold the matchmaking message before switching to the next.
-#define MM_TEXT_HOLD_FRAMES 30
 // Frames to hold "Match found!" into the connecting phase before showing the game.
 #define MATCH_FOUND_HOLD_FRAMES 90
 
-static MatchmakingState display_state = MATCHMAKING_IDLE;
-static int transition_hold = 0;
 static int match_found_hold = 0;
 // S3-review M-1: true while the connect phase (TRANSITIONING/CONNECTING)
 // is being drawn. The "Connected!" hold is armed ONLY on the connect ->
@@ -24,38 +19,17 @@ static int match_found_hold = 0;
 // attract screen.
 static bool connect_phase_live = false;
 
-static const char* mm_message(MatchmakingState s) {
-    switch (s) {
-    case MATCHMAKING_RESOLVING_DNS:
-    case MATCHMAKING_CONNECTING_TCP:
-    case MATCHMAKING_AWAITING_ID:
-        return "Connecting to server...";
-
-    case MATCHMAKING_SENDING_UDP:
-    case MATCHMAKING_AWAITING_MATCH:
-        return "Finding match...";
-
-    case MATCHMAKING_ERROR:
-        return "Matchmaking error";
-
-    default:
-        return "";
-    }
-}
-
 void NetplayScreen_Render() {
     const NetplaySessionState ns = Netplay_GetSessionState();
-    const MatchmakingState mm = Matchmaking_GetState();
 
     // Direct-P2P orchestrator overlay (Step 8 of docs/plan-stun-direct-p2p.md).
     // Only inspected while the netplay session is IDLE — once a session is
     // live the direct_p2p module has already completed handoff and the
-    // in-game/match-found rendering below takes over. Direct-P2P is
-    // lobby-unaware (matchmaking stays IDLE throughout) so checking session
-    // state alone is sufficient. DirectP2P_DrawOverlay is a no-op when the
-    // orchestrator is idle, so the early-return is gated on the session
-    // check plus a cheap DirectP2P_GetState inspection to avoid swallowing
-    // the matchmaking render path when Direct-P2P isn't in play.
+    // in-game/match-found rendering below takes over. DirectP2P_DrawOverlay
+    // is a no-op when the orchestrator is idle, so the early-return is
+    // gated on the session check plus a cheap DirectP2P_GetState
+    // inspection to avoid swallowing the nav render path when Direct-P2P
+    // isn't in play.
     //
     // This runs BEFORE the nav overlay below because on the handoff path
     // the orchestrator draws its own richer overlay (HOSTING + room code,
@@ -83,8 +57,8 @@ void NetplayScreen_Render() {
         // orchestrator state could only appear after the first game-loop
         // tick, which is why this branch historically had no guard.
         // The early-return stays UNCONDITIONAL: while the orchestrator
-        // owns the screen the matchmaking/nav paths below must not draw
-        // over it, init-complete or not.
+        // owns the screen the nav path below must not draw over it,
+        // init-complete or not.
         if (task[TASK_INIT].condition == 0) {
             DirectP2P_DrawOverlay();
         }
@@ -108,30 +82,6 @@ void NetplayScreen_Render() {
         SSPutStrPro(1, 384, 2, 9, 0xFFFFFFFF, "CONNECTING...");
         return;
     }
-
-    // While matchmaking is in progress show status text at the top of the
-    // screen. This is safe at any time and doesn't require the full render pipeline.
-    if (mm != MATCHMAKING_IDLE && mm != MATCHMAKING_MATCHED) {
-        // Errors show immediately. Other state changes hold the current
-        // message for MM_TEXT_HOLD_FRAMES before switching.
-        if (mm == MATCHMAKING_ERROR) {
-            display_state = mm;
-            transition_hold = 0;
-        } else if (mm == display_state) {
-            // Do nothing
-        } else if (transition_hold > 0) {
-            transition_hold--;
-        } else {
-            display_state = mm;
-            transition_hold = MM_TEXT_HOLD_FRAMES;
-        }
-
-        SSPutStrPro(1, 384, 2, 9, 0xFFFFFFFF, mm_message(display_state));
-        return;
-    }
-
-    display_state = MATCHMAKING_IDLE;
-    transition_hold = 0;
 
     // S3: live connect-phase progress. Pre-S3 this block drew a static
     // "Match found!" for the entire TRANSITIONING phase (including the

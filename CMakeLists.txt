@@ -184,13 +184,11 @@ include_directories(
 
 file(GLOB_RECURSE GAME_SRC CONFIGURE_DEPENDS src/*.c)
 list(FILTER GAME_SRC EXCLUDE REGEX "^.*/src/netplay/netplay_stub\\.c$")
-list(FILTER GAME_SRC EXCLUDE REGEX "^.*/src/netplay/matchmaking_stub\\.c$")
 
 if(NOT ENABLE_NETPLAY)
     list(FILTER GAME_SRC EXCLUDE REGEX "^.*/src/netplay/.*\\.c$")
     list(APPEND GAME_SRC
         "${CMAKE_SOURCE_DIR}/src/netplay/netplay_stub.c"
-        "${CMAKE_SOURCE_DIR}/src/netplay/matchmaking_stub.c"
     )
 endif()
 

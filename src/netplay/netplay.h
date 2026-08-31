@@ -47,8 +47,8 @@ void Netplay_SetStunSocket(struct NET_DatagramSocket* socket);
 // 8 bytes, stun.h) alongside the punched socket, from do_handoff. It
 // arms the late-punch rescue layer (late_punch.h) for the pre-session
 // window so a peer whose race ended one-sided can still connect late.
-// Pass (NULL, false) to clear; paths that never call this (matchmaking,
-// LAN CLI) never arm the layer.
+// Pass (NULL, false) to clear; paths that never call this (LAN CLI) never
+// arm the layer.
 void Netplay_SetPunchToken(const uint8_t* token, bool valid);
 // Step 6 (docs/plan-stun-direct-p2p.md, P-2 #18): register a single
 // callback fired at the top of NETPLAY_SESSION_EXITING teardown, before
@@ -111,11 +111,6 @@ ConnectFailCode Netplay_TestHook_SessionFailCodeForEvent(GekkoSessionEventType t
 bool Netplay_TestHook_MenuExitConfirmed(int head_frame, int request_frame, int pred_window);
 bool Netplay_TestHook_MenuExitErasedByLoad(int load_frame, int request_frame);
 #endif
-void Netplay_SetMatchmakingParams(const char* server_ip, int server_port);
-void Netplay_BeginMatchmaking();
-void Netplay_TickMatchmaking();
-bool Netplay_IsMatchmakingPending(); // true while searching, false once matched or idle
-void Netplay_CancelMatchmaking();
 void Netplay_Run();
 NetplaySessionState Netplay_GetSessionState();
 // S3: honest connect-phase progress text ("Verifying opponent (3s)...",
@@ -127,31 +122,13 @@ void Netplay_HandleMenuExit();
 // Arm-time predicate: netplay arms ONLY in verified-arcade balance state
 // (balance auto-selects at boot and is fixed for the process). Every
 // session entry path — NetplayNav_Arm, the direct-P2P handoff dispatch,
-// the matchmaking CLI, and the in-game network menu — must consult this
-// before starting anything, and call Netplay_RefuseArm() on false, which
+// and the in-game network menu — must consult this before starting
+// anything, and call Netplay_RefuseArm() on false, which
 // logs and routes the human-readable reason to the direct-P2P overlay
 // (the same surfacing mechanism the MIST handshake reject path uses).
 bool Netplay_ArmAllowed(void);
 void Netplay_RefuseArm(void);
 void Netplay_GetNetworkStats(NetworkStats* stats);
-
-// === 3SX-private extensions ===
-// Phase 6 Step 2: port of the 8-slot event queue from 3sxtra
-// (/tmp/3sxtra/src/netplay/netplay.h:37-51). See docs/archive/plan-netplay-phase6.md
-// Step 2.
-
-typedef enum {
-    NETPLAY_EVENT_NONE = 0,
-    NETPLAY_EVENT_SYNCHRONIZING,
-    NETPLAY_EVENT_CONNECTED,
-    NETPLAY_EVENT_DISCONNECTED,
-} NetplayEventType;
-
-typedef struct {
-    NetplayEventType type;
-} NetplayEvent;
-
-bool Netplay_PollEvent(NetplayEvent* out);
 
 // === Tier-1 netplay diag — Item 10: SIGTERM flush hook ===
 // Called from src/main.c after the main loop exits but before SDL teardown

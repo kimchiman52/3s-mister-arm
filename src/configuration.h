@@ -8,8 +8,6 @@
 typedef struct NetplayConfiguration {
     int p2p_local_player;
     const char* p2p_remote_ip;
-    const char* matchmaking_ip;
-    int matchmaking_port;
     /* Step 9 of docs/plan-stun-direct-p2p.md: direct-P2P handoff path.
      * When `direct_p2p_handoff_set` is true, main() reads the file at
      * `direct_p2p_handoff_path` after SDL init + DirectP2P_Init and
@@ -202,14 +200,6 @@ typedef struct Configuration {
 #endif
     bool probe_renderer_only;
     bool headless;
-    /* Phase 6 Step 2 (docs/archive/plan-netplay-phase6.md): when true, main() runs
-     * the netplay event-queue test harness and exits. Honors the CLI flag
-     * --test-netplay-event-queue. The flag is parsed unconditionally so the
-     * CLI always accepts it, but the actual test is only compiled in when
-     * ENABLE_NETPLAY=ON && ENABLE_NETPLAY_TESTS is defined. OFF builds and
-     * tests-disabled builds print a diagnostic and exit 2 (see main.c
-     * dispatch and src/netplay/test_event_queue.c fallback). */
-    bool test_netplay_event_queue;
     /* Phase 6 Step 8 (docs/archive/plan-netplay-phase6.md): when true, main() runs
      * the MIST handshake test harness and exits. Honors the CLI flag
      * --test-mist-handshake. Parsed unconditionally; the real test body
