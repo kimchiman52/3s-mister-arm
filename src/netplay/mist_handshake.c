@@ -740,6 +740,24 @@ MistPumpStatus mist_handshake_pump(MistPumpState* st,
         int n;
         while ((n = io->recv(io->ctx, buf, sizeof(buf), &from_peer)) > 0) {
             const int cls = mist_handshake_parse_response(buf, (size_t)n);
+            /* Task #149: TERMINAL verdicts are taken ONLY from the
+             * session peer. The H-1 latch and implicit completion were
+             * already source-gated; the ack/reject verdicts here were
+             * not, so anyone who knew the punched 4-tuple could kill a
+             * pairing with one spoofed REJECT or satisfy the gate with a
+             * forged ACK (every field value is public to any same-build
+             * peer). Same gate on the H-2a hello verdict below.
+             *
+             * What this does and does not prove: peer IDENTITY comes
+             * from the token-authenticated hole punch upstream
+             * (late_punch.c / stun.c) — this exchange only checks
+             * COMPATIBILITY, and the source gate merely ensures the
+             * verdict is about the endpoint the punch committed to, not
+             * about whoever else can reach the socket. It is an
+             * address+port match, not authentication. */
+            if ((cls == 1 || cls == -1) && !from_peer) {
+                continue; /* third-party ack/reject: drop, keep waiting */
+            }
             if (cls == 1) {
                 /* Completion race guard: our side is done, but the peer
                  * still needs an ack for ITS hello. If its hello was
@@ -814,8 +832,13 @@ MistPumpStatus mist_handshake_pump(MistPumpState* st,
                      * about the peer's build (its retransmitted hello
                      * will classify properly), so it must not kill a
                      * session between identical builds — reject-reply
-                     * and keep waiting. */
-                    if (hello_reason != MIST_REJECT_MALFORMED) {
+                     * and keep waiting.
+                     * Task #149: source-gated like the terminal verdicts
+                     * above — an incompatible hello from a THIRD PARTY
+                     * proves nothing about the session peer, so it gets
+                     * its reject reply (sent to its own source, just
+                     * above) and nothing more. */
+                    if (from_peer && hello_reason != MIST_REJECT_MALFORMED) {
                         snprintf(reason, reason_cap, "%s", why);
                         drain_and_answer_hellos(io);
                         return MIST_PUMP_FAIL;

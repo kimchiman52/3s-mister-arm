@@ -738,6 +738,98 @@ static int runner_case_h1_guard_shape(void) {
     return 0;
 }
 
+/* (r13) task #149: a compatible ACK from a source that is NOT the
+ * session peer must not complete the handshake — a third party who
+ * knows the punched 4-tuple must not be able to satisfy the gate with a
+ * forged ack (every field value is public to any same-build peer). No
+ * gratuitous ack either: the only sends are the hello ladder. */
+static int runner_case_foreign_ack_ignored(void) {
+    const char* label = "(r13) #149: foreign ack must not complete";
+    mist_handshake_test_reset();
+    FakeIo fio;
+    MistRunnerIo io;
+    fake_io_bind(&fio, &io);
+
+    uint8_t f[MIST_FRAME_MAX];
+    size_t fl = mist_handshake_build_frame(MIST_MSG_ACK, "armv7", "mister",
+                                           "abcdef0", 0, NULL, f, sizeof(f));
+    fake_queue(&fio, f, fl, false /* NOT the session peer */);
+
+    bool peer_hello_ok = false;
+    char reason[128] = { 0 };
+    const MistHandshakeResult hs =
+        mist_handshake_run_attempt(&io, &peer_hello_ok, reason, sizeof(reason));
+
+    RCHECK(hs == MIST_HS_TIMEOUT, "a foreign ack must NOT complete the gate");
+    RCHECK(fio.sent_count == MIST_RETRANSMIT_COUNT,
+           "no gratuitous ack for a foreign ack — hello ladder only");
+    RCHECK(fio.replies_count == 0, "a foreign ack draws no reply");
+    fprintf(stderr, "[test_mist_handshake] %s OK\n", label);
+    return 0;
+}
+
+/* (r14) task #149: a REJECT from a source that is NOT the session peer
+ * must not kill the pairing — one spoofed reject on the punched 4-tuple
+ * was enough before the source gate. The attempt keeps waiting and
+ * times out (the peer here stays silent). */
+static int runner_case_foreign_reject_ignored(void) {
+    const char* label = "(r14) #149: foreign reject must not kill the pairing";
+    mist_handshake_test_reset();
+    FakeIo fio;
+    MistRunnerIo io;
+    fake_io_bind(&fio, &io);
+
+    uint8_t f[MIST_FRAME_MAX];
+    size_t fl = mist_handshake_build_frame(MIST_MSG_REJECT, NULL, NULL, NULL,
+                                           MIST_REJECT_ARCH_MISMATCH,
+                                           "arch mismatch", f, sizeof(f));
+    fake_queue(&fio, f, fl, false /* NOT the session peer */);
+
+    bool peer_hello_ok = false;
+    char reason[128] = { 0 };
+    const MistHandshakeResult hs =
+        mist_handshake_run_attempt(&io, &peer_hello_ok, reason, sizeof(reason));
+
+    RCHECK(hs == MIST_HS_TIMEOUT, "a foreign reject must NOT fail the attempt");
+    RCHECK(strstr(reason, "timeout") != NULL,
+           "the reason must be the timeout, not the spoofed reject's text");
+    fprintf(stderr, "[test_mist_handshake] %s OK\n", label);
+    return 0;
+}
+
+/* (r15) task #149: the H-2a path is source-gated too — an INCOMPATIBLE
+ * hello from a third party (e.g. a mismatched build hash / state_ver)
+ * gets its reject reply but must not fail OUR pairing; only the session
+ * peer's incompatible hello proves the pair is incompatible. Complement
+ * of (r9), which pins the same gate for a COMPATIBLE foreign hello. */
+static int runner_case_foreign_incompatible_hello_ignored(void) {
+    const char* label = "(r15) #149: foreign incompatible hello must not fail us";
+    mist_handshake_test_reset();
+    FakeIo fio;
+    MistRunnerIo io;
+    fake_io_bind(&fio, &io);
+
+    uint8_t f[MIST_FRAME_MAX];
+    size_t fl = mist_handshake_build_frame_ex(
+        MIST_MSG_HELLO, "armv7", "mister", "abcdef0", MIST_PROTO_VER,
+        (uint16_t)(mist_handshake_local_state_ver() + 8), 0, NULL, f, sizeof(f));
+    fake_queue(&fio, f, fl, false /* NOT the session peer */);
+
+    bool peer_hello_ok = false;
+    char reason[128] = { 0 };
+    const MistHandshakeResult hs =
+        mist_handshake_run_attempt(&io, &peer_hello_ok, reason, sizeof(reason));
+
+    RCHECK(hs == MIST_HS_TIMEOUT, "a foreign incompatible hello must NOT fail us");
+    RCHECK(fio.replies_count == 1 && fio.replies[0].data[4] == MIST_MSG_REJECT,
+           "the third party still gets its reject reply");
+    RCHECK(fio.replies[0].data[MIST_HEADER_LEN] == MIST_REJECT_STATE_MISMATCH,
+           "with the classify-derived reason");
+    RCHECK(!peer_hello_ok, "and the latch stays unarmed");
+    fprintf(stderr, "[test_mist_handshake] %s OK\n", label);
+    return 0;
+}
+
 /* (r12) gate retry policy: 39 timeouts RETRY, the 40th FAILs with the
  * no-reply message; OK resets the counter; FAIL passes the runner's
  * reason through untouched. */
@@ -1102,6 +1194,11 @@ int Netplay_Test_MistHandshake(void) {
     fails += runner_case_h1_guard_shape();
     fails += runner_case_gate_policy();
 
+    /* Task #149: terminal verdicts are source-gated like the latch. */
+    fails += runner_case_foreign_ack_ignored();
+    fails += runner_case_foreign_reject_ignored();
+    fails += runner_case_foreign_incompatible_hello_ignored();
+
     /* S3: incremental per-tick pump (the production gate's new driver). */
     fails += pump_case_ok_across_ticks();
     fails += pump_case_timeout_frame_cadence();
@@ -1114,16 +1211,13 @@ int Netplay_Test_MistHandshake(void) {
     /* Case-count reconciliation (rebase onto S3/S4):
      *   (a)-(g) sender-side           7
      *   (h)-(l) responder/reply       5
-     *   (m)-(o) v2 balance digest     3   [this lane]
-     *   (q)/(q2) v1-on-the-wire order 2   [this lane]
-     *   runner_case_*                12
+     *   (m)-(o) v2 balance digest     3
+     *   (q)/(q2) v1-on-the-wire order 2
+     *   runner_case_*                15   [#149 added (r13)-(r15)]
      *   pump_case_*                   3   [S3]
      *                                --
-     *                                32
-     * S3 added its three pump cases without bumping this string (it
-     * still said 24, the pre-S3 total); this lane's digest and
-     * classify-order cases land on top. */
-    fprintf(stderr, "[test_mist_handshake] OK — 32 cases passed\n");
+     *                                35 */
+    fprintf(stderr, "[test_mist_handshake] OK — 35 cases passed\n");
     return 0;
 }
 

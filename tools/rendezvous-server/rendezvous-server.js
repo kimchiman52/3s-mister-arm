@@ -1478,19 +1478,28 @@ function handlePoll(socket, buf, rinfo) {
 
     let peer = null;
     if (entry) {
-        // Refresh lastTouch even though we don't update endpoints.
-        entry.lastTouch = nowMs();
+        // #151: the TTL refresh belongs to the SEATED arms only. It used
+        // to sit up here, before the slot match, so the else arm below —
+        // "source isn't a registered endpoint for this key" — refreshed
+        // the entry too, letting any cookied holder of the key keep it
+        // alive past SESSION_TTL_MS while seated in neither slot
+        // (pinning one of the creator IP's key slots and one of
+        // MAX_SESSIONS). handleRegister's SESSION_FULL branch returns
+        // before ITS lastTouch write; now the two verbs agree.
         if (endpointEq(entry.endpointA, source)) {
             // slot liveness (review H1); #130: POLL is liveness for the
             // cadence estimate too -- see touchSlot().
+            entry.lastTouch = nowMs();
             touchSlot(entry, 'A', entry.lastTouch);
             peer = entry.endpointB;
         } else if (endpointEq(entry.endpointB, source)) {
+            entry.lastTouch = nowMs();
             touchSlot(entry, 'B', entry.lastTouch);
             peer = entry.endpointA;
         } else {
             // Source isn't a registered endpoint for this key.
-            // Reply with zeroes — caller is asking but isn't pinned.
+            // Reply with zeroes — caller is asking but isn't pinned —
+            // and refresh nothing (#151).
             peer = null;
         }
     }

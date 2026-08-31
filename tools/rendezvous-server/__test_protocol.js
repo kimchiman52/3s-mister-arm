@@ -438,6 +438,57 @@ async function testPollAfterRegister(serverPort) {
     }
 }
 
+// #151: POLL's TTL refresh belongs to the seated arms only. Both
+// directions pinned: a SEATED poller's POLL is liveness (TTL + the #130
+// cadence estimate), an UNSEATED cookied third party's POLL refreshes
+// nothing — it must not be able to keep the entry alive past
+// SESSION_TTL_MS (pinning one of the creator IP's key slots and one of
+// MAX_SESSIONS). Injected sources, so the third party has a genuinely
+// different address rather than a loopback port alias.
+async function testPollTtlRefreshSeatedOnly(handle) {
+    handle._resetSessions();
+    const stub = makeStubSocket();
+    const key = crypto.randomBytes(16);
+    const hexKey = key.toString('hex');
+    const A = { address: '198.51.100.7', port: 7001 };
+    const third = { address: '203.0.113.9', port: 9002 };
+
+    handle._onMessage(regFrom(key, A.port, A.address, A.port), A, stub);
+    const entry = handle._sessionMap.get(hexKey);
+    assert(entry !== undefined, '#151: REGISTER seated the entry');
+
+    // (1) seated poller: POLL refreshes the TTL and the slot cadence.
+    entry.lastTouch -= 61 * 1000;
+    entry.lastSeenA -= 61 * 1000;
+    const agedTouch = entry.lastTouch;
+    const agedSeenA = entry.lastSeenA;
+    stub.sent.length = 0;
+    handle._onMessage(makePoll(key, { cookie: cookieFor(A.address, A.port) }), A, stub);
+    assert(entry.lastTouch > agedTouch, '#151: a seated POLL still refreshes lastTouch');
+    assert(entry.lastSeenA > agedSeenA, '#151/#130: a seated POLL still advances slot liveness (touchSlot)');
+    assertEq(stub.sent.length, 1, '#151: the seated POLL is answered');
+
+    // (2) unseated cookied third party: POLL refreshes NOTHING. Age the
+    // entry past the TTL first, so "did not refresh" is then proven the
+    // way it matters — the entry is evicted by the real sweep despite
+    // the third party's POLL landing after the aging.
+    entry.lastTouch -= handle._sessionTtlMs + 1000;
+    const expiredTouch = entry.lastTouch;
+    const seenA = entry.lastSeenA;
+    stub.sent.length = 0;
+    handle._onMessage(makePoll(key, { cookie: cookieFor(third.address, third.port) }), third, stub);
+    assertEq(entry.lastTouch, expiredTouch, '#151: an unseated POLL no longer refreshes lastTouch');
+    assertEq(entry.lastSeenA, seenA, '#151: an unseated POLL touches no slot liveness');
+    // Wire behavior is unchanged: still answered, still a zeroed DELIVER.
+    assertEq(stub.sent.length, 1, '#151: the unseated POLL is still answered');
+    const d = decodeDeliver(stub.sent[0].buf);
+    assertEq(d.peerIp, '0.0.0.0', '#151: the unseated POLL still discloses no endpoint');
+    assertEq(d.peerPort, 0, '#151: the unseated POLL reply peer port is zero');
+    handle._sweepNow();
+    assert(!handle._sessionMap.has(hexKey),
+        '#151: the third-party POLL could not keep the session alive past the TTL');
+}
+
 async function testRateLimit(serverPort) {
     const sessionKey = crypto.randomBytes(16);
     const c = await makeClient();
@@ -2635,7 +2686,8 @@ async function testSweepHook(handle) {
 // +5 (task #122): nackPerReason, nackAmplificationBound,
 // nackNeverAnswersOwnFrames, lostPairingPushObserved,
 // pairingToPunchHistogram.
-const EXPECTED_TESTS = 39; // +3 (task #130): portReclaimBudgetExhausted,
+const EXPECTED_TESTS = 40; // +1 (task #151): pollTtlRefreshSeatedOnly.
+// +3 (task #130): portReclaimBudgetExhausted,
 // liveHostSlotNotHijackable, unobservedSlotMaximallyProtected. The first is
 // split OUT of joinerPortReclaimSameIp rather than new coverage -- #130 added
 // two REGISTERs from that test's joiner IP and the combined test crossed the
@@ -2703,6 +2755,7 @@ async function main() {
         await runTest('versionReject', () => testVersionReject(serverPort));
         await runTest('lengthReject', () => testLengthReject(serverPort));
         await runTest('pollAfterRegister', () => testPollAfterRegister(serverPort));
+        await runTest('pollTtlRefreshSeatedOnly', () => testPollTtlRefreshSeatedOnly(handle));
         await runTest('rateLimit', () => testRateLimit(serverPort));
         await runTest('sessionTtl', () => testSessionTtl(handle, serverPort));
         await runTest('sessionCap', () => testSessionCap(handle, serverPort));

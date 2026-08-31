@@ -114,6 +114,22 @@ static PacketRingEntry s_packet_ring[PACKET_RING_SLOTS];
 static uint32_t s_packet_ring_idx = 0;     // Write cursor; mask-wraps.
 static uint64_t s_packet_ring_count = 0;   // Total writes (for "valid slot" math).
 
+// === Task #149-review P-2(a): receive-side drop accounting ===
+// Both guards below (empty datagram, foreign source) drop before the
+// existing s_pkt_rx / packet-ring accounting runs, so a wrong filter would
+// otherwise present as zero received traffic — indistinguishable from "no
+// packets arrived", the single most common NAT failure mode. Two counters,
+// not one: they are different diagnoses. Zero-length is a malformed-wire
+// artifact (any peer, benign); foreign-source is the one that would matter
+// during a field failure — it is the signal that something is addressing
+// this socket that is not the registered peer. Same convention as
+// s_pkt_tx/s_pkt_rx above: plain non-atomic counters, single-thread access,
+// incremented on the hot per-packet path (a single ++ is cheap enough not
+// to warrant rate-limited logging there); surfaced once per dump in
+// SDLNetAdapter_DumpPacketRing below.
+static uint64_t s_drop_zero_len = 0;
+static uint64_t s_drop_foreign_source = 0;
+
 // Returns current UTC time in milliseconds with full sub-second precision.
 // Uses CLOCK_REALTIME (vDSO-fast on Linux, no syscall) so packet-ring
 // timestamps cross-correlate exactly with the netplay watchdog and
@@ -240,6 +256,9 @@ void SDLNetAdapter_DumpPacketRing(uint64_t utc_ms,
             (unsigned long long)s_pkt_rx[6], (unsigned long long)s_pkt_rx[7]);
     fprintf(f, "type legend: 1=Inputs 2=SpectatorInputs 3=InputAck 4=SyncRequest "
                "5=SyncResponse 6=SessionHealth 7=NetworkHealth\n");
+    fprintf(f, "drops: zero_len=%llu  foreign_source=%llu\n",
+            (unsigned long long)s_drop_zero_len,
+            (unsigned long long)s_drop_foreign_source);
     fprintf(f, "%-15s  %-3s  %-4s  %-6s  %-22s\n",
             "utc_ms", "dir", "type", "len", "peer");
 
@@ -335,6 +354,19 @@ static GekkoNetResult** receive_data(int* length) {
     NET_Datagram* dgram = NULL;
 
     while (result_count < MAX_NETWORK_RESULTS && NET_ReceiveDatagram(adapter_sock, &dgram) && dgram) {
+        // Task #149: an empty datagram is droppable by inspection — no
+        // GekkoNet packet is zero bytes (its serialized MsgHeader alone
+        // is not empty), and anyone can send one. Before this guard it
+        // fell through every classifier below (they all require buf !=
+        // NULL / buflen > 0 to MATCH, not to pass) and reached the
+        // result block, handing GekkoNet SDL_malloc(0) with
+        // data_len = 0. Drop it before anything else looks at it.
+        if (dgram->buf == NULL || dgram->buflen <= 0) {
+            s_drop_zero_len++;
+            NET_DestroyDatagram(dgram);
+            dgram = NULL;
+            continue;
+        }
         // S1 review L1: a STUN Binding Response straggler (a keepalive
         // reply from HOST_WAITING arriving after the socket was handed
         // off to GekkoNet) is not a GekkoNet packet — drop it before it
@@ -395,6 +427,48 @@ static GekkoNetResult** receive_data(int* length) {
         char addr_str[64];
 
         SDL_snprintf(addr_str, sizeof(addr_str), "%s:%d", ip_str, (int)dgram->port);
+
+        // Task #149: source filter. Everything that survives the guards
+        // above is headed into GekkoNet's deserializer — a vendored
+        // binary we cannot audit at review time (#146 hardened its
+        // packet handling, but filtering here keeps arbitrary hosts'
+        // bytes out of it entirely). Accept only the canonical peer
+        // (configure_gekko's registration) and the actual peer (moved
+        // only by SDLNetAdapter_RetargetPeer, whose sole caller acts on
+        // LatePunch's token-authenticated, same-IP-restricted relearn —
+        // late_punch.c).
+        //
+        // This drops nothing GekkoNet would have usefully accepted: its
+        // inbound handlers match the presented address string byte-for-
+        // byte against the registered one (see the relearn block at the
+        // top of this file), and the #119 translation below only ever
+        // maps actual -> canonical. A mid-session NAT rebind already
+        // kills the session today — LatePunch_Disarm() runs at
+        // GekkoSessionStarted, so no relearn path exists once RUNNING —
+        // and a pre-session rebind re-punches through the LatePunch path
+        // above, which this filter sits after.
+        //
+        // It also closes something GekkoNet does NOT ignore: a foreign
+        // datagram carrying the (guessable u16) session magic drives
+        // GekkoNet's own foreign-source reaction. Once a player reaches
+        // Connected, OnSyncResponse's Connected-arm
+        // (GekkoLib/src/backend.cpp @ 7be848c) increments should_send
+        // with no player->address.Equals(addr) check, then replies with
+        // SendSyncResponse(&addr, ...) to whatever address the packet
+        // arrived from — HandleData builds that addr straight from the
+        // adapter-supplied res->addr.data, unfiltered pre-#149. So
+        // GekkoNet would have *responded* to a foreign source there, not
+        // ignored it; this filter keeps that datagram from ever reaching
+        // ParsePacket. Fall open while no canonical peer is registered
+        // (cleared registration).
+        if (s_canonical_peer[0] != '\0' &&
+            SDL_strcmp(addr_str, s_canonical_peer) != 0 &&
+            SDL_strcmp(addr_str, s_actual_peer) != 0) {
+            s_drop_foreign_source++;
+            NET_DestroyDatagram(dgram);
+            dgram = NULL;
+            continue;
+        }
 
         // Task #119: present datagrams from the relearned peer endpoint
         // under the canonical string GekkoNet registered — its handlers
