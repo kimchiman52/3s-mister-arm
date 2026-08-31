@@ -3242,9 +3242,11 @@ replayed frame); `Netplay_Run` fires only once `head − R ≥ W`. A
 re-latches. TRANSITIONING/CONNECTING exit immediately — not Gekko-simulated.
 
 **The `≥ W` bound is exactly tight, verified in both directions against the
-source `build-deps.sh` actually builds** (ref `7be848c`; our patches touch only
-`compression.h`, `backend.cpp`, `zpp/serializer.h`, so `input.cpp`/`sync.cpp`/
-`event.cpp`/`game_session.cpp` are upstream-identical). `HandleInputPrediction`
+source `build-deps.sh` actually builds** (ref `7be848c`; the two facts the bound
+rests on live in `input.cpp` and `game_session.cpp`'s `UpdateSession`, both
+verified unchanged — **note `game_session.cpp` is no longer upstream-identical
+as of #146 `eb0a428b`, which patches two assert sites in it; the prediction
+and rollback-ordering code the bound depends on is untouched**). `HandleInputPrediction`
 caps a predicted span at W consecutive frames; `UpdateSession` rolls back
 before every advance. One frame looser and a fully-predicted `[R, R+W−1]` is
 legal — the bug survives. One frame stricter and a quit after the peer goes
@@ -3277,7 +3279,7 @@ simulated path calls `Netplay_HandleMenuExit` or mutates `session_state` (today
 `VS_Result_Move_Sub` gains a non-exit transition reachable in `MODE_NETWORK`
 beyond `r_no[2]=6`.
 
-## #146 — GekkoNet `session_health` grows without bound from wire frames — OPEN
+## #146 — GekkoNet `session_health` grows without bound from wire frames — CLOSED
 
 `OnSessionHealth` (GekkoNet `backend.cpp`, ref `7be848c`) inserts
 `session_health[frame]` with a wire-controlled `Frame` (i32) from
@@ -3292,6 +3294,61 @@ Reachable in the shipped config: `configure_gekko` (`netplay.c`) sets
 packet, no receive-side rate limit, on a ~1 GB device.
 
 Not covered by the R-2 patch set in `build-deps.sh`.
+
+**CLOSED by `eb0a428b`.** Mechanism falsified in source at pinned `7be848c`
+before patching: `SessionHealthMsg::frame` (i32) flows wire →
+`OnSessionHealth` → `SetChecksum` → `session_health[frame]` unchecked; the
+erase loop trims only below `last_added_input − 128` and
+`SessionIntegrityCheck` erases only keys `local_health` reaches, so far-future
+keys survive both; the shipped config reaches it.
+
+**H-1:** insertion bounded to `±128` around `last_added_input`. A **window,
+not a size cap** — `SessionIntegrityCheck` keys the comparison on exactly
+these frames, so a cap could evict a live near-confirmed key and silently
+blind detection, which #143 and #148 depend on. Lower edge = upstream's own
+erase threshold (drops nothing legit); upper edge ≫ any real peer, whose
+health frame always lags the inputs it has sent us (worst-case skew =
+prediction window ≤32 + input delay ≈ 34). Residual attacker allocation
+≈ 12–16 KB for one remote: OOM eliminated, not attenuated.
+
+No new indexing assumption: **upstream already performs the identical
+`_net_player_queue[player->handle]` read two lines below the insertion
+point.** The early `return` ≡ `break` — nothing follows that loop.
+
+**S-1:** reject `SpectatorInputs` when the session has locals (we set
+`max_spectators = 0` and are never a spectator; a genuine spectator session
+has no locals and is unaffected).
+
+**A-1:** remove `assert(last_added - last_recv <= 128)`. Defense-in-depth
+only — **GekkoNet is built Release in every configuration here**, so the
+assert was already inert in every shipped artifact; the game's debug flavor
+changes the game's flags, not this library's.
+
+**A-2:** the one with a real shipped payoff, and NOT the debug-abort fix it
+resembles. `assert(sav->frame == confirmed)` is compiled out in Release, so
+upstream today *proceeds* and sends a checksum stamped with the wrong frame,
+**fabricating a false desync on the peer**. Now skips, leaving
+`_last_sent_healthcheck` unadvanced so the next confirmed frame retries.
+
+Applied with R-2 discipline (pre-condition source form asserted exactly once,
+then guard post-condition asserted), so a `GEKKONET_REF` bump that drifts
+refuses to build. Cache check gains a `#146` sentinel in `backend.h`.
+`GEKKONET_REF` unchanged.
+
+**Verified live, not merely built:** recipe replayed against a pristine clone
+with every anchor matching once; resulting headers byte-identical to the
+cached ones; guards confirmed in the **disassembly** of the built
+`libGekkoNet.a` (H-1's window compare ahead of `SetChecksum`, A-2's compare
+ahead of the `_last_sent_healthcheck` store, S-1's early return).
+
+Gates GREEN, harness 13; `arm-cross-build` NOT RUN. Baselines `scopes=11
+breached=0 slack=0`.
+
+**Follow-up worth its own entry:** migrate the in-line `perl -0pi`
+substitutions to a numbered `.patch` series, so a future ref bump gets a
+reviewable diff and `git apply --check` becomes the drift detector instead of
+hand-written pre/post greps. Deliberately not folded in here — it would
+rewrite the lines `eb0a428b` adds.
 
 ## #147 — the portmap quiescence gate covers removal and renewal, not spawn — OPEN
 
