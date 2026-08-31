@@ -3469,7 +3469,7 @@ reaching the branch). Pre-existing, out of scope for #148.
 Gates GREEN; `arm-cross-build` NOT RUN (accumulated-branch gate).
 Rollback determinism fast mode: `verdict=PASS divergent=0 feedback=0`.
 
-## #149 — two accept-side gaps: terminal handshake frames and empty datagrams — OPEN
+## #149 — accept-side gaps: terminal handshake frames and empty datagrams — CLOSED
 
 1. `mist_handshake_pump` (`src/netplay/mist_handshake.c:717`) returns
    `MIST_PUMP_OK` for `cls == 1` and `MIST_PUMP_FAIL` for `cls == -1` without
@@ -3482,6 +3482,46 @@ Rollback determinism fast mode: `verdict=PASS divergent=0 feedback=0`.
    datagram yields `SDL_malloc(0)` with `data_len = 0` handed to GekkoNet, and
    every non-MIST/punch/rendezvous datagram from any host is forwarded before
    any source filter.
+
+**CLOSED by `a609842e`.**
+
+(1) was **THREE** ungated terminal returns, not two — `cls == 1` → OK,
+`cls == -1` → FAIL, and the H-2a path where an incompatible non-MALFORMED
+hello also returned FAIL (a spoofed mismatched build hash could kill a
+pairing). All three now require `from_peer`. Third-party hellos still draw
+their reject/ack reply; only the verdicts are gated. The gate is an
+address+port match, **not authentication** — identity is the token-authenticated
+punch upstream, and the comment says so. Tests r13–r15 assert the absence of
+the wrong outcome, not merely a timeout.
+
+Nothing legitimate regresses: `from_session_peer` is set in `mist_pump_start`
+before any slice runs, and a mid-handshake rebind is repaired by late_punch's
+refetch inside the 40-attempt budget. A permanently mismatched tuple now times
+out where it once fast-failed — but that configuration could never complete
+GekkoNet sync anyway, so only the failure shape of a dead corner changed.
+
+(2) zero-length datagrams dropped outright; source filter accepts canonical ∪
+actual peer, falls open while canonical is unset, sits after the
+STUN/rendezvous/punch guards (so LatePunch still sees a rebinding peer's punch)
+and before the #119 translation.
+
+**The safety argument was closed at source, not assumed.** Upstream GekkoNet at
+pinned `7be848c` matches inbound by byte-comparing the presented address
+string, and every state-changing handler gates on it including sync completion
+— so no endpoint this filter rejects could have produced a working session. A
+hostname canonical (possible via the LAN CLI) was already inbound-dead at the
+engine, so the filter is **provably never stricter than GekkoNet**.
+
+It is also strictly better than "drops what GekkoNet ignored":
+`OnSyncResponse`'s Connected arm increments and replies via `SendSyncResponse`
+to whatever address the packet arrived from, **with no address check** — a
+foreign datagram carrying the guessable session magic drew a reply. The filter
+stops it reaching `ParsePacket`.
+
+Both drop paths are counted and surfaced in the packet-ring dump, **split by
+reason**. Without that, a filter wrong in the field would present as zero rx —
+indistinguishable from the commonest NAT failure, on a project whose netplay
+forensics read exactly this ring.
 
 ## #150 — six connection-path minors — CLOSED (all six)
 
@@ -3534,7 +3574,7 @@ natpmp anchors crossed with each other, `try_handle_deliver` → a thread spawn,
 throughout. All were re-derived by reading their targets. **Do not trust
 `--fix` inside the enforced set.**
 
-## #151 — a third-party POLL refreshes a session's TTL — OPEN
+## #151 — a third-party POLL refreshes a session's TTL — CLOSED
 
 `handlePoll` (`tools/rendezvous-server/rendezvous-server.js:1473`) sets
 `entry.lastTouch = nowMs()` (`:1482`) inside `if (entry)` and *before* the
@@ -3546,6 +3586,20 @@ Any cookied holder of a session key, seated in neither slot, keeps the entry
 alive past `SESSION_TTL_MS` indefinitely by polling — pinning one of the
 creator IP's key slots and one of `MAX_SESSIONS`. Production clients never send
 POLL (`Rendezvous_BuildPoll` has no non-test call site), so exposure is small.
+
+**CLOSED by `a609842e`.** The refresh now lives inside the two `endpointEq`
+seated arms; the "source isn't a registered endpoint" arm refreshes nothing,
+agreeing with `handleRegister`'s SESSION_FULL early return. #130 preserved — a
+seated poller still drives `touchSlot` with the same stamp. Wire format
+untouched: an unseated poller still receives its zeroed DELIVER.
+
+`pollTtlRefreshSeatedOnly` (EXPECTED_TESTS 39 → 40) pins both directions and
+was **confirmed to fail against the pre-change server**, including that a
+past-TTL entry polled by a cookied third party is evicted by the production
+sweep (`sweepSessions`), not a test-only helper.
+
+In-tree only. The pending prod redeploy (v1 server vs v2 client) is unchanged
+and remains the real field blocker.
 
 ## #152 — dead weight, three items — CLOSED (all three deleted)
 
