@@ -1559,8 +1559,30 @@ static NET_DatagramSocket* acquire_active_socket(void) {
     }
     // Direct P2P CLI/LAN path: create a dedicated UDP socket on local_port.
     if (p2p_sock == NULL) {
-        NET_Init();
+        /* Both results were previously discarded, so a bind failure here
+         * surfaced only as the MIST pump's generic "missing transport
+         * state" — indistinguishable from a missing remote_ip, and with no
+         * hint of WHY. That cost a long debug session against a real
+         * MiSTer: the device failed at transitioning frame 1 on every
+         * attempt while both UDP directions were provably fine at the OS
+         * level, and nothing in the log could tell us whether the port was
+         * taken, the address was unusable, or SDL_net had not come up. */
+        if (!NET_Init()) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "[netplay] NET_Init failed, cannot open the LAN/CLI "
+                         "socket on port %d: %s",
+                         local_port, SDL_GetError());
+            return NULL;
+        }
         p2p_sock = NET_CreateDatagramSocket(NULL, local_port);
+        if (p2p_sock == NULL) {
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "[netplay] could not bind the LAN/CLI UDP socket on "
+                         "port %d: %s (is another 3s-arm still holding it? a "
+                         "previous session that failed its handshake keeps "
+                         "running and keeps the port)",
+                         local_port, SDL_GetError());
+        }
     }
     return p2p_sock;
 }
