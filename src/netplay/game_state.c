@@ -1775,7 +1775,7 @@ enum {
     FH_spmv_ng_save,
     FH_COUNT
 };
-static const char* const FH_NAMES[FH_COUNT] = {
+static const char* const FH_NAMES[] = {
     "Random_ix16", "Random_ix32",
     "Random_ix16_ex", "Random_ix32_ex",
     "Random_ix16_com", "Random_ix32_com",
@@ -1794,6 +1794,17 @@ static const char* const FH_NAMES[FH_COUNT] = {
     "Color7", "ca_check_flag",
     "spmv_ng_save",
 };
+/* FH_NAMES is declared without an explicit [FH_COUNT] size so its element
+ * count is inferred from the initializer list above, not asserted by the
+ * compiler for free — a future FH_* added to the enum but not given a name
+ * here would otherwise compile clean (trailing elements just zero-init to
+ * NULL) and only surface as a NULL passed to "%s" the next time
+ * Netplay_Test_FhName()/equalizer_scope_pin_check() tries to name the
+ * offending field (task #143 review, P-2.4). This pins the two counts
+ * together at compile time instead. */
+_Static_assert(sizeof(FH_NAMES) / sizeof(FH_NAMES[0]) == FH_COUNT,
+                "FH_NAMES is missing an entry (or has an extra one) — every FH_* added to "
+                "the enum above needs exactly one matching string here, in the same order");
 
 static State state_buffer[STATE_BUFFER_MAX];
 static SectionedChecksum saved_section_checksums[STATE_BUFFER_MAX];

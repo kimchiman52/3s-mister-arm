@@ -1210,8 +1210,9 @@ static void setup_vs_mode() {
     // field group) they're declared extern right here rather than pulling
     // in hitcheck.h/sel_pl.h/effl8.h for one symbol each.
     //
-    // ca_check_flag: every write site (game.c battle init, plcnt2.c,
-    // plmain.c) fires at real battle init, after setup_vs_mode — same
+    // ca_check_flag: every write site found by grep (game.c, plcnt2.c,
+    // plmain.c, plcnt.c — not claimed exhaustive) fires at real battle
+    // init, after setup_vs_mode — same
     // "only clears a prior match's carry-over" argument as combo_type
     // above. Without a reset, a peer that played an offline match (any
     // write site sets it to 1) carries that 1 into the next netplay

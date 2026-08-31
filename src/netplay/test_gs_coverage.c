@@ -536,6 +536,59 @@ static void equalizer_clean_pass(int frame, int fh_count, uint32_t* out_hashes) 
     }
 }
 
+/* The six fields Netplay_Test_DirtyHashedGlobalsSix/ZeroHashedGlobalsSix
+ * (game_state.c) name explicitly — same six the "IMPORTANT LIMIT" note
+ * above is about. */
+static const char* const SIX_FIELD_NAMES[6] = {
+    "combo_type", "remake_power", "chainex_check", "Color7", "ca_check_flag", "spmv_ng_save",
+};
+
+/* Guards against equalizer_coverage_check()/asymmetric_history_repro()
+ * passing VACUOUSLY if the per-field hashing block inside
+ * save_current_state()'s `if (checksumming_active)` (game_state.c) ever
+ * stopped running: every saved_field_hashes[][] slot would then read back
+ * its BSS-zero default, 0 == 0 would hold across every FH_COUNT field for
+ * both checks below, and both would report OK while proving nothing.
+ *
+ * djb2 (sf33rd/utils/djb2_hash.h) seeds at 5381 (odd) and its update step
+ * is `hash = hash*33 + byte`; 33 is odd, so for an all-zero-byte input the
+ * accumulator stays odd through every iteration and can never land on 0
+ * (even) — this holds unconditionally for the "clean" (zeroed) pass, and
+ * for the "dirty" (random nonzero bytes) pass landing on exactly 0 would
+ * require a specific accidental collision, not the deterministic default
+ * a never-executed hash slot reads back. So `!= 0` here distinguishes "a
+ * real hash pass touched this slot" from "this slot was never written" —
+ * exactly the failure mode this check exists to catch, not a claim that
+ * the hash is correct. */
+static int six_fields_hashed_nonzero_check(const char* what, const uint32_t* hashes, int fh_count) {
+    int failures = 0;
+    for (int f = 0; f < 6; f++) {
+        int ix = -1;
+        for (int i = 0; i < fh_count; i++) {
+            if (strcmp(Netplay_Test_FhName(i), SIX_FIELD_NAMES[f]) == 0) {
+                ix = i;
+                break;
+            }
+        }
+        if (ix < 0) {
+            fprintf(stderr, "[test_gs_coverage] FAIL (%s): field '%s' not found in FH_NAMES\n", what,
+                    SIX_FIELD_NAMES[f]);
+            failures++;
+            continue;
+        }
+        if (hashes[ix] == 0) {
+            fprintf(stderr,
+                    "[test_gs_coverage] FAIL (%s): field '%s' hash is exactly 0 — "
+                    "the per-field hashing block in save_current_state() may not be "
+                    "running (see the comment above this check for why a real hash "
+                    "pass should never land here)\n",
+                    what, SIX_FIELD_NAMES[f]);
+            failures++;
+        }
+    }
+    return failures;
+}
+
 static int report_field_mismatches(const char* what, const uint32_t* a, const uint32_t* b, int fh_count) {
     int failures = 0;
     for (int i = 0; i < fh_count; i++) {
@@ -604,6 +657,8 @@ static int equalizer_coverage_check(void) {
 
     int failures = report_field_mismatches("equalizer-coverage: two differently-dirtied starting states", hashes_a,
                                             hashes_b, fh_count);
+    failures += six_fields_hashed_nonzero_check("equalizer-coverage seed A", hashes_a, fh_count);
+    failures += six_fields_hashed_nonzero_check("equalizer-coverage seed B", hashes_b, fh_count);
     if (failures == 0) {
         fprintf(stderr,
                 "[test_gs_coverage] OK — compared all %d checksummed fields "
@@ -641,6 +696,8 @@ static int asymmetric_history_repro(void) {
     int failures =
         report_field_mismatches("asymmetric-history: host (prior match) vs joiner (fresh boot)", host_hashes,
                                  joiner_hashes, fh_count);
+    failures += six_fields_hashed_nonzero_check("asymmetric-history host", host_hashes, fh_count);
+    failures += six_fields_hashed_nonzero_check("asymmetric-history joiner", joiner_hashes, fh_count);
     if (failures == 0) {
         fprintf(stderr,
                 "[test_gs_coverage] OK — host (prior offline match) and joiner "
