@@ -3201,7 +3201,7 @@ alive past `SESSION_TTL_MS` indefinitely by polling — pinning one of the
 creator IP's key slots and one of `MAX_SESSIONS`. Production clients never send
 POLL (`Rendezvous_BuildPoll` has no non-test call site), so exposure is small.
 
-## #152 — dead weight, three items — DECISION REQUIRED, not implementation
+## #152 — dead weight, three items — DECIDED 2026-08-31: delete all three
 
 1. `matchmaking.c` (legacy TCP lobby client) is still wired into
    `netplay.c` (`Matchmaking_Start` `:2224`, `Matchmaking_Run` `:2233`) despite
@@ -3215,4 +3215,16 @@ POLL (`Rendezvous_BuildPoll` has no non-test call site), so exposure is small.
    the pre-3SXR protocol (7-char IDs, TCP/UDP 9000/9001) and no longer match any
    shipped path.
 
-Keep-or-delete is a scope decision, not a defect fix.
+Keep-or-delete was a scope decision, not a defect fix. **Decided 2026-08-31
+by the maintainer: delete all three.**
+
+- Item 1: remove `matchmaking.c`, `matchmaking_stub.c`, the `netplay.c` call
+  sites and the CLI/menu entry points. Deleting the path removes the unchecked
+  `SDL_sscanf` rather than repairing code the shipped flow never runs, and
+  retires a second unauthenticated connection path.
+- Item 2: remove the `NetplayEvent` queue. #144 routes real failure surfacing
+  through the direct-P2P notify latch instead, which leaves this queue
+  permanently orphaned. **Sequencing: lands only after #144 merges** — both
+  touch the same `netplay.c` failure paths.
+- Item 3: remove `tools/netplay/fake-peer.py` and
+  `tools/test_matchmaking_server.py`.
