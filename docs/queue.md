@@ -3426,7 +3426,7 @@ alive past `SESSION_TTL_MS` indefinitely by polling — pinning one of the
 creator IP's key slots and one of `MAX_SESSIONS`. Production clients never send
 POLL (`Rendezvous_BuildPoll` has no non-test call site), so exposure is small.
 
-## #152 — dead weight, three items — DECIDED 2026-08-31: delete all three
+## #152 — dead weight, three items — CLOSED (all three deleted)
 
 1. `matchmaking.c` (legacy TCP lobby client) is still wired into
    `netplay.c` (`Matchmaking_Start` `:2224`, `Matchmaking_Run` `:2233`) despite
@@ -3453,3 +3453,52 @@ by the maintainer: delete all three.**
   touch the same `netplay.c` failure paths.
 - Item 3: remove `tools/netplay/fake-peer.py` and
   `tools/test_matchmaking_server.py`.
+
+**CLOSED by `4fe47024`.**
+
+**Correct the premise first: matchmaking was NOT dead code.** This entry, and
+the review that produced it, both said "wired into netplay.c" and "the shipped
+flow never uses it". Understated. Uncatalogued consumers found during the
+deletion: `menu.c` called `Netplay_BeginMatchmaking()` **unconditionally** on
+two entry points alongside `Netplay_BeginDirectP2P()`;
+`src/port/sdl/netplay_screen.c` carried a live per-frame render branch drawing
+"Connecting to server… / Finding match… / Matchmaking error";
+`Soft_Reset_Sub()` called `Netplay_CancelMatchmaking()` ungated; `main.c`
+ticked it every frame and branched on it in `set_netplay_params`.
+
+It was **live-wired but provably inert**, and that is what the deletion rests
+on. `Netplay_BeginMatchmaking()` returned at its
+`matchmaking_server_ip == NULL` guard; the field had exactly one writer, the
+`--matchmaking-ip` flag; nothing in the tree passes it. So `Matchmaking_Start`
+never ran, state stayed at the `MATCHMAKING_IDLE` static initializer, and every
+consumer was dead on arrival — the render branch gates on a non-IDLE state, all
+three cancels hit the idle guard, `Matchmaking_GetSocket()` returned NULL
+(socket created only in a never-entered state), and
+`check_netplay_cancelled()` always returned false, making its bare-cursor
+replacement behaviour-identical.
+
+**Zero on-device behaviour change.** Only external surface removed is
+developer-facing: `--matchmaking-ip`, `--matchmaking-port`, and two
+arg-combination error messages.
+
+Item 2 removed cleanly: 7 `push_event()` sites deleted as pure statement
+removals, with #144's notify calls and #145's deferred-exit machinery
+re-verified intact around them. Harness discovery 14 → 13 (floor is 8);
+`args.c`/`main.c`/`configuration.h`/`CMakeLists.txt` consistent.
+
+Four comments naming the deleted `test_event_queue.c` were accurate before
+this task and wrong after it, so they were repaired here — rewritten to
+describe the gating pattern rather than name a sibling that could be deleted
+next. `game_state.c`'s edit is comment-only; `h` untouched.
+
+**Discovered, NOT fixed — `ENABLE_NETPLAY=OFF` has never compiled.** `args.c`
+and unrelated files (e.g. `eff61.c`) use bare `#if ENABLE_NETPLAY` /
+`#if NETPLAY_ENABLED`; both macros are defined only when the option is ON, so
+under `-Wundef -Werror` the preprocessor kills the build before any link.
+Pre-existing, confirmed against HEAD, and no gate builds that configuration.
+Consequence: `netplay_stub.c` is theatrical — nothing compiles it — so its
+trims cannot break anything. **Worth its own entry if the OFF build is ever
+meant to work.**
+
+Gates GREEN, harness count 13; `arm-cross-build` NOT RUN.
+`check_baselines.py`: `scopes=11 breached=0 slack=0`.
