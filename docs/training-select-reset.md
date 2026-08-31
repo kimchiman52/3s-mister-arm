@@ -24,6 +24,13 @@ Both characters land at `centre − 88` (P1) and `centre + 88` (P2), where
 `centre` is `get_center_position()` — 512 on most stages, 464 on stages 0
 and 19.
 
+The reset plays the menu confirm one-shot, `SE_selected()`
+(`SsRequest(98)`, `sound/sound3rd.c`), on the frame the teardown runs. That is
+deliberately earlier than the visual settles — see the frame sequence below —
+so the player gets immediate confirmation instead of waiting out the snap.
+It is safe mid-round rather than menu-only: `Setup_Pause` and `Setup_Come_Out`
+(`system/pause.c`) already call it during live gameplay.
+
 Down is tested as a **bit**, not an exact word, so down-back and down-forward
 work. Those are the ordinary resting stick positions in training; an exact
 match would swallow the reset for most of what a player actually holds.
@@ -79,9 +86,19 @@ off to `player_mv_1000` → `plmv_1010` → `plmv_1020`. Training's appear type 
 exactly the centre preset with the correct `rl_flag` per side. **No position
 override is needed for increment 1.**
 
-It takes three frames: N sets up and runs `player_mv_0000`; N+1 runs
-`player_mv_1000` and the position is written; N+2 `pli_1000` fires and
-`player_mv_4000` accepts input.
+It takes three frames, and the parts do not land together:
+
+| Frame | What happens | What the player sees |
+|---|---|---|
+| N | Teardown; `player_mv_0000` runs | Effects vanish, bars refill, combo counter clears, camera snaps to stage default — but **the characters have not moved yet**. `SE_selected()` fires here. |
+| N+1 | `player_mv_1000` → `plmv_1010` → `plmv_1020` | Characters teleport to `centre ± 88` |
+| N+2 | `pli_1000` sets `routine_no[0] = 4` | Input comes back |
+
+So there is a one-frame window (~17 ms) where the camera has already jumped but
+the characters have not, and input returns one frame after the visual settles.
+Whether that reads as a clean snap or a visible hitch is a device question — it
+is the first thing to watch for on a TV. The sound firing on frame N is partly
+there to cover it.
 
 ### Why `pcon_rno` is written
 

@@ -3867,6 +3867,18 @@ static void Tr_Reset_Release_L8() {
 static void Tr_Reset_Apply() {
     s16 i;
 
+    /* The only feedback the reset gives. It fires here, on the frame the
+     * teardown runs, because the visual does not settle until two frames later
+     * -- plmv_1020 does not write the positions until N+1 and pli_1000 does not
+     * hand input back until N+2 -- so without it the first thing the player
+     * perceives is a frame of the camera at the stage default with both
+     * characters still standing where they were.
+     *
+     * SE_selected is the menu confirm one-shot (SsRequest(98), sound3rd.c). It
+     * is safe mid-round rather than menu-only: Setup_Pause and Setup_Come_Out
+     * (system/pause.c) already call it during live gameplay. */
+    SE_selected();
+
     /* Effect teardown, in Game2_5's order. erase_extra_plef_work does not own
      * list 5, where the super-art shadow lives; that effect clears the global
      * SA_shadow_on only from its own exit branch, which it takes on Suicide[0].

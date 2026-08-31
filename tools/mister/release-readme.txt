@@ -108,6 +108,7 @@ TRAINING MODE
 Press SELECT during training to reset both characters back to their
 round-start positions. There is no screen wipe and the music keeps
 playing, so it is much faster than restarting the round from the menu.
+A short confirmation sound plays when the reset fires.
 
 Holding DOWN while pressing SELECT does the same thing. Holding UP,
 LEFT or RIGHT does nothing yet — those will pick a starting arrangement
