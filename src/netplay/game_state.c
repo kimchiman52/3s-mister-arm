@@ -1745,7 +1745,10 @@ typedef struct {
     uint32_t bg;
     uint32_t tasks;
     uint32_t effects;
-    uint32_t globals;
+    uint32_t globals;   // djb2 stream over the non-PLW whitelisted globals
+                        // only, in save_current_state's HASH_GLOBAL order.
+                        // NOT derivable from plw0/plw1/combined — see the
+                        // comment above the HASH_GLOBAL block.
     uint32_t combined;
 } SectionedChecksum;
 
@@ -1928,9 +1931,49 @@ bool Netplay_GetSparseEffectSaveEnabled(void) {
 
 /* Pack the sparse wire format into out_buf, returning the number of bytes
  * written. Reads from the live GameState (already gathered into gs_src)
- * and the live effect-pool globals (frw, head_ix, etc.). */
+ * and the live effect-pool globals (frw, head_ix, etc.).
+ *
+ * Returns 0 (an unambiguous "did not pack" sentinel — a real sparse buffer
+ * is always at least sizeof(GameState) + SPARSE_HEADER_BYTES) and writes
+ * NOTHING to out_buf when the be_flag!=0 slot count exceeds
+ * SPARSE_CEILING_SLOTS. Caller (save_state) must check for 0 and fall back
+ * to pack_full_state, same as it already does for the cheaper accounting
+ * guard (active = EFFECT_MAX - frwctr).
+ *
+ * Why check be_flag here too, when save_state() already checked the
+ * accounting count: they are two DIFFERENT predicates over the same pool.
+ * save_state() bounds `EFFECT_MAX - frwctr` (accounting); this function
+ * emits every slot with be_flag != 0 (content). pull_effect_work decrements
+ * frwctr before any caller can set be_flag=1, and push_effect_work zeroes
+ * be_flag before the slot rejoins the free list (effect.c) — so
+ * {be_flag!=0} is proven a SUBSET of {not on the free list}, whose count is
+ * exactly EFFECT_MAX - frwctr, meaning the accounting count can only be
+ * >= the be_flag count. But that proof lives in effect.c, not here: this
+ * function must be safe against its OWN predicate rather than trust an
+ * invariant maintained in a different file. Without this guard, a broken
+ * invariant (some future write path that flips be_flag without going
+ * through pull/push_effect_work) would silently overrun the caller's
+ * buffer, which is sized off the accounting predicate. */
 static unsigned int pack_sparse_state(unsigned char* out_buf,
                                       const GameState* gs_src) {
+    /* First pass: count be_flag != 0 slots with pack's own predicate,
+     * independent of frwctr. */
+    int beflag_count = 0;
+    for (int i = 0; i < EFFECT_MAX; i++) {
+        if (((const WORK*)frw[i])->be_flag != 0) {
+            beflag_count++;
+        }
+    }
+
+    /* Tripwire for the invariant proved in this function's comment above;
+     * loud in debug/test builds only. SPARSE_CEILING_SLOTS below still
+     * protects release builds regardless of whether this assert fires. */
+    SDL_assert(beflag_count <= EFFECT_MAX - (int)frwctr);
+
+    if (beflag_count > SPARSE_CEILING_SLOTS) {
+        return 0;
+    }
+
     /* GameState first — verbatim copy of the gathered scratch. */
     SDL_memcpy(out_buf, gs_src, sizeof(GameState));
     unsigned char* hdr = out_buf + sizeof(GameState);
@@ -1985,14 +2028,24 @@ static int popcount16_bytes(const unsigned char mask[16]) {
     return n;
 }
 
-static bool unpack_sparse_state(const unsigned char* in_buf, unsigned int in_len) {
+/* Pure predicate: every structural validation step unpack_sparse_state()
+ * needs BEFORE it is safe to write a single live global. Touches nothing —
+ * no globals read or written, no side effects. Split out so
+ * load_state_from_event() can validate a sparse buffer before calling
+ * GameState_Load(), making the restore atomic (see the comment on
+ * load_state_from_event below): either both GameState and the effect pool
+ * get restored, or neither does. */
+static bool sparse_state_is_valid(const unsigned char* in_buf, unsigned int in_len) {
     if (in_len < sizeof(GameState) + SPARSE_HEADER_BYTES) {
         return false;
     }
     const unsigned char* hdr = in_buf + sizeof(GameState);
     uint16_t active_count;
     SDL_memcpy(&active_count, hdr + SPARSE_OFF_ACTIVE_COUNT, sizeof(active_count));
-    if (active_count > EFFECT_MAX) {
+    /* Bound is SPARSE_CEILING_SLOTS, not EFFECT_MAX: these buffers are always
+     * local (GekkoNet never puts state on the wire), so pack_sparse_state is
+     * the only producer and it never emits active_count above its own ceiling. */
+    if (active_count > SPARSE_CEILING_SLOTS) {
         return false;
     }
     const size_t expected = sizeof(GameState) + SPARSE_HEADER_BYTES +
@@ -2004,6 +2057,21 @@ static bool unpack_sparse_state(const unsigned char* in_buf, unsigned int in_len
     if (popcount16_bytes(mask) != (int)active_count) {
         return false;
     }
+    return true;
+}
+
+static bool unpack_sparse_state(const unsigned char* in_buf, unsigned int in_len) {
+    if (!sparse_state_is_valid(in_buf, in_len)) {
+        return false;
+    }
+
+    /* Below this point validity is established by the predicate above —
+     * the apply half asserts it rather than re-deciding it field by field. */
+    const unsigned char* hdr = in_buf + sizeof(GameState);
+    uint16_t active_count;
+    SDL_memcpy(&active_count, hdr + SPARSE_OFF_ACTIVE_COUNT, sizeof(active_count));
+    const unsigned char* mask = hdr + SPARSE_OFF_ACTIVE_MASK;
+    SDL_assert(popcount16_bytes(mask) == (int)active_count);
 
     /* GameState — caller already restored via GameState_Load(); we only
      * touch the effect-pool globals here. */
@@ -2265,77 +2333,97 @@ uint32_t save_current_state(void* buffer, int frame) {
         }
 
         // --- Build combined hash from PLW + whitelisted globals ---
+        // `h` accumulates PLW + every whitelisted field below, in the exact
+        // order listed: it is the cross-peer desync checksum returned by this
+        // function. `g` accumulates ONLY the non-PLW globals below (via the
+        // HASH_GLOBAL macro), in the same order, and becomes sc.globals — a
+        // real djb2 stream over the whitelisted globals, not a mixture. `h`
+        // and `g` are independent djb2 accumulators fed by the same macro
+        // call so they cannot drift apart field-for-field.
+        // `combined` (h) is NOT `plw0 <op> plw1 <op> globals` for any op:
+        // sc.combined, sc.plw0, sc.plw1 and sc.globals are FOUR independent
+        // djb2 streams over overlapping input — djb2 does not compose by XOR
+        // or any other op — so don't try to derive one dump column from the
+        // other three when triaging a desync.
         const GameState* gs = &dst->gs;
         uint32_t h = djb2_init();
 
-        // PLW (sanitized, canonical member image)
+        // PLW (sanitized, canonical member image). Feeds h only — PLW is
+        // covered separately by sc.plw0/sc.plw1 below, so it is deliberately
+        // NOT part of g (the non-PLW "globals" section hash).
         h = djb2_update_mem(h, plw_canon[0], PLW_CANON_SIZE);
         h = djb2_update_mem(h, plw_canon[1], PLW_CANON_SIZE);
 
+        uint32_t g = djb2_init();
+#define HASH_GLOBAL(fld) do { \
+    h = djb2_update_mem(h, (const uint8_t*)&(fld), sizeof(fld)); \
+    g = djb2_update_mem(g, (const uint8_t*)&(fld), sizeof(fld)); \
+} while (0)
+
         // RNG indices
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix16, sizeof(gs->Random_ix16));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix32, sizeof(gs->Random_ix32));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix16_ex, sizeof(gs->Random_ix16_ex));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix32_ex, sizeof(gs->Random_ix32_ex));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix16_com, sizeof(gs->Random_ix16_com));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix32_com, sizeof(gs->Random_ix32_com));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix16_ex_com, sizeof(gs->Random_ix16_ex_com));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Random_ix32_ex_com, sizeof(gs->Random_ix32_ex_com));
+        HASH_GLOBAL(gs->Random_ix16);
+        HASH_GLOBAL(gs->Random_ix32);
+        HASH_GLOBAL(gs->Random_ix16_ex);
+        HASH_GLOBAL(gs->Random_ix32_ex);
+        HASH_GLOBAL(gs->Random_ix16_com);
+        HASH_GLOBAL(gs->Random_ix32_com);
+        HASH_GLOBAL(gs->Random_ix16_ex_com);
+        HASH_GLOBAL(gs->Random_ix32_ex_com);
 
         // Round/match
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Round_num, sizeof(gs->Round_num));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Round_Level, sizeof(gs->Round_Level));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Round_Result, sizeof(gs->Round_Result));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->PL_Wins, sizeof(gs->PL_Wins));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Conclusion_Type, sizeof(gs->Conclusion_Type));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->win_type, sizeof(gs->win_type));
+        HASH_GLOBAL(gs->Round_num);
+        HASH_GLOBAL(gs->Round_Level);
+        HASH_GLOBAL(gs->Round_Result);
+        HASH_GLOBAL(gs->PL_Wins);
+        HASH_GLOBAL(gs->Conclusion_Type);
+        HASH_GLOBAL(gs->win_type);
 
         // Player identity
-        h = djb2_update_mem(h, (const uint8_t*)&gs->My_char, sizeof(gs->My_char));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Super_Arts, sizeof(gs->Super_Arts));
+        HASH_GLOBAL(gs->My_char);
+        HASH_GLOBAL(gs->Super_Arts);
 
         // Our fork-exclusive top-level globals (NOT in 3sxtra's PLW hash).
         // Research doc §19 risk 1: without this, damage scaling drift goes
         // undetected.
-        h = djb2_update_mem(h, (const uint8_t*)&gs->combo_type, sizeof(gs->combo_type));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->remake_power, sizeof(gs->remake_power));
+        HASH_GLOBAL(gs->combo_type);
+        HASH_GLOBAL(gs->remake_power);
 
         // Combat flags
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Attack_Flag, sizeof(gs->Attack_Flag));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Counter_Attack, sizeof(gs->Counter_Attack));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Guard_Flag, sizeof(gs->Guard_Flag));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Flip_Flag, sizeof(gs->Flip_Flag));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Lie_Flag, sizeof(gs->Lie_Flag));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Attack_Counter, sizeof(gs->Attack_Counter));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Bullet_No, sizeof(gs->Bullet_No));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Bullet_Counter, sizeof(gs->Bullet_Counter));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->paring_counter, sizeof(gs->paring_counter));
+        HASH_GLOBAL(gs->Attack_Flag);
+        HASH_GLOBAL(gs->Counter_Attack);
+        HASH_GLOBAL(gs->Guard_Flag);
+        HASH_GLOBAL(gs->Flip_Flag);
+        HASH_GLOBAL(gs->Lie_Flag);
+        HASH_GLOBAL(gs->Attack_Counter);
+        HASH_GLOBAL(gs->Bullet_No);
+        HASH_GLOBAL(gs->Bullet_Counter);
+        HASH_GLOBAL(gs->paring_counter);
 
         // Game flow
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Present_Mode, sizeof(gs->Present_Mode));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->VS_Stage, sizeof(gs->VS_Stage));
+        HASH_GLOBAL(gs->Present_Mode);
+        HASH_GLOBAL(gs->VS_Stage);
 
         // Slow motion
-        h = djb2_update_mem(h, (const uint8_t*)&gs->SLOW_timer, sizeof(gs->SLOW_timer));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->SLOW_flag, sizeof(gs->SLOW_flag));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->EXE_flag, sizeof(gs->EXE_flag));
+        HASH_GLOBAL(gs->SLOW_timer);
+        HASH_GLOBAL(gs->SLOW_flag);
+        HASH_GLOBAL(gs->EXE_flag);
 
         // Super gauge / stun / vitality
-        h = djb2_update_mem(h, (const uint8_t*)&gs->super_arts, sizeof(gs->super_arts));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->piyori_type, sizeof(gs->piyori_type));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Max_vitality, sizeof(gs->Max_vitality));
+        HASH_GLOBAL(gs->super_arts);
+        HASH_GLOBAL(gs->piyori_type);
+        HASH_GLOBAL(gs->Max_vitality);
 
         // chainex_check (EX-SA chain gating) — previously rollback-unsafe;
         // now saved via GameState (see struct field). Hash the saved copy so
         // cross-peer comparison catches any divergence just like plw_scratch.
-        h = djb2_update_mem(h, (const uint8_t*)&gs->chainex_check, sizeof(gs->chainex_check));
+        HASH_GLOBAL(gs->chainex_check);
 
         // Color7 (char-select color chord) + ca_check_flag (battle throw/CA
         // gate) — previously rollback-unsafe cross-frame globals; now saved
         // via GameState. Hash the saved copies so any residual divergence is
         // caught cross-peer just like chainex_check. Ported from d5f301cc.
-        h = djb2_update_mem(h, (const uint8_t*)&gs->Color7, sizeof(gs->Color7));
-        h = djb2_update_mem(h, (const uint8_t*)&gs->ca_check_flag, sizeof(gs->ca_check_flag));
+        HASH_GLOBAL(gs->Color7);
+        HASH_GLOBAL(gs->ca_check_flag);
 
         // spmv_ng_save (Makoto SA-buff backup of PLW.spmv_ng_flag) —
         // previously rollback-unsafe (2026-04-24 Candidate 0b wrongly
@@ -2343,7 +2431,9 @@ uint32_t save_current_state(void* buffer, int frame) {
         // CPS3 off, id 16 IS Makoto and the code is live). Now saved via
         // GameState; hash the saved copy so any residual divergence is
         // caught cross-peer just like chainex_check.
-        h = djb2_update_mem(h, (const uint8_t*)&gs->spmv_ng_save, sizeof(gs->spmv_ng_save));
+        HASH_GLOBAL(gs->spmv_ng_save);
+
+#undef HASH_GLOBAL
 
         // Per-section checksums + per-field hashes for desync triage. Always-on
         // 2026-04-26: telemetry consumes the same diagnostic surface as DEBUG.
@@ -2359,7 +2449,7 @@ uint32_t save_current_state(void* buffer, int frame) {
         sc.tasks = 0;
         sc.effects = 0;
         sc.combined = h;
-        sc.globals = h ^ sc.plw0 ^ sc.plw1;
+        sc.globals = g;
         saved_section_checksums[frame % STATE_BUFFER_MAX] = sc;
         SDL_memcpy(&saved_plw_scratch[frame % STATE_BUFFER_MAX][0], &plw_scratch[0], sizeof(PLW));
         SDL_memcpy(&saved_plw_scratch[frame % STATE_BUFFER_MAX][1], &plw_scratch[1], sizeof(PLW));
@@ -2446,12 +2536,16 @@ uint32_t save_current_state(void* buffer, int frame) {
  *      either sparse or full format, depending on the runtime kill switch
  *      AND the active-slot count.
  *
- * Two paths the sparse encoding is bypassed:
+ * Three paths the sparse encoding is bypassed:
  *   - kill switch off → full state.
- *   - active count > SPARSE_CEILING_SLOTS → backend_logf warning + full
- *     state (a "soft" overflow that's safe but blows past the ceiling
- *     Gekko's ring is sized for; user MUST raise SPARSE_CEILING_SLOTS or
- *     accept the rollback-buffer pressure for that frame). */
+ *   - accounting predicate (EFFECT_MAX - frwctr) > SPARSE_CEILING_SLOTS →
+ *     SDL_LogWarn + full state (a "soft" overflow that's safe but blows
+ *     past the ceiling Gekko's ring is sized for; user MUST raise
+ *     SPARSE_CEILING_SLOTS or accept the rollback-buffer pressure for that
+ *     frame).
+ *   - pack_sparse_state's own be_flag!=0 predicate trips (returns 0) →
+ *     SDL_LogWarn + full state. See pack_sparse_state's comment for why
+ *     this second predicate exists and what its tripping means. */
 static unsigned char s_save_scratch[sizeof(State)];
 
 void save_state(const GekkoGameEvent* event) {
@@ -2473,22 +2567,42 @@ void save_state(const GekkoGameEvent* event) {
          * reading the live value avoids a second indirection. */
         int active = EFFECT_MAX - (int)frwctr;
         if (active < 0 || active > SPARSE_CEILING_SLOTS) {
-            /* Safety net: fall back to full save for this frame. We log
-             * once per overrun threshold so a sustained busy stage doesn't
-             * spam serial. backend_logf is the same channel as the rest
-             * of the netplay diagnostics. */
+            /* Safety net: fall back to full save for this frame. Log once
+             * per overrun threshold so a sustained busy stage doesn't spam
+             * serial. This is the cheap ACCOUNTING predicate — checked
+             * first because it's an O(1) read, not a pool walk; see the
+             * block comment above for how it differs from the be_flag
+             * predicate below. */
             static int last_warned_active = -1;
             if (active != last_warned_active) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                            "[netplay] sparse-save: active=%d exceeds ceiling %d "
-                            "for frame %d; falling back to full state. "
-                            "Raise SPARSE_CEILING_SLOTS in game_state.h.",
+                            "[netplay] sparse-save: active=%d (accounting predicate) "
+                            "exceeds ceiling %d for frame %d; falling back to full "
+                            "state. Raise SPARSE_CEILING_SLOTS in game_state.h.",
                             active, SPARSE_CEILING_SLOTS, event->data.save.frame);
                 last_warned_active = active;
             }
             dst_len = pack_full_state(dst, scratch);
         } else {
             dst_len = pack_sparse_state(dst, &scratch->gs);
+            if (dst_len == 0) {
+                /* AUTHORITATIVE predicate tripped — see pack_sparse_state's
+                 * comment for the full derivation. This is a REAL finding,
+                 * not a busy stage; the log below names it explicitly
+                 * (be_flag, not accounting) so it's never confused with the
+                 * branch above when triaging a field log. */
+                static int last_warned_beflag_frame = -1;
+                if (event->data.save.frame != last_warned_beflag_frame) {
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                                "[netplay] sparse-save: be_flag predicate (pack_sparse_state's "
+                                "own count) exceeds ceiling %d for frame %d even though the "
+                                "accounting predicate (active=%d) passed -- the be_flag<=accounting "
+                                "invariant is broken; falling back to full state.",
+                                SPARSE_CEILING_SLOTS, event->data.save.frame, active);
+                    last_warned_beflag_frame = event->data.save.frame;
+                }
+                dst_len = pack_full_state(dst, scratch);
+            }
         }
     }
     *event->data.save.state_len = dst_len;
@@ -2523,6 +2637,24 @@ void load_state(const State* src) {
  * not an integer for any allowed active_count in [0, 128]. The same math
  * holds on 64-bit (1792 → 3584) by symmetry. Format detection is unambiguous
  * within a single peer's bitness. */
+/* Fix-by-atomicity: validate the sparse buffer BEFORE touching any live
+ * global, so restoration is all-or-nothing. The previous behaviour ran
+ * GameState_Load() unconditionally and only THEN validated the effect pool
+ * (unpack_sparse_state) — on rejection that left GameState at frame F and
+ * the effect pool at frame F-1, a silent mixture, while only logging.
+ *
+ * A rejected buffer is an impossible condition in normal operation —
+ * GekkoNet corrupting its own ring, never a reachable gameplay path — so
+ * the actual requirement is that it fail LOUDLY and IDENTIFIABLY in a
+ * field log, not that it be silently survivable. Atomic-reject achieves
+ * that strictly better than the old partial-apply behaviour: the log line
+ * is equally loud, and the state left behind is COHERENT (both halves
+ * still at the previous frame) rather than a MIXTURE that would resurface
+ * later as an unexplained desync at a DIFFERENT frame — the worst possible
+ * triage signal, because it points investigation at the wrong frame
+ * entirely. An outright abort/fatal path was considered and REJECTED: on
+ * the MiSTer target a fatal path reboots silently, losing the very log
+ * line that identifies the condition — worse than either alternative. */
 void load_state_from_event(const GekkoGameEvent* event) {
     const unsigned char* src = event->data.load.state;
     unsigned int len = event->data.load.state_len;
@@ -2532,16 +2664,33 @@ void load_state_from_event(const GekkoGameEvent* event) {
         return;
     }
 
-    /* GameState restoration first (always at offset 0). */
-    GameState_Load((const GameState*)src);
-
-    if (!unpack_sparse_state(src, len)) {
+    if (!sparse_state_is_valid(src, len)) {
+        /* Uniquely greppable: distinct from every other netplay log line,
+         * and explicit that NOTHING was restored (GameState included),
+         * not just "effect pool left untouched" as the old message said. */
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "[netplay] load_state_from_event: sparse buffer rejected "
-                     "(state_len=%u, expected sizeof(State)=%zu or sparse layout). "
-                     "Effect pool left untouched; rollback may diverge.",
+                     "[netplay] load_state_from_event: REJECTED SPARSE BUFFER, "
+                     "NOTHING RESTORED (state_len=%u, expected sizeof(State)=%zu "
+                     "or a valid sparse layout). GameState and the effect pool "
+                     "both remain at the previous frame; rollback may diverge.",
                      len, sizeof(State));
+        /* Loud in debug/test builds; the log above is the release-build
+         * survivor of this condition. */
+        SDL_assert(false && "load_state_from_event: rejected sparse buffer -- "
+                             "GekkoNet corrupted its own ring, see the log line above");
+        return;
     }
+
+    /* Validity established — safe to restore both halves. */
+    GameState_Load((const GameState*)src);
+    bool unpack_ok = unpack_sparse_state(src, len);
+    /* unpack_sparse_state re-derives the same predicate internally and
+     * cannot disagree with the sparse_state_is_valid() call above (same
+     * immutable input, no intervening mutation of src) — assert rather than
+     * re-branch, since a live GameState_Load() has already run and there is
+     * no atomic action left to take if this ever fires. */
+    SDL_assert(unpack_ok && "unpack_sparse_state disagreed with sparse_state_is_valid");
+    (void)unpack_ok;
 }
 
 /**
@@ -2683,6 +2832,12 @@ unsigned int Netplay_Test_PackSparseState(unsigned char* out_buf,
                                           const GameState* gs_src);
 bool Netplay_Test_UnpackSparseState(const unsigned char* in_buf,
                                     unsigned int in_len);
+/* Item 3 (queue.md #148 point 3): exposes the pure validation predicate
+ * load_state_from_event() now checks BEFORE calling GameState_Load(), so
+ * test_sparse_effect_save.c can feed it short / popcount-mismatched /
+ * wrong-length buffers directly without going through a GekkoGameEvent. */
+bool Netplay_Test_SparseStateIsValid(const unsigned char* in_buf,
+                                     unsigned int in_len);
 
 unsigned int Netplay_Test_PackSparseState(unsigned char* out_buf,
                                           const GameState* gs_src) {
@@ -2692,5 +2847,10 @@ unsigned int Netplay_Test_PackSparseState(unsigned char* out_buf,
 bool Netplay_Test_UnpackSparseState(const unsigned char* in_buf,
                                     unsigned int in_len) {
     return unpack_sparse_state(in_buf, in_len);
+}
+
+bool Netplay_Test_SparseStateIsValid(const unsigned char* in_buf,
+                                     unsigned int in_len) {
+    return sparse_state_is_valid(in_buf, in_len);
 }
 #endif

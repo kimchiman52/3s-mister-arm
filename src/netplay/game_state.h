@@ -825,6 +825,12 @@ typedef struct State {
  * triggers the full-state fallback path (see save_current_state in
  * game_state.c) — correct, just a larger frame.
  *
+ * Two DIFFERENT predicates are checked against SPARSE_CEILING_SLOTS: the
+ * cheap ACCOUNTING predicate in save_state() (EFFECT_MAX - frwctr) and
+ * pack_sparse_state()'s own AUTHORITATIVE be_flag!=0 predicate. See
+ * pack_sparse_state's comment in game_state.c for why both exist, the
+ * proof they can't disagree, and what happens when either trips.
+ *
  * SPARSE_FRW_SLOT_BYTES — per-slot payload size (matches the inner
  * uintptr_t[448] dimension on either bitness). Wire-stable on a single
  * peer; cross-arch netplay isn't supported so 32 vs 64 doesn't matter

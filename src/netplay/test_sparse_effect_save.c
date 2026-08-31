@@ -15,17 +15,36 @@
  *     inactive slots reads back byte-exact for active slots; inactive slots
  *     match the canonical empty pattern (myself=i, before=-1, behind=-1,
  *     rest zero).
- *  2. Boundary cases — 0, 1, SPARSE_CEILING_SLOTS (ceiling), 128 (overflow → unpack rejects).
+ *  2. Boundary cases — 0, 1, SPARSE_CEILING_SLOTS (ceiling), 128 (overflow →
+ *     pack itself refuses as of queue.md #148 point 2; see below).
  *  3. Linked-list integrity — head_ix walk through `behind` reaches every
  *     active slot in that priority and terminates at -1.
  *  4. be_flag invariant — every active slot has be_flag != 0 after
  *     round-trip; every inactive slot has be_flag == 0.
  *
+ * Also covers queue.md #148 (task-brief hardening, landed alongside the
+ * items above):
+ *  5. pack_sparse_state's own be_flag!=0 count vs SPARSE_CEILING_SLOTS —
+ *     over-ceiling refuses (returns 0, buffer untouched, canary-checked);
+ *     exactly-ceiling still packs at the correct length; and the case the
+ *     hardening exists for — be_flag set on a slot still on the free list,
+ *     so the accounting predicate (EFFECT_MAX - frwctr) and the be_flag
+ *     predicate DISAGREE — pack still refuses on its own predicate. That
+ *     last case deliberately trips pack_sparse_state's invariant
+ *     SDL_assert; see ignore_and_count_handler for how the test swaps
+ *     src/main.c's abort-on-assert harness policy for a local
+ *     ignore-and-count one just for that call.
+ *  6. sparse_state_is_valid() — the predicate load_state_from_event() now
+ *     runs before GameState_Load() — rejects short / popcount-mismatched /
+ *     wrong-length buffers (mirroring the existing unpack_sparse_state
+ *     rejection tests) and accepts pack's own valid output.
+ *
  * Implementation: the test calls the pack/unpack helpers directly via the
- * Netplay_Test_PackSparseState / Netplay_Test_UnpackSparseState
- * trampolines exposed at the bottom of game_state.c. We do not exercise
- * the GekkoNet save_state callback path itself — that requires a session
- * pump and is out of scope for a self-contained unit test.
+ * Netplay_Test_PackSparseState / Netplay_Test_UnpackSparseState /
+ * Netplay_Test_SparseStateIsValid trampolines exposed at the bottom of
+ * game_state.c. We do not exercise the GekkoNet save_state /
+ * load_state_from_event callback paths themselves — that requires a
+ * session pump and is out of scope for a self-contained unit test.
  */
 
 #include <stdio.h>
@@ -47,6 +66,10 @@ unsigned int Netplay_Test_PackSparseState(unsigned char* out_buf,
                                           const GameState* gs_src);
 bool Netplay_Test_UnpackSparseState(const unsigned char* in_buf,
                                     unsigned int in_len);
+/* queue.md #148 point 3: the pure validation predicate load_state_from_event()
+ * now checks before calling GameState_Load(). */
+bool Netplay_Test_SparseStateIsValid(const unsigned char* in_buf,
+                                     unsigned int in_len);
 
 static int fail_count = 0;
 static int pass_count = 0;
@@ -347,22 +370,43 @@ static void test_ceiling_active(void) {
     roundtrip_check("ceiling-active", act);
 }
 
-static void test_overflow_128_unpack_rejects(void) {
-    bool act[EFFECT_MAX];
+static void test_overflow_128_pack_refuses(void) {
     reset_pool_canonical();
-    /* All 128 slots active. Note: this exceeds SPARSE_CEILING_SLOTS, but
-     * pack_sparse_state itself does NOT enforce the ceiling — that's the
-     * caller's job (save_state in game_state.c does the check + fallback).
-     * So pack_sparse_state will produce a 230KB+ buffer. We then verify
-     * unpack accepts it (it's a valid sparse buffer) and round-trips
-     * correctly. The "overflow" surface that matters for safety is the
-     * caller-side check in save_state — exercised by inspection: save_state
-     * routes to pack_full_state when active > SPARSE_CEILING_SLOTS. */
+    /* All 128 slots active — the pool's absolute worst case, and well past
+     * SPARSE_CEILING_SLOTS(100). Historically (pre queue.md #148 point 2)
+     * pack_sparse_state did NOT enforce the ceiling itself — that was the
+     * caller's job (save_state's accounting check) — so this buffer packed
+     * fine and only the caller-side guard mattered "by inspection". After
+     * the hardening, pack_sparse_state enforces SPARSE_CEILING_SLOTS on its
+     * OWN be_flag!=0 count regardless of caller behaviour, so this is now
+     * a pack-refuses case rather than a round-trip case — folding this
+     * boundary into test_beflag_over_ceiling_pack_refuses's coverage at
+     * the pool's actual maximum (EFFECT_MAX, not just ceiling+1). */
     for (int i = 0; i < EFFECT_MAX; i++) {
         install_active_slot((s16)i, (s16)(i & 7), 0xFEEDBEEFu + (uint32_t)i);
-        act[i] = true;
     }
-    roundtrip_check("all-128-active", act);
+
+    GameState gs_dummy;
+    SDL_memset(&gs_dummy, 0xCC, sizeof(gs_dummy));
+    SDL_memset(wire_buf, 0xAB, sizeof(wire_buf));
+    unsigned int len = Netplay_Test_PackSparseState(wire_buf, &gs_dummy);
+    if (len != 0) {
+        T_FAIL("all-128-active-refuses",
+               "pack_sparse_state packed %u bytes for all %d slots active "
+               "(SPARSE_CEILING_SLOTS=%d)",
+               len, EFFECT_MAX, SPARSE_CEILING_SLOTS);
+        return;
+    }
+    for (size_t k = 0; k < sizeof(wire_buf); k++) {
+        if (wire_buf[k] != 0xAB) {
+            T_FAIL("all-128-active-refuses",
+                   "wire_buf byte %zu changed to 0x%02x -- pack wrote despite "
+                   "returning 0 (canary check)",
+                   k, (unsigned)wire_buf[k]);
+            return;
+        }
+    }
+    T_PASS("all-128-active-refuses");
 }
 
 /* Targeted: confirm unpack rejects a corrupted active_count vs popcount. */
@@ -402,6 +446,229 @@ static void test_unpack_rejects_short_buf(void) {
     T_PASS("reject-short-buf");
 }
 
+/* === queue.md #148 point 2: pack_sparse_state hardening =================
+ * pack_sparse_state now counts be_flag!=0 slots ITSELF, before writing
+ * anything, and refuses (returns 0, writes nothing) if that count exceeds
+ * SPARSE_CEILING_SLOTS -- independent of the accounting predicate
+ * (EFFECT_MAX - frwctr) the caller (save_state) already checked. Three
+ * required cases:
+ *   (a) beflag-count > SPARSE_CEILING_SLOTS -> refuses, buffer untouched.
+ *   (b) beflag-count == SPARSE_CEILING_SLOTS -> still packs, correct length.
+ *   (c) beflag-count and the accounting count DISAGREE (be_flag set on a
+ *       slot still on the free list, frwctr not decremented) -> pack still
+ *       refuses on its OWN predicate. This is the whole point of the change
+ *       -- the harness CAN express it (see below).
+ */
+
+static void test_beflag_over_ceiling_pack_refuses(void) {
+    reset_pool_canonical();
+    for (int i = 0; i < SPARSE_CEILING_SLOTS + 1; i++) {
+        install_active_slot((s16)i, (s16)(i & 7), 0x11111100u + (uint32_t)i);
+    }
+
+    GameState gs_dummy;
+    SDL_memset(&gs_dummy, 0xCC, sizeof(gs_dummy));
+    SDL_memset(wire_buf, 0xAB, sizeof(wire_buf));
+    unsigned int len = Netplay_Test_PackSparseState(wire_buf, &gs_dummy);
+    if (len != 0) {
+        T_FAIL("reject-beflag-over-ceiling",
+               "pack_sparse_state packed %u bytes for %d active slots "
+               "(SPARSE_CEILING_SLOTS=%d)",
+               len, SPARSE_CEILING_SLOTS + 1, SPARSE_CEILING_SLOTS);
+        return;
+    }
+    for (size_t k = 0; k < sizeof(wire_buf); k++) {
+        if (wire_buf[k] != 0xAB) {
+            T_FAIL("reject-beflag-over-ceiling",
+                   "wire_buf byte %zu changed to 0x%02x -- pack wrote despite "
+                   "returning 0 (canary check)",
+                   k, (unsigned)wire_buf[k]);
+            return;
+        }
+    }
+    T_PASS("reject-beflag-over-ceiling");
+}
+
+static void test_ceiling_active_packs_nonzero_correct_length(void) {
+    reset_pool_canonical();
+    for (int i = 0; i < SPARSE_CEILING_SLOTS; i++) {
+        install_active_slot((s16)i, (s16)(i & 7), 0x22222200u + (uint32_t)i);
+    }
+
+    GameState gs_dummy;
+    SDL_memset(&gs_dummy, 0xCC, sizeof(gs_dummy));
+    unsigned int len = Netplay_Test_PackSparseState(wire_buf, &gs_dummy);
+    const unsigned int expected = (unsigned int)(sizeof(GameState) + SPARSE_HEADER_BYTES +
+                                                  (size_t)SPARSE_CEILING_SLOTS * SPARSE_FRW_SLOT_BYTES);
+    if (len != expected) {
+        T_FAIL("ceiling-active-nonzero-len",
+               "len=%u, expected %u for exactly SPARSE_CEILING_SLOTS=%d active",
+               len, expected, SPARSE_CEILING_SLOTS);
+        return;
+    }
+    T_PASS("ceiling-active-nonzero-len");
+}
+
+/* Temporary assertion handler for (c): src/main.c installs an
+ * abort-on-assert handler (test_harness_assert_handler) for every
+ * --test-* harness including this one, specifically so a tripped assert
+ * terminates loudly instead of hanging on an interactive prompt. That
+ * policy is exactly right for an UNEXPECTED assert, but this test
+ * DELIBERATELY trips the new SDL_assert(beflag_count <= EFFECT_MAX -
+ * frwctr) inside pack_sparse_state, so it swaps in a local handler that
+ * returns SDL_ASSERTION_IGNORE (lets execution continue) and counts hits,
+ * then restores whatever handler was previously installed. Verifying
+ * s_ignore_handler_hits > 0 also proves the "LOUD in debug/test builds"
+ * requirement is actually wired up, not just that the fallback silently
+ * absorbed the disagreement. */
+static int s_ignore_handler_hits = 0;
+static SDL_AssertState SDLCALL ignore_and_count_handler(const SDL_AssertData* data, void* userdata) {
+    (void)userdata;
+    s_ignore_handler_hits++;
+    fprintf(stderr,
+            "[test_sparse_effect_save] expected assertion trip: '%s' at %s:%d (%s)\n",
+            data->condition, data->filename, data->linenum, data->function);
+    return SDL_ASSERTION_IGNORE;
+}
+
+static void test_beflag_accounting_mismatch_pack_refuses(void) {
+    reset_pool_canonical();
+
+    /* Deliberately break the invariant under test: flip be_flag directly on
+     * SPARSE_CEILING_SLOTS+1 slots WITHOUT going through pull_effect_work,
+     * so frwctr (and the accounting predicate EFFECT_MAX - frwctr) never
+     * moves off "0 active" -- accounting alone would say "nothing to worry
+     * about" while the real content disagrees. This is exactly the
+     * scenario queue.md #148 point 2 describes: pack must refuse on its
+     * OWN predicate, not trust the caller's accounting. */
+    for (int i = 0; i < SPARSE_CEILING_SLOTS + 1; i++) {
+        WORK* w = (WORK*)frw[i];
+        w->be_flag = 1;
+        w->myself = (s16)i;
+    }
+    int accounting_active = EFFECT_MAX - frwctr;
+    if (accounting_active > SPARSE_CEILING_SLOTS) {
+        T_FAIL("reject-beflag-accounting-mismatch",
+               "test setup bug: accounting_active=%d already exceeds the "
+               "ceiling -- the disagreement this test needs is not being "
+               "exercised",
+               accounting_active);
+        return;
+    }
+
+    void* prev_userdata = NULL;
+    SDL_AssertionHandler prev_handler = SDL_GetAssertionHandler(&prev_userdata);
+    s_ignore_handler_hits = 0;
+    SDL_SetAssertionHandler(ignore_and_count_handler, NULL);
+
+    GameState gs_dummy;
+    SDL_memset(&gs_dummy, 0xCC, sizeof(gs_dummy));
+    SDL_memset(wire_buf, 0xAB, sizeof(wire_buf));
+    unsigned int len = Netplay_Test_PackSparseState(wire_buf, &gs_dummy);
+
+    SDL_SetAssertionHandler(prev_handler, prev_userdata);
+
+    if (len != 0) {
+        T_FAIL("reject-beflag-accounting-mismatch",
+               "pack_sparse_state packed %u bytes despite beflag_count > "
+               "SPARSE_CEILING_SLOTS with accounting_active=%d (disagreement)",
+               len, accounting_active);
+        return;
+    }
+    for (size_t k = 0; k < sizeof(wire_buf); k++) {
+        if (wire_buf[k] != 0xAB) {
+            T_FAIL("reject-beflag-accounting-mismatch",
+                   "wire_buf byte %zu changed to 0x%02x -- pack wrote despite "
+                   "returning 0 (canary check)",
+                   k, (unsigned)wire_buf[k]);
+            return;
+        }
+    }
+    if (s_ignore_handler_hits == 0) {
+        T_FAIL("reject-beflag-accounting-mismatch",
+               "pack refused correctly but the invariant SDL_assert never "
+               "fired -- the 'LOUD in debug/test builds' requirement is not "
+               "actually wired up");
+        return;
+    }
+    T_PASS("reject-beflag-accounting-mismatch");
+}
+
+/* === queue.md #148 point 3: sparse_state_is_valid() predicate tests =====
+ * load_state_from_event() now validates a sparse buffer BEFORE calling
+ * GameState_Load(), via the pure predicate sparse_state_is_valid(). These
+ * exercise the predicate directly (Netplay_Test_SparseStateIsValid), the
+ * same three shapes test_unpack_rejects_bad_count /
+ * test_unpack_rejects_short_buf already prove unpack_sparse_state rejects
+ * -- confirming the split moved the logic without changing it. */
+
+static void test_predicate_rejects_short_buf(void) {
+    reset_pool_canonical();
+    install_active_slot(5, 0, 0x5A5A5A5Au);
+    GameState gs_dummy;
+    SDL_memset(&gs_dummy, 0, sizeof(gs_dummy));
+    unsigned int len = Netplay_Test_PackSparseState(wire_buf, &gs_dummy);
+    if (len < 200) { T_FAIL("predicate-reject-short-buf", "len too small to truncate"); return; }
+    if (Netplay_Test_SparseStateIsValid(wire_buf, len - 100)) {
+        T_FAIL("predicate-reject-short-buf", "predicate accepted truncated buffer");
+        return;
+    }
+    T_PASS("predicate-reject-short-buf");
+}
+
+static void test_predicate_rejects_popcount_mismatch(void) {
+    reset_pool_canonical();
+    install_active_slot(9, 2, 0x9A9A9A9Au);
+    GameState gs_dummy;
+    SDL_memset(&gs_dummy, 0, sizeof(gs_dummy));
+    unsigned int len = Netplay_Test_PackSparseState(wire_buf, &gs_dummy);
+    /* Corrupt a MASK bit, not active_count: active_count (1) and `len` (sized
+     * for 1 active slot) must stay mutually consistent, or the length check
+     * earlier in sparse_state_is_valid() rejects first and this test never
+     * reaches the popcount branch it's named for. Slot 9's bit lives in mask
+     * byte 1 (9/8), bit 1 (9%8); flip slot 0's bit in byte 0 instead --
+     * unrelated to slot 9, so popcount(mask) becomes 2 while active_count
+     * stays 1. */
+    size_t mask_off = sizeof(GameState) + 308;
+    wire_buf[mask_off] |= 0x01;
+    if (Netplay_Test_SparseStateIsValid(wire_buf, len)) {
+        T_FAIL("predicate-reject-popcount-mismatch", "predicate accepted a mask/active_count popcount mismatch");
+        return;
+    }
+    T_PASS("predicate-reject-popcount-mismatch");
+}
+
+static void test_predicate_rejects_wrong_length(void) {
+    reset_pool_canonical();
+    install_active_slot(13, 4, 0x13131313u);
+    GameState gs_dummy;
+    SDL_memset(&gs_dummy, 0, sizeof(gs_dummy));
+    unsigned int len = Netplay_Test_PackSparseState(wire_buf, &gs_dummy);
+    /* One byte over a legal sparse length is neither sizeof(State) nor a
+     * length any active_count produces -- must be rejected. */
+    if (Netplay_Test_SparseStateIsValid(wire_buf, len + 1)) {
+        T_FAIL("predicate-reject-wrong-length", "predicate accepted a length one byte over legal");
+        return;
+    }
+    T_PASS("predicate-reject-wrong-length");
+}
+
+static void test_predicate_accepts_its_own_pack_output(void) {
+    bool act[EFFECT_MAX];
+    SDL_memset(act, 0, sizeof(act));
+    reset_pool_canonical();
+    install_active_slot(17, 5, 0x17171717u);
+    act[17] = true;
+    GameState gs_dummy;
+    SDL_memset(&gs_dummy, 0, sizeof(gs_dummy));
+    unsigned int len = Netplay_Test_PackSparseState(wire_buf, &gs_dummy);
+    if (!Netplay_Test_SparseStateIsValid(wire_buf, len)) {
+        T_FAIL("predicate-accepts-own-output", "predicate rejected pack's own valid output");
+        return;
+    }
+    T_PASS("predicate-accepts-own-output");
+}
+
 int Netplay_Test_SparseEffectSave(void) {
     fail_count = 0;
     pass_count = 0;
@@ -417,9 +684,20 @@ int Netplay_Test_SparseEffectSave(void) {
     test_one_active();
     test_mixed_active();
     test_ceiling_active();
-    test_overflow_128_unpack_rejects();
+    test_overflow_128_pack_refuses();
     test_unpack_rejects_bad_count();
     test_unpack_rejects_short_buf();
+
+    /* queue.md #148 point 2: pack_sparse_state hardening */
+    test_beflag_over_ceiling_pack_refuses();
+    test_ceiling_active_packs_nonzero_correct_length();
+    test_beflag_accounting_mismatch_pack_refuses();
+
+    /* queue.md #148 point 3: sparse_state_is_valid() predicate */
+    test_predicate_rejects_short_buf();
+    test_predicate_rejects_popcount_mismatch();
+    test_predicate_rejects_wrong_length();
+    test_predicate_accepts_its_own_pack_output();
 
     fprintf(stderr,
             "[test_sparse_effect_save] summary: %d passed, %d failed\n",
