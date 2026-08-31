@@ -394,9 +394,11 @@ NatpmpParse Natpmp_ParsePmpMapResponse(const uint8_t* buf, int len,
  * which direct_p2p.c calls from at most one worker thread at a time:
  *
  *   - the probe worker is spawned in try_portmap and then either JOINED
- *     (SDL_WaitThread) or detached-and-abandoned, and its result is
- *     adopted only on the joined path, so a detached straggler can never
- *     be followed by a renewal for the same mapping;
+ *     (SDL_WaitThread) or, on overrun, parked joinable in the #147
+ *     straggler slot; its result is adopted only on the joined path, so
+ *     a straggler can never be followed by a renewal for the same
+ *     mapping — and no second worker spawns until the straggler is
+ *     reaped (portmap_backends_quiescent);
  *   - upnp_renew_tick returns early while s_upnp_renew_thread != NULL,
  *     so there is never a second renewal worker;
  *   - teardown/Cancel go through upnp_renew_join_and_discard before
@@ -426,7 +428,8 @@ NatpmpParse Natpmp_ParsePmpMapResponse(const uint8_t* buf, int len,
  * So s_pcp_nonce / s_pcp_nonce_valid / s_pcp_nonce_port (below) and
  * s_epoch_reset_pending can be written by two threads at once, with no
  * lock and no atomics. Concretely, pcp_nonce_acquire's cache check and
- * its mint-and-persist are not one atomic step:
+ * its mint-and-persist are not one atomic step (the race classes below
+ * are what the hole WOULD produce; see the CLOSED note at the end):
  *
  *   - TORN READ: thread A is at the memcpy that copies s_pcp_nonce into
  *     its local `out` while thread B is at the memcpy that writes a
@@ -452,10 +455,22 @@ NatpmpParse Natpmp_ParsePmpMapResponse(const uint8_t* buf, int len,
  * the request's LOCAL nonce copy as a parameter and compares against
  * that, never against the global.
  *
- * NOT BOUNDED IN CODE. Recorded as a residual in
- * docs/plan-netplay-connection.md §9.7. Bounding it means either joining
- * the straggler before the second probe or giving this block a mutex;
- * neither was done here.
+ * CLOSED (task #147). Bounding it meant "either joining the straggler
+ * before the second probe or giving this block a mutex", and the former
+ * was done: an overrun worker is now PARKED JOINABLE in direct_p2p.c's
+ * straggler slot (s_portmap_straggler_thread) instead of
+ * SDL_DetachThread'ed, and the probe spawn sites — try_portmap's and
+ * join_portmap_spawn's — refuse to start a second worker until
+ * portmap_backends_quiescent() has joined it. (upnp_renew_tick's
+ * renewal spawn consults no gate, on purpose: a renewal requires a
+ * live mapping, and "straggler running" excludes "mapping active" —
+ * its #147 comment carries the argument.) The intra-session auto-retry
+ * leg of the sequence above had already been closed by #96's
+ * s_portmap_failed_port latch; #147 closes the remaining route
+ * (DirectP2P_Cancel -> DirectP2P_Begin*, which resets that latch). The
+ * single-writer invariant this section relies on therefore holds
+ * again; the race taxonomy above is kept as the record of what breaks
+ * if a spawn site ever bypasses the gate.
  */
 
 /* --- PCP Mapping Nonce, RFC 6887 §11.3 (review H-5) ------------------- */

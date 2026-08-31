@@ -63,7 +63,11 @@ bool Stun_DecodeEndpoint(const char* code, char* out_ip, uint16_t* out_port, uin
         if (sep2) {
             *out_local_port = (uint16_t)atoi(sep2 + 1);
         } else {
-            *out_local_port = *out_port; // default to public port if not present
+            /* #150: a two-field code does not SAY the local port, so
+             * report 0 ("unknown") rather than fabricating a
+             * port-preserving NAT by echoing the public port — the same
+             * honesty rule as Stun_Discover's getsockname failure path. */
+            *out_local_port = 0;
         }
     }
 
@@ -540,7 +544,7 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
             SDL_Delay(1);
             wait++;
         }
-        if (NET_GetAddressStatus(bind_addr) != 1) {
+        if (NET_GetAddressStatus(bind_addr) != NET_SUCCESS) {
             NET_UnrefAddress(bind_addr);
             bind_addr = NULL;
         }
@@ -783,11 +787,20 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
 
     // Query the ACTUAL OS-assigned local port via getsockname.
     // The STUN public port may differ from the local port on
-    // non-port-preserving NATs. The hairpin bypass needs the real
-    // local port so localhost connections target the correct socket.
+    // non-port-preserving NATs.
+    //
+    // #150: on total getsockname failure local_port stays 0 ("unknown"),
+    // it is NOT defaulted to public_port. The old fallback fabricated a
+    // port that is wrong on exactly the non-port-preserving NATs the
+    // field exists to describe, and its one production consumer —
+    // join_portmap_spawn(s_work.stun.local_port), the #121
+    // symmetric-joiner rescue — would then ask the gateway to map an
+    // internal port the socket is not bound to: a probe that can only
+    // fail, silently disabling the rescue on the NATs it exists for.
+    // Consumers treat 0 as "unknown" and skip, with attribution.
     {
         const NetTuningDgramMirror* m = (const NetTuningDgramMirror*)sock;
-        result->local_port = result->public_port; // Fallback: assume port-preserving NAT
+        result->local_port = 0;
         for (int h = 0; h < m->num_handles; h++) {
             struct sockaddr_storage sa;
             int sa_len = sizeof(sa);
@@ -800,6 +813,12 @@ bool Stun_Discover(StunResult* result, uint16_t local_port, int timeout_ms) {
                     // Keep looking for IPv4; prefer it since STUN used IPv4
                 }
             }
+        }
+        if (result->local_port == 0) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "STUN: getsockname failed on every socket handle — the "
+                        "OS-bound local port is unknown (reported as 0, not "
+                        "assumed equal to the public port)");
         }
     }
 

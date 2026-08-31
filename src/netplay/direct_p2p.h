@@ -127,8 +127,15 @@ void DirectP2P_BeginJoin(const char* peer_code);
 
 /* User cancel. Sets the worker's atomic cancel flag, waits up to a
  * few seconds for the worker to exit, tears down any owned STUN socket
- * or UPnP mapping, returns state to IDLE. Safe to call from any
- * thread. */
+ * or UPnP mapping, returns state to IDLE.
+ *
+ * MAIN (game) THREAD ONLY. #150: this used to say "safe to call from
+ * any thread", which the implementation has never provided — it runs
+ * join_portmap_reset and portmap_remove, whose own contracts require
+ * the main thread (they hand-off miniupnpc/natpmp process globals with
+ * no lock, serialized only by the game thread's ordering against the
+ * joins above them). The sole production caller today is
+ * Netplay_HandleMenuExit (netplay.c), on the game thread. */
 void DirectP2P_Cancel(void);
 
 /* Per-frame pump from the game loop. Inspects the worker's published
@@ -196,7 +203,13 @@ bool DirectP2P_HostStunRetryPending(void);
 const char* DirectP2P_GetHostCode(void);
 
 /* Human-readable status for the game-side overlay. Always non-NULL,
- * possibly empty string. Updates on state transitions. */
+ * possibly empty string. Updates on state transitions.
+ *
+ * #150: returns a pointer INTO internal storage that worker threads
+ * update in place — it does not copy. The buffer is always
+ * NUL-terminated, but a read that races a transition may see an empty
+ * or torn line for that one frame (see set_status in direct_p2p.c).
+ * Render it fresh each frame; do not cache the contents. */
 const char* DirectP2P_GetStatusText(void);
 
 /* R-1: called by netplay.c when the post-handoff MIST handshake rejects
@@ -347,6 +360,30 @@ uint32_t DirectP2P_TestHook_LastRaceMs(void);
  * (the same one netplay.c's EXITING pass fires) so a harness can drive
  * notify-failure -> teardown -> FAILED_HANDSHAKE -> one FAIL report. */
 void DirectP2P_TestHook_RunTeardown(void);
+
+/* Task #147: the straggler slot — the machinery that keeps a port-map
+ * worker which overran its budget JOINABLE (instead of detached) so
+ * every later upnp_worker_fn spawn can refuse to run into miniupnpc's /
+ * natpmp's process globals while it still executes.
+ *
+ *   StragglerSim      — occupy the real slot with a controllable thread
+ *                       (returns false if the slot already holds a
+ *                       running straggler, or on spawn failure).
+ *   StragglerRelease  — let the simulated straggler exit.
+ *   Quiescent         — the exact predicate the spawn gates call
+ *                       (portmap_backends_quiescent): reaps a finished
+ *                       straggler for free, false while one runs.
+ *
+ * The REAL overrun (a worker stuck inside miniupnpc past
+ * PORTMAP_PROBE_BUDGET_MS) cannot be produced in-tree: there is no mock
+ * IGD, and harness builds refuse SSDP by design (upnp_ensure_cached).
+ * These seams pin the slot/park/reap/verdict logic; the call-site gates
+ * are covered by inspection of try_portmap / join_portmap_spawn /
+ * host_thread_fn. Main-thread only, like the teardown paths that park
+ * for real. */
+bool DirectP2P_TestHook_PortmapStragglerSim(void);
+void DirectP2P_TestHook_PortmapStragglerRelease(void);
+bool DirectP2P_TestHook_PortmapQuiescent(void);
 
 /* S7 review H-7.3 / M-5.2: the port-mapping renewal cadence, as a pure
  * function of the lease the gateway GRANTED, so a test can pin it

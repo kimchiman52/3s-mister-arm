@@ -57,8 +57,8 @@ All from `src/netplay/direct_p2p.c` (current lines); labels from
 
 | Terminal state | Status text | Raised at |
 |---|---|---|
-| `DIRECT_P2P_FAILED_STUN` | "Connection failed. Try again." | host: direct_p2p.c:3700, 1173; thread-spawn failure paths in Begin* :2018/:2078; joiner: :1244 |
-| `DIRECT_P2P_FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:5346, 4603 |
+| `DIRECT_P2P_FAILED_STUN` | "Connection failed. Try again." | host worker: direct_p2p.c:3865 (STUN classify), fail-closed nonce/token/encode :3936/:3943/:3962; thread-spawn failure paths in Begin* :5505/:5630 and the S2 auto-retry re-spawn :6143; joiner: :4184/:4222 |
+| `DIRECT_P2P_FAILED_PUNCH` | "Invalid room code." | BeginJoin decode failures, direct_p2p.c:5563, 5576 |
 | `FAILED_SYMMETRIC` | "Could not connect. Try a different network." | joiner bypasses :1152/:1158/:1165 (host side no longer has a terminal gate — same-IP DELIVERs are ignored as stale self-registrations, review H1) |
 | `FAILED_BILATERAL` | "Could not connect. Try a different network." | joiner signaling/punch failures :1189-:1336; host: punch-thread spawn failure :1719, retry-budget exhaustion :2130 (review M1: a single host-side punch failure returns to HOST_WAITING) |
 | `FAILED_HANDSHAKE` | MIST reject reason | R-1 path, :1435 |
@@ -120,7 +120,7 @@ stale registration, so the host now IGNORES it and keeps waiting
 Fix = keep the host alive for as long as it is advertising.
 
 ### 3.1 Persistent re-REGISTER
-`host_rendezvous_thread_fn` (direct_p2p.c:998-1116) now re-REGISTERs
+`host_rendezvous_thread_fn` (direct_p2p.c:3447-3555) now re-REGISTERs
 every `netplay-direct-p2p-register-interval-ms` (default 5 000 ms,
 floor 1 000 ms; config.c defaults block) for the **entire duration of
 HOST_WAITING** — exit on `s_rendezvous_cancel` or on the state leaving
@@ -144,10 +144,11 @@ bilateral fallback could never pair those hosts.
 Every `netplay-direct-p2p-stun-keepalive-ms` (default 20 000 ms, ≤ 0
 disables) while HOST_WAITING, the main thread re-issues a STUN Binding
 Request on the same socket toward the server that answered discovery
-(`host_stun_keepalive_tick`, direct_p2p.c:4586-4602;
+(`host_stun_keepalive_tick`, direct_p2p.c:4753-4769;
 `Stun_SendKeepalive`, stun.c). The probe refreshes the advertised NAT
-mapping; the response is routed through a new STUN gate in
-`host_tick_receive` (direct_p2p.c:1961-1971) — which also fixes a
+mapping; the response is routed through a new STUN gate in the host's
+receive routing (the `DP2P_HOST_DGRAM_STUN` case of
+`host_tick_receive_one`, direct_p2p.c:5244-5249) — which also fixes a
 latent pre-S1 bug where a straggler Binding Response from a slower
 `Stun_Discover` server arriving during HOST_WAITING was captured as
 "the peer" (@1b217758:1295-1322 had no payload validation at all).
@@ -156,7 +157,7 @@ latent pre-S1 bug where a straggler Binding Response from a slower
 last known one, the NAT rebound and the displayed code is already
 dead. We re-encode and **display the NEW code** with status "Network
 changed! Share the NEW code." (`host_handle_stun_rebind`,
-direct_p2p.c:4636-4676), and restart the rendezvous loop under the new
+direct_p2p.c:4822-4862), and restart the rendezvous loop under the new
 session key (cancel+join before mutating the fields it reads).
 Review M2: the rewrite is debounced — a drift commits only when two
 consecutive keepalives report the same new endpoint, so a NAT that
@@ -689,9 +690,9 @@ production room that DoSes itself.
 loop (one RTT to bind, instead of waiting out the 500 ms resend
 cadence). The host receives CHALLENGEs on the **main** thread while
 REGISTER resends are built on the rendezvous **worker** thread, so the
-8-byte cookie crosses via a seqlock (`signal_cookie_publish`, direct_p2p.c:793;
-`signal_cookie_snapshot`, direct_p2p.c:808) and the main thread also
-echoes immediately (`host_handle_challenge`, direct_p2p.c:4968).
+8-byte cookie crosses via a seqlock (`signal_cookie_publish`, direct_p2p.c:844;
+`signal_cookie_snapshot`, direct_p2p.c:859) and the main thread also
+echoes immediately (`host_handle_challenge`, direct_p2p.c:5133).
 `Rendezvous_ParseChallenge` (rendezvous.c:196) validates magic, version,
 type **and** that the frame carries *our* session key (cross-talk +
 forgery gate — the key embeds the S4b nonce), and **zeroes its output on
@@ -1385,7 +1386,7 @@ for the joiner's two attempts. Verified headroom against the callers:
   frames to a derived bound**: it is now
   `DirectP2P_OrchWorstCaseMs()` plus `NAV_ORCH_TIMEOUT_MARGIN_MS`, summed
   from the orchestrator's own live clamped budgets in
-  `DirectP2P_OrchWorstCaseMsForRole` (`direct_p2p.c:6490`). At the
+  `DirectP2P_OrchWorstCaseMsForRole` (`direct_p2p.c:6707`). At the
   shipped defaults the joiner's deadline is 31 800 ms (1 908 frames), not
   150 000 ms. 18 400 ms of race against 31 800 ms is 1.7x headroom rather
   than 8.2x — still comfortable, and the two tail exemptions are now
@@ -1486,7 +1487,7 @@ lines with the per-test banners attributes every one of them:
 | **24** | **many** | two concurrent real races per probe point, each with a real leg. The second review replaced the single pinned skew with seven DERIVED points plus the 1 000 ms control, so the count scales with the probe list rather than being a fixed 4 |
 | **25** | **1** | one real DELIVER-armed leg against the echo peer; confirms |
 | **26** | **1** | one real leg against the echo peer; confirms |
-| 27 | **0** | arms exactly one real leg and punches it, but the target is a **bound, silent sink** — `sink_sock` at `test_bilateral_punch.c:5205` — with `seed_port = 0` at `test_bilateral_punch.c:5239` — nothing ever answers, the race ends EXHAUSTED, and `27-no-punch-from-a-silent-sink` asserts precisely that |
+| 27 | **0** | arms exactly one real leg and punches it, but the target is a **bound, silent sink** — `sink_sock` at `test_bilateral_punch.c:5206` — with `seed_port = 0` at `test_bilateral_punch.c:5240` — nothing ever answers, the race ends EXHAUSTED, and `27-no-punch-from-a-silent-sink` asserts precisely that |
 | 28 | **0** | **runs no race at all**: it calls `DirectP2P_TestHook_RaceBudgetExpired` as a pure function and compares `STUN_PUNCH_CONFIRM_MS` against the literal 600. No socket, no thread, no stepper — which is why task #132 P3 MOVED it out of this harness entirely: it now runs as `unit_race_budget_wrap_safety` in `test_netplay_units.c:1053`, in microseconds |
 | 29 **(REMOVED — relay-only test, deleted with S5, §7)** | **0** | **relay-only**: it set `seed_port = 0` ("no punch leg at all") and `signal_leg = false`, so no candidate was ever armed and the only leg is the relay |
 
@@ -1567,7 +1568,7 @@ Four `NETPLAY_TEST_HOOKS`-only seams make that possible:
 | **28** (M-3) | **N7**: `STUN_PUNCH_CONFIRM_MS` 600 → 0 | *"test28: STUN_PUNCH_CONFIRM_MS is 0, expected the shipped literal 600"* |
 | **29** `test_relay_not_paired_named_separately` (L-1) **(REMOVED, §7)** | **N8**: `NOT_PAIRED` collapsed back into `CONNECT_FAIL_RELAY_REFUSED` | *"test29: relay_fail=P2P_FAIL_RELAY_REFUSED after 4 NOT_PAIRED refusal(s), expected P2P_FAIL_RELAY_NOT_PAIRED"* |
 | **29** (arm delay) **(REMOVED, §7)** | **N9**: `RACE_RELAY_ARM_MS` → 0 | *"test29: the relay leg armed at t+2 ms with no punch candidate in the race; it must not arm before RACE_RELAY_ARM_MS (2500 ms)"* |
-| `run_punch_leg_offer_test` — **`--test-stun-mock`, not this harness** | the stepper's source-IP gate removed — the `NET_GetAddressString` compare at `stun.c:859` and its `return false` at `stun.c:860` | `--test-bilateral-punch` stays at exit **0** with zero harness FAILs: every leg it punches is loopback-to-loopback, so the source IP always matches and the gate is never the thing that rejects. The 4 reds are all in **`--test-stun-mock`** (exit **1**), from `test_stun_mock.c:739`, driven at `:1377`, in this order: *"a valid payload from the WRONG source IP was consumed"*, *"a valid payload from the WRONG source IP confirmed the leg"*, *"a wrong-token punch CONFIRMED the leg (S4a fail-closed broken)"*, *"leg settled BEFORE the confirmation tail elapsed"* — the last two are knock-ons: the leg is already confirmed (and its `confirm_ms` already stamped) by the stranger's datagram |
+| `run_punch_leg_offer_test` — **`--test-stun-mock`, not this harness** | the stepper's source-IP gate removed — the `NET_GetAddressString` compare at `stun.c:963` and its `return false` at `stun.c:964` | `--test-bilateral-punch` stays at exit **0** with zero harness FAILs: every leg it punches is loopback-to-loopback, so the source IP always matches and the gate is never the thing that rejects. The 4 reds are all in **`--test-stun-mock`** (exit **1**), from `run_punch_leg_offer_test` (`test_stun_mock.c:760`, driven at `:1398`), in this order: *"a valid payload from the WRONG source IP was consumed"*, *"a valid payload from the WRONG source IP confirmed the leg"*, *"a wrong-token punch CONFIRMED the leg (S4a fail-closed broken)"*, *"leg settled BEFORE the confirmation tail elapsed"* — the last two are knock-ons: the leg is already confirmed (and its `confirm_ms` already stamped) by the stranger's datagram |
 | **30** `test_race_failed_rearm_keeps_live_candidate` (M-2 half i) | **N11**: `race_arm_punch` restored to memset-then-validate, the `race_finish_punch` call kept | *"test30: endpoint B stopped being punched 482 ms after it started (10 datagrams), expected at least 2000 ms — a re-arm that FAILS must leave the live candidate armed. race_arm_punch memset the slot BEFORE letting Stun_PunchBegin fail"*. Exit **1**, 1 failure; test 27 and test 31 stay green |
 | **31** `test_race_rearm_releases_address_ref` (M-2 half ii) | **N12**: the `race_finish_punch(c, now);` call deleted from `race_arm_punch`, ordering kept | *"test31: +93 live allocations survived a race that re-armed slot 1 31 time(s), bound is 12. Each un-released NET_Address is 3 live allocations, so this is ~31 leaked address(es)"*. Exit **1**, 1 failure; test 27 and test 30 stay green |
 | **24** (second review, H-A: the re-anchor) | **N13**: the commit grace anchored back at `relay_ready_ms` alone (`grace_anchor` and `punch_still_sending` discarded) | *"test24: SPLIT BRAIN at skew=2950 ms (one owd BEFORE the relay-commit instant) — peer A ended PUNCHED and peer B ended RELAYED"*, then RELAYED-instead-of-PUNCHED at 3100 and 3250. Exit **1**, **6** failures. The punch-send-end probe points stay GREEN — this half and N14 are independently load-bearing |
@@ -1848,9 +1849,9 @@ the neutralisation record.
 
   - The host enters the race **only** from `try_handle_deliver`, and
     only while still in `HOST_WAITING`
-    (`try_handle_deliver` at `src/netplay/direct_p2p.c:4853`,
-    `HOST_WAITING` gate at `:4279`, `host_bilateral_punch_thread_fn`
-    spawn at `:4372`). *[The three numbers previously here — `:3821`,
+    (`try_handle_deliver` at `src/netplay/direct_p2p.c:5018`,
+    `HOST_WAITING` gate at `:5022`, `host_bilateral_punch_thread_fn`
+    spawn at `:5115`). *[The three numbers previously here — `:3821`,
     `:3658`, `:3751` — named a thread-join line, a timings assignment and
     a log argument; none of them was ever this claim's evidence. Repointed
     onto the code that is, not shifted.]*
@@ -2208,10 +2209,10 @@ at once.
 
 ### 9.4 One mapping struct, three backends
 
-`UpnpMapping` gained two fields (upnp.h:14-39): `backend`
+`UpnpMapping` gained two fields (upnp.h:25-49): `backend`
 (`PortMapBackend` NONE/UPNP/NATPMP/PCP) and `lifetime_s`.
 
-- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:2585),
+- **Teardown dispatches** through `portmap_remove` (direct_p2p.c:2624),
   and every removal site goes through it. `Upnp_RemoveMapping` and
   `Natpmp_RemoveMapping` each additionally **refuse** a mapping they do
   not own. This is not defensive decoration: on a router that speaks
@@ -2227,7 +2228,7 @@ at once.
   existing `preferred_external = s_upnp_mapping.external_port` line
   already did.
 - **The renewal interval now follows the granted lease**
-  (`portmap_renew_interval_ms`, direct_p2p.c:2977). RFC 6886 §3.3: "The
+  (`portmap_renew_interval_ms`, direct_p2p.c:3108). RFC 6886 §3.3: "The
   NAT gateway MAY reduce the lifetime from what the client requested."
   A router granting 120 s against our 3600 s request would have
   silently lost the mapping 28 minutes before a fixed half-hour timer
@@ -2569,25 +2570,31 @@ runs on Linux.
   is treated the same way, and the mapping from ICMP to errno was not
   verified on the MiSTer kernel.
 - **(L-3) The PCP nonce globals are single-writer by convention, and a
-  detached straggler followed by a SECOND PROBE breaks the convention.**
-  The THREADING invariant at `natpmp.c:392-459` argues that a probe
-  worker is either joined or detached-and-abandoned, and that a detached
-  straggler can never be followed by a renewal. That covers a *renewal*.
-  It does not cover a second *probe*, and the second probe is reachable:
-  `SDL_DetachThread` (`direct_p2p.c:2702`) abandons the timed-out
-  worker, and `try_portmap` returns false **without** adopting the
-  result — the `s_upnp_mapping` assignment is on the joined path only
-  (`direct_p2p.c:2611`) — so `s_upnp_mapping.active` stays false; the
-  FAILED_STUN auto-retry re-spawns `host_thread_fn`
-  (`direct_p2p.c:5734`); the "reuse the live mapping" shortcut is gated
-  on that same `s_upnp_mapping` flag (`direct_p2p.c:3475`) and is
-  therefore skipped; and `try_portmap` runs again (`direct_p2p.c:3618`),
-  spawning a second worker into `Natpmp_AddMapping` while the straggler
-  may still be inside it. `s_pcp_nonce` / `s_pcp_nonce_valid` /
-  `s_pcp_nonce_port` (`s_pcp_nonce` is at `natpmp.c:496`) and
-  `s_epoch_reset_pending` (`natpmp.c:563`) then have two unsynchronised
+  detached straggler followed by a SECOND PROBE used to break the
+  convention. CLOSED (task #147).** The THREADING invariant at
+  `natpmp.c:392-474` used to cover only a straggler followed by a
+  *renewal*; a straggler followed by a second *probe* was reachable
+  (timed-out worker detached, `s_upnp_mapping.active` never set, the
+  FAILED_STUN auto-retry re-probes into the backend the straggler is
+  still inside). Bounding it meant either joining the straggler before
+  the second probe or putting a mutex round the block, and the former
+  was done: the timed-out worker is no longer `SDL_DetachThread`'ed but
+  parked joinable in a single straggler slot
+  (`portmap_straggler_park`, `direct_p2p.c:2718`, into
+  `s_portmap_straggler_thread`, `direct_p2p.c:468`), and the probe
+  spawn sites refuse to start a second worker until
+  `portmap_backends_quiescent()` (`direct_p2p.c:2696`) has joined it —
+  the host ladder and the joiner's #121 rescue each test
+  `portmap_backends_quiescent` first (`direct_p2p.c:3754`, `:2865`).
+  `upnp_renew_tick`'s renewal spawn deliberately consults no
+  gate: a renewal requires a live mapping, and "straggler running"
+  excludes "mapping active" (the comment at `direct_p2p.c:3367` carries
+  the argument). The race taxonomy is kept as the record of what a
+  bypassed spawn gate would produce: `s_pcp_nonce` / `s_pcp_nonce_valid`
+  / `s_pcp_nonce_port` (`s_pcp_nonce` is at `natpmp.c:511`) and
+  `s_epoch_reset_pending` (`natpmp.c:578`) would have two unsynchronised
   writers, and `pcp_nonce_acquire`'s check-then-mint is not atomic.
-  **Worst case:**
+  **Worst case, had a gate been bypassed:**
   the persisted nonce and the nonce the router has on file disagree —
   either torn (one thread copying out while the other writes in) or lost
   (both mint, only the last is kept). RFC 6887 §11.3 answers a MAP whose
@@ -2598,9 +2605,8 @@ runs on Linux.
   fall-through to STUN. It is **not** memory unsafety — every access is a
   fixed-size `memcpy` over a static 12-byte array — and reply matching is
   unaffected, because `Natpmp_ParsePcpMapResponse` compares against the
-  request's local copy. **Not bounded in code.** Bounding it means either
-  joining the straggler before the second probe or putting a mutex round
-  the block; neither was done. Documented at the site.
+  request's local copy. Documented at the site (the THREADING comment's
+  KNOWN HOLE / CLOSED record in `natpmp.c`).
 
 ## 10. S8 — netns verification harness
 

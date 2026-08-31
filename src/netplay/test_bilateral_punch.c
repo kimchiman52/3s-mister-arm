@@ -60,6 +60,7 @@
 #include "netplay/net_tuning.h"
 #include "netplay/rendezvous.h"
 #include "netplay/room_code.h"
+#include "netplay/stun.h" /* #150, tests 46/47: punch payload construction */
 #include "netplay/upnp.h" /* M-1: Upnp_TestHook_DiscoverAttempts, test 23e */
 #include "port/config/config.h"
 
@@ -7006,6 +7007,405 @@ done:
     return (fail_count == fails_before) ? 0 : 1;
 }
 
+/* --- Test 45: #147 portmap straggler slot ------------------------------ */
+
+/* The slot/park/reap/verdict logic behind the #147 spawn gate:
+ * portmap_backends_quiescent() must be false exactly while a parked
+ * overrun worker still runs, must refuse a second occupant, and must
+ * reap (join + free) a finished straggler on the next query. The REAL
+ * overrun — a worker stuck inside miniupnpc past its budget — cannot be
+ * produced in-tree (no mock IGD; harness builds refuse SSDP by design),
+ * so the simulated straggler occupies the real slot via the same
+ * portmap_straggler_park the production detach sites now call. The three
+ * call-site gates (try_portmap, join_portmap_spawn, host_thread_fn) are
+ * one predicate call each and are covered by inspection, not here. */
+static int test_portmap_straggler_slot(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 45: #147 portmap straggler "
+                    "slot (park -> non-quiescent -> reap)\n");
+    const int fails_before = fail_count;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown(); /* whatever ran before -> IDLE */
+
+    /* Idle baseline: no straggler, backends quiescent. */
+    EXPECT_TRUE("45-quiescent-at-idle", DirectP2P_TestHook_PortmapQuiescent());
+
+    /* Park a running straggler: the spawn-gate predicate must go false
+     * and STAY false while it runs. */
+    if (!DirectP2P_TestHook_PortmapStragglerSim()) {
+        FAIL("45-sim", "could not occupy the straggler slot");
+        return 1;
+    }
+    for (int i = 0; i < 5; i++) {
+        EXPECT_FALSE("45-nonquiescent-while-running",
+                     DirectP2P_TestHook_PortmapQuiescent());
+        SDL_Delay(10);
+    }
+
+    /* The slot holds ONE straggler; a second occupant is refused (the
+     * production park site logs BUG and detaches — reachable only if a
+     * spawn gate were bypassed). */
+    EXPECT_FALSE("45-second-occupant-refused",
+                 DirectP2P_TestHook_PortmapStragglerSim());
+
+    /* Release it: the predicate must flip to quiescent (reaping the
+     * thread for free) within a bounded wait, and stay there. */
+    DirectP2P_TestHook_PortmapStragglerRelease();
+    {
+        const uint32_t start = SDL_GetTicks();
+        bool reaped = false;
+        while ((int)(SDL_GetTicks() - start) < 2000) {
+            if (DirectP2P_TestHook_PortmapQuiescent()) { reaped = true; break; }
+            SDL_Delay(10);
+        }
+        EXPECT_TRUE("45-reaped-after-release", reaped);
+    }
+    EXPECT_TRUE("45-quiescent-stays", DirectP2P_TestHook_PortmapQuiescent());
+    /* And the slot is free for a future overrun again. */
+    EXPECT_TRUE("45-slot-reusable", DirectP2P_TestHook_PortmapStragglerSim());
+    DirectP2P_TestHook_PortmapStragglerRelease();
+    {
+        const uint32_t start = SDL_GetTicks();
+        while ((int)(SDL_GetTicks() - start) < 2000 &&
+               !DirectP2P_TestHook_PortmapQuiescent()) {
+            SDL_Delay(10);
+        }
+    }
+    EXPECT_TRUE("45-clean-exit", DirectP2P_TestHook_PortmapQuiescent());
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 45 OK — straggler slot parks one "
+                "worker, refuses a second, reports non-quiescent while it runs "
+                "and reaps it on the first query after exit\n");
+        return 0;
+    }
+    return 1;
+}
+
+/* --- Tests 46/47: #150 HOST_WAITING receive batch + punch-gate recovery  */
+
+/* Send `len` raw bytes to 127.0.0.1:port from `sock`. */
+static bool send_raw_to_host(int sock, uint16_t port, const void* buf, int len) {
+    struct sockaddr_in to;
+    memset(&to, 0, sizeof(to));
+    to.sin_family = AF_INET;
+    to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    to.sin_port = htons(port);
+    return sendto(sock, (const char*)buf, len, 0, (struct sockaddr*)&to,
+                  sizeof(to)) == len;
+}
+
+/* Derive the authenticated 17-byte punch payload from the PUBLISHED room
+ * code — the same inputs a real joiner has (no peeking at statics). */
+static bool host_code_punch_payload(const char* code,
+                                    uint8_t out[STUN_PUNCH_PAYLOAD_LEN]) {
+    uint32_t ip_be = 0, nonce = 0;
+    uint16_t adv_port = 0;
+    uint8_t token[STUN_PUNCH_TOKEN_LEN];
+    if (RoomCode_Decode(code, &ip_be, &adv_port, &nonce) != ROOM_CODE_OK)
+        return false;
+    if (!Rendezvous_DerivePunchToken(ip_be, adv_port, nonce, token))
+        return false;
+    Stun_BuildPunchPayload(token, out);
+    return true;
+}
+
+/* Test 46: the #150 bounded batch. Pre-#150, host_tick_receive drained
+ * ONE datagram per frame, so ten garbage datagrams queued ahead of the
+ * legitimate joiner's punch cost ten frames before the punch was even
+ * looked at — a flood at the advertised endpoint starved the joiner
+ * behind the 256 KB receive buffer. Now one Tick (two allowed below, for
+ * SDL_net's receive-pump slack) must drain past the garbage, accept the
+ * punch, echo it and hand off. */
+static int test_host_batch_drain(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 46: #150 HOST_WAITING batch "
+                    "drain (garbage ahead of the joiner's punch)\n");
+    const int fails_before = fail_count;
+    int rc = 0;
+    int client = -1;
+    unsigned short client_port = 0;
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+    /* No rendezvous mock: an empty signal URL keeps the worker unspawned
+     * (it logs its own cause) — this test is about the receive path. */
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, "");
+    s_mock_discover_calls = 0;
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+    DirectP2P_TestHook_ResetHandoff();
+    /* A unit test must not mutate the LAN (see test 13's rationale). */
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
+    DirectP2P_BeginHost(0);
+    if (!wait_for_state(DIRECT_P2P_HOST_WAITING, 25000)) {
+        FAIL("46-host-waiting", "host never reached HOST_WAITING");
+        rc = 1;
+        goto done;
+    }
+
+    uint8_t punch[STUN_PUNCH_PAYLOAD_LEN];
+    if (!host_code_punch_payload(DirectP2P_GetHostCode(), punch)) {
+        FAIL("46-derive", "could not derive the punch payload from the host code");
+        rc = 1;
+        goto done;
+    }
+    const uint16_t host_port = s_mock_discover_ports[0];
+    if (host_port == 0) {
+        FAIL("46-host-port", "mock STUN discover recorded no bound port");
+        rc = 1;
+        goto done;
+    }
+
+    client = open_udp_on_localhost(&client_port);
+    if (client < 0) {
+        FAIL("46-client", "failed to bind the joiner-side socket");
+        rc = 1;
+        goto done;
+    }
+
+    /* Ten garbage datagrams FIRST (not punch-shaped: uncharged noise),
+     * then the authenticated punch behind them — same source, FIFO. */
+    {
+        uint8_t garbage[12];
+        memset(garbage, 0xAB, sizeof(garbage));
+        for (int i = 0; i < 10; i++) {
+            if (!send_raw_to_host(client, host_port, garbage, (int)sizeof(garbage))) {
+                FAIL("46-send-garbage", "sendto failed");
+                rc = 1;
+                goto done;
+            }
+        }
+        if (!send_raw_to_host(client, host_port, punch, STUN_PUNCH_PAYLOAD_LEN)) {
+            FAIL("46-send-punch", "sendto failed");
+            rc = 1;
+            goto done;
+        }
+    }
+    SDL_Delay(150); /* let the 11 datagrams reach SDL_net's receive queue */
+
+    /* THE PIN: at most two Ticks. Eleven datagrams fit one
+     * HOST_TICK_RECV_BATCH (16); the second Tick only covers SDL_net
+     * pumping the tail in late. One-per-frame draining needs eleven. */
+    DirectP2P_Tick();
+    if (DirectP2P_GetState() != DIRECT_P2P_HANDOFF) {
+        SDL_Delay(50);
+        DirectP2P_Tick();
+    }
+    if (DirectP2P_GetState() != DIRECT_P2P_HANDOFF) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 46-batch: state %d after two Ticks "
+                "with 10 garbage + 1 punch queued — the punch behind the garbage "
+                "was not reached (one-datagram-per-frame drain?)\n",
+                (int)DirectP2P_GetState());
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+    {
+        char hip[64] = { 0 };
+        uint16_t hport = 0;
+        int hplayer = 0, hcount = 0;
+        DirectP2P_TestHook_LastHandoff(hip, (int)sizeof(hip), &hport, &hplayer,
+                                       &hcount);
+        EXPECT_TRUE("46-handoff-endpoint",
+                    hport == client_port && strcmp(hip, "127.0.0.1") == 0);
+        EXPECT_TRUE("46-handoff-player1", hplayer == 1);
+        EXPECT_TRUE("46-one-handoff", hcount == 1);
+    }
+    /* The legitimate joiner RECOVERS: the byte-identical authenticated
+     * echo must come back to it (that is what its Stun_HolePunch loop
+     * requires to return success). */
+    {
+        bool echoed = false;
+        const uint32_t start = SDL_GetTicks();
+        while ((int)(SDL_GetTicks() - start) < 2000 && !echoed) {
+            fd_set rfds;
+            struct timeval tv = { 0, 100 * 1000 };
+            FD_ZERO(&rfds);
+            FD_SET(client, &rfds);
+            if (select(client + 1, &rfds, NULL, NULL, &tv) <= 0) continue;
+            uint8_t rbuf[64];
+            struct sockaddr_in from;
+            socklen_t fl = sizeof(from);
+            const int n = (int)recvfrom(client, (char*)rbuf, sizeof(rbuf), 0,
+                                        (struct sockaddr*)&from, &fl);
+            if (n == STUN_PUNCH_PAYLOAD_LEN &&
+                memcmp(rbuf, punch, STUN_PUNCH_PAYLOAD_LEN) == 0) {
+                echoed = true;
+            }
+        }
+        EXPECT_TRUE("46-punch-echoed", echoed);
+    }
+
+done:
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    if (client >= 0) close_sock(client);
+
+    if (rc == 0 && fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 46 OK — one frame drained past 10 "
+                "garbage datagrams, accepted the authenticated punch behind them "
+                "and echoed it to the joiner\n");
+        return 0;
+    }
+    return 1;
+}
+
+/* Test 47: the punch-gate mute -> re-roll -> legitimate-joiner-recovers
+ * chain, end to end over the real socket. Previously only the gate's
+ * accounting was unit-tested (PunchGateNoteBad etc.); the receive-path
+ * consequences — a muted source's AUTHENTICATED punch being suppressed,
+ * and the re-rolled code accepting a fresh punch — were not. */
+static int test_punch_gate_reroll_recovery(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 47: #150 punch-gate mute -> "
+                    "re-roll -> recovery over the wire\n");
+    const int fails_before = fail_count;
+    int rc = 0;
+    int client = -1;
+    unsigned short client_port = 0;
+    char code1[ROOM_CODE_BUF_LEN] = { 0 };
+
+    NET_Init();
+    DirectP2P_Init();
+    DirectP2P_TestHook_RunTeardown();
+    Config_SetString(CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_URL, "");
+    s_mock_discover_calls = 0;
+    DirectP2P_TestHook_SetStunDiscover(mock_stun_discover);
+    DirectP2P_TestHook_ResetHandoff();
+    /* Same LAN-safety rationale as test 13. */
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_UPNP, true);
+    Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
+    DirectP2P_BeginHost(0);
+    if (!wait_for_state(DIRECT_P2P_HOST_WAITING, 25000)) {
+        FAIL("47-host-waiting", "host never reached HOST_WAITING");
+        rc = 1;
+        goto done;
+    }
+    SDL_strlcpy(code1, DirectP2P_GetHostCode(), sizeof(code1));
+
+    uint8_t punch1[STUN_PUNCH_PAYLOAD_LEN];
+    if (!host_code_punch_payload(code1, punch1)) {
+        FAIL("47-derive", "could not derive the punch payload from the host code");
+        rc = 1;
+        goto done;
+    }
+    uint8_t bad_punch[STUN_PUNCH_PAYLOAD_LEN];
+    memcpy(bad_punch, punch1, sizeof(bad_punch));
+    bad_punch[STUN_PUNCH_PAYLOAD_LEN - 1] ^= 0xFF; /* wrong token, right shape */
+
+    const uint16_t host_port = s_mock_discover_ports[0];
+    client = open_udp_on_localhost(&client_port);
+    if (host_port == 0 || client < 0) {
+        FAIL("47-setup", "no host port / no client socket");
+        rc = 1;
+        goto done;
+    }
+
+    /* 30 bad-token punches (> HOST_PUNCH_SRC_MAX_BAD = 24) followed by a
+     * VALID one — FIFO from one source, so the mute engages before the
+     * valid punch is reached: it must be SUPPRESSED, not handed off. */
+    for (int i = 0; i < 30; i++) {
+        (void)send_raw_to_host(client, host_port, bad_punch, STUN_PUNCH_PAYLOAD_LEN);
+    }
+    (void)send_raw_to_host(client, host_port, punch1, STUN_PUNCH_PAYLOAD_LEN);
+    SDL_Delay(150);
+    for (int i = 0; i < 12; i++) {
+        DirectP2P_Tick();
+        SDL_Delay(10);
+    }
+    if (DirectP2P_GetState() != DIRECT_P2P_HOST_WAITING) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 47-mute: state %d — a valid punch "
+                "from a source that just ground 30 bad tokens was ANSWERED; the "
+                "mute did not suppress it\n",
+                (int)DirectP2P_GetState());
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+
+    /* 40 more bad punches push the session total past
+     * HOST_PUNCH_TOTAL_REROLL (64): the host must re-roll the room code
+     * (the displayed code CHANGES — the user-visible recovery). */
+    for (int i = 0; i < 40; i++) {
+        (void)send_raw_to_host(client, host_port, bad_punch, STUN_PUNCH_PAYLOAD_LEN);
+    }
+    SDL_Delay(150);
+    {
+        bool rerolled = false;
+        const uint32_t start = SDL_GetTicks();
+        while ((int)(SDL_GetTicks() - start) < 5000) {
+            DirectP2P_Tick();
+            if (DirectP2P_GetState() != DIRECT_P2P_HOST_WAITING) break;
+            if (strcmp(DirectP2P_GetHostCode(), code1) != 0) { rerolled = true; break; }
+            SDL_Delay(10);
+        }
+        if (!rerolled) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 47-reroll: the room code never "
+                    "changed after 70 bad-token punches (state %d)\n",
+                    (int)DirectP2P_GetState());
+            fail_count++;
+            rc = 1;
+            goto done;
+        }
+    }
+
+    /* The re-roll cleared every mute and re-derived the token: a joiner
+     * holding the NEW code — same source IP that was muted — recovers. */
+    {
+        uint8_t punch2[STUN_PUNCH_PAYLOAD_LEN];
+        if (!host_code_punch_payload(DirectP2P_GetHostCode(), punch2)) {
+            FAIL("47-derive2", "could not derive a payload from the re-rolled code");
+            rc = 1;
+            goto done;
+        }
+        if (!send_raw_to_host(client, host_port, punch2, STUN_PUNCH_PAYLOAD_LEN)) {
+            FAIL("47-send2", "sendto failed");
+            rc = 1;
+            goto done;
+        }
+        if (!tick_until_state(DIRECT_P2P_HANDOFF, 5000)) {
+            fprintf(stderr,
+                    "[test_bilateral_punch] FAIL: 47-recover: state %d — the punch "
+                    "derived from the RE-ROLLED code was not accepted from the "
+                    "formerly muted source\n",
+                    (int)DirectP2P_GetState());
+            fail_count++;
+            rc = 1;
+            goto done;
+        }
+        char hip[64] = { 0 };
+        uint16_t hport = 0;
+        int hplayer = 0, hcount = 0;
+        DirectP2P_TestHook_LastHandoff(hip, (int)sizeof(hip), &hport, &hplayer,
+                                       &hcount);
+        EXPECT_TRUE("47-handoff-endpoint",
+                    hport == client_port && strcmp(hip, "127.0.0.1") == 0);
+        EXPECT_TRUE("47-one-handoff", hcount == 1);
+    }
+
+done:
+    DirectP2P_TestHook_SetStunDiscover(NULL);
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
+    if (client >= 0) close_sock(client);
+
+    if (rc == 0 && fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 47 OK — mute suppressed the ground "
+                "source's valid punch, 70 bad tokens re-rolled the code, and the "
+                "new code's punch paired from the same source\n");
+        return 0;
+    }
+    return 1;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -7040,6 +7440,9 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_midsession_failure_taxonomy(); /* task #144: test 42 */
     rc |= test_session_fail_code_mapping(); /* task #144 review Item A: test 43 */
     rc |= test_notify_session_failed_first_wins(); /* task #144 review Item B: test 44 */
+    rc |= test_portmap_straggler_slot();      /* task #147: test 45 */
+    rc |= test_host_batch_drain();            /* task #150: test 46 */
+    rc |= test_punch_gate_reroll_recovery();  /* task #150: test 47 */
     rc |= test_host_cookie_rejected(); /* last: ~31 s of wall clock */
 
     if (fail_count > 0 || rc != 0) {

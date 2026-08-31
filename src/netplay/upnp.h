@@ -28,6 +28,16 @@ typedef struct {
     uint16_t internal_port; // Host byte order
     bool active;            // True if mapping was created
     PortMapBackend backend; // S7: which protocol installed it
+    /* #150: the transport protocol the mapping was CREATED with, so
+     * Upnp_RemoveMapping deletes the entry it actually owns instead of
+     * hardcoding "UDP" (Upnp_AddMapping has always taken the protocol as
+     * a parameter; the remove side silently assumed UDP). Empty string
+     * (memset-zeroed struct, or a pre-#150 mapping) means UDP — every
+     * mapping this program has ever created is UDP, so the fallback is
+     * exact, not a guess. NAT-PMP/PCP mappings are UDP by the request
+     * opcode itself (natpmp.c) and never reach Upnp_RemoveMapping (the
+     * backend gate there refuses them). */
+    char protocol[8];
     /* S7: lifetime the gateway actually GRANTED, in seconds; 0 when the
      * backend does not report one (UPnP — miniupnpc's AddPortMapping has
      * no granted-lease out-parameter, so the caller falls back to its

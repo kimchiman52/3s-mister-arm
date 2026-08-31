@@ -432,6 +432,42 @@ static uint16_t        s_join_portmap_port = 0;
  * express mutual exclusion; this flag can. */
 static SDL_AtomicInt   s_join_portmap_busy;
 
+/* #147: the ONE port-map worker that overran its budget and was left
+ * running — parked here JOINABLE instead of SDL_DetachThread'ed.
+ *
+ * Why parking instead of detaching: a worker that overruns is still
+ * executing inside miniupnpc's cached-IGD statics (upnp.c's
+ * s_cached_urls / s_cached_data / s_cache_valid, with FreeUPNPUrls on
+ * its error path) or natpmp.c's nonce/epoch statics. The REMOVAL and
+ * RENEWAL sides were already gated on quiescence
+ * (upnp_renew_join_and_discard, join_portmap_reset), but SPAWNING was
+ * not: DirectP2P_Cancel -> DirectP2P_BeginHost clears
+ * s_portmap_failed_port and runs a fresh upnp_worker_fn into the same
+ * statics — two threads populating and freeing one cache, the
+ * data-race / double-free class natpmp.c's L-3 comment records. A
+ * detached thread's completion is unobservable (SDL_DetachThread), so
+ * the only way a later session can KNOW the backends are quiescent is
+ * to keep the handle. portmap_backends_quiescent below reaps it for
+ * free once it exits; until then every upnp_worker_fn spawn site
+ * refuses to start a second worker.
+ *
+ * AT MOST ONE straggler can exist, by construction: all three spawn
+ * sites (try_portmap, join_portmap_spawn, upnp_renew_tick's renewal —
+ * the last needs no explicit gate, see the note there) are closed while
+ * this slot is occupied, so there is never a second running worker to
+ * park. portmap_straggler_park asserts that loudly rather than assuming
+ * it.
+ *
+ * Threading: same hand-off convention as s_join_portmap_thread above.
+ * Worker-thread touches (try_portmap's park, join_portmap_spawn's gate,
+ * join_portmap_collect's park) happen while that worker runs; every
+ * main-thread touch (join_portmap_reset, upnp_renew_join_and_discard —
+ * both called only from Cancel, teardown, BeginHost/BeginJoin and Init)
+ * happens after the orchestrator worker was SDL_WaitThread'ed, so no
+ * two threads ever access the slot concurrently. */
+static SDL_Thread*     s_portmap_straggler_thread = NULL;
+static struct UpnpJob* s_portmap_straggler_job = NULL;
+
 /* R-1: latched by DirectP2P_NotifySessionRejected (game thread) when the
  * post-handoff MIST handshake rejects the peer. Consumed by
  * direct_p2p_on_teardown, which then parks in FAILED_HANDSHAKE instead
@@ -551,10 +587,20 @@ static void set_status(const char* msg) {
         s_status[0] = '\0';
         return;
     }
-    /* snprintf writes NUL last; to avoid torn mid-string reads from the
-     * main thread, zero the buffer first. Single-byte atomicity is the
-     * only guarantee we need because DirectP2P_GetStatusText copies out
-     * of the buffer eagerly. */
+    /* Written from worker threads while the main thread reads s_status IN
+     * PLACE — DirectP2P_GetStatusText returns the buffer itself (the
+     * overlay renders straight out of it), it does not copy. #150: an
+     * earlier version of this comment claimed the reader "copies out of
+     * the buffer eagerly", which the API has never done — do not design
+     * against that. What this write pattern actually guarantees is only:
+     *   (a) the buffer is never un-NUL-terminated (len is clamped below
+     *       sizeof and the memset clears the tail first), so a racing
+     *       reader cannot run off the end;
+     *   (b) a reader that races the write may see an empty or torn
+     *       status for the frame the write straddles. Accepted: this is
+     *       a human-readable line that settles by the next frame.
+     * A worker must never put anything here whose momentary tearing
+     * matters. */
     size_t len = strlen(msg);
     if (len >= sizeof(s_status)) len = sizeof(s_status) - 1;
     memset(s_status, 0, sizeof(s_status));
@@ -618,12 +664,15 @@ static int s_host_unauth_drops = 0;
  * punch gate: the host answered every guess (a correct token is
  * accepted and handed off, a wrong one is silently dropped and the host
  * keeps waiting — deliberately with NO wall-clock budget), which makes
- * it a perfect brute-force oracle. host_tick_receive drains ~60
- * datagrams/second, and with a UPnP mapping the advertised port is
- * STABLE, so a past opponent could grind at it months later.
+ * it a perfect brute-force oracle. host_tick_receive drains up to
+ * HOST_TICK_RECV_BATCH datagrams per frame (~960/second since #150;
+ * ~60/second when this block was written), and with a UPnP mapping the
+ * advertised port is STABLE, so a past opponent could grind at it
+ * months later.
  *
- * The v3 room code widened the nonce to 32 bits, which alone takes a
- * 60/s grind from <=68 seconds to >=2.2 years. This throttle is the
+ * The v3 room code widened the nonce to 32 bits, which alone takes an
+ * unthrottled grind from <=68 seconds (12-bit nonce at 60/s) to years
+ * at 60/s and ~52 days even at #150's 960/s drain. This throttle is the
  * belt to that suspenders, and it closes the asymmetry the reviewer
  * flagged: the session-KEY path was already properly bounded (no oracle
  * + MAX_NEW_KEYS_PER_IP) while the punch path was not bounded at all.
@@ -661,7 +710,9 @@ static int s_host_unauth_drops = 0;
  * out again; friend now punches with the RIGHT token and is still
  * dropped, forever, with no diagnosis. A bounded mute is also
  * arithmetically sufficient: 24 attempts per 60 s is 0.4/s versus the
- * unthrottled 60/s, so a 32-bit nonce needs ~340 years per source IP,
+ * unthrottled drain rate (~960/s at #150's HOST_TICK_RECV_BATCH — the
+ * mute is what binds, so the drain-rate change does not move this
+ * number), so a 32-bit nonce needs ~340 years per source IP,
  * and a 10,000-node botnet still needs ~12 days against a code that
  * only exists while the OSD screen is up.
  *
@@ -2631,6 +2682,54 @@ static int SDLCALL upnp_worker_fn(void* data) {
  * cascade sums the same symbol the deadline below enforces. */
 #define PORTMAP_PROBE_BUDGET_MS (UPNP_PROBE_BUDGET_MS + NATPMP_PROBE_BUDGET_MS)
 
+/* --- #147: the straggler slot ------------------------------------------ */
+
+/* TRUE when no overrun port-map worker is still executing — i.e. the
+ * miniupnpc / natpmp process globals have a single user again. Reaps a
+ * parked straggler that has since finished (SDL_WaitThread on a COMPLETE
+ * thread returns without waiting, and the job heap block is reclaimed —
+ * the old detach path leaked it by design). NON-BLOCKING in every case.
+ *
+ * Every upnp_worker_fn spawn decision must consult this; the removal
+ * gates (join_portmap_reset / upnp_renew_join_and_discard verdicts) stay
+ * as they are and cover the release side. */
+static bool portmap_backends_quiescent(void) {
+    if (s_portmap_straggler_thread == NULL) {
+        return true;
+    }
+    if (SDL_GetThreadState(s_portmap_straggler_thread) != SDL_THREAD_COMPLETE) {
+        return false; /* still inside miniupnpc / natpmp */
+    }
+    SDL_WaitThread(s_portmap_straggler_thread, NULL);
+    s_portmap_straggler_thread = NULL;
+    if (s_portmap_straggler_job != NULL) {
+        SDL_free(s_portmap_straggler_job);
+        s_portmap_straggler_job = NULL;
+    }
+    return true;
+}
+
+/* Park an overrun worker joinable. Replaces every SDL_DetachThread of an
+ * upnp_worker_fn thread; `job` ownership moves to the slot (freed on
+ * reap). The slot being occupied by a RUNNING straggler here is
+ * unreachable by construction (see the slot's comment) — if it ever
+ * happens the new thread is detached exactly as pre-#147, with a loud
+ * log, rather than losing track of the old one. */
+static void portmap_straggler_park(SDL_Thread* t, struct UpnpJob* job) {
+    if (t == NULL) {
+        return;
+    }
+    if (!portmap_backends_quiescent()) {
+        SDL_Log("[direct_p2p] BUG: two overrun port-map workers exist at once — "
+                "the #147 spawn gate should make this impossible; detaching the "
+                "newer one (its job block leaks until it exits)");
+        SDL_DetachThread(t);
+        return;
+    }
+    s_portmap_straggler_thread = t;
+    s_portmap_straggler_job = job;
+}
+
 /* Attempt a port mapping (UPnP, then NAT-PMP/PCP). Returns true on
  * success (s_upnp_mapping.active is set and s_upnp_mapping.backend says
  * which protocol won). Returns false on user-disabled, no backend
@@ -2695,11 +2794,12 @@ static bool try_portmap(uint16_t internal_port, uint16_t preferred_external) {
             SDL_Log("[direct_p2p] WARNING: port-mapping attempt timed out after %u ms; "
                     "falling back to STUN.",
                     (unsigned)PORTMAP_PROBE_BUDGET_MS);
-            /* Detach and leak the job struct — the side thread owns it
-             * until it exits, at which point the OS reclaims everything.
-             * Any mapping it eventually registers (UPnP or NAT-PMP/PCP —
-             * both request a 3600 s lease) will expire on its own. */
-            SDL_DetachThread(t);
+            /* #147: park the overrun worker joinable instead of detaching
+             * it — it is still inside miniupnpc / natpmp process globals,
+             * and the spawn gates key off this slot. Any mapping it
+             * eventually registers (UPnP or NAT-PMP/PCP — both request a
+             * 3600 s lease) will expire on its own. */
+            portmap_straggler_park(t, job);
             return false;
         }
         SDL_Delay(20);
@@ -2742,10 +2842,37 @@ static bool try_portmap(uint16_t internal_port, uint16_t preferred_external) {
  *     #121 from being able to trade one quadrant for another. */
 static void join_portmap_spawn(uint16_t internal_port) {
     if (s_join_portmap_spawned) return;
-    if (internal_port == 0) return;
+    if (internal_port == 0) {
+        /* #150: Stun_Discover could not learn the OS-bound local port
+         * (getsockname failed on every handle) and now reports 0 instead
+         * of fabricating public_port. Asking the gateway to map a port
+         * the socket is not bound to could never rescue anything, so the
+         * skip is correct — but on the symmetric NAT this rescue exists
+         * for, it must be SAID, not silent. Not latched: attempt 2
+         * re-discovers on a fresh socket and may learn a real port. */
+        if (s_work.stun.port_disagreement) {
+            Netplay_LogConnectEventMT(
+                "[netplay-connect] PORTMAP joiner rescue skipped: local port "
+                "unknown (getsockname failed) — refusing to request a mapping "
+                "for a fabricated port; this attempt advertises the "
+                "STUN-observed endpoint");
+        }
+        return;
+    }
     if (s_upnp_mapping.active && s_upnp_mapping.internal_port == internal_port) return;
     if (s_portmap_failed_port == internal_port) return;
     if (!s_work.stun.port_disagreement) return;
+    if (!portmap_backends_quiescent()) {
+        /* #147: an overrun worker from an earlier session is still inside
+         * the backend libraries' process globals — same gate as
+         * host_thread_fn's, same reason. Not latched, and
+         * s_join_portmap_spawned stays false: attempt 2 re-checks a slot
+         * that reaps itself when the straggler exits. */
+        Netplay_LogConnectEventMT(
+            "[netplay-connect] PORTMAP joiner rescue skipped: a previous port-map "
+            "attempt is still running inside the backend libraries (#147 spawn gate)");
+        return;
+    }
 
     struct UpnpJob* job = (struct UpnpJob*)SDL_calloc(1, sizeof(struct UpnpJob));
     if (job == NULL) return;
@@ -2814,12 +2941,13 @@ static uint16_t join_portmap_collect(void) {
 
     if (SDL_GetThreadState(s_join_portmap_thread) != SDL_THREAD_COMPLETE) {
         SDL_Log("[direct_p2p] joiner: port-map probe still in flight at the retry "
-                "boundary — detaching it rather than paying up to %u ms to find out; "
+                "boundary — parking it rather than paying up to %u ms to find out; "
                 "this attempt advertises the STUN-observed endpoint",
                 (unsigned)PORTMAP_PROBE_BUDGET_MS);
-        SDL_DetachThread(s_join_portmap_thread);
+        /* #147: parked joinable, not detached — see s_portmap_straggler_thread. */
+        portmap_straggler_park(s_join_portmap_thread, s_join_portmap_job);
         s_join_portmap_thread = NULL;
-        s_join_portmap_job = NULL; /* owned by the detached thread now */
+        s_join_portmap_job = NULL; /* owned by the straggler slot now */
         return 0;
     }
 
@@ -2860,9 +2988,10 @@ static uint16_t join_portmap_collect(void) {
 }
 
 /* Teardown/reset disposition. Same zero-wait rule: a probe still running
- * when the session ends is detached, never joined. Callers that hold the
- * main thread (DirectP2P_Cancel, direct_p2p_on_teardown) have already
- * joined the join worker, so this cannot race a spawn.
+ * when the session ends is parked (#147: joinable, in the straggler
+ * slot), never joined here. Callers that hold the main thread
+ * (DirectP2P_Cancel, direct_p2p_on_teardown) have already joined the
+ * join worker, so this cannot race a spawn.
  *
  * RETURNS TRUE WHEN THE PORT-MAP BACKENDS ARE QUIESCENT — i.e. no probe
  * was left running. This mirrors upnp_renew_join_and_discard's contract
@@ -2889,7 +3018,9 @@ static bool join_portmap_reset(void) {
                 SDL_free(s_join_portmap_job);
             }
         } else {
-            SDL_DetachThread(s_join_portmap_thread);
+            /* #147: parked joinable so a later spawn can observe when the
+             * backends actually go quiet, instead of detached-and-lost. */
+            portmap_straggler_park(s_join_portmap_thread, s_join_portmap_job);
             quiescent = false; /* still inside miniupnpc / natpmp */
         }
         s_join_portmap_thread = NULL;
@@ -3063,11 +3194,13 @@ static bool upnp_renew_join_and_discard(void) {
             SDL_WaitThread(s_upnp_renew_thread, NULL);
         } else {
             SDL_Log("[direct_p2p] WARNING: UPnP renewal thread unresponsive after %u ms "
-                    "(router down?) — detaching; router-side mapping removal skipped, "
+                    "(router down?) — parking it; router-side mapping removal skipped, "
                     "the lease expires on its own.",
                     (unsigned)UPNP_RENEW_JOIN_BUDGET_MS);
-            SDL_DetachThread(s_upnp_renew_thread);
-            /* Ownership of the job transfers to the detached worker. */
+            /* #147: parked joinable (straggler slot), not detached — the
+             * next session's spawn gate observes it. Job ownership moves
+             * to the slot. */
+            portmap_straggler_park(s_upnp_renew_thread, s_upnp_renew_job);
             s_upnp_renew_job = NULL;
             joined = false;
         }
@@ -3231,6 +3364,17 @@ static void upnp_renew_tick(void) {
      * upnp_renew_join_and_discard's 2 s join budget. */
     job->backend = s_upnp_mapping.backend;
     job->natpmp_budget_ms = NATPMP_RENEW_BUDGET_MS;
+    /* #147: this spawn needs NO portmap_backends_quiescent() gate, and
+     * deliberately does not call it (the call itself would touch the
+     * straggler slot from the main thread while a join worker may be
+     * touching it). Reaching here requires s_upnp_mapping.active, and a
+     * mapping can only be installed by a probe that the #147 spawn gates
+     * let run — i.e. while the straggler slot was empty. Every site that
+     * parks a straggler (try_portmap timeout, join_portmap_collect,
+     * join_portmap_reset, upnp_renew_join_and_discard) either precedes
+     * the probe that would install a mapping or is followed by the
+     * mapping being memset (Cancel / teardown), so "straggler running"
+     * and "mapping active" are mutually exclusive. */
     s_upnp_renew_thread = SDL_CreateThread(upnp_worker_fn, "PortMapRenew", job);
     if (s_upnp_renew_thread == NULL) {
         SDL_free(job);
@@ -3579,6 +3723,7 @@ static int SDLCALL host_thread_fn(void* data) {
     set_state(DIRECT_P2P_UPNP_PROBE);
     uint32_t stage_t0 = SDL_GetTicks();
     bool upnp_ok;
+    bool probe_skipped_busy = false; /* #147: gate skip, for honest attribution */
     if (s_upnp_mapping.active && s_upnp_mapping.internal_port == local_port) {
         SDL_Log("[direct_p2p] retry: reusing the live %s mapping from the previous "
                 "attempt (external %u -> internal %u) — skipping re-probe",
@@ -3605,6 +3750,22 @@ static int SDLCALL host_thread_fn(void* data) {
                 "another %u ms and cannot change its answer); advertising the "
                 "STUN-observed endpoint",
                 local_port, (unsigned)PORTMAP_PROBE_BUDGET_MS);
+        upnp_ok = false;
+    } else if (!portmap_backends_quiescent()) {
+        /* #147: an overrun probe/renewal worker from an EARLIER session
+         * (Cancel -> BeginHost re-arms this path; the intra-session
+         * ladder is closed by the #96 latch above) is still executing
+         * inside miniupnpc / natpmp process globals. Spawning a second
+         * worker into those statics is the data-race / double-free
+         * natpmp.c's L-3 comment documents. Skip THIS session's probe —
+         * attributed below, NOT latched into s_portmap_failed_port: "we
+         * did not ask" is not a verdict, and the user's next Host press
+         * re-checks a slot that reaps itself the moment the straggler
+         * exits. */
+        SDL_Log("[direct_p2p] a previous port-map attempt is still running inside "
+                "the backend libraries — skipping this session's probe rather than "
+                "racing it; advertising the STUN-observed endpoint");
+        probe_skipped_busy = true;
         upnp_ok = false;
     } else {
         /* #104: the rung that actually PAYS the probe. Since #96 this is
@@ -3644,9 +3805,13 @@ static int SDLCALL host_thread_fn(void* data) {
                      (unsigned)s_work.host_rungs,
                      s_upnp_mapping.active
                          ? "mapped"
-                         : "probe found no IGD and no NAT-PMP/PCP gateway; the verdict "
-                           "is latched for this hosting session, so the ladder's "
-                           "remaining rungs skip it");
+                         : probe_skipped_busy
+                             ? "probe SKIPPED: an overrun probe from an earlier attempt "
+                               "is still running (#147 spawn gate); no verdict latched — "
+                               "this session advertises the STUN endpoint"
+                             : "probe found no IGD and no NAT-PMP/PCP gateway; the verdict "
+                               "is latched for this hosting session, so the ladder's "
+                               "remaining rungs skip it");
         Netplay_LogConnectEventMT(pm_line);
     }
     if (cancel_requested()) {
@@ -5003,8 +5168,26 @@ static void host_handle_challenge(const uint8_t* pkt, int len,
             (unsigned)src_port);
 }
 
-/* Host-side per-frame drain. Returns true once a valid inbound datagram
- * has been received and the handoff was executed. The first ACCEPTED
+/* #150: how many datagrams one HOST_WAITING frame may drain. The old
+ * shape was ONE per frame (~60/s at the frame rate), and the punch gate
+ * mutes only punch-SHAPED traffic — so arbitrary garbage aimed at the
+ * advertised endpoint (stable and knowable to a past opponent whenever
+ * UPnP mapped it) consumed the frame's single receive and could park a
+ * legitimate joiner's punch behind up to 256 KB of queue
+ * (NetTuning_SetRecvBuf) for minutes. Pre-pairing only. 16/frame is
+ * ~960/s: a full 256 KB queue of minimal datagrams (~15 k) drains in
+ * ~16 s instead of ~250 s, the legitimate joiner's ~10-punch opening
+ * burst fits in one frame, and the per-frame cost stays bounded at 16
+ * classify calls (memcmp-sized) plus rate-limited logging — the same
+ * order of work as the rendezvous queue's 4-slot drain beside it. This
+ * is a drain-rate bound, not a flood-proof: a sender sustaining more
+ * than ~960 datagrams/s can still delay the joiner, which is the
+ * accepted residual (the race loop's greedy drain is not available
+ * here — HOST_WAITING is unbounded by design and must not spin). */
+#define HOST_TICK_RECV_BATCH 16
+
+/* Host-side receive routing (the per-frame drain, host_tick_receive
+ * below, loops over this). The first ACCEPTED
  * inbound packet on a direct-P2P Host socket is the joiner's
  * authenticated Stun_HolePunch probe ("3SX_PUNCH" + the 8-byte
  * code-derived token, S4a). We echo the validated payload back to the
@@ -5012,14 +5195,23 @@ static void host_handle_challenge(const uint8_t* pkt, int len,
  * response and returns success — otherwise the joiner would time out
  * and flag FAILED_SYMMETRIC even though connectivity is established.
  * Anything that fails the datagram gate is dropped WITHOUT consuming
- * the peer slot (see classify_host_datagram). */
-static bool host_tick_receive(void) {
-    if (s_work.stun.socket == NULL) {
-        return false;
-    }
+ * the peer slot (see classify_host_datagram).
+ *
+ * #150: host_tick_receive drains up to HOST_TICK_RECV_BATCH datagrams
+ * per call instead of one; this helper handles exactly ONE. The batch
+ * loop stops the moment the state leaves HOST_WAITING (a DELIVER can
+ * transition it) or a peer is captured — later datagrams in the queue
+ * belong to the session and must be left for the socket's next owner. */
+typedef enum {
+    HOST_RECV_EMPTY = 0,  /* nothing queued — the frame's drain is done   */
+    HOST_RECV_CONSUMED,   /* one non-peer datagram handled; may drain on  */
+    HOST_RECV_STOP,       /* peer captured or state transitioned — stop   */
+} HostRecvOne;
+
+static HostRecvOne host_tick_receive_one(void) {
     NET_Datagram* dgram = NULL;
     if (!NET_ReceiveDatagram(s_work.stun.socket, &dgram) || dgram == NULL) {
-        return false;
+        return HOST_RECV_EMPTY;
     }
     /* S4a: one routing decision per datagram (classify_host_datagram).
      * Only an AUTHENTICATED punch — "3SX_PUNCH" + the 8-byte token both
@@ -5043,14 +5235,18 @@ static bool host_tick_receive(void) {
             try_handle_deliver(dgram->buf, dgram->buflen);
         }
         NET_DestroyDatagram(dgram);
-        return true;
+        /* #150: a DELIVER can have paired us and left HOST_WAITING; any
+         * further queued datagrams belong to the session then. A
+         * CHALLENGE keeps waiting, and the batch may drain on. */
+        return get_state() == DIRECT_P2P_HOST_WAITING ? HOST_RECV_CONSUMED
+                                                      : HOST_RECV_STOP;
 
     case DP2P_HOST_DGRAM_STUN:
         /* S1: keepalive replies / late Stun_Discover duplicates route
          * to the drift detector, never to the peer capture. */
         host_handle_stun_rebind(dgram->buf, dgram->buflen);
         NET_DestroyDatagram(dgram);
-        return false; /* not a peer — keep waiting */
+        return HOST_RECV_CONSUMED; /* not a peer — keep waiting */
 
     case DP2P_HOST_DGRAM_IGNORE: {
         /* Unauthenticated / unrecognized datagram: drop it, do NOT
@@ -5096,7 +5292,7 @@ static bool host_tick_receive(void) {
         if (reroll_owed) {
             host_reroll_room_code();
         }
-        return false; /* keep waiting */
+        return HOST_RECV_CONSUMED; /* keep waiting */
     }
 
     case DP2P_HOST_DGRAM_PEER_PUNCH:
@@ -5121,7 +5317,7 @@ static bool host_tick_receive(void) {
                         (unsigned)dgram->port, s_host_punch_muted_drops);
             }
             NET_DestroyDatagram(dgram);
-            return false; /* keep waiting */
+            return HOST_RECV_CONSUMED; /* keep waiting */
         }
         break; /* authenticated peer — fall through to the capture below */
     }
@@ -5153,7 +5349,28 @@ static bool host_tick_receive(void) {
 
     /* Host is player 1 (player_number = 0). */
     do_handoff(1, src_ip, src_port);
-    return true;
+    return HOST_RECV_STOP;
+}
+
+/* The per-frame drain (see host_tick_receive_one above for the routing
+ * and HOST_TICK_RECV_BATCH for the bound's sizing). Returns true when a
+ * datagram ended the wait (peer captured / state transitioned). */
+static bool host_tick_receive(void) {
+    if (s_work.stun.socket == NULL) {
+        return false;
+    }
+    for (int drained = 0; drained < HOST_TICK_RECV_BATCH; drained++) {
+        switch (host_tick_receive_one()) {
+        case HOST_RECV_EMPTY:
+            return false;
+        case HOST_RECV_STOP:
+            return true;
+        case HOST_RECV_CONSUMED:
+        default:
+            break; /* drain on */
+        }
+    }
+    return false; /* batch bound reached — the rest waits for next frame */
 }
 
 /* Join-side tick: the worker already completed punch and published
@@ -6525,6 +6742,43 @@ const char* DirectP2P_GetStatusText(void) {
  * sequence without standing up a full GekkoNet session. */
 void DirectP2P_TestHook_RunTeardown(void) {
     direct_p2p_on_teardown();
+}
+
+/* #147: straggler-slot seams (see direct_p2p.h). The simulated straggler
+ * is a thread that parks in the real slot and spins until released — a
+ * stand-in for an upnp_worker_fn stuck inside miniupnpc, which no test
+ * can produce for real (there is no mock IGD; upnp_ensure_cached refuses
+ * SSDP in harness builds by design). */
+static SDL_AtomicInt s_test_straggler_release = { 0 };
+
+static int SDLCALL test_straggler_thread_fn(void* data) {
+    (void)data;
+    while (!SDL_GetAtomicInt(&s_test_straggler_release)) {
+        SDL_Delay(5);
+    }
+    return 0;
+}
+
+bool DirectP2P_TestHook_PortmapStragglerSim(void) {
+    if (!portmap_backends_quiescent()) {
+        return false; /* slot already occupied by a RUNNING straggler */
+    }
+    SDL_SetAtomicInt(&s_test_straggler_release, 0);
+    SDL_Thread* t = SDL_CreateThread(test_straggler_thread_fn,
+                                     "TestPortmapStraggler", NULL);
+    if (t == NULL) {
+        return false;
+    }
+    portmap_straggler_park(t, NULL);
+    return true;
+}
+
+void DirectP2P_TestHook_PortmapStragglerRelease(void) {
+    SDL_SetAtomicInt(&s_test_straggler_release, 1);
+}
+
+bool DirectP2P_TestHook_PortmapQuiescent(void) {
+    return portmap_backends_quiescent();
 }
 
 /* S4-review HIGH-1b: punch-gate throttle seams (see direct_p2p.h). */

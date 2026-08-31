@@ -485,6 +485,27 @@ static int run_codec_test(void) {
         }
     }
 
+    /* #150: a two-field code carries no local port. The decode must
+     * report 0 ("unknown"), not fabricate port preservation by echoing
+     * the public port — the old fallback did exactly that. */
+    {
+        char dip[64] = { 0 };
+        uint16_t dpp = 0, dlp = 0xFFFF;
+        if (!Stun_DecodeEndpoint("1.2.3.4|55555", dip, &dpp, &dlp)) {
+            fprintf(stderr, "[test_stun_mock] FAIL: codec: two-field code rejected\n");
+            fails_here++;
+        } else if (dlp != 0 || dpp != 55555 || strcmp(dip, "1.2.3.4") != 0) {
+            fprintf(stderr,
+                    "[test_stun_mock] FAIL: codec: two-field code decoded to "
+                    "ip=%s pp=%u lp=%u — local port must be 0 (unknown), never a "
+                    "copy of the public port\n",
+                    dip, dpp, dlp);
+            fails_here++;
+        } else {
+            fprintf(stderr, "[test_stun_mock] codec two-field local-port-unknown OK\n");
+        }
+    }
+
     /* NULL code must be rejected. */
     {
         char dip[64] = { 0 };

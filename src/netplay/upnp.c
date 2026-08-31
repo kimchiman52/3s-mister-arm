@@ -178,6 +178,9 @@ bool Upnp_AddMapping(UpnpMapping* out, uint16_t internal_port, uint16_t external
     out->external_port = external_port;
     out->internal_port = internal_port;
     out->active = true;
+    /* #150: record the protocol the mapping was created with so the
+     * remove side deletes the same entry (see UpnpMapping.protocol). */
+    SDL_strlcpy(out->protocol, protocol, sizeof(out->protocol));
     /* S7: stamp the backend so teardown/renewal dispatch correctly now
      * that natpmp.c fills the same struct. lifetime_s stays 0 —
      * UPNP_AddPortMapping reports no granted lease. */
@@ -212,8 +215,14 @@ void Upnp_RemoveMapping(UpnpMapping* mapping) {
     char ext_port_str[8];
     snprintf(ext_port_str, sizeof(ext_port_str), "%u", mapping->external_port);
 
-    int r =
-        UPNP_DeletePortMapping(s_cached_urls.controlURL, s_cached_data.first.servicetype, ext_port_str, "UDP", NULL);
+    /* #150: delete with the protocol the mapping was CREATED with (an
+     * IGD keys mappings on (external port, protocol), so deleting "UDP"
+     * against a TCP mapping removes nothing — or the wrong entry). An
+     * empty field is a memset-zeroed / pre-#150 mapping, which is UDP by
+     * construction (see UpnpMapping.protocol). */
+    const char* protocol = mapping->protocol[0] != '\0' ? mapping->protocol : "UDP";
+    int r = UPNP_DeletePortMapping(
+        s_cached_urls.controlURL, s_cached_data.first.servicetype, ext_port_str, protocol, NULL);
     if (r == 0) {
         SDL_Log("UPnP: Port mapping removed for port %u", mapping->external_port);
     } else {
