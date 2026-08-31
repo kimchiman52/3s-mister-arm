@@ -925,7 +925,12 @@ static GekkoNetAdapter* base_adapter = NULL;
 static GekkoNetAdapter lossy_adapter = { 0 };
 
 static float random_float() {
-    return (float)rand() / RAND_MAX;
+    /* RAND_MAX (0x7fffffff) is not representable as a float, so the implicit
+     * int->float conversion trips -Wimplicit-const-int-float-conversion under
+     * -Werror and this whole facility stopped compiling when the warning set
+     * tightened. Cast explicitly: the value rounds to 2147483648.0f either
+     * way, which is what the ratio wants. */
+    return (float)rand() / (float)RAND_MAX;
 }
 
 static void LossyAdapter_SendData(GekkoNetAddress* addr, const char* data, int length) {
