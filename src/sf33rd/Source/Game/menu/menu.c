@@ -34,14 +34,20 @@
 #include "sf33rd/Source/Game/effect/eff91.h"
 #include "sf33rd/Source/Game/effect/effa0.h"
 #include "sf33rd/Source/Game/effect/eff00.h"
+#include "sf33rd/Source/Game/effect/eff84.h"
 #include "sf33rd/Source/Game/effect/effa3.h"
 #include "sf33rd/Source/Game/effect/effa8.h"
 #include "sf33rd/Source/Game/effect/effc4.h"
 #include "sf33rd/Source/Game/effect/effect.h"
 #include "sf33rd/Source/Game/effect/effk6.h"
+#include "sf33rd/Source/Game/effect/effl8.h"
+#include "sf33rd/Source/Game/engine/cmb_win.h"
 #include "sf33rd/Source/Game/engine/grade.h"
+#include "sf33rd/Source/Game/engine/hitcheck.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/pls02.h"
+#include "sf33rd/Source/Game/engine/stun.h"
+#include "sf33rd/Source/Game/engine/vital.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include "sf33rd/Source/Game/game.h"
 #include "sf33rd/Source/Game/io/gd3rd.h"
@@ -3660,6 +3666,402 @@ void Decide_PL(s16 PL_id) {
     }
 }
 
+/* ---- Training-mode SELECT reset -------------------------------------------
+ *
+ * SELECT inside training snaps both players back to a start position with no
+ * black wipe, no BGM restart and no round transition. A held direction picks
+ * the arrangement; bare SELECT repeats whichever one was used last.
+ *
+ * Only the centre preset (down, or bare SELECT) exists so far. The other three
+ * need a post-Player_move position override plus a facing recompute, so
+ * Tr_Reset_Read_Input deliberately ignores up/left/right for now rather than
+ * quietly resolving them to centre.
+ *
+ * The latch is a file-static rather than a GameState field on purpose:
+ * MIST_STATE_VER is sizeof(GameState), so a field here would force a
+ * MIST_PROTO_VER bump for a mode netplay cannot reach. Only one value is
+ * reachable today, so the apply path does not branch on it yet; increment 2 is
+ * where it starts selecting a position override.
+ */
+enum TrResetPreset {
+    TR_RESET_CENTRE = 0, /* zero-init default, and the only one implemented */
+    TR_RESET_SWAP,
+    TR_RESET_LEFT,
+    TR_RESET_RIGHT
+};
+
+static s8 Tr_Reset_Preset;
+
+/* Set on the reset frame, consumed on the next one. It carries the two halves
+ * of the teardown that cannot both happen in the same frame: clearing
+ * Suicide[0] again, and rebuilding the effect_84 singleton the pulse kills. */
+static s8 Tr_Reset_Teardown_Pending;
+
+/* Returns 1 and latches the preset when a reset should run this frame.
+ * SELECT is an edge, the direction a level, per Pause_Check_Tr's idiom. The
+ * engine input word cannot be used here: Convert_User_Setting masks it to
+ * directions plus START, so sw_chg structurally cannot carry SELECT. */
+static s32 Tr_Reset_Read_Input() {
+    s16 PL_id;
+
+    /* START held on either pad disqualifies the whole frame, not just that
+     * pad's SELECT. Two reasons: START+SELECT is the soft-reset chord
+     * (Check_Reset_IO), and Pause_Check_Tr turns a START edge on *either* pad
+     * into Next_Be_Tr_Menu later in this same Wait_Pause_in_Tr call. Leaving
+     * that open would let a reset fire on the frame the task leaves
+     * Wait_Pause_in_Tr, stranding Suicide[0] at 1 and eff84 dead until the
+     * player next returns to gameplay -- Tr_Reset_Check is the only thing that
+     * finishes the teardown, and it only runs from here.
+     *
+     * It does NOT close the SELECT-then-START ordering, and cannot: Check_Reset_IO
+     * arms the soft reset from Reset_Status 0 the frame START joins an already
+     * held SELECT, which is a frame after this function has already fired. That
+     * sequence is accepted, and the damage is bounded. TASK_RESET (2) runs
+     * before TASK_MENU (3), so on the START frame Reset_Move's effect_work_init
+     * wipes the whole effect pool before this file gets another turn, and
+     * Menu_Task's nowSoftReset() early return then keeps Tr_Reset_Check from
+     * running at all -- Suicide[0] stays 1 and the latch stays set until
+     * Soft_Reset_Sub lands on a screen whose Menu_Init calls All_Clear_Suicide,
+     * and until the next Training_Init consumes the latch. Both recover without
+     * a live round ever seeing the stale state. Verified by hand that the
+     * START+SELECT chord still reaches Reset_Status 0x63 with this gate in
+     * place: the gate only suppresses the position reset, never the chord. */
+    if ((PLsw[0][0] | PLsw[1][0]) & SWK_START) {
+        return 0;
+    }
+
+    for (PL_id = 0; PL_id < 2; PL_id++) {
+        u16 sw;
+        u16 held;
+
+        if (plw[PL_id].wu.operator == 0) {
+            continue;
+        }
+
+        sw = ~(PLsw[PL_id][1]) & PLsw[PL_id][0];
+
+        if (!(sw & SWK_BACK)) {
+            continue;
+        }
+
+        held = PLsw[PL_id][0] & SWK_DIRECTIONS;
+
+        /* Down is tested as a bit, not as an exact word. Down-back and
+         * down-forward are the ordinary resting stick positions in training, so
+         * an exact `held == SWK_DOWN` would swallow the reset for most of the
+         * inputs a player actually holds. Up/left/right (and the up diagonals)
+         * still fall through to "no reset" rather than resolving to centre:
+         * those are increment 2's presets and answering them with the centre
+         * arrangement would teach the wrong mapping before they exist. */
+        if (held == 0 || (held & SWK_DOWN)) {
+            if (held & SWK_DOWN) {
+                Tr_Reset_Preset = TR_RESET_CENTRE;
+            }
+
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+/* effect_L8 is Makoto's Tanden Renki buff (list 6, id 218). It latches a
+ * 12-entry prefix of two ColorRAM rows into its own frw slot via
+ * save_old_color_data, tints them, and puts them back only from
+ * effect_L8_move's case 1. erase_extra_plef_work frees the whole of list 6
+ * with effect_work_list_init(6, -1), which releases each work through
+ * push_effect_work *without* running its move function, so case 1 never
+ * executes -- and push_effect_work then SDL_zeroa's frw[qix], the slot holding
+ * the only saved copy (effect_L8_move keeps it at &ewk->wu.zu_flag).
+ * Makoto stays tinted for the rest of the session, and it does not self-heal:
+ * the next Tanden Renki latches the already-tinted rows as its "old" colours.
+ *
+ * The Suicide[0] pulse does not cover this. effect_L8_move reads no Suicide
+ * entry at all, and the free happens inside erase_extra_plef_work regardless.
+ *
+ * This gap is NOT introduced here: Game2_5 tears down the same way (Suicide[0]
+ * then erase_extra_plef_work, no move pass between), so a stock round restart
+ * during Tanden Renki leaks the same palette. A training reset just makes it
+ * reachable at any moment instead of only at a round boundary. It is fixed on
+ * this side rather than in erase_extra_plef_work because that function is
+ * shared with Game2_5 and is not this feature's to change.
+ *
+ * Both players can own an L8 work (Makoto mirror), each tinting different rows
+ * (EFFL8_STEP_ROW is keyed on master_id), so walk the whole list. */
+static void Tr_Reset_Release_L8() {
+    s16 curr_ix = head_ix[6];
+
+    while (curr_ix != -1) {
+        WORK* c_addr = (WORK*)frw[curr_ix];
+        s16 next_ix = c_addr->behind;
+
+        if (c_addr->id == 218) {
+            WORK_Other* ewk = (WORK_Other*)c_addr;
+
+            /* State 0 has not latched or tinted anything yet; one move takes
+             * it through the latch so the restore below is exact. It is not
+             * reachable from here in practice -- effect_L8_init runs under
+             * Player_move in TASK_GAME, after this TASK_MENU hook -- but the
+             * pair terminates unconditionally, so handle it. */
+            if (ewk->wu.routine_no[0] == 0) {
+                effect_L8_move(ewk);
+            }
+
+            if (ewk->wu.routine_no[0] == 1) {
+                /* dead_f is the exit condition case 1 already honours; with it
+                 * set the guard cannot hold the effect in the buff state. The
+                 * move advances routine_no[0] to 2, so the work is left for
+                 * erase_extra_plef_work to free rather than pushed twice. */
+                ewk->wu.dead_f = 1;
+                effect_L8_move(ewk);
+            }
+        }
+
+        curr_ix = next_ix;
+    }
+}
+
+/* Puts both players back through the engine's own start-position path.
+ *
+ * Clearing routine_no is only half of it. Player_move dispatches
+ * routine_no[0] == 0 to player_mv_0000, which re-runs the round-start clears
+ * and hands off to player_mv_1000 -> plmv_1010 (routine_no[0] = 3) and
+ * plmv_1020 (training's appear type is APPEAR_TYPE_NON_ANIMATED, so step is 88;
+ * it writes centre-88 for P1 and centre+88 for P2 with the matching rl_flag,
+ * which is exactly the centre preset -- hence no position override here).
+ *
+ * But routine_no[0] == 3 dispatches to player_mv_3000, which is Player_normal
+ * and nothing else. check_lever_data -- the sole entry point for pad input into
+ * a player, and itself gated on routine_no[0] == 4 -- is called only from
+ * player_mv_4000 (plmain.c) and player_mvbs_4000 (plmain2.c). So a reset that
+ * stops at routine_no would leave both pads and the dummy CPU permanently
+ * inert.
+ *
+ * The only two writers of plw[].wu.routine_no[0] = 4 are pli_1000 (plcnt.c) and
+ * plcnt_b_init case 1 (plcnt2.c, bonus stages). Both are reached only through
+ * player_main_process[pcon_rno[0]], i.e. only while pcon_rno[0] == 0, and a
+ * live round sits at pcon_rno[0] == 1 (plcnt_move). Hence the pcon_rno write
+ * below: it is what actually hands the players back to the input path.
+ *
+ * pcon_rno[1] = 2 rather than 0 is deliberate. appear_initalize[] is
+ * { init_app_10000, init_app_10000, init_app_20000, init_app_30000 } and
+ * APPEAR_TYPE_NON_ANIMATED is 0, so training dispatches to init_app_10000, NOT
+ * init_app_20000. init_app_10000's case 0 is pli_0000 -> SDL_zeroa(plw) +
+ * setup_base_and_other_data, the full round-boot re-init: it would re-run
+ * set_base_data (clobbering wu.target_adrs, which set_rl_waza dereferences
+ * every frame) and re-run effect_E3_init / effect_E4_init, the training-only
+ * option works erase_extra_plef_work deliberately leaves alone. Entering at
+ * case 2 skips pli_0000 and runs 2 -> 3 -> 1, ending at pli_1000, which is the
+ * complete state transition (pcon_rno[0] = 1, pcon_rno[1] = 0, both
+ * routine_no[0] = 4, ca_check_flag = 1) rather than a hand-written imitation of
+ * it. Three frames: N sets up and runs player_mv_0000, N+1 runs player_mv_1000
+ * (position written), N+2 pli_1000 fires and player_mv_4000 takes input.
+ *
+ * This is not invented here -- it is exactly what Game_Manage_2_3's training
+ * branch (manage.c) already does for the training round init, down to the
+ * pcon_rno[1] = 2 constant and its "skip init_app_10000 case 0 (pli_0000)"
+ * comment, the erase_extra_plef_work + setup_any_data pair and the explicit
+ * disp_flag restore. Game2_5's pcon_rno[0..3] = 0 is the other in-tree form and
+ * is the one that goes through pli_0000; it is wrong for a mid-round reset for
+ * the reasons above. */
+static void Tr_Reset_Apply() {
+    s16 i;
+
+    /* Effect teardown, in Game2_5's order. erase_extra_plef_work does not own
+     * list 5, where the super-art shadow lives; that effect clears the global
+     * SA_shadow_on only from its own exit branch, which it takes on Suicide[0].
+     * Without this the stage stays dark for good after a reset during a super.
+     * Nothing on an in-round path calls All_Clear_Suicide, so the flag has to
+     * be cleared here on the following frame -- see Tr_Reset_Check.
+     *
+     * The pulse is consumed the same frame: TASK_MENU runs before TASK_GAME,
+     * and Game2_1 reaches Basic_Sub_Ex -> move_effect_work(0..5). None of the
+     * works setup_any_data creates below (eff01, effK5, eff00, effJ7, effE5)
+     * reads Suicide, so they survive it. */
+    Suicide[0] = 1;
+    Tr_Reset_Teardown_Pending = 1;
+
+    Tr_Reset_Release_L8();
+
+    /* Known, accepted loss: effect_work_list_init(0, 0) frees every id-0
+     * hitbox-overlay work, and setup_any_data only re-creates them for the two
+     * players -- an already-airborne projectile loses its box for the rest of
+     * its life. Only visible with the hitbox display turned on. */
+    erase_extra_plef_work();
+    setup_any_data();
+
+    vital_cont_init();
+    stngauge_work_clear();
+    combo_cont_init();
+    clear_hit_queue();
+
+    for (i = 0; i < 2; i++) {
+        PLW* wk = &plw[i];
+        s16 j;
+
+        for (j = 0; j < 8; j++) {
+            wk->wu.routine_no[j] = 0;
+        }
+
+        /* setup_any_data -> set_base_data_tiny clears disp_flag; without this
+         * both players blink out for a frame before the appear step re-sets it. */
+        wk->wu.disp_flag = 1;
+        wk->do_not_move = 0;
+        wk->scr_pos_set_flag = 1;
+
+        /* effect_L0 (Twelve's invisibility) is the only writer of these three
+         * fields on a PLW -- a tree-wide grep for my_bright_type/my_bright_level/
+         * my_clear_level assignments hits effe5/eff70/eff61/effh6/aboutspr on
+         * their own works, and effl0 alone through its my_master pointer.
+         * effect_L0_move's case 1 guards its restore with
+         * "dead_f == 0 && Suicide[0] == 0", so the pulse above skips the restore
+         * and then frees the work at case 2. Of the five fields it would have put
+         * back, disp_flag is covered by the write just above and my_col_mode /
+         * my_col_code by setup_any_data -> set_base_data_tiny ->
+         * set_char_base_data; these three are covered by nothing, and the player
+         * render path (sort_push_request) does not reset them either. Reset
+         * Twelve inside the fade window and he keeps a stale brightness for good.
+         * Restored here rather than by fixing effl0.c's guard: my_bright_* live
+         * in plw, which is GS_SAVE'd, so changing that guard would be a
+         * simulation change on the shared arcade/netplay path for a
+         * training-only feature. */
+        wk->wu.my_bright_type = 0;
+        wk->wu.my_bright_level = 0;
+        wk->wu.my_clear_level = 0;
+
+        /* player_mv_0000 never touches velocity, so a reset mid-dash would
+         * otherwise carry the momentum straight back out of the start position. */
+        wk->wu.mvxy.a[0].sp = wk->wu.mvxy.a[1].sp = 0;
+        wk->wu.mvxy.d[0].sp = wk->wu.mvxy.d[1].sp = 0;
+        wk->wu.mvxy.kop[0] = wk->wu.mvxy.kop[1] = 0;
+        wk->wu.mvxy.index = 0;
+        wk->wu.next_x = wk->wu.next_y = wk->wu.next_z = 0;
+        wk->wu.old_pos[0] = wk->wu.old_pos[1] = wk->wu.old_pos[2] = 0;
+
+        /* XY is a union of s32 cal and { s16 low; s16 pos; } disp
+         * (include/structs.h), i.e. 16.16 fixed point. plmv_1020 writes only
+         * .disp.pos, so without this the character lands at centre +/- 88 plus
+         * whatever sub-pixel fraction it happened to be carrying, and the
+         * "same" reset lands a fraction of a pixel differently every time. The
+         * stock restart avoids it by coming through pli_0000's SDL_zeroa(plw);
+         * this path deliberately does not, so clear the fractions directly.
+         * .disp.pos is left alone -- plmv_1020 overwrites xyz[0] and xyz[1] two
+         * frames from now, and xyz[2] is depth, which no preset moves. */
+        wk->wu.xyz[0].disp.low = 0;
+        wk->wu.xyz[1].disp.low = 0;
+        wk->wu.xyz[2].disp.low = 0;
+    }
+
+    /* player_mv_1000's APPEAR_TYPE_NON_ANIMATED path does Appear_end++, so the
+     * appear this reset re-runs adds 2 -- and nothing in a live round takes it
+     * back down. Its only clear is appear_work_clear(), called from
+     * Game_Manage_1st and from Game_Manage_2_3 itself, so between rounds the
+     * counter would keep climbing 2 at a time until the s16 overflows (signed
+     * overflow is UB, not merely a wrap). Clearing it here restores the pairing
+     * the engine already has: appear_work_clear() runs immediately before the
+     * appear sequence that increments it, and this reset re-runs that sequence.
+     * The count therefore lands back at exactly 2 -- the same value a stock
+     * appear leaves -- instead of 2 more than last time. Sole reader is
+     * Game_Manage_2_3's "if (Appear_end < 2) return;", which cannot observe the
+     * dip: it is a round-init phase and this function only runs mid-round,
+     * behind the Allow_a_battle_f gate in Tr_Reset_Check. */
+    Appear_end = 0;
+
+    /* Hand the players back to pli_1000 -- see the header comment. Values and
+     * ordering copied from Game_Manage_2_3's training branch. */
+    pcon_rno[0] = 0;
+    pcon_rno[1] = 2;
+    pcon_rno[2] = 0;
+    pcon_rno[3] = 0;
+
+    compel_bg_init_position();
+    bg_pos_hosei2();
+    Bg_Family_Set();
+}
+
+/* Second half of the teardown, normally one frame after the pulse.
+ *
+ * One frame of Suicide[0] is all the list-5 teardown needs; leaving it set
+ * would make every effect that honours it suicide on creation.
+ *
+ * The pulse also kills effect_84, which is not transient: it is the
+ * round-message controller singleton (list 4, id 84), erase_extra_plef_work
+ * does not free it (its list-4 filters are 0x81 / 0x25 / 0xAC), and
+ * effect_84_move is the only writer of request_message = 0 outside the
+ * screen-boundary phases Game_Manage_2_0 and Game_Manage_12_0. Three phases
+ * spin on that clear -- Game_Manage_5_2, Game_Manage_7_5 and
+ * Game_Manage_12_3 case 1 -- and effect_56_init, which draws the message,
+ * is called only from effect_84_move. Lose the singleton and no K.O. /
+ * TIME UP / round message renders for the rest of the session, and the
+ * Game_pause = 1 that effect_84_move raises over the K.O. window stops
+ * happening at all.
+ *
+ * Narrowing the teardown so effect_84 survives is not available: Suicide[0]
+ * is one global with no per-effect granularity, and effect_84_move tests it
+ * unconditionally at function entry. So this mirrors Game_Manage_2_2, which
+ * clears Suicide[0] and only then calls effect_84_init(). effect_84_init
+ * returns non-zero when the pool is exhausted; hold the pending flag and
+ * retry next frame exactly as Game_Manage_2_2 does. The list-4 sweep first
+ * keeps the singleton a singleton if the pulse ever fails to reach it.
+ *
+ * Factored out of Tr_Reset_Check because that is the only place that can
+ * consume the latch, and it only runs while the task is still inside
+ * Wait_Pause_in_Tr. Every same-frame route out of Wait_Pause_in_Tr was
+ * traced and none is currently reachable after a reset fires -- but a
+ * stranded latch means Suicide[0] pinned at 1, which kills every effect
+ * that reads it on creation, so it is not a thing to leave resting on an
+ * invariant nothing enforces. Training_Init calls this too: it is the
+ * r_no[1] == 0 sub-state of Training_Menu, and Next_Be_Tr_Menu -- the only
+ * exit from Wait_Pause_in_Tr -- sets r_no[0] to the training menu and
+ * r_no[1] to 0 together, so a latch that escapes is finished on the very
+ * next frame regardless of how it escaped. Menu_Init's All_Clear_Suicide
+ * has already cleared Suicide[0] by then, so what Training_Init really
+ * recovers is the eff84 singleton. */
+static void Tr_Reset_Finish_Teardown() {
+    if (!Tr_Reset_Teardown_Pending) {
+        return;
+    }
+
+    Suicide[0] = 0;
+    effect_work_list_init(4, 84);
+
+    if (effect_84_init() == 0) {
+        Tr_Reset_Teardown_Pending = 0;
+    }
+}
+
+static void Tr_Reset_Check(struct _TASK* task_ptr) {
+    Tr_Reset_Finish_Teardown();
+
+    if (!Is_Training_Mode(Mode_Type)) {
+        return;
+    }
+
+    /* Live round only: not during the pause menu (r_no[1] >= 2), not before
+     * the round has started, and not while a super-art flash or a round message
+     * owns the screen.
+     *
+     * Game_pause is masked, not compared to 0. Bit 7 is a separate flag from
+     * the "gameplay frozen" bit 0 -- cpLoopTask (src/main.c) ORs it in under
+     * #if defined(DEBUG) for every frame sysSLOW is active, and the readers
+     * that mean "system pause" test it on its own (effect_A2_move, cmb_win.c,
+     * TATE00). Comparing the whole byte to 0 would make this feature silently
+     * dead in a DEBUG build with slow motion on, which is the flavour used for
+     * on-device testing. Bit 0 still gates: Setup_Tr_Pause writes 0x81 and
+     * effect_84_move writes 1, and both survive the mask. */
+    if (task_ptr->r_no[1] >= 2 || Allow_a_battle_f == 0 || Extra_Break != 0 || (Game_pause & 0x7F) != 0) {
+        return;
+    }
+
+    if (Play_Mode != PLAY_MODE_NORMAL) {
+        return;
+    }
+
+    if (Tr_Reset_Read_Input()) {
+        Tr_Reset_Apply();
+    }
+}
+
 void Wait_Pause_in_Tr(struct _TASK* task_ptr) {
     u16 ans;
     u16 ix;
@@ -3673,6 +4075,13 @@ void Wait_Pause_in_Tr(struct _TASK* task_ptr) {
 #else
     Training_Data_Disp();
 #endif
+
+    /* Before Control_Player_Tr, which overwrites the dummy player's p*sw_0 and
+     * would destroy SELECT there. TASK_MENU runs before TASK_GAME, so the
+     * routine_no clear this may raise is consumed by Player_move the same
+     * frame, and the effect teardown gets its move_effect_work pass too. */
+    Tr_Reset_Check(task_ptr);
+
     Control_Player_Tr();
 
     if (End_Training) {
@@ -4160,6 +4569,12 @@ void Training_Menu(struct _TASK* task_ptr) {
 void Training_Init(struct _TASK* task_ptr) {
     ToneDown(0x80, 2);
     Menu_Init(task_ptr);
+
+    /* Safety net for the SELECT-reset teardown latch -- see the comment on
+     * Tr_Reset_Finish_Teardown. No-op unless a reset's teardown escaped
+     * Wait_Pause_in_Tr without being finished there. */
+    Tr_Reset_Finish_Teardown();
+
     task_ptr->r_no[1] = 1;
     Pause_Down = 1;
     End_Training = 0;
