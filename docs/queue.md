@@ -3134,7 +3134,7 @@ Window: the file's own measurement records an 11,543 ms probe against an
 11,250 ms deadline, so detach is routine; a wedged TCP connect extends it to the
 OS SYN timeout. PLAUSIBLE — the race is derived from the code, not observed.
 
-## #148 — three `game_state.c` items: one diagnostic, two latent — OPEN
+## #148 — three `game_state.c` items: one diagnostic, two latent — CLOSED
 
 1. `sc.globals = h ^ sc.plw0 ^ sc.plw1` (`save_current_state`,
    `src/netplay/game_state.c:2362`). djb2 does not compose by XOR, so the dump's
@@ -3150,6 +3150,54 @@ OS SYN timeout. PLAUSIBLE — the race is derived from the code, not observed.
    `unpack_sparse_state` (`:1988`); on rejection (`:2540`) GameState is at frame
    F and the effect pool at the previous frame. Silent inconsistency rather than
    session abort. Unreachable unless Gekko corrupts its own ring.
+
+**CLOSED by `bb2076de`.** As-built, with the two facts a later reader needs:
+
+`h` is unchanged. Verified by mechanical enumeration, not by inspecting the
+macro: 39 field sites extracted from the pre-change `save_current_state` and
+diffed against the post-change `HASH_GLOBAL` sequence — identical fields,
+order, sizes and seed. Every original call already passed `sizeof(field)`
+matching its own address operand, so the macro could not introduce an
+array/scalar discrepancy. This is the property that matters: a changed `h`
+makes every peer on an older build see a false desync.
+
+`sc.globals` DOES change value. A dump diff between this build and an older
+one shows the globals column differing by construction on every frame;
+`combined`/`plw0`/`plw1` stay comparable and the wire checksum is `h`. No
+tooling parses the column (`tools/compare_states.py` is a DWARF struct
+differ; the only other reference writes a placeholder and never reads it).
+
+Item 2 as built: `pack_sparse_state` counts `be_flag != 0` itself, asserts
+`beflag_count <= EFFECT_MAX - frwctr` as a tripwire, and returns `0` for the
+full-state fallback when its own count exceeds the ceiling. The invariant it
+no longer trusts was re-verified in `effect.c`: `pull_effect_work` decrements
+`frwctr` as part of the index expression, `push_effect_work` zeroes the slot
+before returning it to the free list, and many `eff*.c` sites set
+`be_flag = 1` several lines after the pull — so strict inequality is the
+normal case, not a theoretical one.
+
+Item 3 as built: `sparse_state_is_valid` is a pure predicate run BEFORE
+`GameState_Load`. `GekkoGameEvent` carries no status channel, so neither
+shape can signal the library; restoring nothing re-simulates from a
+self-consistent state, where the partial restore left a frame-F/frame-F−1
+mixture and named the wrong frame in the log.
+
+`SPARSE_CEILING_SLOTS` unchanged at 100 (`game_state.h:865`).
+
+Review found zero P-1 and four P-2. Three fixed: the popcount test never
+reached the branch it was named for (the length check rejected first, so that
+branch had zero coverage while the diff cited it as proof); the two-predicate
+story was written out in four places against the assertion-over-prose rule;
+`sparse_state_is_valid`'s `active_count` bound tightened from `EFFECT_MAX` to
+`SPARSE_CEILING_SLOTS`. The fourth was the mixed-build triage note, recorded
+above and in the commit rather than in code.
+
+Inherited, NOT fixed here: `test_unpack_rejects_bad_count` has the same shape
+the popcount test did (`bogus = 99`, rejected by the length check before
+reaching the branch). Pre-existing, out of scope for #148.
+
+Gates GREEN; `arm-cross-build` NOT RUN (accumulated-branch gate).
+Rollback determinism fast mode: `verdict=PASS divergent=0 feedback=0`.
 
 ## #149 — two accept-side gaps: terminal handshake frames and empty datagrams — OPEN
 
