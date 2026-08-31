@@ -3042,7 +3042,7 @@ both GekkoNet remote-crash bugs (`OnInputs` bounds + serializer resize cap,
 patched in `build-deps.sh` at `GEKKONET_REF=7be848c`), and H-6 `spmv_ng_save`
 rollback-unsafety (saved, restored and hashed in `game_state.c`).
 
-## #143 — the checksum hashes five globals `setup_vs_mode` never equalizes — OPEN
+## #143 — the checksum hashes six globals `setup_vs_mode` never equalizes — CLOSED
 
 `save_current_state` (`src/netplay/game_state.c`) latches `battle_start_frame`
 on the first Gekko save, so the focused desync checksum covers character
@@ -3071,6 +3071,74 @@ Structural gap: PHASE 3 is a hand-maintained blocklist that must move in
 lockstep with the hash whitelist, and nothing ties them together. The save set
 has `--test-gs-coverage` for exactly this class; the hash-input set has no
 analogue.
+
+**CLOSED by `d6c4ae31` + `7fd54359` + `bcccded8`.**
+
+Six fields, not five — the table above counts `combo_type`/`remake_power` as
+one row. All six now reset at the end of PHASE 3.
+
+The safety question that mattered was the inverse of the bug: does any reset
+stomp a value the synced sim legitimately carries in, turning a false desync
+into a real one? Answered by tracing every writer of all six through the
+engine. All are battle- or select-scope and run after `setup_vs_mode` returns;
+nothing `setup_vs_mode` itself calls beforehand (`Clear_Personal_Data`,
+`grade_check_work_1st_init`, `Setup_Training_Difficulty`,
+`System_all_clear_Level_B`, `Clear_Flash_Init`) references any of them, and
+neither does the TRANSITIONING window. `Color7` has no other zeroing path at
+all, so its reset is load-bearing rather than belt-and-braces.
+
+`chainex_check` is deliberate defense-in-depth, not a live fix: all nine
+`= 1` writers are `!ArcadeBalance_IsEnabled()`-gated, `is_enabled` is written
+only by `ArcadeBalance_Init` (single call site, `main.c`), and
+`Netplay_ArmAllowed()` is literally `return ArcadeBalance_IsEnabled()`. In any
+shipped process that can arm netplay the array is provably already zero.
+
+`h` is unchanged — the wire checksum's field set, order and function are
+untouched, preserving the #148 (`bb2076de`) compatibility proof. Confirmed by
+diff boundary and by `nm` on the shipped build: none of the new
+`Netplay_Test_*` symbols are present.
+
+The structural half, and its honest limit. `equalizer_scope_pin_check`
+(`test_gs_coverage.c`) trips when `FH_COUNT` moves off 39 and NAMES the
+offending field via `FH_NAMES`, with 3-step remediation. **It fails the
+`--test-gs-coverage` harness run, not compilation** — `d6c4ae31`'s commit
+message says "fails the build", which is wrong in kind. And the pin is
+satisfiable by bumping `EQUALIZER_DIRTY_FH_COUNT_PINNED` alone, without
+adding the PHASE 3 reset: a first-trip tripwire, not a proof of coverage. The
+stronger form (dirty all 39 fields with in-range values rather than 6) was
+considered and rejected on OOB risk. That is the residual gap; the in-file
+comments state it accurately.
+
+The asymmetric-history repro (host with prior-match residue vs fresh-boot
+joiner) is the shape no prior harness could produce — all of them run two
+identically-clean instances, which is why this survived. Verified
+non-tautological: at `4678df6e` netplay.c contains zero occurrences of any of
+the six.
+
+Review follow-ups in `bcccded8`: the `ca_check_flag` comment claimed an
+exhaustive writer list while omitting both `plcnt.c` sites, including
+`setup_settle_rno` — the very site this entry's table names; the coverage
+checks could have passed vacuously on all-zero hashes had the FH block ever
+stopped running (now assertion-pinned, proven by gating it out); and
+`FH_NAMES` had no arity guard, so a future enum entry without a name string
+would have made the pin's own "name the field" step a NULL `%s`. Now a
+`_Static_assert`.
+
+NOT fixed, recorded: the six globals are hand-`extern`'d in three TUs and C
+does not check extern-vs-definition agreement, so a resize in `sysdir.c`
+would silently zero the wrong extent. `ca_check_flag` and `chainex_check`
+have headers that would give the compiler the check. Existing repo
+convention; consolidating is a far wider change than this task.
+
+Citation fallout: `d6c4ae31`'s +79 lines moved `NETPLAY_SESSION_CONNECTING`
+from `netplay.c:2428` to `:2497`, breaching the enforced set. Repointed in
+`7fd54359` after confirming the two 16-line ranges are byte-identical. The
+implementing commit reported this breach as "pre-existing and unrelated"; it
+was neither.
+
+Gates GREEN; `arm-cross-build` NOT RUN (accumulated-branch gate).
+`check_baselines.py`: `scopes=11 breached=0 slack=0`. Rollback determinism
+fast mode on the code commit: `verdict=PASS divergent=0 feedback=0`.
 
 ## #144 — mid-game disconnect and desync reach the player as silence — OPEN
 
