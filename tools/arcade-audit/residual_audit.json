@@ -2038,68 +2038,7 @@
    "after_terminator": true
   }
  ],
- "wrong_group_census": {
-  "2": {
-   "group": 2,
-   "cells": 87,
-   "chars": {
-    "DUDLEY": 23,
-    "NECRO": 23,
-    "KEN": 3,
-    "REMY": 38
-   },
-   "reachability": "PER-CHARACTER",
-   "loaded_when": "loaded only while ALEX is in the match"
-  },
-  "1": {
-   "group": 1,
-   "cells": 535,
-   "chars": {
-    "HUGO": 23,
-    "IBUKI": 23,
-    "ELENA": 23,
-    "ORO": 23,
-    "YANG": 23,
-    "KEN": 23,
-    "SEAN": 31,
-    "URIEN": 23,
-    "AKUMA": 23,
-    "MAKOTO": 293,
-    "Q": 27
-   },
-   "reachability": "PER-CHARACTER",
-   "loaded_when": "loaded only while GILL is in the match"
-  },
-  "3": {
-   "group": 3,
-   "cells": 233,
-   "chars": {
-    "MAKOTO": 228,
-    "Q": 2,
-    "REMY": 3
-   },
-   "reachability": "PER-CHARACTER",
-   "loaded_when": "loaded only while RYU is in the match"
-  },
-  "4": {
-   "group": 4,
-   "cells": 60,
-   "chars": {
-    "TWELVE": 60
-   },
-   "reachability": "PER-CHARACTER",
-   "loaded_when": "loaded only while YUN is in the match"
-  },
-  "5": {
-   "group": 5,
-   "cells": 28,
-   "chars": {
-    "TWELVE": 28
-   },
-   "reachability": "PER-CHARACTER",
-   "loaded_when": "loaded only while DUDLEY is in the match"
-  }
- },
+ "wrong_group_census": {},
  "ovct_violations": [
   {
    "cls": "ogt_oob",
