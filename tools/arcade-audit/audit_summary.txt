@@ -1,0 +1,90 @@
+=========== HIGH-CONFIDENCE CG FINDINGS (cell-aligned arcade vs PS2) ===========
+char    class                    table raw->remapped (grp) | ps2 (grp)  cells scripts
+YUN     c_own_group              nmca  delta_arc= -0x420 delta_ps2= -0x41c grp 4->4      1 [26]
+DUDLEY  c_other_group            yuca  delta_arc= -0x480 delta_ps2= -0x1e0 grp 2->3     23 [68, 69, 70, 71, 72, 73, 74, 75]...
+NECRO   c_other_group            yuca  delta_arc= -0x600 delta_ps2= -0x1e0 grp 2->3     23 [68, 69, 70, 71, 72, 73, 74, 75]...
+NECRO   c_own_group              nmca  delta_arc= -0x600 delta_ps2= -0x618 grp 6->6      1 [28]
+HUGO    c_other_group            yuca  delta_arc= -0x720 delta_ps2= -0x1e0 grp 1->3     23 [68, 69, 70, 71, 72, 73, 74, 75]...
+HUGO    c_own_group              btca  delta_arc= -0x720 delta_ps2= -0x71e grp 7->7      1 [15]
+IBUKI   c_own_group              saca  delta_arc=-0x74d0 delta_ps2=-0x74cf grp 8->8    228 [56, 57, 58, 59]
+IBUKI   c_own_group              yuca  delta_arc=-0x74d0 delta_ps2=-0x74cf grp 8->8    180 [4, 5, 6, 7, 12, 13, 33, 34]...
+IBUKI   c_other_group            yuca  delta_arc= -0x940 delta_ps2= -0x1e0 grp 1->3     23 [68, 69, 70, 71, 72, 73, 74, 75]...
+ELENA   c_other_group            yuca  delta_arc= -0x820 delta_ps2= -0x1e0 grp 1->3     23 [68, 69, 70, 71, 72, 73, 74, 75]...
+ELENA   a_ogt_oob                dmca  delta_arc= -0x820 delta_ps2=-0x6f42 grp None->9     12 [82, 83, 86, 87]
+ELENA   a_ogt_oob                btca  delta_arc= -0x820 delta_ps2=-0x6f42 grp None->9      4 [15]
+ORO     c_other_group            yuca  delta_arc= -0x800 delta_ps2= -0x1e0 grp 1->3     23 [68, 69, 70, 71, 72, 73, 74, 75]...
+YANG    c_other_group            yuca  delta_arc= -0x820 delta_ps2= -0x1e0 grp 1->3     23 [68, 69, 70, 71, 72, 73, 74, 75]...
+KEN     c_other_group            yuca  delta_arc= -0x8c0 delta_ps2=+0x2d40 grp 1->12     23 [68, 69, 70, 71, 72, 73, 74, 75]...
+KEN     c_other_group            caca  delta_arc= -0x8c0 delta_ps2= -0x420 grp 2->4      3 [18, 19, 20]
+SEAN    c_other_group            yuca  delta_arc= -0xaa0 delta_ps2=+0x3160 grp 1->13     23 [68, 69, 70, 71, 72, 73, 74, 75]...
+SEAN    c_other_group            cuca  delta_arc= -0xaa0 delta_ps2=+0x3160 grp 1->13      8 [64]
+URIEN   c_own_group              yuca  delta_arc= -0xc60 delta_ps2= -0xc78 grp 14->14    184 [8, 9, 10, 11, 12, 13, 14, 15]
+URIEN   c_other_group            yuca  delta_arc= -0xc60 delta_ps2= -0x1e0 grp 1->3     23 [68, 69, 70, 71, 72, 73, 74, 75]...
+URIEN   c_own_group              yuca  delta_arc= -0xc60 delta_ps2= -0xc6f grp 14->14      8 [8, 9, 10, 11, 12, 13, 14, 15]
+URIEN   c_own_group              yuca  delta_arc= -0xc60 delta_ps2= -0xc70 grp 14->14      8 [8, 9, 10, 11, 12, 13, 14, 15]
+URIEN   c_own_group              yuca  delta_arc= -0xc60 delta_ps2= -0xc71 grp 14->14      8 [8, 9, 10, 11, 12, 13, 14, 15]
+URIEN   c_own_group              yuca  delta_arc= -0xc60 delta_ps2= -0xc72 grp 14->14      8 [8, 9, 10, 11, 12, 13, 14, 15]
+URIEN   c_own_group              yuca  delta_arc= -0xc60 delta_ps2= -0xc73 grp 14->14      8 [8, 9, 10, 11, 12, 13, 14, 15]
+URIEN   c_own_group              yuca  delta_arc= -0xc60 delta_ps2= -0xc74 grp 14->14      8 [8, 9, 10, 11, 12, 13, 14, 15]
+URIEN   c_own_group              yuca  delta_arc= -0xc60 delta_ps2= -0xc75 grp 14->14      8 [8, 9, 10, 11, 12, 13, 14, 15]
+URIEN   c_own_group              yuca  delta_arc= -0xc60 delta_ps2= -0xc76 grp 14->14      8 [8, 9, 10, 11, 12, 13, 14, 15]
+URIEN   c_own_group              yuca  delta_arc= -0xc60 delta_ps2= -0xc77 grp 14->14      8 [8, 9, 10, 11, 12, 13, 14, 15]
+AKUMA   c_other_group            yuca  delta_arc= -0xca0 delta_ps2=+0x3b60 grp 1->15     23 [68, 69, 70, 71, 72, 73, 74, 75]...
+AKUMA   c_own_group              nmca  delta_arc= -0xca0 delta_ps2= -0xcc2 grp 15->15      2 [21, 46]
+AKUMA   c_own_group              nmca  delta_arc= -0xca0 delta_ps2= -0xcca grp 15->15      1 [21]
+AKUMA   c_own_group              nmca  delta_arc= -0xca0 delta_ps2= -0xc9f grp 15->15      1 [21]
+AKUMA   c_own_group              nmca  delta_arc= -0xca0 delta_ps2= -0xca1 grp 15->15      1 [21]
+AKUMA   c_own_group              nmca  delta_arc= -0xca0 delta_ps2= -0xcc9 grp 15->15      1 [21]
+CHUNLI  c_own_group              saca  delta_arc= -0xe00 delta_ps2=-0x5fee grp 16->0     72 [44, 45, 46, 47]
+MAKOTO  c_other_group            atca  delta_arc= -0xd80 delta_ps2= -0x1e0 grp 1->3    288 [108, 109, 110, 111, 112, 113, 114, 115]...
+MAKOTO  c_other_group            exca  delta_arc=   +0x0 delta_ps2= -0x1e0 grp 3->3    112 [30, 31, 32, 33, 34, 37, 38, 39]...
+MAKOTO  c_other_group            atca  delta_arc=   +0x0 delta_ps2= -0x1e0 grp 3->3    108 [108, 109, 110, 111, 112, 113, 114, 115]...
+MAKOTO  c_other_group            nmca  delta_arc=   +0x0 delta_ps2= -0x1e0 grp 3->3      8 [46]
+MAKOTO  c_other_group            exca  delta_arc= -0xd80 delta_ps2= -0x1e0 grp 1->3      5 [43, 44]
+Q       c_other_group            cuca  delta_arc= -0xc20 delta_ps2= -0x1e0 grp 1->3     27 [37]
+Q       c_other_group            cuca  delta_arc=   +0x0 delta_ps2= -0x1e0 grp 3->3      2 [37]
+TWELVE  c_other_group            nmca  delta_arc= -0xb80 delta_ps2= -0x600 grp 4->6     36 [32, 33, 34, 35, 36, 37, 38, 39]...
+TWELVE  c_other_group            cuca  delta_arc= -0xb80 delta_ps2= -0x600 grp 5->6     26 [31, 37]
+TWELVE  c_other_group            exca  delta_arc= -0xb80 delta_ps2= -0x600 grp 4->6     20 [20, 22, 25, 29, 40, 41]
+TWELVE  c_other_group            cuca  delta_arc= -0xb80 delta_ps2= -0x600 grp 4->6      4 [37]
+TWELVE  c_other_group            nmca  delta_arc= -0xb80 delta_ps2= -0x600 grp 5->6      2 [40]
+REMY    c_other_group            nmca  delta_arc=   +0x0 delta_ps2=  +0x20 grp 2->2     37 [33, 34, 35, 36, 37, 38, 39, 40]...
+REMY    c_other_group            nmca  delta_arc=   +0x0 delta_ps2=  +0x20 grp 1->2      3 [48]
+REMY    c_other_group            nmca  delta_arc=   +0x0 delta_ps2= -0x1e0 grp 3->3      3 [49]
+REMY    c_other_group            exca  delta_arc=   +0x0 delta_ps2=  +0x20 grp 1->2      3 [30, 37, 38]
+REMY    c_other_group            cuca  delta_arc=   +0x0 delta_ps2=  +0x20 grp 2->2      1 [35]
+
+HIGH-CONFIDENCE TOTALS: {'c_mismatch_own_group': 745, 'c_mismatch_other_group': 949, 'a_ogt_oob': 16}
+low-confidence (inside shape-mismatched scripts, not cell-aligned): 50
+
+=========== OVCT / OVIX ADAPTATION COVERAGE ===========
+char    ovct arcade/ps2  ovix arcade/ps2  note
+GILL    392/396          146/148          ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+ALEX    57/59            53/55            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+RYU     54/56            7/9              ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+YUN     6/8              20/22            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+DUDLEY  178/180          41/43            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+NECRO   46/48            10/12            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+HUGO    71/73            62/64            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+IBUKI   2286/2296        2230/2235        ovix 5 shorter than PS2 (latent: olc_ix_table unbounded)
+ELENA   91/85            91/85            6 UNPATCHED parts_char (arcade>ps2)
+ORO     67/69            41/43            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+YANG    20/22            20/22            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+KEN     42/44            24/26            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+SEAN    25/27            25/27            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+URIEN   329/352          187/189          ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+AKUMA   115/117          34/36            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+CHUNLI  75/78            75/77            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+MAKOTO  252/254          139/141          ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+Q       18/20            18/20            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+TWELVE  133/135          133/135          ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+REMY    42/44            31/33            ovix 2 shorter than PS2 (latent: olc_ix_table unbounded)
+
+=========== OVER-DECLARED location_data SECTION SIZES ===========
+  HUGO    saca  declared=0x4164   real_max_script_off=0x34C4   slack=0xCA0   ps2_span=0x2BB4
+  ELENA   saca  declared=0x6638   real_max_script_off=0x6078   slack=0x5C0   ps2_span=0x6638
+  ELENA   exca  declared=0x35BC   real_max_script_off=0x2E1C   slack=0x7A0   ps2_span=0x2494
+  SEAN    caca  declared=0x12C0   real_max_script_off=0xCD8    slack=0x5E8   ps2_span=0x12C0
+  URIEN   saca  declared=0x3A54   real_max_script_off=0x3184   slack=0x8D0   ps2_span=0x3AA4
+  TWELVE  saca  declared=0x5E50   real_max_script_off=0x5530   slack=0x920   ps2_span=0x5D80
+  REMY    yuca  declared=0x73E0   real_max_script_off=0x11B0   slack=0x6230  ps2_span=0x11C0

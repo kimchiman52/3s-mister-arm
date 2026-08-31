@@ -8,6 +8,11 @@
 
 #define BASE_OFFSET 0x6000000
 
+// remap_cg_number's early-return threshold below which a raw cg_number is
+// never remapped. Moved 0x800 -> 0x400 in ae309dc4; see the _Static_assert
+// beside remy_cg_ranges, which depends on this staying <= 0x601.
+#define CG_REMAP_CUTOFF 0x400
+
 // Uncomment to enable parsed char data dumping to dump folder
 // #define DUMP_CHAR_DATA
 
@@ -67,6 +72,9 @@ static bool initialized = false;
 static const CharacterCgMap cg_maps[NUM_CHARS];
 static const LocationData location_data[NUM_CHARS];
 static const size_t section_element_sizes[CHAR_DATA_SECTION_COUNT];
+#if defined(DEBUG)
+static void validate_cg_ranges(void);
+#endif
 
 static int SDLCALL compare_u32(const void* lhs, const void* rhs) {
     const Uint32 a = *(Uint32*)lhs;
@@ -82,7 +90,7 @@ static int SDLCALL compare_u32(const void* lhs, const void* rhs) {
 }
 
 static Uint16 remap_cg_number(Uint16 value, Character character) {
-    if (value < 0x400) {
+    if (value < CG_REMAP_CUTOFF) {
         return value;
     }
 
@@ -585,6 +593,13 @@ static void join_rom_dirs(char* out, size_t out_size, bool only_existing) {
 }
 
 void ArcadeCharData_Init() {
+#if defined(DEBUG)
+    /* Merged from fix/arcade-cg-mapping: the CG-range overlap check runs
+     * at the top of Init, before the ROM is located, so it also covers
+     * PS2-balance Debug launches. Compiled out of every shipped build. */
+    validate_cg_ranges();
+#endif
+
     /* CPS3 ROM search path.
      *
      * We ship no ROM of our own and we do not look for one in our own
@@ -945,72 +960,206 @@ static const CgRemapRange yun_cg_ranges[] = {
     { .first = 0x7091, .last = 0x709B, .delta = -0x5D20 },
 };
 
+// yuca[68..75] script cell 0x0CB4 is a cross-bank reference (§8.E): one raw
+// CG shared by 12 characters' own scripts (Ryu included), each needing that
+// *other* character's delta rather than its own -- except Ryu, whose own
+// default_delta already is -0x1E0, so only the other 11 need a row here.
+// PS2 resolves it via Ryu's own -0x1E0 for Dudley/Necro/Hugo/Ibuki/Elena/Oro/
+// Yang/Urien; Ken/Sean/Akuma measure their own distinct deltas (see their
+// range tables below).
 static const CgRemapRange dudley_cg_ranges[] = {
     { .first = 0x709C, .last = 0x70A6, .delta = -0x58C3 },
+    { .first = 0x0CB4, .last = 0x0CB4, .delta = -0x1E0 },
 };
 
 static const CgRemapRange necro_cg_ranges[] = {
     { .first = 0x70A7, .last = 0x70B1, .delta = -0x53E4 },
+    { .first = 0x0CB4, .last = 0x0CB4, .delta = -0x1E0 },
 };
 
 static const CgRemapRange hugo_cg_ranges[] = {
     { .first = 0x70B2, .last = 0x70BC, .delta = -0x5005 },
+    { .first = 0x0CB4, .last = 0x0CB4, .delta = -0x1E0 },
 };
 
 static const CgRemapRange ibuki_cg_ranges[] = {
-    { .first = 0x70BD, .last = 0x70C7, .delta = -18692 },
-    { .first = 0x9BA8, .last = 0x9C6F, .delta = -29904 },
+    { .first = 0x70BD, .last = 0x70C7, .delta = -0x4904 },
+    // Off-by-one (doc §8.D): PS2's measured delta for this whole span is
+    // -0x74CF, one less (in magnitude) than the -0x74D0 below.
+    { .first = 0x9BA8, .last = 0x9C6F, .delta = -0x74CF },
+    { .first = 0x0CB4, .last = 0x0CB4, .delta = -0x1E0 },
 };
 
 static const CgRemapRange elena_cg_ranges[] = {
     { .first = 0x70C8, .last = 0x70D2, .delta = -0x42E5 },
     { .first = 0x9C88, .last = 0x9CC1, .delta = -0x6F08 },
+    /* Fixes upstream #363 (Ryu's Denjin shocks Elena) and its btca[15]/exca
+       siblings. 0x9CC1 (end of #290's range) maps to 11705 under -0x6F08;
+       0x9CFC (this range's start) maps to 11706 under -0x6F42 -- the delta
+       step (0x3A = 58) equals the size of the intervening raw gap
+       0x9CC2-0x9CFB, which backs 0 cells in any of Elena's ten tables. So
+       0x9C88..0x9D24 maps onto one unbroken PS2 run 11648..11746, with 58
+       arcade-only sprites elided, and all 41 raw values in this range land
+       in group 9. See docs/research-arcade-cg-data-accuracy.md §8.A. */
+    { .first = 0x9CFC, .last = 0x9D24, .delta = -0x6F42 },
+    { .first = 0x0CB4, .last = 0x0CB4, .delta = -0x1E0 },
 };
 
 static const CgRemapRange oro_cg_ranges[] = {
     { .first = 0x70D3, .last = 0x70DD, .delta = -0x3D5A },
+    { .first = 0x0CB4, .last = 0x0CB4, .delta = -0x1E0 },
 };
 
 static const CgRemapRange yang_cg_ranges[] = {
     { .first = 0x70DE, .last = 0x70E8, .delta = -0x37F2 },
+    { .first = 0x0CB4, .last = 0x0CB4, .delta = -0x1E0 },
 };
 
 static const CgRemapRange ken_cg_ranges[] = {
     { .first = 0x70E9, .last = 0x70F3, .delta = -0x3399 },
+    // caca[18..20] cross-bank cells (doc §8.E / §7.3(i)).
+    { .first = 0x1201, .last = 0x1201, .delta = -0x420 },
+    // Ken's own resolved delta for the yuca[68..75] slot -- not Ryu's.
+    { .first = 0x0CB4, .last = 0x0CB4, .delta = 0x2D40 },
 };
 
 static const CgRemapRange sean_cg_ranges[] = {
     { .first = 0x70F4, .last = 0x70FF, .delta = -0x2F74 },
+    // cuca[64] and siblings, all measuring the same +0x3160 (doc §8.E /
+    // §7.3(i)); discrete rows because the raw values aren't contiguous.
+    { .first = 0x0C92, .last = 0x0C92, .delta = 0x3160 },
+    { .first = 0x0C95, .last = 0x0C95, .delta = 0x3160 },
+    { .first = 0x0C97, .last = 0x0C97, .delta = 0x3160 },
+    { .first = 0x0C9C, .last = 0x0C9C, .delta = 0x3160 },
+    { .first = 0x0CAB, .last = 0x0CAB, .delta = 0x3160 },
+    { .first = 0x0CB4, .last = 0x0CB4, .delta = 0x3160 },
+    { .first = 0x0CBB, .last = 0x0CBB, .delta = 0x3160 },
+    { .first = 0x0CC5, .last = 0x0CC5, .delta = 0x3160 },
 };
 
 static const CgRemapRange urien_cg_ranges[] = {
     { .first = 0x70FF, .last = 0x7109, .delta = -0x29C3 },
+    { .first = 0x0CB4, .last = 0x0CB4, .delta = -0x1E0 },
+    // yuca[8..15] (doc §8.D): ten distinct measured deltas against the flat
+    // -0xC60 default. 0x52DA-0x52E2 share -0xC78; 0x52E3-0x52EC step by one
+    // as raw increases, so each needs its own row. 0x52D9 is deliberately
+    // NOT covered here: yuca[0..7] also uses raw 0x52D9 and needs the
+    // default -0xC60, so a range would fix yuca[8..15]'s cell but regress
+    // yuca[0..7]'s -- the per-raw-value model can't express both; see
+    // docs/research-arcade-cg-data-accuracy.md §8.D remainder note.
+    { .first = 0x52DA, .last = 0x52E2, .delta = -0xC78 },
+    { .first = 0x52E3, .last = 0x52E3, .delta = -0xC6F },
+    { .first = 0x52E4, .last = 0x52E4, .delta = -0xC70 },
+    { .first = 0x52E5, .last = 0x52E5, .delta = -0xC71 },
+    { .first = 0x52E6, .last = 0x52E6, .delta = -0xC72 },
+    { .first = 0x52E7, .last = 0x52E7, .delta = -0xC73 },
+    { .first = 0x52E8, .last = 0x52E8, .delta = -0xC74 },
+    { .first = 0x52E9, .last = 0x52E9, .delta = -0xC75 },
+    { .first = 0x52EA, .last = 0x52EA, .delta = -0xC76 },
+    { .first = 0x52EB, .last = 0x52EB, .delta = -0xC77 },
+    { .first = 0x52EC, .last = 0x52EC, .delta = -0xC78 },
 };
 
 static const CgRemapRange akuma_cg_ranges[] = {
     { .first = 0x710A, .last = 0x7114, .delta = -0x2526 },
+    // Akuma's own resolved delta for the yuca[68..75] slot -- not Ryu's.
+    { .first = 0x0CB4, .last = 0x0CB4, .delta = 0x3B60 },
 };
 
 static const CgRemapRange chunli_cg_ranges[] = {
     { .first = 0x7115, .last = 0x711F, .delta = -0x1EB4 },
 };
 
+// atca/exca cross-bank cells (doc §8.E / §7.3(i)): 521 cells scattered over
+// a wide raw span, all resolving via Ryu's -0x1E0. Rows are the raw-value
+// runs that are actually referenced, per cg_audit.json -- coalescing across
+// the gaps between them would sweep in unmeasured values (see doc §8.N's
+// caution, same hazard).
 static const CgRemapRange makoto_cg_ranges[] = {
     { .first = 0x7120, .last = 0x712A, .delta = -0x1760 },
     { .first = 0xA000, .last = UINT16_MAX, .delta = -0x5378 },
+    { .first = 0x0C0D, .last = 0x0C0D, .delta = -0x1E0 },
+    { .first = 0x0C28, .last = 0x0C2C, .delta = -0x1E0 },
+    { .first = 0x0C2F, .last = 0x0C2F, .delta = -0x1E0 },
+    { .first = 0x0C44, .last = 0x0C4B, .delta = -0x1E0 },
+    { .first = 0x0C56, .last = 0x0C57, .delta = -0x1E0 },
+    { .first = 0x0C6B, .last = 0x0C6B, .delta = -0x1E0 },
+    { .first = 0x0C83, .last = 0x0C88, .delta = -0x1E0 },
+    { .first = 0x0C8C, .last = 0x0C8C, .delta = -0x1E0 },
+    { .first = 0x0C93, .last = 0x0C93, .delta = -0x1E0 },
+    { .first = 0x0CE3, .last = 0x0CE7, .delta = -0x1E0 },
+    { .first = 0x0DE6, .last = 0x0DE7, .delta = -0x1E0 },
+    { .first = 0x0E65, .last = 0x0E6C, .delta = -0x1E0 },
+    { .first = 0x0EBB, .last = 0x0EBB, .delta = -0x1E0 },
 };
 
+// cuca[37] cross-bank cells (doc §8.E / §7.3(i)); resolves via Ryu's -0x1E0.
 static const CgRemapRange q_cg_ranges[] = {
     { .first = 0x712B, .last = 0x7135, .delta = -0x123A },
+    { .first = 0x0C01, .last = 0x0C01, .delta = -0x1E0 },
+    { .first = 0x0C94, .last = 0x0C94, .delta = -0x1E0 },
+    { .first = 0x0C97, .last = 0x0C98, .delta = -0x1E0 },
+    { .first = 0x0CB3, .last = 0x0CB3, .delta = -0x1E0 },
+    { .first = 0x0CB5, .last = 0x0CB7, .delta = -0x1E0 },
+    { .first = 0x0CBB, .last = 0x0CC0, .delta = -0x1E0 },
+    { .first = 0x0D02, .last = 0x0D02, .delta = -0x1E0 },
 };
 
+// nmca/cuca/exca cross-bank cells, the X.C.O.P.Y. family (doc §8.E /
+// §7.3(i)); resolves via Necro's -0x600.
 static const CgRemapRange twelve_cg_ranges[] = {
     { .first = 0x7136, .last = 0x7140, .delta = -0x0C46 },
+    { .first = 0x1E01, .last = 0x1E01, .delta = -0x600 },
+    { .first = 0x1E21, .last = 0x1E24, .delta = -0x600 },
+    { .first = 0x1E26, .last = 0x1E27, .delta = -0x600 },
+    { .first = 0x1E3B, .last = 0x1E3D, .delta = -0x600 },
+    { .first = 0x1E40, .last = 0x1E43, .delta = -0x600 },
+    { .first = 0x1E68, .last = 0x1E69, .delta = -0x600 },
+    { .first = 0x1E71, .last = 0x1E72, .delta = -0x600 },
+    { .first = 0x1E76, .last = 0x1E7D, .delta = -0x600 },
+    { .first = 0x1FCC, .last = 0x1FCD, .delta = -0x600 },
+    { .first = 0x1FD7, .last = 0x1FD8, .delta = -0x600 },
+    { .first = 0x1FDA, .last = 0x1FDC, .delta = -0x600 },
+    { .first = 0x2033, .last = 0x2033, .delta = -0x600 },
+    { .first = 0x2035, .last = 0x2036, .delta = -0x600 },
+    { .first = 0x203C, .last = 0x203C, .delta = -0x600 },
+    { .first = 0x2074, .last = 0x2074, .delta = -0x600 },
+    { .first = 0x2090, .last = 0x2090, .delta = -0x600 },
+    { .first = 0x2095, .last = 0x2095, .delta = -0x600 },
 };
 
 static const CgRemapRange remy_cg_ranges[] = {
     { .first = 0x7141, .last = 0x714B, .delta = -0x07C1 },
+    /* Raw CG 1537 (0x0601) is an Alex sprite placed in Remy's nmca[48] /
+       exca[30,37,38] slots. Remy's default_delta underflows it (§7.4's
+       negative clamp), so it passes through raw into Gill's group with an
+       out-of-range residual (§17.3). PS2 stores 1569 for all six counterpart
+       cells -- Alex's own delta, +0x20. See
+       docs/research-arcade-cg-data-accuracy.md §8.K. */
+    { .first = 0x0601, .last = 0x0601, .delta = 0x20 },
+    // A further 19 raw CGs (38 cells), all in ordinary nmca/cuca animations,
+    // measure the same Alex-bank +0x20 (doc §8.N). Discrete rows only: the
+    // gaps between them hold dmca[3]/[90]/[91] cells whose scripts decode a
+    // different shape (cgd) than their PS2 counterparts, so cg_audit.py has
+    // no oracle for those raw values -- sweeping them in would be unverified.
+    { .first = 0x0655, .last = 0x065C, .delta = 0x20 },
+    { .first = 0x0669, .last = 0x0669, .delta = 0x20 },
+    { .first = 0x0676, .last = 0x0676, .delta = 0x20 },
+    { .first = 0x0678, .last = 0x0678, .delta = 0x20 },
+    { .first = 0x067C, .last = 0x067D, .delta = 0x20 },
+    { .first = 0x0683, .last = 0x0684, .delta = 0x20 },
+    { .first = 0x0690, .last = 0x0692, .delta = 0x20 },
+    { .first = 0x0744, .last = 0x0744, .delta = 0x20 },
+    // nmca[49]: measures Ryu's -0x1E0, not the Alex-bank +0x20 above --
+    // must stay a separate row (doc §8.N's warning).
+    { .first = 0x0C01, .last = 0x0C01, .delta = -0x1E0 },
 };
+
+// See docs/research-arcade-cg-data-accuracy.md §8.K -- this binds a cutoff
+// that has already moved once (ae309dc4).
+_Static_assert(
+    CG_REMAP_CUTOFF <= 0x601, "remy_cg_ranges' 0x0601 row (doc §8.K) requires CG_REMAP_CUTOFF <= 0x601"
+);
 
 static const CharacterCgMap cg_maps[NUM_CHARS] = {
     [CHAR_GILL] = { .default_delta = 0x0000, .ranges = gill_cg_ranges, .range_count = SDL_arraysize(gill_cg_ranges) },
@@ -1052,6 +1201,42 @@ static const CharacterCgMap cg_maps[NUM_CHARS] = {
                       .range_count = SDL_arraysize(twelve_cg_ranges) },
     [CHAR_REMY] = { .default_delta = -0x0D00, .ranges = remy_cg_ranges, .range_count = SDL_arraysize(remy_cg_ranges) },
 };
+
+#if defined(DEBUG)
+// doc §8.C (range-overlap guard): remap_cg_number takes the first matching
+// row and stops (see above), so a future row that shadows an earlier one in
+// the same character's table would silently remap to the wrong delta with
+// no diagnostic. Tables are hand-authored and unsorted, so nothing else
+// catches that.
+//
+// DEVELOPER CONVENIENCE ONLY -- this is compiled out entirely in every
+// shipped build. `DEBUG` is defined only for CMAKE_BUILD_TYPE=Debug
+// (CMakeLists.txt's target_compile_definitions), and every shipping
+// pipeline (tools/mister/build-game.sh) configures Release, so this
+// SDL_assert never runs where a user could hit it. It also runs
+// unconditionally at the top of ArcadeCharData_Init(), before the ROM is
+// even located, so it is not "arcade-only": it runs on PS2-balance Debug
+// launches too (ROM missing, or full-cast adaptation failing) -- it is
+// gated on build config, not on arcade balance being enabled. The check
+// that actually runs in every build, release included, is
+// tools/arcade-audit/cg_audit.py's check_range_overlaps().
+static void validate_cg_ranges(void) {
+    for (int character = 0; character < NUM_CHARS; character++) {
+        const CharacterCgMap* map = &cg_maps[character];
+
+        for (size_t i = 0; i < map->range_count; i++) {
+            const CgRemapRange* a = &map->ranges[i];
+            SDL_assert(a->first <= a->last);
+
+            for (size_t j = i + 1; j < map->range_count; j++) {
+                const CgRemapRange* b = &map->ranges[j];
+                const bool overlap = a->first <= b->last && b->first <= a->last;
+                SDL_assert(!overlap);
+            }
+        }
+    }
+}
+#endif
 
 static const size_t section_element_sizes[CHAR_DATA_SECTION_COUNT] = {
     [CHAR_DATA_NMCA] = 1,
