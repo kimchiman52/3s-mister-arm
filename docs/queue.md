@@ -3883,3 +3883,45 @@ Gates GREEN, harness 13; baselines `scopes=11 breached=0 slack=0`.
 
 **NOT verified:** the wrapper OSD on real hardware (no gate builds it), and no
 live v4 pairing between two machines.
+
+## #156 — the '1' glyph renders corrupt everywhere — OPEN
+
+User-reported 2026-08-31, with a screenshot of the netplay stats overlay
+(`R:0 P:16`) where the `1` is a garbled block. **Every `1` in the UI is
+affected; every other character renders correctly.**
+
+### Established, by reading the code and by user observation
+
+- **Exactly one 8x8 atlas tile is wrong.** In the same string, `R`, `:`, `0`,
+  `P` and `6` are all correct.
+- **Static and changing `1`s are equally corrupt** (user-confirmed). That rules
+  out the stale-pixel hypothesis: a narrow glyph failing to overpaint a wider
+  predecessor would only corrupt values that CHANGE.
+- **The width table is not the bug.** `ascProData['1'] = 0x12` (left trim 1,
+  right trim 2, advance 5px) is the only non-zero entry among the digits, but
+  it is ORIGINAL: the pre-refactor decimal array in the same file's history had
+  `18` at index 49 too. `73d05703` reformatted decimal to commented hex and
+  transcribed it correctly.
+- **The sampler is self-consistent.** `SSPutStrTexInputPro` samples
+  `u+sideL .. u+8-sideR`, draws a quad of width `slide = 8-sideL-sideR`, and
+  returns `slide`; `SSPutStrProP` advances by exactly that. No overlap, no gap.
+
+**Therefore the tile's CONTENT is wrong** — the bug is in how that tile is
+loaded, decoded or cached, not in the text-drawing path.
+
+### Explicitly NOT the April dirty-rect bug
+
+`project-ppg-dirty-rect-corruption` (resolved 2026-04-07 by INDEX8
+rasterization) is a different, older issue and its notes should not be trusted
+here — the user states this regression is from **this month**. Do not re-derive
+from that entry.
+
+### Next step: bisect, not more reading
+
+~12 August commits touch rendering/textures/texture-cache — `texcash` pattern
+append bounds and refcount traps (`8d623eae`), `texgroup` reclaim (`731d22a0`),
+the hash/pattern-bound assertions (`658e0026`, `aba90c32`), the rolled-back
+char-select texture-block fix (`2e7778f1`). Reading diffs cannot distinguish
+them; building can. ~5 builds with a human glancing at any `1`.
+
+Unrelated to the netplay work in #143-#155; do not conflate.
