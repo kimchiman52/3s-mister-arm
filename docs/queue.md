@@ -3208,7 +3208,7 @@ other definition is `netplay_stub.c`, and every call site is a test.
 Result: connect-phase failures surface honestly (S3), the RUNNING phase does
 not. "Opponent left" and "desynced" are distinguishable only in the log file.
 
-## #145 — `Netplay_HandleMenuExit` latches teardown from speculative frames — OPEN
+## #145 — `Netplay_HandleMenuExit` latches teardown from speculative frames — CLOSED (fixed)
 
 `VS_Result` case 7 (`src/sf33rd/Source/Game/menu/menu.c:3339` @ `5b2c4ed2`)
 calls `Netplay_HandleMenuExit()`, which sets `session_state =
@@ -3220,6 +3220,62 @@ the chain consults `rolling_back` or confirmed-frame status.
 Failure: on the result menu both players act inside the prediction window; a
 rollback erases the local quit, EXITING stays latched. One side tears down
 "user-canceled", the other rematches into the 5 s `DISCONNECT_TIMEOUT`.
+
+**CLOSED by `1707e55c`.** Trigger falsification-tested first: **REACHABLE**,
+but narrower than filed.
+
+The only divergent transition in `VS_Result_Move_Sub` is `r_no[2]=6` (rematch
+completion, requires the other player's `Menu_Cursor_X` set). Presses reaching
+`7`/`99` land in the same exit arm and diverge nothing; `r_no[2]=5` is
+unreachable in `MODE_NETWORK` (`After_VS_Move_Sub` skip=1 removes that cursor
+row, `Game03` zeroes `Cursor_Y_Pos`). So the race is precisely: local arms a
+rematch, disarms, quits — all inside the prediction window — while the peer's
+confirm, made against the still-armed cursor, is in flight. On the corrected
+timeline `VS_Result_Select_Sub`'s player-0-first short-circuit consumes the
+frame and the local press is LOST, not deferred (input is edge-detected,
+`~plsw_01 & plsw_00`).
+
+Fix: RUNNING-state exits latch `s_menu_exit_request_frame` (stamped from
+`s_sim_frame`, set at the top of `advance_game` so replay legs stamp the
+replayed frame); `Netplay_Run` fires only once `head − R ≥ W`. A
+`GekkoLoadEvent` below R cancels; a corrected timeline that still quits
+re-latches. TRANSITIONING/CONNECTING exit immediately — not Gekko-simulated.
+
+**The `≥ W` bound is exactly tight, verified in both directions against the
+source `build-deps.sh` actually builds** (ref `7be848c`; our patches touch only
+`compression.h`, `backend.cpp`, `zpp/serializer.h`, so `input.cpp`/`sync.cpp`/
+`event.cpp`/`game_session.cpp` are upstream-identical). `HandleInputPrediction`
+caps a predicted span at W consecutive frames; `UpdateSession` rolls back
+before every advance. One frame looser and a fully-predicted `[R, R+W−1]` is
+legal — the bug survives. One frame stricter and a quit after the peer goes
+silent never fires, because prediction carries the head to exactly `R+W`.
+
+Mutual clean quit cannot deadlock: case 7 is shared deterministic state, so
+both peers execute it at the same simulated frame, both defer, both keep
+sending inputs, both fire.
+
+**ACCEPTED, not fixed:** peer goes silent within ~W frames of the quit → head
+never reaches `R+W` → the exit arrives via the 5 s `DISCONNECT_TIMEOUT` and
+reads "Opponent disconnected." instead of "user-canceled". Bounded, rare, and
+arguably the truer cause. A wall-clock fire-anyway fallback is NOT the remedy —
+it reintroduces the speculative teardown this task removes, because an
+uncancelled request during a stall can still be rolled past when the stall
+resolves. A `menu-exit-superseded` log line preserves the attribution.
+
+Side effect: `session_state` no longer mutates mid-simulated-frame, so
+`Ldreq_BarrierActive` (`gd3rd.c`) holds through the frame instead of dropping
+the instant case 7 ran.
+
+Pinned by `unit_menu_exit_deferral` (fails under `> W` and under `≥ W+1`,
+across windows 1/8/32). NOT covered: the latch/cancel/fire wiring itself —
+needs two live peers, the same seam gap #144 records for `process_session`.
+
+**Reopen if:** (a) `GEKKONET_REF` moves off `7be848c` and the prediction cap or
+the rollback-before-advance ordering changes — re-derive the bound; (b) any new
+simulated path calls `Netplay_HandleMenuExit` or mutates `session_state` (today
+`menu.c` `VS_Result` case 7 is the only sim caller); (c)
+`VS_Result_Move_Sub` gains a non-exit transition reachable in `MODE_NETWORK`
+beyond `r_no[2]=6`.
 
 ## #146 — GekkoNet `session_health` grows without bound from wire frames — OPEN
 
