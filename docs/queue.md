@@ -3350,7 +3350,7 @@ reviewable diff and `git apply --check` becomes the drift detector instead of
 hand-written pre/post greps. Deliberately not folded in here — it would
 rewrite the lines `eb0a428b` adds.
 
-## #147 — the portmap quiescence gate covers removal and renewal, not spawn — OPEN
+## #147 — the portmap quiescence gate covers removal and renewal, not spawn — CLOSED (confirmed, fixed)
 
 `upnp_ensure_cached` (`src/netplay/upnp.c:48`) writes process statics
 (`s_cached_urls`, `s_cached_data`, `s_cache_valid` `:37`, `FreeUPNPUrls` on the
@@ -3367,6 +3367,42 @@ the `join_portmap_quiescent` verdict). Spawning is not: `DirectP2P_Cancel` ->
 Window: the file's own measurement records an 11,543 ms probe against an
 11,250 ms deadline, so detach is routine; a wedged TCP connect extends it to the
 OS SYN timeout. PLAUSIBLE — the race is derived from the code, not observed.
+
+**CLOSED by `400c7c3c`. Falsify verdict: CONFIRMED, not falsified.**
+
+Re-verified first-hand rather than from the filing: `upnp.c` has no mutex, no
+generation counter, no cancel latch; `upnp_worker_fn` reads only its heap job
+plus config, so a detached worker cannot bail early; and **`natpmp.c`'s own
+`KNOWN HOLE (review L-3)` comment describes this exact sequence**, ending
+"neither was done here". #96's latch had closed the FAILED_STUN auto-retry
+route that comment names, but `Begin*` resets that latch and discards
+`join_portmap_reset`'s verdict — so `Cancel` → `BeginHost` stayed live.
+
+Fix: the timed-out worker is parked **joinable** in a single straggler slot
+instead of `SDL_DetachThread`'ed, and every probe spawn site refuses to start a
+second worker until `portmap_backends_quiescent()` has joined it. Host ladder
+and joiner rescue both skip with an attributed connect-log line.
+**Not** latched into `s_portmap_failed_port` — "we did not ask" is not a
+measured verdict and would corrupt #96's semantics. `upnp_renew_tick` consults
+no gate deliberately: a renewal requires a live mapping and a running straggler
+excludes one; that argument was verified through all four of its cases.
+
+Waiting instead of skipping was rejected — it would block the hosting worker
+for the SYN timeout at the moment the user pressed Host. Skipping degrades to
+the supported no-mapping outcome and self-heals next press.
+
+No leak, no stall: `SDL_WaitThread` is only ever called after the thread
+reports COMPLETE; the reap also reclaims the job block the old detach path
+leaked *by design*. Worst case at process exit is one zombie thread handle.
+
+Slot park/refuse/reap pinned by test 45 through the production entry points.
+**Real miniupnpc concurrency has no mock and the spawn-site gates are
+inspection-covered only** — stated, not papered over.
+
+Residual for separate queueing: the module now has five hand-maintained
+worker handle/job pairs. A single owned worker-slot abstraction, or a mutex
+around the two backends' process globals (which would make the spawn gate
+unnecessary), is the systematic version.
 
 ## #148 — three `game_state.c` items: one diagnostic, two latent — CLOSED
 
@@ -3447,7 +3483,7 @@ Rollback determinism fast mode: `verdict=PASS divergent=0 feedback=0`.
    every non-MIST/punch/rendezvous datagram from any host is forwarded before
    any source filter.
 
-## #150 — six connection-path minors — OPEN
+## #150 — six connection-path minors — CLOSED (all six)
 
 1. `Stun_Discover` (`src/netplay/stun.c:790`) falls back to
    `result->local_port = result->public_port` when `getsockname` (`:794`)
@@ -3469,6 +3505,34 @@ Rollback determinism fast mode: `verdict=PASS divergent=0 feedback=0`.
    `Upnp_AddMapping` takes `protocol` as a parameter. Latent; all call sites UDP.
 6. `Stun_Discover` compares `NET_GetAddressStatus(bind_addr) != 1` against a
    magic `1` rather than `NET_SUCCESS`.
+
+**CLOSED by `400c7c3c`. All six.**
+
+(1) `local_port = 0` now means unknown, warned at the source; the #121 rescue
+skips with an attributed line rather than asking the gateway to map a port the
+socket is not bound to. Sole production consumer (`join_portmap_spawn`)
+verified; the sibling `Stun_DecodeEndpoint` fallback (no production callers)
+reports 0 too, pinned by a codec case. (2) `set_status`'s comment no longer
+claims a copy-out the API never provided; the real contract is stated at both
+ends. (3) `DirectP2P_Cancel` documented main-thread-only, matching its
+callees. (4) `HOST_WAITING` drains up to `HOST_TICK_RECV_BATCH` (16) per
+frame, stopping on state exit so session datagrams are never consumed; the
+>960/s residual is documented. (5) `Upnp_RemoveMapping` deletes with the
+protocol the mapping was created with (`UpnpMapping.protocol`), exact fallback
+for pre-existing structs. (6) `!= NET_SUCCESS`.
+
+Tests 46 and 47 close the **previously uncovered** mute → re-roll →
+legitimate-joiner-recovers path end to end over the real socket.
+
+**Worth knowing beyond this task — the citation checker cannot catch a wrong
+repoint.** Its ownership pass accepts *any* anchor token from the citation's
+surrounding context appearing on the cited line, so when two symbols share a
+sentence, a repoint to the wrong one passes. `--fix` produced seven wrong
+anchors here (`signal_cookie_publish` → `signal_cookie_snapshot`, the two
+natpmp anchors crossed with each other, `try_handle_deliver` → a thread spawn,
+`seed_port` → a socket guard) and `check_baselines.py` stayed green
+throughout. All were re-derived by reading their targets. **Do not trust
+`--fix` inside the enforced set.**
 
 ## #151 — a third-party POLL refreshes a session's TTL — OPEN
 
