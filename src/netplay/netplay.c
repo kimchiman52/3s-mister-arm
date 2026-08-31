@@ -1192,6 +1192,75 @@ static void setup_vs_mode() {
     SDL_zeroa(piyori_type);
     Max_vitality = 160; // MAX_VITALITY_DEFAULT — must not be 0 (setup_vitality divides by it).
 
+    // Damage-scaling combo state (task #143). Written unconditionally by
+    // combo_cont_init() (engine/cmb_win.c) at real battle init, which runs
+    // AFTER setup_vs_mode — so zeroing here only clears a carry-over from a
+    // PRIOR match/session, it never stomps a legitimate pre-save write.
+    // Without this, a peer that played an earlier offline combo enters the
+    // session with nonzero combo_type/remake_power while a fresh-boot peer
+    // has zero, and the two disagree on the very first checksummed frame.
+    SDL_zeroa(combo_type);
+    SDL_zeroa(remake_power);
+
+    // ca_check_flag (battle throw/counter-attack gate, engine/hitcheck.c),
+    // Color7 (char-select color chord, screen/sel_pl.c), spmv_ng_save
+    // (Makoto SA-buff PLW.spmv_ng_flag backup, effect/effl8.c) — none of
+    // these three are declared in a header this TU already includes, so
+    // (matching game_state.c's own local-extern style for this exact
+    // field group) they're declared extern right here rather than pulling
+    // in hitcheck.h/sel_pl.h/effl8.h for one symbol each.
+    //
+    // ca_check_flag: every write site (game.c battle init, plcnt2.c,
+    // plmain.c) fires at real battle init, after setup_vs_mode — same
+    // "only clears a prior match's carry-over" argument as combo_type
+    // above. Without a reset, a peer that played an offline match (any
+    // write site sets it to 1) carries that 1 into the next netplay
+    // session while a fresh-boot peer has 0.
+    //
+    // Color7 is a per-frame char-select accumulator with nothing that
+    // zeroes it between matches/sessions — see the audit comment at
+    // sel_pl.c:132-159. A peer that reached char-select before (this
+    // session or a prior one) can carry a nonzero chord into the next
+    // session's first save.
+    //
+    // spmv_ng_save: written only inside effect_L8_move's case 0
+    // (effl8.c:50, "save the flag before the buff, so case 1 can restore
+    // it") and never reset by anything else. Once Makoto's SA-buff effect
+    // has fired once in this process, the value it stashed persists as a
+    // stale process-global until the effect fires again — including into
+    // a later netplay session. (2026-04-24 Candidate 0b wrongly
+    // exonerated this field as dead via incorrect CPS3 character
+    // numbering — see the "H-6" note at sel_pl.c:135 — it is live.)
+    {
+        extern u16 Color7[2];
+        extern s8 ca_check_flag;
+        extern u32 spmv_ng_save[2];
+        SDL_zeroa(Color7);
+        ca_check_flag = 0;
+        SDL_zeroa(spmv_ng_save);
+    }
+
+    // chainex_check (EX-SA chain gating, system/sysdir.c) — deliberately
+    // included for defense-in-depth, NOT because it is believed reachable
+    // today. Every write site sits inside `if (!ArcadeBalance_IsEnabled())`
+    // (see the audit comment at game_state.h above the chainex_check field),
+    // and Netplay_ArmAllowed() == ArcadeBalance_IsEnabled(), which is a
+    // fixed-at-boot value (ArcadeBalance_Init, called once from main.c) that
+    // cannot change mid-process. So any process that ever arms netplay has
+    // had arcade balance ON for its entire lifetime, meaning those writes
+    // provably never fired in that process — chainex_check cannot be stale
+    // entering a netplay session on a shipped build. This mirrors the
+    // ArcadeBalance_IsEnabled() belt-and-braces check a few lines above in
+    // this same function (setup_vs_mode already treats "an entry path
+    // missed its gate" as a real possibility to defend, not just log): if
+    // that invariant is ever violated, a stale chainex_check would be a
+    // silent frame-0 desync exactly like the other five fields in this
+    // block, so it gets the same defensive reset for uniformity.
+    {
+        extern u8 chainex_check[2][36];
+        SDL_zeroa(chainex_check);
+    }
+
     clean_input_buffers();
 }
 
@@ -2963,5 +3032,15 @@ bool Netplay_PollEvent(NetplayEvent* out) {
 // EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON -DCMAKE_C_FLAGS=-DENABLE_NETPLAY_TESTS".
 void Netplay_Test_PushEvent(NetplayEventType type) {
     push_event(type);
+}
+
+// Task #143 (queue.md #143): expose setup_vs_mode() itself so
+// test_gs_coverage.c can probe whether the full equalizer is safe to call
+// from the --test-* dispatch position (immediately after read_args(),
+// before any SDL/engine bootstrap — see main.c). Not declared in
+// netplay.h; test TU forward-declares it, same pattern as
+// Netplay_Test_PushEvent above.
+void Netplay_Test_RunSetupVsMode(void) {
+    setup_vs_mode();
 }
 #endif

@@ -415,9 +415,270 @@ static void roundtrip_pass(uint32_t seed) {
     }
 }
 
+/* === PHASE 3 equalizer coverage guard + asymmetric-history repro
+ * (task #143 / queue.md #143) ===============================================
+ *
+ * setup_vs_mode()'s PHASE 3 block (src/netplay/netplay.c) is a hand-
+ * maintained list of resets that has to track game_state.c's FH_* hash-
+ * input list — nothing ties them together, which is exactly how
+ * ca_check_flag/combo_type/remake_power/Color7/spmv_ng_save/chainex_check
+ * drifted out of PHASE 3's coverage while staying in the hash. Every
+ * existing harness runs two FRESH (identically BSS-zero) instances, so
+ * none of them can see a field that is simply never reset: both sides
+ * start at the same wrong (zero) value and agree by accident.
+ *
+ * Trampolines used here (game_state.c, ENABLE_NETPLAY_TESTS block):
+ *   - Netplay_Test_FhCount / Netplay_Test_FhName / Netplay_Test_FieldHash
+ *     read back game_state.c's file-static FH_* hash table.
+ *   - Netplay_Test_DirtyHashedGlobalsSix(seed) writes pseudo-random
+ *     nonzero values into exactly the six raw globals queue.md #143
+ *     found missing from PHASE 3 (see its own comment in game_state.c
+ *     for why it is scoped to six fields and not the full FH_* set).
+ * netplay.c:
+ *   - Netplay_Test_RunSetupVsMode() calls the real, unmodified
+ *     setup_vs_mode() — confirmed safe to call from this exact
+ *     --test-* dispatch position (immediately after read_args(), before
+ *     any SDL/engine bootstrap): it was probed standalone first and
+ *     returned cleanly, logging only the expected "arcade balance not
+ *     verified" SDL_LogError (setup_vs_mode's own belt-and-braces check;
+ *     this harness never calls ArcadeBalance_Init()).
+ * game_state.h:
+ *   - save_current_state() and the State type are already public; no new
+ *     trampoline needed to compute the real per-field hashes.
+ *
+ * Two checks, sharing the dirty/equalize/save mechanics:
+ *
+ *  1. equalizer_coverage_check() — dirty the six fields with seed A, run
+ *     the equalizer, hash; repeat with an independent seed B; compare
+ *     hash[i] between the two runs for every i in FH_COUNT. A field the
+ *     equalizer fully resets lands on the SAME (zeroed) value regardless
+ *     of what it started at, so the two runs agree. A field PHASE 3
+ *     forgets (or only partially resets) carries a seed-dependent residue
+ *     through, so the two runs disagree — named by FH_NAMES[i].
+ *
+ *     IMPORTANT LIMIT: this only gives real signal for the six fields
+ *     Netplay_Test_DirtyHashedGlobalsSix actually perturbs. A field added
+ *     to FH_* in the future that neither dirty pass touches hashes to the
+ *     same untouched value on both runs regardless of whether PHASE 3
+ *     resets it, and PASSES here by accident — the same blind spot this
+ *     whole guard exists to close, just one field later. The comparison
+ *     loop itself needs no maintenance to stay memory-safe when FH_COUNT
+ *     grows (it is sized off FH_COUNT/FH_NAMES, not a literal), but it
+ *     does need the dirty scope extended to stay MEANINGFUL for a new
+ *     field. equalizer_scope_pin_check() below is what actually catches
+ *     that: it pins FH_COUNT and fails loudly, by name, the moment it
+ *     moves, so "extend the dirty scope" can't be forgotten silently.
+ *
+ *  2. asymmetric_history_repro() — the queue.md #143 failure mode
+ *     reproduced directly: a "host" that dirtied the six fields (prior
+ *     offline match) and a "joiner" left at BSS zero (fresh boot), both
+ *     run through the SAME equalizer, then their resulting hashes must
+ *     agree field-by-field — this is what a real session start checks
+ *     (first confirmed frame must match cross-peer).
+ */
+void Netplay_Test_RunSetupVsMode(void);
+void Netplay_Test_DirtyHashedGlobalsSix(uint32_t seed);
+void Netplay_Test_ZeroHashedGlobalsSix(void);
+int Netplay_Test_FhCount(void);
+const char* Netplay_Test_FhName(int ix);
+uint32_t Netplay_Test_FieldHash(int frame, int ix);
+
+#define FH_TEST_MAX_FIELDS 64 /* generous ceiling; FH_COUNT is well under this */
+
+/* Structural tripwire for the P-1.1 gap above: Netplay_Test_DirtyHashedGlobalsSix/
+ * ZeroHashedGlobalsSix (game_state.c) hand-dirty exactly six named globals
+ * (chainex_check, Color7, ca_check_flag, spmv_ng_save, combo_type,
+ * remake_power) — the six queue.md #143 found missing from PHASE 3. That
+ * dirty scope is hand-maintained and does NOT automatically grow when a
+ * new field is added to the FH_* enum/FH_NAMES/HASHONE block in
+ * game_state.c — see the "IMPORTANT LIMIT" note above.
+ *
+ * Pinning FH_COUNT here (same idiom as GS_COVERAGE_EXPECTED_HOLE_BYTES
+ * above: a hand-maintained count that turns "silently stale" into "build
+ * fails and names what changed") makes it impossible for FH_COUNT to move
+ * without equalizer_scope_pin_check() failing loudly and naming the new
+ * field(s) by FH_NAMES[i]. Bump this ONLY after you have:
+ *   (1) added a PHASE 3 reset for the new field in setup_vs_mode()
+ *       (src/netplay/netplay.c), AND
+ *   (2) extended Netplay_Test_DirtyHashedGlobalsSix and
+ *       Netplay_Test_ZeroHashedGlobalsSix (src/netplay/game_state.c) to
+ *       dirty/zero it, THEN
+ *   (3) re-pin this constant to the new FH_COUNT.
+ * Bumping it without (1)/(2) just widens the blind spot this pin exists
+ * to close. */
+#define EQUALIZER_DIRTY_FH_COUNT_PINNED 39
+
+static State equalizer_test_scratch;
+
+/* Dirty the six fields with `seed`, run the production equalizer, run the
+ * production checksum, and copy out the per-field hashes it recorded for
+ * `frame`. */
+static void equalizer_dirty_pass(uint32_t seed, int frame, int fh_count, uint32_t* out_hashes) {
+    Netplay_Test_DirtyHashedGlobalsSix(seed);
+    Netplay_Test_RunSetupVsMode();
+    save_current_state(&equalizer_test_scratch, frame);
+    for (int i = 0; i < fh_count; i++) {
+        out_hashes[i] = Netplay_Test_FieldHash(frame, i);
+    }
+}
+
+/* Force the six fields to true zero (models a fresh-boot process — see
+ * Netplay_Test_ZeroHashedGlobalsSix's comment for why this must be
+ * explicit rather than "just don't dirty", since host and joiner run in
+ * the same process here), run the equalizer, then record hashes the same
+ * way. */
+static void equalizer_clean_pass(int frame, int fh_count, uint32_t* out_hashes) {
+    Netplay_Test_ZeroHashedGlobalsSix();
+    Netplay_Test_RunSetupVsMode();
+    save_current_state(&equalizer_test_scratch, frame);
+    for (int i = 0; i < fh_count; i++) {
+        out_hashes[i] = Netplay_Test_FieldHash(frame, i);
+    }
+}
+
+static int report_field_mismatches(const char* what, const uint32_t* a, const uint32_t* b, int fh_count) {
+    int failures = 0;
+    for (int i = 0; i < fh_count; i++) {
+        if (a[i] != b[i]) {
+            fprintf(stderr,
+                    "[test_gs_coverage] FAIL (%s): field '%s' hash disagrees "
+                    "(0x%08x vs 0x%08x) after setup_vs_mode() ran on both sides — "
+                    "PHASE 3 in netplay.c's setup_vs_mode() does not fully reset "
+                    "this field\n",
+                    what, Netplay_Test_FhName(i), a[i], b[i]);
+            failures++;
+        }
+    }
+    return failures;
+}
+
+/* Fails loudly and names what changed the moment FH_COUNT moves away from
+ * the pin above — see EQUALIZER_DIRTY_FH_COUNT_PINNED's comment for why
+ * this exists: equalizer_coverage_check()/asymmetric_history_repro() below
+ * can only prove PHASE 3 coverage for the six fields the dirty scope
+ * actually touches, so a field added to FH_* without also extending that
+ * scope would otherwise pass those two checks by accident. */
+static int equalizer_scope_pin_check(void) {
+    int fh_count = Netplay_Test_FhCount();
+    if (fh_count == EQUALIZER_DIRTY_FH_COUNT_PINNED) {
+        return 0;
+    }
+    fprintf(stderr,
+            "[test_gs_coverage] FAIL: FH_COUNT changed from the pinned %d to %d. "
+            "The equalizer-coverage guard's dirty scope "
+            "(Netplay_Test_DirtyHashedGlobalsSix/Netplay_Test_ZeroHashedGlobalsSix "
+            "in game_state.c) only perturbs the fields it names explicitly — a "
+            "field added to FH_* without extending that scope hashes to the same "
+            "untouched value on both sides of the comparisons below and would "
+            "PASS silently, hiding a missing PHASE 3 reset in setup_vs_mode().\n",
+            EQUALIZER_DIRTY_FH_COUNT_PINNED, fh_count);
+    if (fh_count > EQUALIZER_DIRTY_FH_COUNT_PINNED) {
+        fprintf(stderr, "[test_gs_coverage] New field(s) since the pin:\n");
+        for (int i = EQUALIZER_DIRTY_FH_COUNT_PINNED; i < fh_count && i < FH_TEST_MAX_FIELDS; i++) {
+            fprintf(stderr, "[test_gs_coverage]   FH_NAMES[%d] = \"%s\"\n", i, Netplay_Test_FhName(i));
+        }
+    }
+    fprintf(stderr,
+            "[test_gs_coverage] To fix: (1) add a PHASE 3 reset for the new "
+            "field in setup_vs_mode() (src/netplay/netplay.c), (2) extend "
+            "Netplay_Test_DirtyHashedGlobalsSix and "
+            "Netplay_Test_ZeroHashedGlobalsSix (src/netplay/game_state.c) to "
+            "dirty/zero it, then (3) re-pin EQUALIZER_DIRTY_FH_COUNT_PINNED in "
+            "test_gs_coverage.c to %d.\n",
+            fh_count);
+    return 1;
+}
+
+static int equalizer_coverage_check(void) {
+    int fh_count = Netplay_Test_FhCount();
+    if (fh_count <= 0 || fh_count > FH_TEST_MAX_FIELDS) {
+        fprintf(stderr, "[test_gs_coverage] FAIL: FH_COUNT=%d out of the expected 1..%d range\n", fh_count,
+                FH_TEST_MAX_FIELDS);
+        return 1;
+    }
+
+    static uint32_t hashes_a[FH_TEST_MAX_FIELDS];
+    static uint32_t hashes_b[FH_TEST_MAX_FIELDS];
+    equalizer_dirty_pass(0x1B873593u, 10, fh_count, hashes_a);
+    equalizer_dirty_pass(0xCC9E2D51u, 11, fh_count, hashes_b);
+
+    int failures = report_field_mismatches("equalizer-coverage: two differently-dirtied starting states", hashes_a,
+                                            hashes_b, fh_count);
+    if (failures == 0) {
+        fprintf(stderr,
+                "[test_gs_coverage] OK — compared all %d checksummed fields "
+                "between two independently-dirtied starting states; the 6 "
+                "fields Netplay_Test_DirtyHashedGlobalsSix actually dirties "
+                "(ca_check_flag, combo_type, remake_power, Color7, "
+                "spmv_ng_save, chainex_check) came back equal, proving "
+                "PHASE 3 resets them. The other %d fields matched too, but "
+                "only because neither run perturbed them — see "
+                "equalizer_scope_pin_check() for how a future field is still "
+                "caught\n",
+                fh_count, fh_count - 6);
+    }
+    return failures;
+}
+
+static int asymmetric_history_repro(void) {
+    int fh_count = Netplay_Test_FhCount();
+    if (fh_count <= 0 || fh_count > FH_TEST_MAX_FIELDS) {
+        fprintf(stderr, "[test_gs_coverage] FAIL: FH_COUNT=%d out of the expected 1..%d range\n", fh_count,
+                FH_TEST_MAX_FIELDS);
+        return 1;
+    }
+
+    static uint32_t host_hashes[FH_TEST_MAX_FIELDS];
+    static uint32_t joiner_hashes[FH_TEST_MAX_FIELDS];
+
+    fprintf(stderr,
+            "[test_gs_coverage] asymmetric-history repro: 'host' played a prior "
+            "offline match (six fields dirtied), 'joiner' is fresh-boot (BSS zero); "
+            "both then run setup_vs_mode() before their first save\n");
+    equalizer_dirty_pass(0xF00DCAFEu, 20, fh_count, host_hashes);
+    equalizer_clean_pass(21, fh_count, joiner_hashes);
+
+    int failures =
+        report_field_mismatches("asymmetric-history: host (prior match) vs joiner (fresh boot)", host_hashes,
+                                 joiner_hashes, fh_count);
+    if (failures == 0) {
+        fprintf(stderr,
+                "[test_gs_coverage] OK — host (prior offline match) and joiner "
+                "(fresh boot) agree on all %d checksummed fields after "
+                "setup_vs_mode() — no frame-0 GekkoDesyncDetected from this history "
+                "asymmetry\n",
+                fh_count);
+    } else {
+        fprintf(stderr,
+                "[test_gs_coverage] This is queue.md #143's exact failure mode: a "
+                "host that played one offline match, backed out, and hosted a "
+                "netplay session would desync a fresh-boot joiner on the first "
+                "confirmed frame.\n");
+    }
+    return failures;
+}
+
 int Netplay_Test_GsCoverage(void) {
-    /* PLW canonical hash-image checks first: they touch only local
-     * scratch, so they run before the round-trip pass disturbs globals. */
+    /* MANDATORY ORDER: the pin/equalizer/repro checks below must run here,
+     * before roundtrip_pass() further down. Netplay_Test_DirtyHashedGlobalsSix/
+     * ZeroHashedGlobalsSix (game_state.c) are only safe to call against
+     * near-BSS global state — see that function's own comment for why
+     * (setup_vs_mode()'s PHASE 0/1 read several fields as array indices
+     * before PHASE 3 zeroes them). roundtrip_pass() loads fully-random
+     * bytes into all ~611 GameState members; running Netplay_Test_RunSetupVsMode()
+     * (the real setup_vs_mode(), including live engine calls like
+     * Clear_Personal_Data/System_all_clear_Level_B) against that randomized
+     * state instead of near-BSS state is the exact out-of-bounds risk that
+     * comment warns about. If these calls ever get reordered, move this
+     * warning with them, not just the code. */
+    int pin_failures = equalizer_scope_pin_check();
+    int equalizer_failures = equalizer_coverage_check();
+    int repro_failures = asymmetric_history_repro();
+
+    /* PLW canonical hash-image checks touch only local scratch (no
+     * GameState globals), so their position relative to the pin/equalizer/
+     * repro checks above is unconstrained — but, like those, they must
+     * stay ahead of the round-trip pass below. */
     int plw_failures = plw_canonical_checks();
 
     /* Snapshot live globals so we can put them back before returning. */
@@ -474,15 +735,21 @@ int Netplay_Test_GsCoverage(void) {
                 GS_COVERAGE_EXPECTED_HOLE_BYTES, hole_bytes);
         return 1;
     }
-    if (plw_failures) {
-        fprintf(stderr, "[test_gs_coverage] FAIL: %d PLW canonical-image check(s) failed\n", plw_failures);
+    if (plw_failures || equalizer_failures || repro_failures || pin_failures) {
+        fprintf(stderr,
+                "[test_gs_coverage] FAIL: %d FH_COUNT-pin check(s), %d PLW "
+                "canonical-image check(s), %d equalizer-coverage check(s), %d "
+                "asymmetric-history repro check(s) failed\n",
+                pin_failures, plw_failures, equalizer_failures, repro_failures);
         return 1;
     }
     fprintf(stderr,
             "[test_gs_coverage] OK — all %zu hole bytes match the pinned "
             "padding expectation (%d); every GameState field round-trips "
-            "through GS_SAVE/GS_LOAD\n",
-            hole_bytes, GS_COVERAGE_EXPECTED_HOLE_BYTES);
+            "through GS_SAVE/GS_LOAD; setup_vs_mode() equalizes every "
+            "checksummed field this harness dirties, host-vs-joiner included; "
+            "FH_COUNT still matches the pinned %d\n",
+            hole_bytes, GS_COVERAGE_EXPECTED_HOLE_BYTES, EQUALIZER_DIRTY_FH_COUNT_PINNED);
     return 0;
 #else
     /* 32-bit build of the harness: no pinned padding figure (tests run on
@@ -492,8 +759,12 @@ int Netplay_Test_GsCoverage(void) {
             "[test_gs_coverage] NOTE: no pinned hole-byte expectation for "
             "32-bit builds; measured %zu (informational only)\n",
             hole_bytes);
-    if (plw_failures) {
-        fprintf(stderr, "[test_gs_coverage] FAIL: %d PLW canonical-image check(s) failed\n", plw_failures);
+    if (plw_failures || equalizer_failures || repro_failures || pin_failures) {
+        fprintf(stderr,
+                "[test_gs_coverage] FAIL: %d FH_COUNT-pin check(s), %d PLW "
+                "canonical-image check(s), %d equalizer-coverage check(s), %d "
+                "asymmetric-history repro check(s) failed\n",
+                pin_failures, plw_failures, equalizer_failures, repro_failures);
         return 1;
     }
     return 0;

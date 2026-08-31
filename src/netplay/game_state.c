@@ -2853,4 +2853,124 @@ bool Netplay_Test_SparseStateIsValid(const unsigned char* in_buf,
                                      unsigned int in_len) {
     return sparse_state_is_valid(in_buf, in_len);
 }
+
+/* === Test-only trampolines for the checksummed-globals coverage guard
+ * (task #143 / queue.md #143) ======================================
+ *
+ * The per-field desync-diagnostic hash list (FH_*, FH_NAMES, FH_COUNT,
+ * saved_field_hashes) is file-static, same reasoning as the sparse-save
+ * helpers above: it is netplay-internal bookkeeping, not something
+ * production code outside this file should reach into. test_gs_coverage.c
+ * needs read access to it to build a guard proving setup_vs_mode()'s
+ * PHASE 3 block actually zeroes every field this file hashes — the gap
+ * that let ca_check_flag/combo_type/remake_power/Color7/spmv_ng_save
+ * drift out of sync with the hash whitelist in the first place. */
+int Netplay_Test_FhCount(void);
+const char* Netplay_Test_FhName(int ix);
+uint32_t Netplay_Test_FieldHash(int frame, int ix);
+void Netplay_Test_DirtyHashedGlobalsSix(uint32_t seed);
+void Netplay_Test_ZeroHashedGlobalsSix(void);
+
+int Netplay_Test_FhCount(void) {
+    return FH_COUNT;
+}
+
+const char* Netplay_Test_FhName(int ix) {
+    if (ix < 0 || ix >= FH_COUNT) {
+        return "<out-of-range>";
+    }
+    return FH_NAMES[ix];
+}
+
+uint32_t Netplay_Test_FieldHash(int frame, int ix) {
+    if (ix < 0 || ix >= FH_COUNT) {
+        return 0;
+    }
+    /* Same negative-frame normalization note_state() uses above. All
+     * current callers pass positive constants, so this is latent, not
+     * exploitable today — kept for consistency with the production
+     * indexing pattern this trampoline mirrors. */
+    if (frame < 0) {
+        frame += STATE_BUFFER_MAX;
+    }
+    return saved_field_hashes[frame % STATE_BUFFER_MAX][ix];
+}
+
+/* Test-only xorshift32, deliberately separate from any production PRNG so
+ * this harness never perturbs gameplay-visible randomness. */
+static uint32_t test_dirty_rng_state;
+
+static uint32_t test_dirty_xorshift32(void) {
+    uint32_t x = test_dirty_rng_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    test_dirty_rng_state = x;
+    return x;
+}
+
+static void test_dirty_fill(void* p, size_t n) {
+    uint8_t* b = (uint8_t*)p;
+    for (size_t i = 0; i < n; i++) {
+        b[i] = (uint8_t)(test_dirty_xorshift32() >> 24);
+    }
+}
+
+/* Dirty exactly the six raw globals queue.md #143 found missing from
+ * setup_vs_mode's PHASE 3 block, simulating "this process played an
+ * offline match earlier" residue. Deliberately scoped to these six and
+ * NOT to the full FH_* set (let alone all of GameState): the other ~33
+ * hashed fields include character-select/round-flow indices (My_char,
+ * Super_Arts, Round_Result, ...) that setup_vs_mode's PHASE 0/1 read
+ * and act on (array-index engine calls) BEFORE PHASE 3 zeroes them —
+ * filling those with unconstrained random bytes risks an out-of-bounds
+ * engine access unrelated to what this guard is testing. The six fields
+ * here are plain scalars/small structs/byte arrays with no pointers and
+ * nothing upstream of PHASE 3 reads them, so dirtying them is safe (see
+ * the setup_vs_mode() PHASE 3 comment block in netplay.c for the
+ * per-field timing argument, and Netplay_Test_RunSetupVsMode's own
+ * probed history in test_gs_coverage.c). If a NEW field is ever added to
+ * both GameState and the FH_* hash list, extend this function alongside
+ * it — the comparison loop in test_gs_coverage.c already iterates all of
+ * FH_COUNT, so it silently no-ops (neither run touches the new field, so
+ * both hash the same untouched value) rather than lying about coverage. */
+void Netplay_Test_DirtyHashedGlobalsSix(uint32_t seed) {
+    test_dirty_rng_state = seed ? seed : 0xA5A5A5A5u;
+
+    extern u8 chainex_check[2][36];
+    extern u16 Color7[2];
+    extern s8 ca_check_flag;
+    extern u32 spmv_ng_save[2];
+
+    test_dirty_fill(combo_type, sizeof(combo_type));
+    test_dirty_fill(remake_power, sizeof(remake_power));
+    test_dirty_fill(Color7, sizeof(Color7));
+    test_dirty_fill(&ca_check_flag, sizeof(ca_check_flag));
+    if (ca_check_flag == 0) {
+        ca_check_flag = 1; // keep it a plausible nonzero "prior match" value
+    }
+    test_dirty_fill(spmv_ng_save, sizeof(spmv_ng_save));
+    test_dirty_fill(chainex_check, sizeof(chainex_check));
+}
+
+/* Explicitly force the same six globals to true zero. Needed because
+ * test_gs_coverage.c's asymmetric-history repro runs "host" (dirtied) and
+ * "joiner" (fresh-boot) in the SAME process: without an explicit zero,
+ * "joiner" would inherit whatever "host" (or a PHASE 3 that only
+ * partially resets) left behind instead of modelling a true separate
+ * fresh-boot process, which would make the repro agree for the wrong
+ * reason (shared contamination, not correct equalization). */
+void Netplay_Test_ZeroHashedGlobalsSix(void) {
+    extern u8 chainex_check[2][36];
+    extern u16 Color7[2];
+    extern s8 ca_check_flag;
+    extern u32 spmv_ng_save[2];
+
+    SDL_zeroa(combo_type);
+    SDL_zeroa(remake_power);
+    SDL_zeroa(Color7);
+    ca_check_flag = 0;
+    SDL_zeroa(spmv_ng_save);
+    SDL_zeroa(chainex_check);
+}
 #endif
