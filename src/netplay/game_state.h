@@ -804,6 +804,26 @@ typedef struct GameState {
     u16 effl8_colorram[4][12];
 } GameState;
 
+/* The authoritative struct-size pin, and the value the MIST handshake
+ * advertises as state_ver.
+ *
+ * It lives in the header (not game_state.c, and NOT inside a 32-bit
+ * #if) for one reason: mist_handshake.c must advertise the SAME number
+ * on every architecture. state_ver exists to reject a peer whose
+ * simulation state has a different SHAPE. Advertising sizeof(GameState)
+ * conflated that with the struct's local byte size, which differs across
+ * architectures purely by pointer width and alignment — 17772 on armv7
+ * vs 19328 on 64-bit, from the Demo_Ptr slots and the 49 pointer members
+ * inside each embedded PLW. That is a layout artifact, not a simulation
+ * difference, and it hard-rejected every MiSTer<->desktop pairing.
+ *
+ * Advertising the pin instead changes nothing for MiSTer<->MiSTer: the
+ * _Static_assert in game_state.c forces sizeof(GameState) == this value
+ * on 32-bit, so shipped builds already send exactly 17772. Re-pin this
+ * (the assert will tell you to) whenever the saved-state shape changes;
+ * that is precisely when peers SHOULD reject each other. */
+#define EXPECTED_GAME_STATE_SIZE 17772
+
 typedef struct State {
     GameState gs;
     EffectState es;

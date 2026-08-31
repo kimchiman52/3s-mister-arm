@@ -141,7 +141,10 @@
  * probe[sizeof(GameState)]` vs `extern char probe[1]`), which reported
  * 'char[17772]' after the change and reproduced 'char[17784]' on the
  * pre-change header, validating the environment. 17784 - 12 = 17772. */
-#define EXPECTED_GAME_STATE_SIZE 17772
+/* EXPECTED_GAME_STATE_SIZE moved to game_state.h so mist_handshake.c can
+ * advertise the same state_ver on every architecture — see the comment at
+ * its definition. The assert below still enforces it here, on the 32-bit
+ * build where the pin is measured. */
 #define EXPECTED_TASK_SIZE 16
 
 _Static_assert(sizeof(GameState) == EXPECTED_GAME_STATE_SIZE,
@@ -156,13 +159,25 @@ _Static_assert(sizeof(struct _TASK) == EXPECTED_TASK_SIZE,
                "during netplay rollback. DO NOT change its layout without updating "
                "GameState and verifying rollback compatibility.");
 #else
-// 64-bit build: tripwires are disabled because cross-arch determinism is
-// unsupported (see docs/archive/research-3sxtra-netplay-port.md §9.7 and the
-// cross-arch research agent report). A MiSTer (32-bit) peer and a desktop
-// (64-bit) peer will desync on GekkoNet's SessionHealthMsg checksum within
-// seconds regardless of struct layout, so pinning the 64-bit expected size
-// is not a meaningful correctness check. Desktop builds exist for local
-// testing of the orchestrator/transport only.
+// 64-bit build: the size tripwires are disabled because sizeof(GameState)
+// differs across architectures by pointer width and alignment alone, so a
+// second pinned number would have to be maintained by hand for no
+// correctness gain. The pin that matters (EXPECTED_GAME_STATE_SIZE, in
+// game_state.h) is measured and asserted on the 32-bit build above.
+//
+// NOTE, corrected 2026-08-31: this block used to state that a 32-bit and a
+// 64-bit peer "will desync on GekkoNet's SessionHealthMsg checksum within
+// seconds regardless of struct layout." That is FALSE and it argued against
+// a change that turned out to be one line. What crosses the wire is our own
+// `h`, and `h` is architecture-stable by construction: PLW is hashed through
+// the generated canonical member table (task #111, plw_canon.c), whose image
+// was measured byte-identical on macOS arm64 and MiSTer armv7l
+// (CANON_CHECKSUM=0x113128fd, both runs 2026-08-29, see
+// tools/netplay/plw_canon_crossarch.c), and the remaining globals are hashed
+// per-field via HASH_GLOBAL with fixed-width types, so inter-field padding
+// never enters the stream. Saved states never cross the wire at all — only
+// inputs and a u32 checksum do. Desktop builds are therefore usable as real
+// netplay peers, not just for orchestrator/transport testing.
 #endif
 
 // Copies are sized by the global, so a mismatched field would spill into its

@@ -94,7 +94,14 @@ const uint8_t MIST_MAGIC[MIST_MAGIC_LEN] = {
  * self-built peers than tolerating the rare silent-incompatible pair.
  * If one of the above ships in a release, bump MIST_PROTO_VER to force
  * the reject. */
-#define MIST_STATE_VER ((uint16_t)sizeof(GameState))
+/* Cross-arch (2026-08-31): advertise the PIN, not sizeof(GameState).
+ * sizeof differs across architectures by pointer width alone (17772 armv7
+ * vs 19328 on 64-bit) and hard-rejected every MiSTer<->desktop pairing for
+ * a layout artifact rather than a simulation difference. The pin is what
+ * state_ver always meant to gate, and 32-bit builds already advertise it,
+ * so this is back-compatible with every shipped MiSTer build. See the
+ * comment on EXPECTED_GAME_STATE_SIZE in game_state.h. */
+#define MIST_STATE_VER ((uint16_t)EXPECTED_GAME_STATE_SIZE)
 
 uint16_t mist_handshake_local_state_ver(void) {
     return MIST_STATE_VER;
