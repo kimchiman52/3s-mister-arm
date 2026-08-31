@@ -3025,3 +3025,194 @@ running.
 - **Frame-data, netplay harnesses, ARM cross-build and every build: skipped,
   correctly.** This lane touches two shell files and reaches no compiled
   artifact. Canon untouched: 99 corpora / 1,488 rows / 1,435 PASS / 53 XFAIL.
+
+---
+
+# Netplay review batch (#143–#152) — OPEN
+
+Source: the 2026-08-31 five-lane netplay review. Every citation below was read
+at `5b2c4ed2` on `upstream-engine-fixes`. Symbols are the durable anchor; line
+numbers are hints qualified by that commit.
+
+Prior findings re-verified as ALREADY FIXED, recorded so they are not re-opened:
+host liveness (`host_rendezvous_thread_fn`, budget-less 5 s re-REGISTER),
+any-datagram slot capture (`classify_host_datagram` fails closed), punch
+retarget (`Stun_PunchOffer`), host CGNAT gate (`direct_p2p_ip_is_nonpublic`),
+both GekkoNet remote-crash bugs (`OnInputs` bounds + serializer resize cap,
+patched in `build-deps.sh` at `GEKKONET_REF=7be848c`), and H-6 `spmv_ng_save`
+rollback-unsafety (saved, restored and hashed in `game_state.c`).
+
+## #143 — the checksum hashes five globals `setup_vs_mode` never equalizes — OPEN
+
+`save_current_state` (`src/netplay/game_state.c`) latches `battle_start_frame`
+on the first Gekko save, so the focused desync checksum covers character
+select, not battle only.
+
+Five hashed fields are absent from the PHASE 3 equalizer block
+(`setup_vs_mode`, `src/netplay/netplay.c:1138` @ `5b2c4ed2`, comment "Zero
+checksummed globals not covered above"). `grep -n 'ca_check_flag\|combo_type\|
+remake_power\|Color7\|spmv_ng_save\|chainex_check' src/netplay/netplay.c`
+returns nothing at `5b2c4ed2`:
+
+| field | defined | zeroed only by |
+|---|---|---|
+| `ca_check_flag` | `engine/hitcheck.c` | round settle (`setup_settle_rno`, `plcnt.c`) |
+| `combo_type[2]`, `remake_power[2]` | `engine/plcnt.c` | `combo_cont_init` (`cmb_win.c`), battle init |
+| `Color7[2]` | `screen/sel_pl.c` | nothing |
+| `spmv_ng_save[2]` | `effect/effl8.c` | nothing |
+| `chainex_check[2][36]` | `system/sysdir.c` | `clear_chainex_check` (`plcnt.c`), `!ArcadeBalance_IsEnabled()`-gated |
+
+Failure: host plays one offline match, backs out, hosts; joiner boots fresh.
+Checksums differ from the first confirmed frame -> `GekkoDesyncDetected` ->
+`handle_disconnection()` before the match starts. Two fresh loopback instances
+carry identical staleness, so the existing harnesses structurally cannot see it.
+
+Structural gap: PHASE 3 is a hand-maintained blocklist that must move in
+lockstep with the hash whitelist, and nothing ties them together. The save set
+has `--test-gs-coverage` for exactly this class; the hash-input set has no
+analogue.
+
+## #144 — mid-game disconnect and desync reach the player as silence — OPEN
+
+`process_session` (`src/netplay/netplay.c`) cases `GekkoPlayerDisconnected`
+(`:1779`) and `GekkoDesyncDetected` (`:1847`) log, `push_event`, and call
+`handle_disconnection` (`:1882`). Neither calls `DirectP2P_NotifySessionFailed`
+— its only callers are the handshake reject (`:2410`) and the CONNECTING
+timeout (`:2470`). `direct_p2p_on_teardown` parks `FAILED_HANDSHAKE` only when
+`s_handshake_reject_latched` is set, else `set_state(DIRECT_P2P_IDLE)`.
+
+`Netplay_PollEvent` (`netplay.c:2946`) has no production consumer: the only
+other definition is `netplay_stub.c`, and every call site is a test.
+
+Result: connect-phase failures surface honestly (S3), the RUNNING phase does
+not. "Opponent left" and "desynced" are distinguishable only in the log file.
+
+## #145 — `Netplay_HandleMenuExit` latches teardown from speculative frames — OPEN
+
+`VS_Result` case 7 (`src/sf33rd/Source/Game/menu/menu.c:3339` @ `5b2c4ed2`)
+calls `Netplay_HandleMenuExit()`, which sets `session_state =
+NETPLAY_SESSION_EXITING` — a global outside `GameState`, so no `GekkoLoadEvent`
+undoes it. `VS_Result` runs under `Menu_Task` inside `step_game()`, which
+`advance_game()` executes for predicted and replayed frames alike. No call in
+the chain consults `rolling_back` or confirmed-frame status.
+
+Failure: on the result menu both players act inside the prediction window; a
+rollback erases the local quit, EXITING stays latched. One side tears down
+"user-canceled", the other rematches into the 5 s `DISCONNECT_TIMEOUT`.
+
+## #146 — GekkoNet `session_health` grows without bound from wire frames — OPEN
+
+`OnSessionHealth` (GekkoNet `backend.cpp`, ref `7be848c`) inserts
+`session_health[frame]` with a wire-controlled `Frame` (i32) from
+`SessionHealthMsg`. Its own cleanup erases only `frame < last_added_input - 128`;
+`SessionIntegrityCheck` erases only keys matching a `local_health` entry, and
+`local_health` is bounded near the confirmed frame. Attacker-chosen far-future
+frames survive both.
+
+Reachable in the shipped config: `configure_gekko` (`netplay.c`) sets
+`desync_detection = true`, `limited_saving = 0`. Post-sync peer only (needs
+`_session_magic`), so opponent-controlled rather than pre-auth. One map node per
+packet, no receive-side rate limit, on a ~1 GB device.
+
+Not covered by the R-2 patch set in `build-deps.sh`.
+
+## #147 — the portmap quiescence gate covers removal and renewal, not spawn — OPEN
+
+`upnp_ensure_cached` (`src/netplay/upnp.c:48`) writes process statics
+(`s_cached_urls`, `s_cached_data`, `s_cache_valid` `:37`, `FreeUPNPUrls` on the
+error path). A probe that overruns `PORTMAP_PROBE_BUDGET_MS` is detached, not
+joined (`try_portmap` timeout branch; `join_portmap_collect` /
+`join_portmap_reset` detach branches, `src/netplay/direct_p2p.c`).
+
+Removal and renewal are gated on quiescence (`upnp_renew_join_and_discard`,
+the `join_portmap_quiescent` verdict). Spawning is not: `DirectP2P_Cancel` ->
+`DirectP2P_BeginHost` resets `s_portmap_failed_port` and starts a fresh
+`upnp_worker_fn` into the same statics. Two threads then populate and
+`FreeUPNPUrls` one cache: data race, double-free class.
+
+Window: the file's own measurement records an 11,543 ms probe against an
+11,250 ms deadline, so detach is routine; a wedged TCP connect extends it to the
+OS SYN timeout. PLAUSIBLE — the race is derived from the code, not observed.
+
+## #148 — three `game_state.c` items: one diagnostic, two latent — OPEN
+
+1. `sc.globals = h ^ sc.plw0 ^ sc.plw1` (`save_current_state`,
+   `src/netplay/game_state.c:2362`). djb2 does not compose by XOR, so the dump's
+   "globals" column is a mixture, not a section hash: a pure-PLW divergence
+   moves both columns in a cross-peer diff. Diagnostic only; misdirects triage.
+2. The sparse overflow guard tests accounting (`EFFECT_MAX - frwctr`,
+   `:2471`) while `pack_sparse_state` (`:1932`) emits every `be_flag != 0` slot.
+   Safe today because `pull_effect_work` decrements `frwctr` before any
+   `be_flag = 1` write and `push_effect_work` zeroes before freeing
+   (`effect.c`), but nothing asserts it. A wrong-direction break overruns the
+   Gekko state slot by 20 bytes.
+3. `load_state_from_event` (`:2526`) runs `GameState_Load` before
+   `unpack_sparse_state` (`:1988`); on rejection (`:2540`) GameState is at frame
+   F and the effect pool at the previous frame. Silent inconsistency rather than
+   session abort. Unreachable unless Gekko corrupts its own ring.
+
+## #149 — two accept-side gaps: terminal handshake frames and empty datagrams — OPEN
+
+1. `mist_handshake_pump` (`src/netplay/mist_handshake.c:717`) returns
+   `MIST_PUMP_OK` for `cls == 1` and `MIST_PUMP_FAIL` for `cls == -1` without
+   consulting `from_session_peer`; that source check gates only the H-1 latch
+   and implicit completion. Anyone who knows the punched 4-tuple can kill a
+   pairing with one spoofed REJECT, or satisfy the gate with a forged ACK (field
+   values are public to any same-build peer).
+2. `receive_data` (`src/netplay/sdl_net_adapter.c:327`) guards the counter
+   block on `buflen > 0` but not the result-building block: a zero-length
+   datagram yields `SDL_malloc(0)` with `data_len = 0` handed to GekkoNet, and
+   every non-MIST/punch/rendezvous datagram from any host is forwarded before
+   any source filter.
+
+## #150 — six connection-path minors — OPEN
+
+1. `Stun_Discover` (`src/netplay/stun.c:790`) falls back to
+   `result->local_port = result->public_port` when `getsockname` (`:794`)
+   fails. On a non-port-preserving NAT that is wrong, and
+   `join_portmap_spawn(s_work.stun.local_port)` then maps an internal port the
+   socket is not bound to — silently disabling the #121 symmetric-joiner rescue
+   on exactly the NATs it exists for.
+2. `set_status`'s comment justifies a non-atomic write with
+   "DirectP2P_GetStatusText copies out of the buffer eagerly";
+   `DirectP2P_GetStatusText` returns the raw `s_status` pointer. Tearing is
+   bounded (memset-first keeps it NUL-terminated) — the defect is the claim.
+3. `DirectP2P_Cancel` is documented "Safe to call from any thread"
+   (`src/netplay/direct_p2p.h`) but runs `join_portmap_reset` / `portmap_remove`,
+   whose own comment requires the main thread.
+4. `host_tick_receive` processes one datagram per frame in `HOST_WAITING`;
+   the punch gate mutes punch-shaped traffic only, so arbitrary garbage
+   consumes the frame's single receive. The race loop already drains greedily.
+5. `Upnp_RemoveMapping` hardcodes `"UDP"` in `UPNP_DeletePortMapping` while
+   `Upnp_AddMapping` takes `protocol` as a parameter. Latent; all call sites UDP.
+6. `Stun_Discover` compares `NET_GetAddressStatus(bind_addr) != 1` against a
+   magic `1` rather than `NET_SUCCESS`.
+
+## #151 — a third-party POLL refreshes a session's TTL — OPEN
+
+`handlePoll` (`tools/rendezvous-server/rendezvous-server.js:1473`) sets
+`entry.lastTouch = nowMs()` (`:1482`) inside `if (entry)` and *before* the
+`endpointEq` slot-match branches, so the `else` arm ("source isn't a registered
+endpoint") refreshes the entry too. `handleRegister`'s SESSION_FULL branch
+returns before its own `lastTouch` write, so the two verbs disagree.
+
+Any cookied holder of a session key, seated in neither slot, keeps the entry
+alive past `SESSION_TTL_MS` indefinitely by polling — pinning one of the
+creator IP's key slots and one of `MAX_SESSIONS`. Production clients never send
+POLL (`Rendezvous_BuildPoll` has no non-test call site), so exposure is small.
+
+## #152 — dead weight, three items — DECISION REQUIRED, not implementation
+
+1. `matchmaking.c` (legacy TCP lobby client) is still wired into
+   `netplay.c` (`Matchmaking_Start` `:2224`, `Matchmaking_Run` `:2233`) despite
+   direct-P2P being lobby-unaware by locked decision. `Matchmaking_Run`'s
+   `SDL_sscanf` result is unchecked: a malformed server line yields `player = 0`
+   -> `player_number = -1` -> `configure_gekko` adds two remote actors and no
+   local actor. Bounded by the 15 s CONNECTING deadline; server is the user's own.
+2. The `NetplayEvent` queue has no consumer (#144), and its comments promise UI
+   reactions that do not exist.
+3. `tools/netplay/fake-peer.py` and `tools/test_matchmaking_server.py` describe
+   the pre-3SXR protocol (7-char IDs, TCP/UDP 9000/9001) and no longer match any
+   shipped path.
+
+Keep-or-delete is a scope decision, not a defect fix.
