@@ -95,7 +95,7 @@ typedef struct {
 
     /* Join-side decoded peer tuple. peer_local_port was removed when
      * the v1 room code shrank to 11 chars (see room_code.h; the code is
-     * 18 chars as of v3 but has never carried local_port again). Hairpin
+     * 12 chars as of v4 but has never carried local_port again). Hairpin
      * fallback now relies on the router's NAT-loopback behavior
      * rather than rewriting to 127.0.0.1:peer_local_port. */
     char peer_code[64];
@@ -138,13 +138,19 @@ typedef struct {
     uint8_t punch_token[STUN_PUNCH_TOKEN_LEN];
     bool punch_token_valid;
 
-    /* S4b room-code nonce (32 bits as of v3). HOST: drawn from the CSPRNG by
-     * host_thread_fn right before the room code is encoded; kept
-     * STABLE across a drift re-encode (the endpoint change already
-     * forces a new code/key/token — regenerating the nonce too would
-     * add nothing) and regenerated per hosting attempt. JOINER: decoded
-     * from the room code by BeginJoin. Feeds the session-key and
-     * punch-token derivations on both roles. */
+    /* Nonce fed to the session-key and punch-token derivations on both
+     * roles (Rendezvous_DeriveSessionKey / Rendezvous_DerivePunchToken).
+     * Through v3 this was a per-session CSPRNG draw carried in the room
+     * code. As of v4 (task #155) the room code no longer carries a
+     * nonce, so this is always ROOM_CODE_V4_FIXED_NONCE (0) — set once
+     * by host_thread_fn / BeginJoin and never touched again, INCLUDING
+     * by a drift re-encode. See room_code.h's "nonce leaves the code"
+     * section for the accepted-risk writeup this implies: both
+     * derivations are now a pure function of the public (ip, port)
+     * tuple. The field is kept as a real uint32_t (not inlined as a
+     * literal at each derive call) so the two roles visibly agree on
+     * one value and so a future room-list feature that DOES deliver a
+     * real nonce out-of-band has one place to plug it into. */
     uint32_t nonce;
 
     /* Parsed rendezvous endpoint cache; populated in BeginHost/BeginJoin
@@ -657,64 +663,65 @@ static ConnectFailCode s_host_advisory_code = CONNECT_FAIL_NONE;
  * host_tick_receive). Main-thread only. */
 static int s_host_unauth_drops = 0;
 
-/* --- S4-review HIGH-1b: host punch-gate throttle ----------------------
+/* --- S4-review HIGH-1b: host punch-gate throttle -----------------------
  *
  * s_host_unauth_drops above is a LOG COUNTER ONLY. Before this block
  * there was no cap, no per-source throttle and no backoff on the host's
  * punch gate: the host answered every guess (a correct token is
  * accepted and handed off, a wrong one is silently dropped and the host
- * keeps waiting — deliberately with NO wall-clock budget), which makes
- * it a perfect brute-force oracle. host_tick_receive drains up to
- * HOST_TICK_RECV_BATCH datagrams per frame (~960/second since #150;
- * ~60/second when this block was written), and with a UPnP mapping the
- * advertised port is STABLE, so a past opponent could grind at it
- * months later.
+ * keeps waiting — deliberately with NO wall-clock budget). host_tick_
+ * receive drains up to HOST_TICK_RECV_BATCH datagrams per frame
+ * (~960/second since #150; ~60/second when this block was written).
  *
- * The v3 room code widened the nonce to 32 bits, which alone takes an
- * unthrottled grind from <=68 seconds (12-bit nonce at 60/s) to years
- * at 60/s and ~52 days even at #150's 960/s drain. This throttle is the
- * belt to that suspenders, and it closes the asymmetry the reviewer
- * flagged: the session-KEY path was already properly bounded (no oracle
- * + MAX_NEW_KEYS_PER_IP) while the punch path was not bounded at all.
+ * PER SOURCE IP — after HOST_PUNCH_SRC_MAX_BAD bad punches from one IP
+ * that source is MUTED: its punches are dropped WITHOUT the accept/
+ * echo/handoff. Sizing: a joiner's Stun_HolePunch emits ~10 datagrams in
+ * its first 500 ms then 5/s, so 24 covers the opening burst plus ~2.8 s
+ * of steady state before muting — a peer that merely raced a drift
+ * re-encode gets plenty of room. The mute EXPIRES after
+ * HOST_PUNCH_MUTE_MS rather than lasting the session, so a friend who
+ * flooded 24 bad punches on a typo'd code and then re-typed it correctly
+ * is not locked out forever with no diagnosis.
  *
  * Accounting rule — ONLY punch-SHAPED datagrams that FAIL the token
  * check are charged. A legitimate joiner holding the right code is
- * accepted on its first punch and is never charged at all, so the
- * thresholds below cannot be reached by a peer that can actually
- * connect. What CAN reach them: a scanner, a brute-forcer, or a peer
- * punching with a stale code (pre-drift-re-encode, or an old build).
+ * accepted on its first punch and is never charged at all.
  *
- * Two levels:
+ * v4 (task #155) — what this throttle defends against CHANGED, and the
+ * old "brute-force oracle" framing above is now only half true. Through
+ * v3, guessing the token meant guessing a CSPRNG nonce nobody but a code
+ * holder had, and this throttle (plus the nonce width) was what made
+ * that grind infeasible. As of v4 the token is `f(ip, port)` with a
+ * FIXED nonce (room_code.h's accepted risk): anyone who knows or scans
+ * the host's public endpoint computes the CORRECT token directly, no
+ * guessing required, and their very first punch is accepted like any
+ * real joiner's — this throttle does nothing for that attacker, because
+ * they are never charged a single bad punch. What it still defends
+ * against: a source that keeps sending WRONG-TOKEN traffic — punch-
+ * SHAPED datagrams that fail the token check (see the accounting rule
+ * above and host_ignore_is_chargeable) — from a stale/mismatched build,
+ * a corrupted client, or unsophisticated flooding that never computed
+ * the real token. Non-punch-shaped garbage (port scans, stray traffic)
+ * is deliberately NOT charged either way — it teaches an attacker
+ * nothing and charging it would let unrelated noise trip the gate. A
+ * real but narrower threat than the one this block was written for.
  *
- *  (1) PER SOURCE IP — after HOST_PUNCH_SRC_MAX_BAD bad punches from one
- *      IP that source is MUTED: its punches are dropped WITHOUT the
- *      accept/echo/handoff, so the oracle is closed for it. Sizing: a
- *      joiner's Stun_HolePunch emits ~10 datagrams in its first 500 ms
- *      then 5/s, so 24 covers the opening burst plus ~2.8 s of steady
- *      state before muting — a peer that merely raced a drift re-encode
- *      gets plenty of room.
+ * The SECOND layer this block originally described — a per-session
+ * "re-roll" that drew a fresh nonce once HOST_PUNCH_TOTAL_REROLL bad
+ * punches accumulated, invalidating whatever an attacker had been
+ * grinding for — is REMOVED as of v4. It has no v4 analog: with a fixed
+ * nonce the token cannot be rotated without changing the advertised
+ * (ip, port) itself, which nothing here does on demand, so "re-roll"
+ * would relabel the SAME code as new and accomplish nothing. The
+ * per-source mute above is the sole backstop from here — see
+ * room_code.h's accepted-risk section for what this implies.
  *
- *  (2) PER SESSION — after HOST_PUNCH_TOTAL_REROLL bad punches in total
- *      the host re-rolls the nonce, re-encodes the room code, re-derives
- *      the token and TELLS THE USER on the status line. Whatever the
- *      attacker was searching is now worthless. Capped at
- *      HOST_PUNCH_REROLL_MAX per hosting session so a persistently
- *      stale peer cannot churn the displayed code forever.
- *
- * DELIBERATE DEPARTURE from the review's literal "stop classifying that
- * source for the session": the mute EXPIRES after HOST_PUNCH_MUTE_MS,
- * and a re-roll clears every mute. A permanent mute would turn this
- * defence into a self-inflicted lockout — the exact failure class the
- * review's headline question tested S4a for. Concretely: friend types a
- * typo'd code, floods 24 bad punches, gets muted; user reads the code
- * out again; friend now punches with the RIGHT token and is still
- * dropped, forever, with no diagnosis. A bounded mute is also
- * arithmetically sufficient: 24 attempts per 60 s is 0.4/s versus the
- * unthrottled drain rate (~960/s at #150's HOST_TICK_RECV_BATCH — the
- * mute is what binds, so the drain-rate change does not move this
- * number), so a 32-bit nonce needs ~340 years per source IP,
- * and a 10,000-node botnet still needs ~12 days against a code that
- * only exists while the OSD screen is up.
+ * HOST_PUNCH_TOTAL_REROLL / HOST_PUNCH_REROLL_MAX and the functions that
+ * used them (host_reroll_room_code, host_punch_gate_clear_mutes) stay
+ * DORMANT-BUT-COMPILED below rather than deleted outright — see the
+ * tombstone comment on host_reroll_room_code for why unwiring them (not
+ * removing them) is the correct call under v4, and direct_p2p.h for why
+ * they are declared non-static instead of parked behind #if.
  *
  * All state here is MAIN-THREAD ONLY (host_tick_receive and the Tick
  * reset paths). No locking.
@@ -722,6 +729,8 @@ static int s_host_unauth_drops = 0;
 #define HOST_PUNCH_SRC_TABLE      8      /* tracked source IPs           */
 #define HOST_PUNCH_SRC_MAX_BAD    24     /* bad punches before mute      */
 #define HOST_PUNCH_MUTE_MS        60000u /* mute lifetime                */
+/* DORMANT as of v4 — read only by the unwired host_reroll_room_code
+ * below (no production caller reaches it; see its tombstone comment). */
 #define HOST_PUNCH_TOTAL_REROLL   64     /* session bad punches -> re-roll */
 #define HOST_PUNCH_REROLL_MAX     3      /* re-rolls per hosting session */
 
@@ -733,6 +742,9 @@ typedef struct {
 
 static HostPunchSrc s_host_punch_src[HOST_PUNCH_SRC_TABLE];
 static int  s_host_punch_bad_total = 0;   /* this hosting session        */
+/* DORMANT as of v4 — only host_reroll_room_code increments this, and
+ * nothing calls that function (see its tombstone comment). Kept so the
+ * function's own accounting still compiles and reads sensibly. */
 static int  s_host_punch_rerolls   = 0;   /* code re-rolls performed     */
 static int  s_host_punch_muted_drops = 0; /* accepts suppressed by mute  */
 
@@ -743,11 +755,32 @@ static void host_punch_gate_reset(void) {
     s_host_punch_muted_drops = 0;
 }
 
-/* Clear every mute and every per-source tally, keeping the session
- * totals. Called after a re-roll: the code the muted sources were
- * failing against no longer exists, so holding their strikes against
- * them would be exactly the lockout this design avoids. */
-static void host_punch_gate_clear_mutes(void) {
+/*
+ * v4 (task #155) — DORMANT-BUT-COMPILED, NOT WIRED. Clears every mute and
+ * per-source tally, keeping the session totals. Through v3 this ran as
+ * the tail of a punch-gate "re-roll": the code the muted sources were
+ * failing against no longer existed, so holding their strikes against
+ * them would have been exactly the lockout this design avoids.
+ *
+ * Under v4 that reasoning does NOT carry over, and this function must
+ * stay UNCALLED rather than being re-wired as-is. host_reroll_room_code
+ * below can only ever re-encode the SAME (ip, port) into a
+ * byte-identical code (the nonce is fixed — see room_code.h), so a
+ * hypothetical caller that invoked this once every HOST_PUNCH_TOTAL_
+ * REROLL charged bad punches would clear every source's mute against an
+ * UNCHANGED code — an attacker grinding wrong tokens would launder their
+ * own mute every 64 datagrams for free. That is a mute bypass, not a
+ * defense, which is why the old call site in host_tick_receive_one is
+ * gone.
+ *
+ * Declared non-static (see direct_p2p.h) rather than parked behind #if —
+ * #if is what let LOSSY_ADAPTER silently stop compiling once the warning
+ * set tightened (4ca4c0de) — and kept for the day a room-list feature
+ * restores an out-of-band nonce (room_code.h's "nonce leaves the code"
+ * section): host_reroll_room_code and this function become correct again
+ * together, and are re-wired together, never one without the other.
+ */
+void host_punch_gate_clear_mutes(void) {
     memset(s_host_punch_src, 0, sizeof(s_host_punch_src));
 }
 
@@ -798,11 +831,13 @@ static bool host_punch_gate_is_muted(const char* ip, uint32_t now_ms) {
     return false;
 }
 
-/* Charge one bad punch-shaped datagram to `ip`. Returns true when this
- * charge crossed the session re-roll threshold and a re-roll is owed
- * (the caller performs it — this function stays free of s_work and
- * thread lifecycle concerns so it can be unit-tested). */
-static bool host_punch_gate_note_bad(const char* ip, uint32_t now_ms) {
+/* Charge one bad punch-shaped datagram to `ip` (this function stays
+ * free of s_work and thread lifecycle concerns so it can be
+ * unit-tested). v4 (task #155): no return value — the session-total
+ * "re-roll owed" signal this used to report is gone along with the
+ * re-roll escalation itself; see the punch-gate throttle comment
+ * above. */
+static void host_punch_gate_note_bad(const char* ip, uint32_t now_ms) {
     s_host_punch_bad_total++;
 
     HostPunchSrc* e = host_punch_src_slot(ip, now_ms);
@@ -819,9 +854,6 @@ static bool host_punch_gate_note_bad(const char* ip, uint32_t now_ms) {
                     s_host_punch_bad_total);
         }
     }
-
-    return s_host_punch_bad_total >= HOST_PUNCH_TOTAL_REROLL &&
-           s_host_punch_rerolls < HOST_PUNCH_REROLL_MAX;
 }
 
 /* --- S4c: rendezvous return-routability cookie (host side) ------------- */
@@ -3924,20 +3956,14 @@ static int SDLCALL host_thread_fn(void* data) {
      * room_code.h for the rationale. */
     uint16_t pub_port = upnp_ok ? s_upnp_mapping.external_port : s_work.stun.public_port;
     uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
-    /* S4b: fresh CSPRNG nonce per hosting attempt — mixed into the code
-     * payload, the rendezvous session key, and the punch token, so
-     * neither can be derived from the observable (ip, port) alone.
-     * Fail closed on CSPRNG failure: a predictable nonce would silently
-     * void the protection (see RoomCode_GenerateNonce). */
-    if (!RoomCode_GenerateNonce(&s_work.nonce)) {
-        SDL_Log("[direct_p2p] CSPRNG unavailable — cannot generate a room-code nonce");
-        Stun_CloseSocket(&s_work.stun);
-        set_fail(CONNECT_FAIL_INTERNAL);
-        set_state(DIRECT_P2P_FAILED_STUN);
-        return 0;
-    }
+    /* v4 (task #155): the room code no longer carries a nonce — see
+     * room_code.h's "nonce leaves the code" section for the accepted-
+     * risk writeup. Every derivation below uses the fixed value, so
+     * the session key and punch token are a pure function of the
+     * advertised (ip, port) tuple. */
+    s_work.nonce = ROOM_CODE_V4_FIXED_NONCE;
     if (ip_be == 0 ||
-        !RoomCode_Encode(ip_be, pub_port, s_work.nonce, s_work.host_code)) {
+        !RoomCode_Encode(ip_be, pub_port, s_work.host_code)) {
         Stun_CloseSocket(&s_work.stun);
         set_fail(CONNECT_FAIL_INTERNAL);
         set_state(DIRECT_P2P_FAILED_STUN);
@@ -3980,11 +4006,12 @@ static int SDLCALL host_thread_fn(void* data) {
     set_status("Waiting for player 2...");
     set_state(DIRECT_P2P_HOST_WAITING);
     {
-        /* MEDIUM-4: the code is key material now — nonce chars redacted.
-         * The ip:port on the same line is the non-secret half. */
+        /* MEDIUM-4 (re-scoped for v4, room_code.h): the redaction here is
+         * hygiene, not confidentiality — the ip:port on the same line
+         * already IS the whole payload. */
         char code_redacted[ROOM_CODE_BUF_LEN];
         RoomCode_Redact(s_work.host_code, code_redacted);
-        SDL_Log("[direct_p2p] HOST_WAITING published. Code=%s (nonce redacted) "
+        SDL_Log("[direct_p2p] HOST_WAITING published. Code=%s (redacted) "
                 "public=%s:%u (via %s)",
                 code_redacted, s_work.stun.public_ip, (unsigned)pub_port,
                 upnp_ok ? portmap_backend_name(s_upnp_mapping.backend) : "STUN");
@@ -4892,16 +4919,16 @@ static void host_commit_endpoint(const char* ip, uint16_t port, const char* why)
     uint16_t new_adv_port = portmap_mapping_usable() ? s_upnp_mapping.external_port : port;
     uint32_t ip_be = ipv4_str_to_be(ip);
     char new_code[ROOM_CODE_BUF_LEN];
-    /* S4b: the nonce stays STABLE across a drift re-encode — the
-     * endpoint change already yields a new code/key/token, and the
-     * nonce's job (unguessable derivations) is done either way. */
-    if (ip_be != 0 && RoomCode_Encode(ip_be, new_adv_port, s_work.nonce, new_code) &&
+    /* v4 (task #155): s_work.nonce is always ROOM_CODE_V4_FIXED_NONCE —
+     * kept only so the derivation calls below have one place both roles
+     * agree on. */
+    if (ip_be != 0 && RoomCode_Encode(ip_be, new_adv_port, new_code) &&
         strcmp(new_code, s_work.host_code) != 0) {
         char old_redacted[ROOM_CODE_BUF_LEN];
         char new_redacted[ROOM_CODE_BUF_LEN];
         RoomCode_Redact(s_work.host_code, old_redacted);
         RoomCode_Redact(new_code, new_redacted);
-        SDL_Log("[direct_p2p] room code re-encoded: %s -> %s (nonce redacted)",
+        SDL_Log("[direct_p2p] room code re-encoded: %s -> %s",
                 old_redacted, new_redacted);
         SDL_strlcpy(s_work.host_code, new_code, sizeof(s_work.host_code));
         set_status("Network changed! Share the NEW code.");
@@ -4925,25 +4952,47 @@ static void host_commit_endpoint(const char* ip, uint16_t port, const char* why)
     host_rendezvous_restart(why);
 }
 
-/* --- S4-review HIGH-1b: room-code re-roll ------------------------------
+/*
+ * S4-review HIGH-1b's "room-code re-roll" — v4 (task #155):
+ * DORMANT-BUT-COMPILED, NOT WIRED. Through v3 this ran once the punch
+ * gate absorbed HOST_PUNCH_TOTAL_REROLL session-total bad-token
+ * punches: draw a fresh nonce, re-encode the room code, re-derive the
+ * punch token, clear every source's mute (host_punch_gate_clear_mutes)
+ * and tell the user — invalidating whatever an attacker had been
+ * grinding for.
  *
- * Draw a FRESH nonce, re-encode the room code, re-derive the punch
- * token, and tell the user. Invoked once the punch gate has absorbed
- * HOST_PUNCH_TOTAL_REROLL bad-token punches this session: whatever the
- * sender was searching for is thereby invalidated, and every source mute
- * is cleared so a legitimate peer that merely had a stale code gets a
- * clean slate along with the new code.
+ * It has no v4 analog, and — this is the part that matters — restoring
+ * it AS IT WAS would be actively harmful, not merely useless. The token
+ * is now `f(ip, port)` with a FIXED nonce (room_code.h's "nonce leaves
+ * the code" section), so re-encoding the SAME (ip, port) below can only
+ * ever reproduce a BYTE-IDENTICAL code, key and token — there is
+ * nothing left to roll. If this were still invoked from
+ * host_punch_gate_note_bad's old threshold, the mute-clear at the end
+ * would fire on every HOST_PUNCH_TOTAL_REROLL charged bad punches
+ * against that same unchanged code: an attacker grinding wrong tokens
+ * would launder their own mute every 64 datagrams for free. That is a
+ * mute bypass, not a defense, which is why the call site that used to
+ * live in host_tick_receive_one is gone — the per-source mute
+ * (host_punch_gate_note_bad / host_punch_gate_is_muted above) is the
+ * sole backstop from here.
  *
- * Same threading discipline as the drift handler above — the rendezvous
- * worker derives its session key from (public_ip, advertised_port,
- * nonce), so it is cancelled and JOINED before s_work.nonce moves, then
- * respawned under the new key. Main thread only.
+ * Declared non-static (see direct_p2p.h) rather than parked behind #if
+ * — #if is what let LOSSY_ADAPTER silently stop compiling once the
+ * warning set tightened (4ca4c0de), and dormant-but-built is the
+ * requirement here too. Kept for the day a room-list feature restores
+ * an out-of-band nonce (room_code.h): re-wiring this and
+ * host_punch_gate_clear_mutes becomes correct again at that point, and
+ * they are re-wired TOGETHER — never one without the other, for exactly
+ * the mute-bypass reason above.
  *
- * Fails CLOSED and CHANGES NOTHING if either the CSPRNG or the
- * derivation is unavailable: keeping a working old code beats
- * advertising a code whose token we could not derive (which would
- * ignore every punch, including the real joiner's). */
-static void host_reroll_room_code(void) {
+ * Adapted (not verbatim) from the pre-v4 body: RoomCode_Encode dropped
+ * its nonce parameter when the code stopped carrying one, so the call
+ * below passes 2 args instead of 3. Rendezvous_DerivePunchToken kept
+ * its nonce parameter (rendezvous.h) for the same future-room-list
+ * reason as host_punch_gate_clear_mutes above, so that call is
+ * unchanged.
+ */
+void host_reroll_room_code(void) {
     const uint32_t ip_be = ipv4_str_to_be(s_work.stun.public_ip);
     if (ip_be == 0) {
         return;
@@ -4962,7 +5011,7 @@ static void host_reroll_room_code(void) {
 
     char new_code[ROOM_CODE_BUF_LEN];
     uint8_t new_token[STUN_PUNCH_TOKEN_LEN];
-    if (!RoomCode_Encode(ip_be, s_work.advertised_port, new_nonce, new_code) ||
+    if (!RoomCode_Encode(ip_be, s_work.advertised_port, new_code) ||
         !Rendezvous_DerivePunchToken(ip_be, s_work.advertised_port, new_nonce,
                                      new_token)) {
         SDL_Log("[direct_p2p] punch-gate re-roll SKIPPED: re-encode/derive "
@@ -5280,18 +5329,13 @@ static HostRecvOne host_tick_receive_one(void) {
         /* S4-review HIGH-1b: only a punch-SHAPED datagram that failed
          * the token check is a gate probe. Arbitrary garbage (port
          * scans, stray traffic) is logged above but deliberately NOT
-         * charged — it teaches an attacker nothing and charging it
-         * would let unrelated noise trip the re-roll. An authenticated
+         * charged — it teaches an attacker nothing. An authenticated
          * late-punch probe is exempt for the same reason: it proves the
          * token rather than guessing at it (host_ignore_is_chargeable). */
-        bool reroll_owed = false;
         if (chargeable) {
-            reroll_owed = host_punch_gate_note_bad(src_ip, SDL_GetTicks());
+            host_punch_gate_note_bad(src_ip, SDL_GetTicks());
         }
         NET_DestroyDatagram(dgram);
-        if (reroll_owed) {
-            host_reroll_room_code();
-        }
         return HOST_RECV_CONSUMED; /* keep waiting */
     }
 
@@ -5311,7 +5355,7 @@ static HostRecvOne host_tick_receive_one(void) {
                 SDL_Log("[direct_p2p] %s punch-gate suppressed an AUTHENTICATED "
                         "punch from muted source %s:%u (#%d) — that address "
                         "burned its budget guessing; it recovers when the mute "
-                        "expires or the code re-rolls",
+                        "expires",
                         ConnectFail_Code(CONNECT_FAIL_PUNCH_AUTH),
                         NET_GetAddressString(dgram->addr),
                         (unsigned)dgram->port, s_host_punch_muted_drops);
@@ -5524,16 +5568,15 @@ void DirectP2P_BeginJoin(const char* peer_code) {
      * s_work write.)
      *
      * S4b: the decode result is a tri-state-plus — a legacy-checksum-
-     * valid 11-char v1 or 14-char v2 code, and an unknown-version
-     * 18-char code, each get their own explanation
+     * valid 11/14/18-char v1/v2/v3 code, and an unknown-version 12-char
+     * code, each get their own explanation
      * (CONNECT_FAIL_CODE_VERSION_OLDER / _NEWER — L-4 split so log
      * triage can tell WHICH side is stale) instead of the
      * mysterious generic "Invalid room code.". */
     uint32_t ip_be = 0;
     uint16_t pub_port = 0;
-    uint32_t code_nonce = 0;
     const RoomCodeDecodeResult dec =
-        RoomCode_Decode(peer_code, &ip_be, &pub_port, &code_nonce);
+        RoomCode_Decode(peer_code, &ip_be, &pub_port);
     if (dec != ROOM_CODE_OK) {
         /* Review L-1: same belt-and-braces release the normal path does
          * before ITS memset — a ref'd STUN server address left in
@@ -5545,7 +5588,7 @@ void DirectP2P_BeginJoin(const char* peer_code) {
         s_outcome_reported = false;
         switch (dec) {
         case ROOM_CODE_OLD_FORMAT:
-            SDL_Log("[direct_p2p] room code is a valid pre-v3 (v1/v2) code — "
+            SDL_Log("[direct_p2p] room code is a valid pre-v4 (v1/v2/v3) code — "
                     "the host runs an older build");
             set_fail_msg(CONNECT_FAIL_CODE_VERSION_OLDER,
                          "Code is from an older game version.");
@@ -5622,7 +5665,10 @@ void DirectP2P_BeginJoin(const char* peer_code) {
     SDL_strlcpy(s_work.peer_code, peer_code, sizeof(s_work.peer_code));
     SDL_strlcpy(s_work.peer_ip, peer_ip, sizeof(s_work.peer_ip));
     s_work.peer_public_port = pub_port;
-    s_work.nonce = code_nonce; /* S4b: feeds session-key + punch-token derivation */
+    /* v4 (task #155): the room code no longer carries a nonce; every
+     * caller of the session-key / punch-token derivations uses this
+     * fixed value (see room_code.h's accepted-risk section). */
+    s_work.nonce = ROOM_CODE_V4_FIXED_NONCE;
 
     s_thread = SDL_CreateThread(join_thread_fn, "DirectP2PJoin", NULL);
     if (s_thread == NULL) {
@@ -6811,21 +6857,16 @@ void DirectP2P_TestHook_PunchGateReset(void) {
     host_punch_gate_reset();
 }
 
-bool DirectP2P_TestHook_PunchGateNoteBad(const char* src_ip, uint32_t now_ms) {
-    return host_punch_gate_note_bad(src_ip, now_ms);
+void DirectP2P_TestHook_PunchGateNoteBad(const char* src_ip, uint32_t now_ms) {
+    host_punch_gate_note_bad(src_ip, now_ms);
 }
 
 bool DirectP2P_TestHook_PunchGateIsMuted(const char* src_ip, uint32_t now_ms) {
     return host_punch_gate_is_muted(src_ip, now_ms);
 }
 
-void DirectP2P_TestHook_PunchGateClearMutes(void) {
-    host_punch_gate_clear_mutes();
-}
-
-void DirectP2P_TestHook_PunchGateCounters(int* bad_total, int* rerolls) {
+void DirectP2P_TestHook_PunchGateCounters(int* bad_total) {
     if (bad_total) *bad_total = s_host_punch_bad_total;
-    if (rerolls) *rerolls = s_host_punch_rerolls;
 }
 
 /* S5: last do_handoff arguments (see s_test_handoff_*). Any pointer may
@@ -6849,12 +6890,9 @@ void DirectP2P_TestHook_ResetHandoff(void) {
 }
 
 void DirectP2P_TestHook_PunchGateLimits(int* src_max_bad, uint32_t* mute_ms,
-                                        int* total_reroll, int* reroll_max,
                                         int* src_table) {
     if (src_max_bad) *src_max_bad = HOST_PUNCH_SRC_MAX_BAD;
     if (mute_ms) *mute_ms = HOST_PUNCH_MUTE_MS;
-    if (total_reroll) *total_reroll = HOST_PUNCH_TOTAL_REROLL;
-    if (reroll_max) *reroll_max = HOST_PUNCH_REROLL_MAX;
     if (src_table) *src_table = HOST_PUNCH_SRC_TABLE;
 }
 #endif /* NETPLAY_TEST_HOOKS */

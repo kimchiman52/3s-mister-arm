@@ -44,13 +44,14 @@
 
 #define REND_KEY_LEN          16
 
-/* The 10-byte canonical serialization of the v3 room-code payload that
- * both peers hash to derive the session key and the punch token:
- * 4 IPv4 octets in network byte order, the public port big-endian,
- * then the 32-bit nonce big-endian. This is byte-for-byte the same
- * bitstream room_code.c cuts its 16 base-32 payload chars out of
- * (room_code_pack_payload) — one canonical byte order for the code and
- * the hash input. */
+/* The 10-byte canonical serialization both peers hash to derive the
+ * session key and the punch token: 4 IPv4 octets in network byte order,
+ * the public port big-endian, then a 32-bit nonce big-endian — as of
+ * v4 (task #155) always ROOM_CODE_V4_FIXED_NONCE (0), since the room
+ * code no longer carries one (room_code.h). This layout deliberately
+ * stays 10 bytes wide (rather than shrinking to the 6-byte ip+port)
+ * so a future room-list feature that DOES deliver a real nonce
+ * out-of-band needs no change here. */
 #define REND_KEY_PAYLOAD_LEN  10
 
 /* Big-endian byte-stream helpers — explicit reads/writes avoid any
@@ -80,7 +81,7 @@ static uint16_t read_be16(const uint8_t* p) {
 
 /* Shared derivation core for the session key and the S4a punch token.
  * Hashes the domain-separation string followed by the 10-byte canonical
- * v3 payload (ip[4] || port_be[2] || nonce_be[4]), then copies the
+ * payload (ip[4] || port_be[2] || nonce_be[4]), then copies the
  * first out_len digest bytes out. Zeroes the output and returns false
  * on any failure. */
 static bool rend_derive(const char* domain,
@@ -89,7 +90,7 @@ static bool rend_derive(const char* domain,
     if (!out) {
         return false;
     }
-    /* v3: every uint32_t nonce is in range, so ip_be == 0 (an unset /
+    /* Every uint32_t nonce is in range, so ip_be == 0 (an unset /
      * invalid endpoint) is the only reject. */
     if (ip_be == 0) {
         memset(out, 0, out_len);
@@ -136,10 +137,10 @@ bool Rendezvous_DeriveSessionKey(uint32_t ip_be,
                                  uint16_t public_port,
                                  uint32_t nonce,
                                  uint8_t out_key[16]) {
-    /* Domain-separated v3 derivation (see rendezvous.h). BREAKING vs
-     * the v2 "3SXR-SK2"/12-bit-nonce hash — shipped with the v3
-     * room-code format. */
-    return rend_derive("3SXR-SK3", ip_be, public_port, nonce,
+    /* Domain-separated v4 derivation (see rendezvous.h). BREAKING vs
+     * the v3 "3SXR-SK3" hash (real 32-bit nonce) — shipped with the v4
+     * room-code format (task #155), which passes a fixed nonce here. */
+    return rend_derive("3SXR-SK4", ip_be, public_port, nonce,
                        out_key, REND_KEY_LEN);
 }
 
@@ -147,7 +148,7 @@ bool Rendezvous_DerivePunchToken(uint32_t ip_be,
                                  uint16_t public_port,
                                  uint32_t nonce,
                                  uint8_t out_token[REND_PUNCH_TOKEN_LEN]) {
-    return rend_derive("3SXR-PT3", ip_be, public_port, nonce,
+    return rend_derive("3SXR-PT4", ip_be, public_port, nonce,
                        out_token, REND_PUNCH_TOKEN_LEN);
 }
 

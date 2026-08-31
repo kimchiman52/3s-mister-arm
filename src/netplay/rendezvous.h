@@ -12,17 +12,28 @@
  * (c) parse a 32-byte DELIVER or CHALLENGE, and (d) parse the
  * configured `udp://host:port` signal URL.
  *
- * Security note (v3): the session key is
- * SHA-256("3SXR-SK3" || ip[4] || port_be[2] || nonce_be[4])[0..15] —
- * the byte-aligned serialization of the v3 room-code payload including
- * the 32-bit CSPRNG nonce, domain-separated from the S4a punch token
- * ("3SXR-PT3"). It is derived (not transmitted) and not user-typeable.
+ * Security note (v4, task #155): the session key is
+ * SHA-256("3SXR-SK4" || ip[4] || port_be[2] || nonce_be[4])[0..15] —
+ * domain-separated from the S4a punch token ("3SXR-PT4"). It is derived
+ * (not transmitted) and not user-typeable.
  *
- * The domain strings carry the room-code format version ("...2" -> "...3")
- * so a build that somehow paired a v2 payload with a v3 derivation
- * cannot land in the same rendezvous slot or produce a matching punch
- * token. The '3SXR' WIRE version is unaffected and stays 2 — the
- * session key is a 16-byte opaque blob to the server.
+ * v4's room code no longer carries a nonce (src/netplay/room_code.h);
+ * every v4 caller passes ROOM_CODE_V4_FIXED_NONCE (0) in the nonce
+ * argument below, so as of v4 this derivation is a PURE FUNCTION of the
+ * public (ip, port) tuple — an ACCEPTED RISK, see room_code.h's "nonce
+ * leaves the code" section for the full writeup and its backstop (the
+ * host-side punch-gate mute). `nonce` stays a real parameter — not
+ * hardcoded to 0 inside this function — because a future room-list
+ * feature will deliver a real nonce out-of-band and wants this
+ * derivation unchanged when it does.
+ *
+ * The domain strings carry the room-code format version ("...3" ->
+ * "...4") so a build that somehow paired a v3 payload (real nonce) with
+ * a v4 derivation (fixed nonce) cannot land in the same rendezvous slot
+ * or produce a matching punch token. The '3SXR' WIRE version is
+ * unaffected and stays 2 — the session key is a 16-byte opaque blob to
+ * the server, and this task changes no frame this client sends or
+ * parses.
  */
 
 #ifndef NETPLAY_RENDEZVOUS_H
@@ -37,25 +48,23 @@ extern "C" {
 
 /*
  * Derive the 16-byte rendezvous session key from the public endpoint
- * tuple + nonce that both peers share via the room code (v3).
+ * tuple + nonce.
  *
  * `ip_be` follows the same convention as room_code.c: the uint32_t's
  * in-memory bytes are the four IPv4 octets in network byte order (i.e.
  * the value returned by inet_pton(AF_INET, ...) into `s_addr`).
- * `nonce` is the 32-bit room-code nonce (host order; every value is
- * in range).
+ * `nonce` is a 32-bit value (host order; every value is in range) — as
+ * of v4 (task #155) every room-code caller passes
+ * ROOM_CODE_V4_FIXED_NONCE (0); see the accepted-risk note above.
  *
- * The derivation is domain-separated and covers the full v3 payload:
+ * The derivation is domain-separated and covers the full 10-byte
+ * canonical payload:
  *
- *   key = SHA-256("3SXR-SK3" || ip[4] || port_be[2] || nonce_be[4])[0..15]
+ *   key = SHA-256("3SXR-SK4" || ip[4] || port_be[2] || nonce_be[4])[0..15]
  *
- * where nonce_be is the nonce as a 32-bit big-endian value. Because the
- * 32-bit CSPRNG nonce is inside the hash, an attacker who merely
- * knows/guesses (ip, port) can no longer derive the session key to
- * squat or race the rendezvous slot — only someone holding the actual
- * room code can. BREAKING change from the v2 derivation (12-bit nonce,
- * "3SXR-SK2"), shipped together with the v3 room-code format to the
- * whole alpha group.
+ * where nonce_be is the nonce as a 32-bit big-endian value. BREAKING
+ * change from the v3 derivation ("3SXR-SK3", real 32-bit nonce),
+ * shipped together with the v4 room-code format.
  *
  * Writes 16 bytes into `out_key`. Returns true on success. On failure
  * (ip_be == 0, indicating an unset / invalid endpoint), zeroes
@@ -72,20 +81,19 @@ bool Rendezvous_DeriveSessionKey(uint32_t ip_be,
  * payload. Same inputs and payload serialization as
  * Rendezvous_DeriveSessionKey, different domain string:
  *
- *   token = SHA-256("3SXR-PT3" || ip[4] || port_be[2] || nonce_be[4])[0..7]
+ *   token = SHA-256("3SXR-PT4" || ip[4] || port_be[2] || nonce_be[4])[0..7]
  *
- * so the two derivations can never collide. The token proves knowledge
- * of the room-code payload INCLUDING the nonce: the host only accepts
- * a punch carrying it, so a blind scanner — or an attacker who
- * observed the host's ip:port but not the code — can no longer be
- * captured as "the peer". Anyone who has the full room code can of
- * course derive it — the room code IS the shared secret in this
- * friend-to-friend model.
+ * so the two derivations can never collide.
  *
- * The nonce is 32 bits as of v3. At 12 bits the token had only 4096
- * unguessable variants against a host that answered every guess (accept
- * -> handoff, miss -> silent drop, no cap), which the host receive path
- * could be walked through in under 68 seconds. See room_code.h.
+ * v4 (task #155): the room code no longer carries a nonce, so `nonce`
+ * is ROOM_CODE_V4_FIXED_NONCE (0) for every production caller and the
+ * token is a pure function of the public (ip, port) tuple — anyone who
+ * knows or scans the host's endpoint can derive it, not only someone
+ * holding the room code. ACCEPTED for friend-to-friend P2P, backstopped
+ * by the host-side punch-gate mute (S4-review HIGH-1b, direct_p2p.c);
+ * see room_code.h's "nonce leaves the code" section for the full
+ * writeup. Pre-v4 (through v3), the nonce made this token provable only
+ * by someone holding the actual code; that property is gone.
  *
  * Writes 8 bytes into out_token. Returns true on success; on failure
  * (ip_be == 0 or hash failure) zeroes out_token and returns false.

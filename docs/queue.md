@@ -3734,7 +3734,7 @@ into the cached include tree. Defensible only because every patch applies in
 the same atomic rebuild block; a `.patch` series would make that structural
 rather than argued.
 
-## #155 — room code v4: drop the nonce, keep version + check (12 chars) — OPEN
+## #155 — room code v4: drop the nonce, keep version + check (12 chars) — CLOSED
 
 **Maintainer decision, 2026-08-31.** The v3 code is 18 chars (20 displayed with
 its two hyphen groups) and that is hurting the thing the code exists for:
@@ -3807,3 +3807,79 @@ character cost**.
 - `ROOM_CODE_REDACT_CHARS` (8) was sized for an 18-char code; re-derive for 12.
 - Keep the corrected ISO 7064 recurrence and its full-alphabet sweep; extend
   the sweep to the new length rather than trusting the old result.
+
+**CLOSED.** v4 = version char `'4'` + 10 payload + 1 check = **12 chars, no
+hyphen groups** (`ROOM_CODE_DISPLAY_LEN == ROOM_CODE_CHAR_LEN`). Length
+dispatch collision-free across all four: 11 = v1, **12 = v4**, 14 = v2,
+18 = v3 — v3 newly demoted to legacy, recognized with the *corrected*
+mod-36 recurrence (its arithmetic was already right; only its length is
+legacy now). Domain strings bumped `3SXR-SK3/PT3` → `SK4/PT4`, so a v3
+payload can never land in a v4 derivation.
+
+Sweep **re-measured on the new geometry**, not carried forward:
+**0 undetected of 1,680,000** substitutions across 4,000 codes.
+
+`ROOM_CODE_REDACT_CHARS` 8 → **3**: a v4 code carries no secret, so masking
+is hygiene (don't hand out a paste-ready code), not confidentiality. The 3
+masked chars include the check digit, so a redacted string can never decode.
+
+`MIST_PROTO_VER` **not bumped** — a v4 client cannot reach a MIST handshake
+with a v3 peer at all (different rendezvous slot from the SK4 bump, mismatched
+punch token), so the incompatibility is caught strictly earlier.
+
+### The re-roll: deleted, then restored dormant — read this before re-wiring
+
+Removing the nonce made the S4-review HIGH-1b **re-roll escalation inert**:
+`host_reroll_room_code` re-encoded from the *same* `(ip, port)` and never
+re-bound anything, so with a fixed nonce it reproduces a byte-identical code.
+The implement pass deleted it. Review then found that re-wiring it as-is would
+be **worse than inert — an active mute bypass**: the escalation called
+`host_punch_gate_clear_mutes()` every 64 charged bad punches, so an attacker
+grinding tokens would clear their own mute every 64 datagrams against a code
+that never changed.
+
+Resolution (maintainer's call): **the code is restored and compiled; the
+wiring stays out.** `host_reroll_room_code` and `host_punch_gate_clear_mutes`
+are non-`static` with unconditional declarations in `direct_p2p.h` — kept
+alive by external linkage, the same way `RoomCode_GenerateNonce` is. **Not**
+behind a `#if`, and deliberately **not** behind a `DirectP2P_TestHook_*`
+wrapper: every such wrapper lives inside `#ifdef NETPLAY_TEST_HOOKS`, which
+the shipped-config gate builds with **OFF**, so a test-hook-only reference
+would vanish in exactly the build that matters — recreating the
+`LOSSY_ADAPTER` rot by omission instead of by `#if`. Verified: the symbol is
+present in the shipped `host-release` binary.
+
+Re-wire only when a room list restores an out-of-band nonce, and re-wire
+**both together** — re-roll is meaningless without fresh entropy, and
+mute-clearing is a gift to an attacker without a genuinely new code.
+
+### The mute's coverage shrank — correcting this entry's own earlier wording
+
+This entry originally called the mute "a defence v1 never had", which
+overstates what it now does. Under v3 an attacker had to **grind** for a valid
+token and the mute cut that off. Under v4 an attacker who knows the host's
+endpoint **computes the correct token directly** and is accepted on the first
+punch — the throttle does nothing for them. What the mute still covers is
+punch-shaped **wrong-token** traffic (non-punch-shaped garbage is deliberately
+not charged, per `host_ignore_is_chargeable`). That is consistent with the
+accepted risk recorded above, but it is a smaller backstop than first written.
+
+Nonce machinery (`RoomCode_GenerateNonce`, the `Csprng_Bytes` hard-fail, the
+SK4/PT4 derivations) stays compiled and unit-tested by
+`nonce_machinery_behavior`, unused by the code string, awaiting the room list.
+
+Wrapper: `main-mister-full-menu.patch`'s hand-edited hunk header verified
+arithmetically (6 context + 139 added = 145) **and test-applied with
+`git apply`** against pinned upstream `menu.cpp` — clean. Consequence: the OSK
+now caps entry at 12 chars, so an 18-char v3 code can no longer be *typed* to
+reach the "older version" message; only recent-joins and handoff files reach
+it. Harmless, since v3/v4 cannot pair regardless.
+
+Review: **zero P-1**, four P-2 (stale re-roll promise in a live log line;
+self-contradictory pad-tolerance prose; `RoomCode_Redact` legacy-truncation
+comment; a note about retired domain strings in an ungated probe tool) — first
+three fixed, fourth left as flagged. 34 citation repoints spot-checked correct.
+Gates GREEN, harness 13; baselines `scopes=11 breached=0 slack=0`.
+
+**NOT verified:** the wrapper OSD on real hardware (no gate builds it), and no
+live v4 pairing between two machines.

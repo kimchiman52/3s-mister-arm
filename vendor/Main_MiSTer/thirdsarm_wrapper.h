@@ -48,7 +48,9 @@ void direct_p2p_handoff_join(const char *code);
  * format; the menu uses these to render the "Recently Joined" submenu.
  *
  * load_recent_joins: fills codes_out (NUL-terminated, up to 24 chars incl. NUL —
- * the v3 room code is 18 chars without dashes; see src/netplay/room_code.h)
+ * the v4 room code is 12 chars, no dashes; see src/netplay/room_code.h. 24
+ * is generous slack, kept rather than shrunk, so a saved legacy-length code
+ * still round-trips through this buffer)
  * and optional epochs_out with up to max_entries entries (most-recent-first).
  * Returns the number of entries written.
  * save_recent_join: called from direct_p2p_handoff_join() after the handoff

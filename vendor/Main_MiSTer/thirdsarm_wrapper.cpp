@@ -2582,8 +2582,8 @@ constexpr const char *kRecentJoinsPath = "/media/fat/games/3s-arm/state/recent_j
 constexpr int kRecentJoinsMax = 10;
 // Bound to the public header's RECENT_JOIN_CODE_BUF so the extern "C"
 // signature below and the on-disk record can never drift apart. Also
-// matches the wrapper menu's g_dp2p_code_buf sizing (v3 room code:
-// 18 chars without dashes + NUL + slack).
+// matches the wrapper menu's g_dp2p_code_buf sizing (v4 room code:
+// 12 chars, no dashes, + NUL + slack).
 constexpr int kRecentCodeBuf  = RECENT_JOIN_CODE_BUF;
 
 struct RecentJoinsBuf

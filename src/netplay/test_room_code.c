@@ -1,13 +1,14 @@
 /*
  * test_room_code.c — Step 2 test harness for docs/plan-stun-direct-p2p.md,
- * extended for the v3 format (docs/plan-netplay-connection.md §6.8).
+ * extended for the v4 format (docs/queue.md #155).
  *
- * Covers: (ip, port, nonce) round-trips, display-format invariants,
- * an EXHAUSTIVE full-alphabet single-substitution sweep (the MEDIUM-1
+ * Covers: (ip, port) round-trips, display-format invariants, an
+ * EXHAUSTIVE full-alphabet single-substitution sweep (the MEDIUM-1
  * regression net — see full_alphabet_sweep), OLD_FORMAT recognition of
- * legacy-checksum-valid v1 (11-char) and v2 (14-char) codes,
- * FUTURE_VERSION detection, 32-bit nonce fidelity, CSPRNG nonce
- * variability, and bogus-input rejection.
+ * legacy-checksum-valid v1 (11-char), v2 (14-char) and v3 (18-char)
+ * codes, FUTURE_VERSION detection, the nonce MACHINERY (kept compiled
+ * and exercised here even though the v4 code string no longer carries
+ * one — see room_code.h), and bogus-input rejection.
  * Gated behind ENABLE_NETPLAY_TESTS. Enable with:
  *   EXTRA_CMAKE_ARGS="-DENABLE_NETPLAY=ON \
  *                     -DCMAKE_C_FLAGS='-DENABLE_NETPLAY_TESTS -DNETPLAY_TEST_HOOKS'"
@@ -51,10 +52,9 @@ static bool ip_eq(uint32_t a_be, uint32_t b_be) {
     return a_be == b_be;
 }
 
-static void round_trip(const char* tag,
-                       uint32_t ip_be, uint16_t pport, uint32_t nonce) {
+static void round_trip(const char* tag, uint32_t ip_be, uint16_t pport) {
     char code[ROOM_CODE_BUF_LEN];
-    if (!RoomCode_Encode(ip_be, pport, nonce, code)) {
+    if (!RoomCode_Encode(ip_be, pport, code)) {
         fail(tag, "encode returned false");
         return;
     }
@@ -64,13 +64,7 @@ static void round_trip(const char* tag,
         fail_count++;
         return;
     }
-    /* Exactly two dashes, at positions 6 and 13 (three 6-char groups of
-     * the 18-char code), and the version prefix char in position 0. */
-    if (code[6] != '-' || code[13] != '-') {
-        fprintf(stderr, "[test_room_code] FAIL: %s: dash misplaced in \"%s\"\n", tag, code);
-        fail_count++;
-        return;
-    }
+    /* v4: no dash groups — the display form IS the bare 12-char code. */
     if (code[0] != ROOM_CODE_VERSION_CHAR) {
         fprintf(stderr, "[test_room_code] FAIL: %s: version char missing in \"%s\"\n", tag, code);
         fail_count++;
@@ -79,19 +73,18 @@ static void round_trip(const char* tag,
 
     uint32_t rip = 0;
     uint16_t rpp = 0;
-    uint32_t rn = 0;
-    const RoomCodeDecodeResult dr = RoomCode_Decode(code, &rip, &rpp, &rn);
+    const RoomCodeDecodeResult dr = RoomCode_Decode(code, &rip, &rpp);
     if (dr != ROOM_CODE_OK) {
         fprintf(stderr, "[test_room_code] FAIL: %s: decode rejected \"%s\" (result=%d)\n",
                 tag, code, (int)dr);
         fail_count++;
         return;
     }
-    if (!ip_eq(rip, ip_be) || rpp != pport || rn != nonce) {
+    if (!ip_eq(rip, ip_be) || rpp != pport) {
         fprintf(stderr,
                 "[test_room_code] FAIL: %s: round-trip mismatch "
-                "code=\"%s\" ip=%08x/%08x pp=%u/%u nonce=%08x/%08x\n",
-                tag, code, rip, ip_be, rpp, pport, rn, nonce);
+                "code=\"%s\" ip=%08x/%08x pp=%u/%u\n",
+                tag, code, rip, ip_be, rpp, pport);
         fail_count++;
         return;
     }
@@ -115,10 +108,9 @@ static bool perturb_one(char* code, size_t pos) {
     return false;
 }
 
-static void typo_detection(const char* tag,
-                           uint32_t ip_be, uint16_t pport, uint32_t nonce) {
+static void typo_detection(const char* tag, uint32_t ip_be, uint16_t pport) {
     char code[ROOM_CODE_BUF_LEN];
-    if (!RoomCode_Encode(ip_be, pport, nonce, code)) {
+    if (!RoomCode_Encode(ip_be, pport, code)) {
         fail(tag, "encode failed during typo test setup");
         return;
     }
@@ -133,8 +125,7 @@ static void typo_detection(const char* tag,
         }
         uint32_t rip = 0;
         uint16_t rpp = 0;
-        uint32_t rn = 0;
-        const RoomCodeDecodeResult dr = RoomCode_Decode(code, &rip, &rpp, &rn);
+        const RoomCodeDecodeResult dr = RoomCode_Decode(code, &rip, &rpp);
         /* No single-char substitution may EVER decode to ROOM_CODE_OK:
          * payload/check typos are caught by ISO 7064 MOD 37,36 (100%
          * single-substitution detection over the covered chars); a typo
@@ -145,8 +136,8 @@ static void typo_detection(const char* tag,
             fprintf(stderr,
                     "[test_room_code] FAIL: %s: typo at pos %zu "
                     "('%c' -> '%c') was NOT detected; decoded tuple "
-                    "ip=%08x pp=%u nonce=%08x\n",
-                    tag, i, backup[i], code[i], rip, rpp, rn);
+                    "ip=%08x pp=%u\n",
+                    tag, i, backup[i], code[i], rip, rpp);
             missed++;
         }
         if (i == 0 && dr != ROOM_CODE_FUTURE_VERSION && dr != ROOM_CODE_OK) {
@@ -188,7 +179,8 @@ static bool make_v1_code(uint32_t ip_be, uint16_t pport, char out[12]) {
     for (int i = 0; i < 10; i++) {
         out[i] = kCrock[(x >> (45 - i * 5)) & 0x1F];
     }
-    /* ISO 7064 MOD 37,36 over the 10 chars. */
+    /* ISO 7064 MOD 37,36 over the 10 chars, LEGACY (defective, sum mod
+     * 37) recurrence — what v1 actually emitted. */
     int product = 36;
     for (int i = 0; i < 10; i++) {
         const char c = out[i];
@@ -236,6 +228,53 @@ static bool make_v2_code(uint32_t ip_be, uint16_t pport, uint16_t nonce12,
     return true;
 }
 
+/* Minimal LOCAL v3 (task #142-era) encoder — the production v3 encoder
+ * is gone as of task #155, but the decoder must still map a legacy-
+ * checksum-valid 18-char code to OLD_FORMAT. '3' + 16 Crockford chars
+ * over the 80-bit ip|port|nonce32 packing + the CORRECTED (sum mod 36)
+ * check digit over the 17 — v3 was ALREADY fixed (room_code.h), so this
+ * is NOT the legacy-recurrence sibling make_v1_code/make_v2_code are. */
+static bool make_v3_code(uint32_t ip_be, uint16_t pport, uint32_t nonce32,
+                         char out[19]) {
+    static const char kCrock[32] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    static const char kIso[36] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    uint8_t payload[10];
+    memcpy(&payload[0], &ip_be, 4);
+    payload[4] = (uint8_t)((pport >> 8) & 0xFFu);
+    payload[5] = (uint8_t)(pport & 0xFFu);
+    payload[6] = (uint8_t)((nonce32 >> 24) & 0xFFu);
+    payload[7] = (uint8_t)((nonce32 >> 16) & 0xFFu);
+    payload[8] = (uint8_t)((nonce32 >> 8) & 0xFFu);
+    payload[9] = (uint8_t)(nonce32 & 0xFFu);
+
+    out[0] = '3';
+    for (int i = 0; i < 16; i++) {
+        const unsigned bitpos = (unsigned)(i * 5);
+        const unsigned byte = bitpos >> 3;
+        const unsigned off = bitpos & 7u;
+        unsigned v;
+        if (off <= 3u) {
+            v = (unsigned)(payload[byte] >> (3u - off)) & 0x1Fu;
+        } else {
+            v = (unsigned)(((unsigned)payload[byte] << (off - 3u)) |
+                           ((unsigned)payload[byte + 1] >> (11u - off))) & 0x1Fu;
+        }
+        out[1 + i] = kCrock[v];
+    }
+    /* CORRECTED ISO 7064 recurrence (sum mod 36) over the 17 chars. */
+    int product = 36;
+    for (int i = 0; i < 17; i++) {
+        const char c = out[i];
+        const int v = (c >= '0' && c <= '9') ? c - '0' : 10 + (c - 'A');
+        int sum = (product + v) % 36;
+        if (sum == 0) sum = 36;
+        product = (sum * 2) % 37;
+    }
+    out[17] = kIso[(37 - product) % 36];
+    out[18] = '\0';
+    return true;
+}
+
 /* ---------------------------------------------------------------------
  * MEDIUM-1 regression net: EXHAUSTIVE single-substitution sweep.
  *
@@ -252,6 +291,9 @@ static bool make_v2_code(uint32_t ip_be, uint16_t pport, uint16_t nonce12,
  * DIFFERENT endpoint. Anything that still decodes OK must decode to the
  * IDENTICAL tuple (only possible via the decoder's Crockford loose
  * aliases at payload positions: I/L -> 1, O -> 0).
+ *
+ * v4 geometry: 12 positions (no dash positions to skip — v4 has none),
+ * 35 alternatives each = 420 substitutions per code.
  * ------------------------------------------------------------------ */
 static void full_alphabet_sweep(int code_count) {
     static const char kIso[37] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -264,8 +306,6 @@ static void full_alphabet_sweep(int code_count) {
         const uint32_t ip32 = rng;
         rng = rng * 1664525u + 1013904223u;
         const uint16_t pport = (uint16_t)(rng >> 16);
-        rng = rng * 1664525u + 1013904223u;
-        const uint32_t nonce = rng;
 
         uint8_t oct[4] = { (uint8_t)(ip32 >> 24), (uint8_t)(ip32 >> 16),
                            (uint8_t)(ip32 >> 8),  (uint8_t)ip32 };
@@ -273,28 +313,26 @@ static void full_alphabet_sweep(int code_count) {
         memcpy(&ip_be, oct, 4);
 
         char code[ROOM_CODE_BUF_LEN];
-        if (!RoomCode_Encode(ip_be, pport, nonce, code)) {
+        if (!RoomCode_Encode(ip_be, pport, code)) {
             fail("sweep", "encode failed during sweep setup");
             return;
         }
-        uint32_t gip = 0; uint16_t gpp = 0; uint32_t gn = 0;
-        if (RoomCode_Decode(code, &gip, &gpp, &gn) != ROOM_CODE_OK) {
+        uint32_t gip = 0; uint16_t gpp = 0;
+        if (RoomCode_Decode(code, &gip, &gpp) != ROOM_CODE_OK) {
             fail("sweep", "self-decode of a freshly encoded code failed");
             return;
         }
 
         for (size_t pos = 0; pos < ROOM_CODE_DISPLAY_LEN; pos++) {
-            if (code[pos] == '-') continue;   /* dashes are stripped anyway */
             const char orig = code[pos];
             for (int a = 0; a < 36; a++) {
                 if (kIso[a] == orig) continue;
                 code[pos] = kIso[a];
-                uint32_t rip = 0; uint16_t rpp = 0; uint32_t rn = 0;
-                const RoomCodeDecodeResult dr =
-                    RoomCode_Decode(code, &rip, &rpp, &rn);
+                uint32_t rip = 0; uint16_t rpp = 0;
+                const RoomCodeDecodeResult dr = RoomCode_Decode(code, &rip, &rpp);
                 total++;
                 if (dr == ROOM_CODE_OK) {
-                    if (rip == gip && rpp == gpp && rn == gn) {
+                    if (rip == gip && rpp == gpp) {
                         /* Crockford loose alias — same tuple, harmless. */
                         alias_ok++;
                     } else {
@@ -305,9 +343,9 @@ static void full_alphabet_sweep(int code_count) {
                             fprintf(stderr,
                                     "[test_room_code] FAIL: sweep: UNDETECTED "
                                     "substitution pos=%zu '%c'->'%c'  \"%s\" -> "
-                                    "\"%s\"  (%08x:%u/%08x  vs  %08x:%u/%08x)\n",
+                                    "\"%s\"  (%08x:%u  vs  %08x:%u)\n",
                                     pos, orig, kIso[a], good, code,
-                                    gip, gpp, gn, rip, rpp, rn);
+                                    gip, gpp, rip, rpp);
                         }
                         undetected++;
                     }
@@ -334,21 +372,20 @@ static void full_alphabet_sweep(int code_count) {
 static void old_format_detection(void) {
     uint32_t ip = 0;
     uint16_t pp = 0;
-    uint32_t nn = 0;
 
     /* A checksum-valid v1 code must be recognized as OLD_FORMAT — the
      * "this code is from an older version" UI path. */
     char v1[12];
     make_v1_code(make_ip_be(203, 0, 113, 77), 3478, v1);
-    RoomCodeDecodeResult dr = RoomCode_Decode(v1, &ip, &pp, &nn);
+    RoomCodeDecodeResult dr = RoomCode_Decode(v1, &ip, &pp);
     if (dr != ROOM_CODE_OLD_FORMAT) {
         fprintf(stderr,
                 "[test_room_code] FAIL: old-format: valid v1 code \"%s\" reported %d, "
                 "expected OLD_FORMAT\n", v1, (int)dr);
         fail_count++;
     }
-    if (ip != 0 || pp != 0 || nn != 0) {
-        fail("old-format", "outputs not zeroed on OLD_FORMAT");
+    if (ip != 0 || pp != 0) {
+        fail("old-format", "outputs not zeroed on v1 OLD_FORMAT");
     }
 
     /* A second v1 tuple, dashed the way v1 displayed it (dash after the
@@ -360,7 +397,7 @@ static void old_format_detection(void) {
     dashed[8] = '-';
     memcpy(&dashed[9], &v1b[8], 3);
     dashed[12] = '\0';
-    if (RoomCode_Decode(dashed, &ip, &pp, &nn) != ROOM_CODE_OLD_FORMAT) {
+    if (RoomCode_Decode(dashed, &ip, &pp) != ROOM_CODE_OLD_FORMAT) {
         fail("old-format", "dashed v1 code not recognized as OLD_FORMAT");
     }
 
@@ -369,24 +406,23 @@ static void old_format_detection(void) {
     char bad[12];
     memcpy(bad, v1, sizeof(bad));
     bad[10] = (bad[10] == 'A') ? 'B' : 'A'; /* break the v1 check digit */
-    if (RoomCode_Decode(bad, &ip, &pp, &nn) != ROOM_CODE_MALFORMED) {
+    if (RoomCode_Decode(bad, &ip, &pp) != ROOM_CODE_MALFORMED) {
         fail("old-format", "checksum-invalid 11-char string reported OLD_FORMAT");
     }
 
-    /* v3 addition: a legacy-checksum-valid 14-char v2 code must ALSO be
-     * OLD_FORMAT — the whole alpha group is mid-upgrade, and "code is
-     * from an older version" is the only honest thing to say about a
-     * code whose 12-bit nonce cannot seed a v3 derivation. */
+    /* A legacy-checksum-valid 14-char v2 code must ALSO be OLD_FORMAT —
+     * "code is from an older version" is the only honest thing to say
+     * about a code whose 12-bit nonce cannot seed a v4 derivation. */
     char v2[15];
     make_v2_code(make_ip_be(198, 51, 100, 7), 6000, 0x0AB, v2);
-    ip = 0; pp = 0; nn = 0;
-    if (RoomCode_Decode(v2, &ip, &pp, &nn) != ROOM_CODE_OLD_FORMAT) {
+    ip = 0; pp = 0;
+    if (RoomCode_Decode(v2, &ip, &pp) != ROOM_CODE_OLD_FORMAT) {
         fprintf(stderr,
                 "[test_room_code] FAIL: old-format: valid v2 code \"%s\" not "
                 "reported as OLD_FORMAT\n", v2);
         fail_count++;
     }
-    if (ip != 0 || pp != 0 || nn != 0) {
+    if (ip != 0 || pp != 0) {
         fail("old-format", "outputs not zeroed on v2 OLD_FORMAT");
     }
 
@@ -394,26 +430,51 @@ static void old_format_detection(void) {
     char v2bad[15];
     memcpy(v2bad, v2, sizeof(v2bad));
     v2bad[13] = (v2bad[13] == 'A') ? 'B' : 'A';
-    if (RoomCode_Decode(v2bad, &ip, &pp, &nn) != ROOM_CODE_MALFORMED) {
+    if (RoomCode_Decode(v2bad, &ip, &pp) != ROOM_CODE_MALFORMED) {
         fail("old-format", "checksum-invalid 14-char string reported OLD_FORMAT");
+    }
+
+    /* Task #155 addition: a legacy-checksum-valid 18-char v3 code must
+     * ALSO be OLD_FORMAT — v3 is now a legacy LENGTH even though its
+     * arithmetic was already correct (room_code.h). */
+    char v3[19];
+    make_v3_code(make_ip_be(192, 0, 2, 55), 7000, 0xABCDEF01u, v3);
+    ip = 0; pp = 0;
+    if (RoomCode_Decode(v3, &ip, &pp) != ROOM_CODE_OLD_FORMAT) {
+        fprintf(stderr,
+                "[test_room_code] FAIL: old-format: valid v3 code \"%s\" not "
+                "reported as OLD_FORMAT\n", v3);
+        fail_count++;
+    }
+    if (ip != 0 || pp != 0) {
+        fail("old-format", "outputs not zeroed on v3 OLD_FORMAT");
+    }
+
+    /* ...and 18 chars of checksum-INVALID garbage stays MALFORMED. */
+    char v3bad[19];
+    memcpy(v3bad, v3, sizeof(v3bad));
+    v3bad[17] = (v3bad[17] == 'A') ? 'B' : 'A';
+    if (RoomCode_Decode(v3bad, &ip, &pp) != ROOM_CODE_MALFORMED) {
+        fail("old-format", "checksum-invalid 18-char string reported OLD_FORMAT");
     }
 
     /* The reviewer's MEDIUM-1 counterexample pair: under the v2 codec
      * these two ONE-CHARACTER-APART strings both decoded ROOM_CODE_OK,
-     * to 34.23.190.173 and 114.23.190.173. Under v3 they are 14-char
-     * strings that are NOT legacy-checksum-valid... they are, in fact,
-     * exactly what a v2 host would have printed, so they land on
-     * OLD_FORMAT. Either way the one thing that must never happen again
-     * is BOTH of them decoding OK to different endpoints. */
+     * to 34.23.190.173 and 114.23.190.173. Under v4 they are 14-char
+     * strings that are NOT recognized as the current format (14 != 12);
+     * they land on the v2 legacy-length path, which is exactly what a
+     * v2 host would have printed, so they land on OLD_FORMAT. Either
+     * way the one thing that must never happen again is BOTH of them
+     * decoding OK to different endpoints. */
     {
         const char* a = "248BVXBAA4DNM1";
         const char* b = "2E8BVXBAA4DNM1";
-        uint32_t aip = 0, bip = 0, an = 0, bn = 0;
+        uint32_t aip = 0, bip = 0;
         uint16_t app = 0, bpp = 0;
-        const RoomCodeDecodeResult ra = RoomCode_Decode(a, &aip, &app, &an);
-        const RoomCodeDecodeResult rb = RoomCode_Decode(b, &bip, &bpp, &bn);
+        const RoomCodeDecodeResult ra = RoomCode_Decode(a, &aip, &app);
+        const RoomCodeDecodeResult rb = RoomCode_Decode(b, &bip, &bpp);
         if (ra == ROOM_CODE_OK && rb == ROOM_CODE_OK &&
-            (aip != bip || app != bpp || an != bn)) {
+            (aip != bip || app != bpp)) {
             fprintf(stderr,
                     "[test_room_code] FAIL: MEDIUM-1 counterexample: \"%s\" and "
                     "\"%s\" both decoded OK to DIFFERENT endpoints\n", a, b);
@@ -423,91 +484,50 @@ static void old_format_detection(void) {
 
     if (fail_count == 0) {
         fprintf(stderr,
-                "[test_room_code] old-format detection OK (v1 \"%s\" and v2 "
-                "\"%s\" -> OLD_FORMAT)\n", v1, v2);
+                "[test_room_code] old-format detection OK (v1 \"%s\", v2 \"%s\", "
+                "v3 \"%s\" -> OLD_FORMAT)\n", v1, v2, v3);
     }
 }
 
 static void future_version_detection(void) {
     uint32_t ip = 0;
     uint16_t pp = 0;
-    uint32_t nn = 0;
 
     char code[ROOM_CODE_BUF_LEN];
-    if (!RoomCode_Encode(make_ip_be(198, 51, 100, 7), 6000, 0x0ABCDEF1u, code)) {
+    if (!RoomCode_Encode(make_ip_be(198, 51, 100, 7), 6000, code)) {
         fail("future-version", "encode failed during setup");
         return;
     }
     /* Flip the version char to an unknown value: must be reported as
      * FUTURE_VERSION (checked BEFORE the check digit — a future
-     * format's checksum scheme is unknowable). '4' is chosen because
-     * '2' would be a v2-length claim at v3 length, which is a different
-     * (also-correct) rejection path. */
-    code[0] = '4';
-    if (RoomCode_Decode(code, &ip, &pp, &nn) != ROOM_CODE_FUTURE_VERSION) {
+     * format's checksum scheme is unknowable). '5' is chosen because it
+     * is not any recognized version char at any recognized length and
+     * is unaffected by the Crockford loose-alias normalization. */
+    code[0] = '5';
+    if (RoomCode_Decode(code, &ip, &pp) != ROOM_CODE_FUTURE_VERSION) {
         fail("future-version", "unknown version char not reported as FUTURE_VERSION");
         return;
     }
-    if (ip != 0 || pp != 0 || nn != 0) {
+    if (ip != 0 || pp != 0) {
         fail("future-version", "outputs not zeroed on FUTURE_VERSION");
         return;
     }
     fprintf(stderr, "[test_room_code] future-version detection OK\n");
 }
 
-static void nonce_behavior(void) {
-    /* v3: the nonce is a full 32 bits. Assert the WIDTH itself — this is
-     * the HIGH-1(a) regression net. If someone narrows the nonce back to
-     * 12/16 bits (or masks it anywhere in the encode/derive chain), the
-     * high-bit round-trip below fails immediately. */
+/*
+ * v4 (task #155): the room code no longer carries a nonce, so this no
+ * longer round-trips one through RoomCode_Encode/Decode. What stays —
+ * per room_code.h's "keep the nonce machinery alive" requirement — is
+ * direct exercise of RoomCode_GenerateNonce itself: the width macro and
+ * the CSPRNG's actual variability. A future room-list feature is the
+ * intended consumer; this is the regression net that keeps
+ * RoomCode_GenerateNonce from silently rotting the way LOSSY_ADAPTER did
+ * (4ca4c0de).
+ */
+static void nonce_machinery_behavior(void) {
     if (ROOM_CODE_NONCE_BITS < 32) {
-        fail("nonce", "ROOM_CODE_NONCE_BITS regressed below 32 — the punch "
-                      "token's only unguessable input got narrower");
-    }
-
-    /* Same (ip, port), different nonces -> different codes. */
-    char c1[ROOM_CODE_BUF_LEN];
-    char c2[ROOM_CODE_BUF_LEN];
-    if (!RoomCode_Encode(make_ip_be(8, 8, 8, 8), 80, 0x001, c1) ||
-        !RoomCode_Encode(make_ip_be(8, 8, 8, 8), 80, 0x002, c2)) {
-        fail("nonce", "encode failed");
-        return;
-    }
-    if (strcmp(c1, c2) == 0) {
-        fail("nonce", "different nonces produced the SAME code");
-        return;
-    }
-
-    /* Two nonces that differ ONLY above bit 11 must produce different
-     * codes and must round-trip exactly. Under the v2 12-bit format
-     * these were the same value. */
-    const uint32_t hi_a = 0x00000222u;
-    const uint32_t hi_b = 0xDEAD0222u;
-    char ch1[ROOM_CODE_BUF_LEN];
-    char ch2[ROOM_CODE_BUF_LEN];
-    if (!RoomCode_Encode(make_ip_be(8, 8, 8, 8), 80, hi_a, ch1) ||
-        !RoomCode_Encode(make_ip_be(8, 8, 8, 8), 80, hi_b, ch2)) {
-        fail("nonce", "encode failed for high-bit nonces");
-        return;
-    }
-    if (strcmp(ch1, ch2) == 0) {
-        fail("nonce", "nonces differing only above bit 11 produced the SAME code");
-        return;
-    }
-    uint32_t rip = 0; uint16_t rpp = 0; uint32_t rn = 0;
-    if (RoomCode_Decode(ch2, &rip, &rpp, &rn) != ROOM_CODE_OK || rn != hi_b) {
-        fprintf(stderr,
-                "[test_room_code] FAIL: nonce: high-bit nonce round-trip "
-                "%08x -> %08x\n", hi_b, rn);
-        fail_count++;
-        return;
-    }
-    /* Full-width extremes. */
-    if (!RoomCode_Encode(make_ip_be(8, 8, 8, 8), 80, 0xFFFFFFFFu, ch1) ||
-        RoomCode_Decode(ch1, &rip, &rpp, &rn) != ROOM_CODE_OK ||
-        rn != 0xFFFFFFFFu) {
-        fail("nonce", "all-ones 32-bit nonce did not round-trip");
-        return;
+        fail("nonce", "ROOM_CODE_NONCE_BITS regressed below 32");
     }
 
     /* CSPRNG nonce generation: actually varying, and actually using the
@@ -515,7 +535,7 @@ static void nonce_behavior(void) {
      * probability 2^-480 — a stuck/constant source is the only
      * realistic way this fires. Separately, 16 draws that all leave the
      * top 20 bits zero has probability 2^-320, so `any_high` catches a
-     * source that was silently masked back down to 12 bits. */
+     * source that was silently narrowed to a 12-bit width. */
     uint32_t first = 0;
     bool any_diff = false;
     bool any_high = false;
@@ -524,6 +544,9 @@ static void nonce_behavior(void) {
         if (!RoomCode_GenerateNonce(&nn)) {
             fail("nonce", "RoomCode_GenerateNonce failed (CSPRNG unavailable?)");
             return;
+        }
+        if (nn > ROOM_CODE_NONCE_MASK) {
+            fail("nonce", "RoomCode_GenerateNonce produced a value outside the mask");
         }
         if ((nn & 0xFFFFF000u) != 0) any_high = true;
         if (i == 0) first = nn;
@@ -535,36 +558,38 @@ static void nonce_behavior(void) {
     }
     if (!any_high) {
         fail("nonce", "16 generated nonces all fit in 12 bits — the CSPRNG "
-                      "nonce is still being masked to the v2 width");
+                      "nonce is still being masked to a narrow width");
         return;
     }
-    fprintf(stderr, "[test_room_code] nonce behavior OK (32-bit width + variability)\n");
+    fprintf(stderr, "[test_room_code] nonce machinery OK (32-bit width + "
+                    "CSPRNG variability; not used by the v4 code string — "
+                    "kept for the future room-list feature, room_code.h)\n");
 }
 
 static void reject_bogus(void) {
     uint32_t ip = 0;
     uint16_t pp = 0;
-    uint32_t nn = 0;
 
     /* Empty. */
-    if (RoomCode_Decode("", &ip, &pp, &nn) != ROOM_CODE_MALFORMED)
+    if (RoomCode_Decode("", &ip, &pp) != ROOM_CODE_MALFORMED)
         fail("bogus-empty", "empty string not MALFORMED");
     /* Too short. */
-    if (RoomCode_Decode("ABCD", &ip, &pp, &nn) != ROOM_CODE_MALFORMED)
+    if (RoomCode_Decode("ABCD", &ip, &pp) != ROOM_CODE_MALFORMED)
         fail("bogus-short", "4-char not MALFORMED");
-    /* Wrong lengths bracketing the valid ones. 11 and 14 are the legacy
-     * lengths (handled by old_format_detection); 12, 13, 15, 16, 17 and
-     * 19 must all be MALFORMED. Built length-parametrically so they do
-     * not silently rot the next time the format grows. */
+    /* Wrong lengths bracketing the valid ones. 11, 14 and 18 are the
+     * legacy lengths (handled by old_format_detection); 12 is current.
+     * 10, 13, 15, 16, 17 and 19 must all be MALFORMED. Built
+     * length-parametrically so they do not silently rot the next time
+     * the format grows. */
     {
-        static const size_t kBadLens[] = { 12, 13, 15, 16, 17, 19 };
+        static const size_t kBadLens[] = { 10, 13, 15, 16, 17, 19 };
         char buf[32];
         for (size_t bi = 0; bi < sizeof(kBadLens) / sizeof(kBadLens[0]); bi++) {
             const size_t L = kBadLens[bi];
             buf[0] = ROOM_CODE_VERSION_CHAR;
             for (size_t i = 1; i < L; i++) buf[i] = 'A';
             buf[L] = '\0';
-            if (RoomCode_Decode(buf, &ip, &pp, &nn) != ROOM_CODE_MALFORMED) {
+            if (RoomCode_Decode(buf, &ip, &pp) != ROOM_CODE_MALFORMED) {
                 fprintf(stderr,
                         "[test_room_code] FAIL: bogus-len: %zu-char \"%s\" not "
                         "MALFORMED\n", L, buf);
@@ -577,82 +602,67 @@ static void reject_bogus(void) {
      * code and inject the U so length/version/check-order is right. */
     {
         char code[ROOM_CODE_BUF_LEN];
-        if (RoomCode_Encode(make_ip_be(10, 0, 0, 1), 65535, 0x3FFu, code)) {
-            code[2] = 'U'; /* payload position (post-version, pre-dash) */
-            if (RoomCode_Decode(code, &ip, &pp, &nn) == ROOM_CODE_OK)
+        if (RoomCode_Encode(make_ip_be(10, 0, 0, 1), 65535, code)) {
+            code[2] = 'U'; /* a payload position */
+            if (RoomCode_Decode(code, &ip, &pp) == ROOM_CODE_OK)
                 fail("bogus-U", "U in payload accepted");
         } else {
             fail("bogus-U", "encode failed during setup");
         }
     }
     /* NULL code pointer. */
-    if (RoomCode_Decode(NULL, &ip, &pp, &nn) != ROOM_CODE_MALFORMED)
+    if (RoomCode_Decode(NULL, &ip, &pp) != ROOM_CODE_MALFORMED)
         fail("bogus-null", "NULL not MALFORMED");
 
     fprintf(stderr, "[test_room_code] bogus-input rejection OK\n");
 }
 
-/* --- S4-review MEDIUM-4: log redaction --------------------------------
+/* --- S4-review MEDIUM-4: log redaction, re-scoped for v4 --------------
  *
- * The property that matters is not "some characters are stars" but
- * "ZERO nonce bits survive". So: encode the SAME (ip, port) under many
- * different nonces and assert every redaction is byte-identical. If any
- * nonce bit leaked into a surviving character the strings would differ.
- * Also assert the surviving prefix still identifies the version and is
- * genuinely shorter than the whole code (a redactor that blanked
- * everything would pass the first test trivially).
+ * v4 has no independent secret to protect in the redacted tail (the
+ * payload IS the public (ip, port) tuple — see room_code.h's "redaction
+ * no longer hides a secret"). What's asserted here instead: exactly
+ * ROOM_CODE_REDACT_CHARS trailing characters are masked, the version
+ * char and length survive, two different codes still redact
+ * differently (the redaction is not blanking everything), and
+ * degenerate inputs are handled safely.
  */
 static void redaction_behavior(void) {
-    const uint32_t ip_be = make_ip_be(198, 51, 100, 7);
-    const uint16_t pport = 51234;
+    char code[ROOM_CODE_BUF_LEN];
+    if (!RoomCode_Encode(make_ip_be(198, 51, 100, 7), 51234, code)) {
+        fail("redact", "encode failed during setup");
+        return;
+    }
+    char red[ROOM_CODE_BUF_LEN];
+    RoomCode_Redact(code, red);
 
-    char first[ROOM_CODE_BUF_LEN] = { 0 };
-    uint32_t rng = 0xC0FFEE11u;
-    for (int i = 0; i < 512; i++) {
-        rng = rng * 1664525u + 1013904223u;
-        char code[ROOM_CODE_BUF_LEN];
-        if (!RoomCode_Encode(ip_be, pport, rng, code)) {
-            fail("redact", "encode failed during setup");
-            return;
-        }
-        char red[ROOM_CODE_BUF_LEN];
-        RoomCode_Redact(code, red);
-
-        if (strlen(red) != strlen(code)) {
-            fail("redact", "redaction changed the code's length");
-            return;
-        }
-        if (strcmp(red, code) == 0) {
-            fail("redact", "redaction returned the code unchanged");
-            return;
-        }
-        if (red[0] != ROOM_CODE_VERSION_CHAR) {
-            fail("redact", "redaction destroyed the version char");
-            return;
-        }
-        if (i == 0) {
-            memcpy(first, red, sizeof(first));
-        } else if (strcmp(first, red) != 0) {
-            fprintf(stderr,
-                    "[test_room_code] FAIL: redact: nonce bits SURVIVED "
-                    "redaction — \"%s\" vs \"%s\" for the same ip:port\n",
-                    first, red);
-            fail_count++;
-            return;
-        }
+    if (strlen(red) != strlen(code)) {
+        fail("redact", "redaction changed the code's length");
+        return;
+    }
+    if (strcmp(red, code) == 0) {
+        fail("redact", "redaction returned the code unchanged");
+        return;
+    }
+    if (red[0] != ROOM_CODE_VERSION_CHAR) {
+        fail("redact", "redaction destroyed the version char");
+        return;
     }
 
     /* Exactly ROOM_CODE_REDACT_CHARS masked characters, and they are the
-     * TAIL (the nonce end), not a scatter. */
+     * TAIL. */
     {
         int stars = 0;
-        for (size_t i = 0; first[i] != '\0'; i++) {
-            if (first[i] == '*') stars++;
+        for (size_t i = 0; red[i] != '\0'; i++) {
+            if (red[i] == '*') stars++;
+            else if (i + (size_t)ROOM_CODE_REDACT_CHARS < strlen(red) && red[i] != code[i]) {
+                fail("redact", "a non-tail character was altered");
+            }
         }
         if (stars != ROOM_CODE_REDACT_CHARS) {
             fprintf(stderr,
                     "[test_room_code] FAIL: redact: %d masked chars, expected "
-                    "%d (\"%s\")\n", stars, ROOM_CODE_REDACT_CHARS, first);
+                    "%d (\"%s\")\n", stars, ROOM_CODE_REDACT_CHARS, red);
             fail_count++;
             return;
         }
@@ -663,12 +673,12 @@ static void redaction_behavior(void) {
     {
         char other[ROOM_CODE_BUF_LEN];
         char other_red[ROOM_CODE_BUF_LEN];
-        if (!RoomCode_Encode(make_ip_be(203, 0, 113, 77), 3478, 1u, other)) {
+        if (!RoomCode_Encode(make_ip_be(203, 0, 113, 77), 3478, other)) {
             fail("redact", "encode failed for the distinctness case");
             return;
         }
         RoomCode_Redact(other, other_red);
-        if (strcmp(other_red, first) == 0) {
+        if (strcmp(other_red, red) == 0) {
             fail("redact", "two different endpoints redact identically — the "
                            "redaction is destroying the ip:port half too");
             return;
@@ -678,24 +688,26 @@ static void redaction_behavior(void) {
     /* Degenerate inputs must not write past the buffer or leave it
      * unterminated. */
     {
-        char red[ROOM_CODE_BUF_LEN];
-        RoomCode_Redact(NULL, red);
-        if (red[0] != '\0') fail("redact", "NULL input did not yield \"\"");
-        RoomCode_Redact("", red);
-        if (red[0] != '\0') fail("redact", "empty input did not yield \"\"");
-        RoomCode_Redact("2AB", red);
-        if (strlen(red) != 3) fail("redact", "short input changed length");
+        char red2[ROOM_CODE_BUF_LEN];
+        RoomCode_Redact(NULL, red2);
+        if (red2[0] != '\0') fail("redact", "NULL input did not yield \"\"");
+        RoomCode_Redact("", red2);
+        if (red2[0] != '\0') fail("redact", "empty input did not yield \"\"");
+        RoomCode_Redact("2AB", red2);
+        if (strlen(red2) != 3) fail("redact", "short input changed length");
     }
 
-    fprintf(stderr, "[test_room_code] redaction OK — \"%s\" (0 nonce bits "
-                    "survive across 512 nonces)\n", first);
+    fprintf(stderr, "[test_room_code] redaction OK — \"%s\" -> \"%s\" "
+                    "(%d chars masked; hygiene only as of v4, not "
+                    "confidentiality — see room_code.h)\n",
+                    code, red, ROOM_CODE_REDACT_CHARS);
 }
 
 static void normalization_sanity(void) {
     /* Encode, convert display form to lower-case, decode. */
     char code[ROOM_CODE_BUF_LEN];
     const uint32_t ip_be = make_ip_be(8, 8, 8, 8);
-    if (!RoomCode_Encode(ip_be, 80, 0x123, code)) {
+    if (!RoomCode_Encode(ip_be, 80, code)) {
         fail("norm", "encode failed");
         return;
     }
@@ -710,79 +722,78 @@ static void normalization_sanity(void) {
     }
     aliased[w] = '\0';
 
-    uint32_t rip = 0; uint16_t rpp = 0; uint32_t rn = 0;
-    if (RoomCode_Decode(aliased, &rip, &rpp, &rn) != ROOM_CODE_OK) {
+    uint32_t rip = 0; uint16_t rpp = 0;
+    if (RoomCode_Decode(aliased, &rip, &rpp) != ROOM_CODE_OK) {
         fail("norm-lower", "decode rejected lower-case round-trip");
         return;
     }
-    if (!ip_eq(rip, ip_be) || rpp != 80 || rn != 0x123) {
+    if (!ip_eq(rip, ip_be) || rpp != 80) {
         fail("norm-lower", "decode returned wrong tuple");
         return;
     }
     fprintf(stderr, "[test_room_code] norm lower-case OK — \"%s\"\n", aliased);
 
-    /* Dash-stripped form still decodes. */
-    char nodash[ROOM_CODE_BUF_LEN];
-    size_t nw = 0;
+    /* A stray dash/whitespace in the input is still tolerated even
+     * though v4 never DISPLAYS one (legacy codes did, and a user could
+     * still paste one in by habit). */
+    char dashed[ROOM_CODE_BUF_LEN + 4];
+    size_t dw = 0;
     for (size_t i = 0; code[i]; i++) {
-        if (code[i] != '-') nodash[nw++] = code[i];
+        if (i == 6) dashed[dw++] = '-';
+        dashed[dw++] = code[i];
     }
-    nodash[nw] = '\0';
-    rip = 0; rpp = 0; rn = 0;
-    if (RoomCode_Decode(nodash, &rip, &rpp, &rn) != ROOM_CODE_OK) {
-        fail("norm-nodash", "decode rejected dash-free form");
+    dashed[dw] = '\0';
+    rip = 0; rpp = 0;
+    if (RoomCode_Decode(dashed, &rip, &rpp) != ROOM_CODE_OK) {
+        fail("norm-dash", "decode rejected a stray-dash input");
         return;
     }
-    if (!ip_eq(rip, ip_be) || rpp != 80 || rn != 0x123) {
-        fail("norm-nodash", "decode returned wrong tuple");
+    if (!ip_eq(rip, ip_be) || rpp != 80) {
+        fail("norm-dash", "decode returned wrong tuple");
         return;
     }
-    fprintf(stderr, "[test_room_code] norm no-dash OK — \"%s\"\n", nodash);
+    fprintf(stderr, "[test_room_code] norm stray-dash OK — \"%s\"\n", dashed);
 }
 
 int Netplay_Test_RoomCode(void) {
     fail_count = 0;
 
-    /* Edge cases across all three fields. */
-    round_trip("all-zeros",     make_ip_be(0,0,0,0),            0, 0x00000000u);
-    round_trip("all-ones",      make_ip_be(255,255,255,255), 0xFFFF, ROOM_CODE_NONCE_MASK);
-    round_trip("loopback",      make_ip_be(127,0,0,1),       54321, 0x00000001u);
-    round_trip("dns-google",    make_ip_be(8,8,8,8),            80, 0x80000000u);
-    round_trip("lan",           make_ip_be(192,168,1,171),   55123, 0x5A5A5A5Au);
-    round_trip("high-port",     make_ip_be(10,0,0,1),        65535, 0x000000FFu);
-    round_trip("asymmetric",    make_ip_be(203,0,113,77),     3478, 0xABCDEF01u);
-    round_trip("nonce-zero",    make_ip_be(203,0,113,77),     3478, 0x00000000u);
-    round_trip("nonce-msb",     make_ip_be(203,0,113,77),     3478, 0x80000000u);
+    /* Edge cases across both fields. */
+    round_trip("all-zeros",     make_ip_be(0,0,0,0),            0);
+    round_trip("all-ones",      make_ip_be(255,255,255,255), 0xFFFF);
+    round_trip("loopback",      make_ip_be(127,0,0,1),       54321);
+    round_trip("dns-google",    make_ip_be(8,8,8,8),            80);
+    round_trip("lan",           make_ip_be(192,168,1,171),   55123);
+    round_trip("high-port",     make_ip_be(10,0,0,1),        65535);
+    round_trip("asymmetric",    make_ip_be(203,0,113,77),     3478);
 
     /* Typo detection — ISO 7064 MOD 37,36 over version+payload+check
      * guarantees 100% detection of single-character substitutions in
      * the covered positions; the version position surfaces as
      * FUTURE_VERSION. */
-    typo_detection("lan-typo",     make_ip_be(192,168,1,171), 55123, 0x5A5A5A5Au);
-    typo_detection("zero-typo",    make_ip_be(0,0,0,0),           0, 0x00000000u);
-    typo_detection("ones-typo",    make_ip_be(255,255,255,255), 0xFFFF, ROOM_CODE_NONCE_MASK);
+    typo_detection("lan-typo",     make_ip_be(192,168,1,171), 55123);
+    typo_detection("zero-typo",    make_ip_be(0,0,0,0),           0);
+    typo_detection("ones-typo",    make_ip_be(255,255,255,255), 0xFFFF);
 
-    /* MEDIUM-1: the exhaustive version of the above. 4000 codes x 18
-     * positions x 35 alternatives = 2,520,000 substitutions, all of
-     * which must be either rejected or decode to the IDENTICAL tuple.
-     * Against the v1/v2 recurrence this reported ~2500 undetected. */
+    /* MEDIUM-1: the exhaustive version of the above. 4000 codes x 12
+     * positions x 35 alternatives = 1,680,000 substitutions, all of
+     * which must be either rejected or decode to the IDENTICAL tuple. */
     full_alphabet_sweep(4000);
 
-    /* S4b: version handling. */
+    /* Version handling. */
     old_format_detection();
     future_version_detection();
 
-    /* S4b: nonce range + CSPRNG variability. */
-    nonce_behavior();
+    /* Nonce machinery — kept alive, exercised directly (see room_code.h). */
+    nonce_machinery_behavior();
 
     /* Bogus input rejection. */
     reject_bogus();
 
-    /* Normalization sanity (case fold, dash strip). */
+    /* Normalization sanity (case fold, stray dash). */
     normalization_sanity();
 
-    /* S4-review MEDIUM-4: the code is key material — logs must not
-     * carry the nonce. */
+    /* S4-review MEDIUM-4, re-scoped for v4: redaction hygiene. */
     redaction_behavior();
 
     if (fail_count > 0) {

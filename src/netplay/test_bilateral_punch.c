@@ -1047,7 +1047,7 @@ static int test_joiner_fresh_socket_retry(void) {
     struct in_addr lan_peer;
     lan_peer.s_addr = htonl(0x0A000001u); /* 10.0.0.1 */
     char code[ROOM_CODE_BUF_LEN] = { 0 };
-    if (!RoomCode_Encode((uint32_t)lan_peer.s_addr, 5555, 0x0AA, code)) {
+    if (!RoomCode_Encode((uint32_t)lan_peer.s_addr, 5555, code)) {
         FAIL("test6", "RoomCode_Encode failed");
         DirectP2P_TestHook_SetStunDiscover(NULL);
         DirectP2P_TestHook_SetPunchOracle(NULL);
@@ -1245,7 +1245,7 @@ static int test_joiner_self_deliver(void) {
     host_ip.s_addr = htonl(0xC6336407u); /* 198.51.100.7 */
     char code[ROOM_CODE_BUF_LEN] = { 0 };
     int rc = 0;
-    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, 0x0BB, code)) {
+    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, code)) {
         FAIL("test8", "RoomCode_Encode failed");
         rc = 1;
         goto done;
@@ -1388,7 +1388,7 @@ static int test_posthandoff_failure_report(void) {
     host_ip.s_addr = htonl(0xC6336407u); /* 198.51.100.7 (TEST-NET-2) */
     char code[ROOM_CODE_BUF_LEN] = { 0 };
     int rc = 0;
-    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, 0x0BB, code)) {
+    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, code)) {
         FAIL("test9", "RoomCode_Encode failed");
         rc = 1;
         goto done;
@@ -1570,10 +1570,13 @@ done:
  * hardcoded copy that could silently drift from the header.
  *
  * Every assertion here goes RED against the pre-fix behavior, because
- * pre-fix there is no mute to observe and no re-roll to be owed: with
- * host_punch_gate_note_bad neutralized to `return false` and
- * host_punch_gate_is_muted to `return false`, sub-tests 12a, 12b, 12d,
- * 12e and 12f all fail.
+ * pre-fix there is no mute to observe: with host_punch_gate_note_bad
+ * neutralized to a no-op and host_punch_gate_is_muted to `return
+ * false`, sub-tests 12a, 12b and 12f all fail. (Task #155: the session-
+ * total "re-roll owed" sub-tests this comment used to describe, 12d and
+ * 12e, no longer exist — the re-roll escalation they covered was
+ * removed along with the room-code nonce it depended on; see
+ * direct_p2p.c's punch-gate throttle comment.)
  */
 /* test_punch_gate_throttle MOVED to src/netplay/test_netplay_units.c (#132 P3).
  * It drives an INJECTED clock, so it never needed this file. */
@@ -1849,18 +1852,21 @@ static int test_host_cookie_handshake(void) {
     }
 
     /* The room code IS the advertised tuple: decoding it gives exactly
-     * the (ip, advertised_port, nonce) the host derives its session key
-     * from — no peeking at direct_p2p.c statics required. */
-    uint32_t adv_ip_be = 0, nonce = 0;
+     * the (ip, advertised_port) the host derives its session key from —
+     * no peeking at direct_p2p.c statics required. v4 (task #155): the
+     * nonce input is the fixed constant every derivation uses, not
+     * anything decoded from the code. */
+    uint32_t adv_ip_be = 0;
     uint16_t advertised_port = 0;
-    if (RoomCode_Decode(DirectP2P_GetHostCode(), &adv_ip_be, &advertised_port,
-                        &nonce) != ROOM_CODE_OK) {
+    if (RoomCode_Decode(DirectP2P_GetHostCode(), &adv_ip_be, &advertised_port) !=
+        ROOM_CODE_OK) {
         FAIL("test13", "could not decode the published host room code");
         rc = 1;
         goto done;
     }
     uint8_t expect_key[REND_KEY_LEN];
-    if (!Rendezvous_DeriveSessionKey(adv_ip_be, advertised_port, nonce, expect_key)) {
+    if (!Rendezvous_DeriveSessionKey(adv_ip_be, advertised_port,
+                                     ROOM_CODE_V4_FIXED_NONCE, expect_key)) {
         FAIL("test13", "Rendezvous_DeriveSessionKey failed for the advertised tuple");
         rc = 1;
         goto done;
@@ -2272,15 +2278,14 @@ static int test_joiner_cookie_handshake(void) {
     struct in_addr host_ip;
     host_ip.s_addr = htonl(0xC6336407u); /* 198.51.100.7 */
     char code[ROOM_CODE_BUF_LEN] = { 0 };
-    const uint32_t join_nonce = 0x0CC;
-    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, join_nonce, code)) {
+    if (!RoomCode_Encode((uint32_t)host_ip.s_addr, 6000, code)) {
         FAIL("test15", "RoomCode_Encode failed");
         rc = 1;
         goto done;
     }
     uint8_t expect_key[REND_KEY_LEN];
-    if (!Rendezvous_DeriveSessionKey((uint32_t)host_ip.s_addr, 6000, join_nonce,
-                                     expect_key)) {
+    if (!Rendezvous_DeriveSessionKey((uint32_t)host_ip.s_addr, 6000,
+                                     ROOM_CODE_V4_FIXED_NONCE, expect_key)) {
         FAIL("test15", "Rendezvous_DeriveSessionKey failed");
         rc = 1;
         goto done;
@@ -2488,13 +2493,11 @@ static uint32_t probe_run_cascade(const char* label) {
         Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, false);
     }
 
-    uint32_t nonce = 0;
     char code[ROOM_CODE_BUF_LEN];
     struct in_addr peer_in;
     uint32_t elapsed = 0;
-    if (RoomCode_GenerateNonce(&nonce) &&
-        inet_pton(AF_INET, "198.51.100.7", &peer_in) == 1 &&
-        RoomCode_Encode((uint32_t)peer_in.s_addr, 6000, nonce, code)) {
+    if (inet_pton(AF_INET, "198.51.100.7", &peer_in) == 1 &&
+        RoomCode_Encode((uint32_t)peer_in.s_addr, 6000, code)) {
         const uint32_t t0 = SDL_GetTicks();
         DirectP2P_BeginJoin(code);
         bool left_idle = false;
@@ -2537,12 +2540,10 @@ static uint32_t probe_run_once(const char* label) {
     Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_NATPMP, true);
     Config_SetBool(CFG_KEY_NETPLAY_DIRECT_P2P_DISABLE_BILATERAL, false);
 
-    uint32_t nonce = 0;
     char code[ROOM_CODE_BUF_LEN];
     struct in_addr peer_in;
-    if (!RoomCode_GenerateNonce(&nonce) ||
-        inet_pton(AF_INET, "198.51.100.7", &peer_in) != 1 ||
-        !RoomCode_Encode((uint32_t)peer_in.s_addr, 6000, nonce, code)) {
+    if (inet_pton(AF_INET, "198.51.100.7", &peer_in) != 1 ||
+        !RoomCode_Encode((uint32_t)peer_in.s_addr, 6000, code)) {
         FAIL("test18", "could not build a room code");
         close_sock(s_probe_sock);
         s_probe_sock = -1;
@@ -3326,8 +3327,8 @@ static int test_natpmp_pcp(void) {
                         "HOST_WAITING\n", cases[ci].tag, (int)DirectP2P_GetState());
                 fail_count++;
             } else {
-                uint32_t ip_be = 0, nnc = 0;
-                if (RoomCode_Decode(DirectP2P_GetHostCode(), &ip_be, &adv_port, &nnc) !=
+                uint32_t ip_be = 0;
+                if (RoomCode_Decode(DirectP2P_GetHostCode(), &ip_be, &adv_port) !=
                     ROOM_CODE_OK) {
                     FAIL(cases[ci].tag, "could not decode the published host room code");
                 } else {
@@ -4409,9 +4410,9 @@ static int test_s7_natpmp_kill_switch(void) {
                     "HOST_WAITING\n", cases[ci].tag, (int)DirectP2P_GetState());
             fail_count++;
         } else {
-            uint32_t ip_be = 0, nnc = 0;
+            uint32_t ip_be = 0;
             uint16_t adv_port = 0;
-            if (RoomCode_Decode(DirectP2P_GetHostCode(), &ip_be, &adv_port, &nnc) !=
+            if (RoomCode_Decode(DirectP2P_GetHostCode(), &ip_be, &adv_port) !=
                 ROOM_CODE_OK) {
                 FAIL(cases[ci].tag, "could not decode the published host room code");
             } else {
@@ -4522,10 +4523,10 @@ static int test_s7_lost_mapping(void) {
                 "HOST_WAITING\n", (int)DirectP2P_GetState());
         fail_count++;
     } else {
-        uint32_t ip_be = 0, nnc = 0;
+        uint32_t ip_be = 0;
         uint16_t adv0 = 0;
         EXPECT_TRUE("23d-decode",
-                    RoomCode_Decode(DirectP2P_GetHostCode(), &ip_be, &adv0, &nnc) ==
+                    RoomCode_Decode(DirectP2P_GetHostCode(), &ip_be, &adv0) ==
                         ROOM_CODE_OK);
         /* The control: the mapping really was created and really is what
          * the code advertises. Without this, "the port reverted" below
@@ -4551,9 +4552,9 @@ static int test_s7_lost_mapping(void) {
         while (SDL_GetTicks() - t0 < 25000u) {
             DirectP2P_Tick();
             SDL_Delay(10);
-            uint32_t ib = 0, nn = 0;
+            uint32_t ib = 0;
             uint16_t p = 0;
-            if (RoomCode_Decode(DirectP2P_GetHostCode(), &ib, &p, &nn) == ROOM_CODE_OK) {
+            if (RoomCode_Decode(DirectP2P_GetHostCode(), &ib, &p) == ROOM_CODE_OK) {
                 adv = p;
                 if (p == 40000) { reverted = true; break; }
             }
@@ -4687,12 +4688,10 @@ static int test_race_deliver_overlaps_seed(void) {
     DirectP2P_TestHook_ResetHandoff();
     s_r19_handoffs_before = 0;
 
-    uint32_t nonce = 0;
     char code[ROOM_CODE_BUF_LEN];
     struct in_addr peer_in;
-    if (!RoomCode_GenerateNonce(&nonce) ||
-        inet_pton(AF_INET, "198.51.100.7", &peer_in) != 1 ||
-        !RoomCode_Encode((uint32_t)peer_in.s_addr, 6000, nonce, code)) {
+    if (inet_pton(AF_INET, "198.51.100.7", &peer_in) != 1 ||
+        !RoomCode_Encode((uint32_t)peer_in.s_addr, 6000, code)) {
         FAIL("test19", "could not build a room code");
         rc = 1;
         goto done;
@@ -7098,15 +7097,17 @@ static bool send_raw_to_host(int sock, uint16_t port, const void* buf, int len) 
 }
 
 /* Derive the authenticated 17-byte punch payload from the PUBLISHED room
- * code — the same inputs a real joiner has (no peeking at statics). */
+ * code — the same inputs a real joiner has (no peeking at statics). v4
+ * (task #155): the nonce input is the fixed constant every derivation
+ * uses, not anything decoded from the code. */
 static bool host_code_punch_payload(const char* code,
                                     uint8_t out[STUN_PUNCH_PAYLOAD_LEN]) {
-    uint32_t ip_be = 0, nonce = 0;
+    uint32_t ip_be = 0;
     uint16_t adv_port = 0;
     uint8_t token[STUN_PUNCH_TOKEN_LEN];
-    if (RoomCode_Decode(code, &ip_be, &adv_port, &nonce) != ROOM_CODE_OK)
+    if (RoomCode_Decode(code, &ip_be, &adv_port) != ROOM_CODE_OK)
         return false;
-    if (!Rendezvous_DerivePunchToken(ip_be, adv_port, nonce, token))
+    if (!Rendezvous_DerivePunchToken(ip_be, adv_port, ROOM_CODE_V4_FIXED_NONCE, token))
         return false;
     Stun_BuildPunchPayload(token, out);
     return true;
@@ -7256,14 +7257,27 @@ done:
     return 1;
 }
 
-/* Test 47: the punch-gate mute -> re-roll -> legitimate-joiner-recovers
- * chain, end to end over the real socket. Previously only the gate's
- * accounting was unit-tested (PunchGateNoteBad etc.); the receive-path
- * consequences — a muted source's AUTHENTICATED punch being suppressed,
- * and the re-rolled code accepting a fresh punch — were not. */
-static int test_punch_gate_reroll_recovery(void) {
-    fprintf(stderr, "[test_bilateral_punch] test 47: #150 punch-gate mute -> "
-                    "re-roll -> recovery over the wire\n");
+/* Test 47: the punch-gate mute, end to end over the real socket, and —
+ * v4 (task #155) — the NEGATIVE assertion that the old re-roll
+ * escalation no longer fires. Previously only the gate's accounting was
+ * unit-tested (PunchGateNoteBad etc.); the receive-path consequence — a
+ * muted source's AUTHENTICATED punch being suppressed — was not.
+ *
+ * The second half of this test used to verify that 70 bad-token
+ * punches re-rolled the room code and that a joiner holding the NEW
+ * code recovered. That mechanism is GONE as of v4: the punch token is
+ * `f(ip, port)` with a fixed nonce, so re-encoding the SAME (ip, port)
+ * can only ever produce the SAME code — there is nothing left to roll.
+ * See the punch-gate throttle comment in direct_p2p.c. Recovery is now
+ * purely TIME-bound (the mute expires after HOST_PUNCH_MUTE_MS), which
+ * test_netplay_units.c's unit_punch_gate_throttle (test 12c) already
+ * covers at the unit level without a real 60 s wait; this integration
+ * test instead asserts the code and token stay STABLE past the old
+ * threshold, so a silent re-introduction of the reroll behavior would
+ * be caught here. */
+static int test_punch_gate_mute_no_reroll(void) {
+    fprintf(stderr, "[test_bilateral_punch] test 47: #150 punch-gate mute "
+                    "over the wire; v4 (#155): confirms NO re-roll\n");
     const int fails_before = fail_count;
     int rc = 0;
     int client = -1;
@@ -7328,66 +7342,40 @@ static int test_punch_gate_reroll_recovery(void) {
         rc = 1;
         goto done;
     }
+    EXPECT_TRUE("47-code-stable-after-mute",
+                strcmp(DirectP2P_GetHostCode(), code1) == 0);
 
-    /* 40 more bad punches push the session total past
-     * HOST_PUNCH_TOTAL_REROLL (64): the host must re-roll the room code
-     * (the displayed code CHANGES — the user-visible recovery). */
+    /* 40 more bad punches — past the OLD HOST_PUNCH_TOTAL_REROLL (64)
+     * session-total threshold — must NOT change the code. Under v3 this
+     * was the point the host re-rolled; under v4 there is nothing to
+     * roll (see the comment above this test). */
     for (int i = 0; i < 40; i++) {
         (void)send_raw_to_host(client, host_port, bad_punch, STUN_PUNCH_PAYLOAD_LEN);
     }
     SDL_Delay(150);
-    {
-        bool rerolled = false;
-        const uint32_t start = SDL_GetTicks();
-        while ((int)(SDL_GetTicks() - start) < 5000) {
-            DirectP2P_Tick();
-            if (DirectP2P_GetState() != DIRECT_P2P_HOST_WAITING) break;
-            if (strcmp(DirectP2P_GetHostCode(), code1) != 0) { rerolled = true; break; }
-            SDL_Delay(10);
-        }
-        if (!rerolled) {
-            fprintf(stderr,
-                    "[test_bilateral_punch] FAIL: 47-reroll: the room code never "
-                    "changed after 70 bad-token punches (state %d)\n",
-                    (int)DirectP2P_GetState());
-            fail_count++;
-            rc = 1;
-            goto done;
-        }
+    for (int i = 0; i < 12; i++) {
+        DirectP2P_Tick();
+        SDL_Delay(10);
     }
-
-    /* The re-roll cleared every mute and re-derived the token: a joiner
-     * holding the NEW code — same source IP that was muted — recovers. */
-    {
-        uint8_t punch2[STUN_PUNCH_PAYLOAD_LEN];
-        if (!host_code_punch_payload(DirectP2P_GetHostCode(), punch2)) {
-            FAIL("47-derive2", "could not derive a payload from the re-rolled code");
-            rc = 1;
-            goto done;
-        }
-        if (!send_raw_to_host(client, host_port, punch2, STUN_PUNCH_PAYLOAD_LEN)) {
-            FAIL("47-send2", "sendto failed");
-            rc = 1;
-            goto done;
-        }
-        if (!tick_until_state(DIRECT_P2P_HANDOFF, 5000)) {
-            fprintf(stderr,
-                    "[test_bilateral_punch] FAIL: 47-recover: state %d — the punch "
-                    "derived from the RE-ROLLED code was not accepted from the "
-                    "formerly muted source\n",
-                    (int)DirectP2P_GetState());
-            fail_count++;
-            rc = 1;
-            goto done;
-        }
-        char hip[64] = { 0 };
-        uint16_t hport = 0;
-        int hplayer = 0, hcount = 0;
-        DirectP2P_TestHook_LastHandoff(hip, (int)sizeof(hip), &hport, &hplayer,
-                                       &hcount);
-        EXPECT_TRUE("47-handoff-endpoint",
-                    hport == client_port && strcmp(hip, "127.0.0.1") == 0);
-        EXPECT_TRUE("47-one-handoff", hcount == 1);
+    if (strcmp(DirectP2P_GetHostCode(), code1) != 0) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 47-no-reroll: the room code "
+                "CHANGED after 70 bad-token punches (\"%s\" -> \"%s\") — the "
+                "v3 re-roll escalation was re-introduced without a nonce to "
+                "roll, which the v4 derivation cannot support\n",
+                code1, DirectP2P_GetHostCode());
+        fail_count++;
+        rc = 1;
+        goto done;
+    }
+    if (DirectP2P_GetState() != DIRECT_P2P_HOST_WAITING) {
+        fprintf(stderr,
+                "[test_bilateral_punch] FAIL: 47-still-waiting: state %d after "
+                "70 bad-token punches, expected to remain HOST_WAITING\n",
+                (int)DirectP2P_GetState());
+        fail_count++;
+        rc = 1;
+        goto done;
     }
 
 done:
@@ -7395,12 +7383,13 @@ done:
     DirectP2P_TestHook_RunTeardown();
     if (DirectP2P_GetState() != DIRECT_P2P_IDLE) DirectP2P_Cancel();
     if (client >= 0) close_sock(client);
+    (void)client_port;
 
     if (rc == 0 && fail_count == fails_before) {
         fprintf(stderr,
                 "[test_bilateral_punch] test 47 OK — mute suppressed the ground "
-                "source's valid punch, 70 bad tokens re-rolled the code, and the "
-                "new code's punch paired from the same source\n");
+                "source's valid punch, and 70 bad-token punches left the code "
+                "and state unchanged (no v3-style re-roll under v4)\n");
         return 0;
     }
     return 1;
@@ -7442,7 +7431,7 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_notify_session_failed_first_wins(); /* task #144 review Item B: test 44 */
     rc |= test_portmap_straggler_slot();      /* task #147: test 45 */
     rc |= test_host_batch_drain();            /* task #150: test 46 */
-    rc |= test_punch_gate_reroll_recovery();  /* task #150: test 47 */
+    rc |= test_punch_gate_mute_no_reroll();  /* task #150 / #155: test 47 */
     rc |= test_host_cookie_rejected(); /* last: ~31 s of wall clock */
 
     if (fail_count > 0 || rc != 0) {

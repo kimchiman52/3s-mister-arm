@@ -257,14 +257,13 @@ static void dispatch_direct_p2p_handoff(void) {
         break;
     case DIRECT_P2P_HANDOFF_MODE_JOIN:
         {
-            /* S4-review MEDIUM-4: the peer code is the HOST's key
-             * material (it seeds their session key and punch token), so
-             * the nonce characters are redacted here the same way the
-             * host redacts its own. See RoomCode_Redact. */
+            /* S4-review MEDIUM-4 (re-scoped for v4, room_code.h): redacted
+             * here the same way the host redacts its own — hygiene, not
+             * confidentiality, as of v4. See RoomCode_Redact. */
             char peer_code_redacted[ROOM_CODE_BUF_LEN];
             RoomCode_Redact(handoff.peer_code, peer_code_redacted);
             fprintf(stderr,
-                    "[direct_p2p_handoff] dispatching Join (peer_code=%s, nonce redacted)\n",
+                    "[direct_p2p_handoff] dispatching Join (peer_code=%s, redacted)\n",
                     peer_code_redacted);
         }
         DirectP2P_BeginJoin(handoff.peer_code);

@@ -116,13 +116,13 @@ void DirectP2P_Init(void);
  * already in flight. */
 void DirectP2P_BeginHost(int preferred_port);
 
-/* Join-side flow. peer_code must be a room-code display form (with or
- * without dashes, any case); accepts both 18-char raw and 20-char
- * dashed (v3 format). No-op on NULL/empty. On success, code is
- * persisted to CFG_KEY_NETPLAY_DIRECT_P2P_LAST_PEER_CODE. A v1
- * (11-char), v2 (14-char) or unknown-version code fails immediately
- * with CONNECT_FAIL_CODE_VERSION_OLDER / _NEWER and an explanatory
- * status. */
+/* Join-side flow. peer_code must be a room-code display form (any
+ * case; stray dashes/whitespace tolerated for a pasted legacy code) —
+ * 12 raw chars, no dashes, as of v4. No-op on NULL/empty. On success,
+ * code is persisted to CFG_KEY_NETPLAY_DIRECT_P2P_LAST_PEER_CODE. A v1
+ * (11-char), v2 (14-char), v3 (18-char) or unknown-version code fails
+ * immediately with CONNECT_FAIL_CODE_VERSION_OLDER / _NEWER and an
+ * explanatory status. */
 void DirectP2P_BeginJoin(const char* peer_code);
 
 /* User cancel. Sets the worker's atomic cancel flag, waits up to a
@@ -197,10 +197,38 @@ int DirectP2P_OrchWorstCaseMs(void);
  * Main-thread only. */
 bool DirectP2P_HostStunRetryPending(void);
 
-/* Display-form room code (20 visible chars, v3), valid only while
+/* Display-form room code (12 chars, no dashes, v4), valid only while
  * state == DIRECT_P2P_HOST_WAITING. Returns "" in all other states.
  * Pointer is into internal static storage — do not free or mutate. */
 const char* DirectP2P_GetHostCode(void);
+
+/*
+ * v4 (task #155) — DORMANT-BUT-COMPILED, NOT WIRED. Together these
+ * implement the S4-review HIGH-1b punch-gate "re-roll" escalation: past
+ * HOST_PUNCH_TOTAL_REROLL session-total bad-token punches, draw a fresh
+ * nonce, re-encode the room code, re-derive the punch token, clear
+ * every source's mute, and tell the user. Through v3 that invalidated
+ * whatever an attacker had been grinding for. As of v4 the room code no
+ * longer carries a nonce (room_code.h's "nonce leaves the code"
+ * section) — every caller's derivation is a pure function of (ip,
+ * port), so a "re-roll" can only reproduce a BYTE-IDENTICAL code, and
+ * calling host_punch_gate_clear_mutes off that non-event would be a
+ * mute bypass: an attacker grinding wrong tokens launders their own
+ * mute every 64 datagrams for free. See host_reroll_room_code's
+ * tombstone comment in direct_p2p.c for the full writeup. NO call site
+ * reaches either of these in this build, and none should be added until
+ * a room-list feature restores an out-of-band nonce, at which point
+ * both are re-wired back together.
+ *
+ * Declared non-static (not `static` in direct_p2p.c, not parked behind
+ * #if) so a deliberately-uncalled function does not trip
+ * -Wunused-function/-Werror — the same convention room_code.h uses for
+ * RoomCode_GenerateNonce, and the one #if would have failed: 4ca4c0de
+ * is what happened to LOSSY_ADAPTER when it was hidden behind a macro
+ * gate instead.
+ */
+void host_reroll_room_code(void);
+void host_punch_gate_clear_mutes(void);
 
 /* Human-readable status for the game-side overlay. Always non-NULL,
  * possibly empty string. Updates on state transitions.
@@ -472,13 +500,19 @@ void DirectP2P_TestHook_LastHandoff(char* out_ip, int ip_cap, uint16_t* out_port
                                     int* out_player, int* out_count);
 void DirectP2P_TestHook_ResetHandoff(void);
 
+/* v4 (task #155): the punch-gate "re-roll" escalation (a second,
+ * session-total layer that used to draw a fresh nonce once a threshold
+ * of bad punches accumulated) is REMOVED — with a fixed nonce there is
+ * nothing left to roll. DirectP2P_TestHook_PunchGateNoteBad went from
+ * bool (an "re-roll owed" signal) to void accordingly, and the reroll/
+ * rerolls fields dropped out of the counters/limits hooks below. See
+ * the punch-gate throttle comment in direct_p2p.c for the full
+ * rationale. */
 void DirectP2P_TestHook_PunchGateReset(void);
-bool DirectP2P_TestHook_PunchGateNoteBad(const char* src_ip, uint32_t now_ms);
+void DirectP2P_TestHook_PunchGateNoteBad(const char* src_ip, uint32_t now_ms);
 bool DirectP2P_TestHook_PunchGateIsMuted(const char* src_ip, uint32_t now_ms);
-void DirectP2P_TestHook_PunchGateClearMutes(void);
-void DirectP2P_TestHook_PunchGateCounters(int* bad_total, int* rerolls);
+void DirectP2P_TestHook_PunchGateCounters(int* bad_total);
 void DirectP2P_TestHook_PunchGateLimits(int* src_max_bad, uint32_t* mute_ms,
-                                        int* total_reroll, int* reroll_max,
                                         int* src_table);
 
 /* --- S6-review H-3: drive ONE p2p_race directly ------------------------

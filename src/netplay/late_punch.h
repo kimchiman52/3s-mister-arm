@@ -11,10 +11,11 @@
  * can reach, and any band not yet discovered). Pre-#119 the connected
  * side then sat out CONNECT_TIMEOUT_CONNECTING_MS (or the MIST retry
  * window) talking to a peer that had already torn down, parked in
- * FAILED_HANDSHAKE, and the room code was burned — the nonce regenerates
- * per hosting attempt (direct_p2p.c, s_work.nonce), so there was no way
- * back. Four prior mechanisms (the settle window, the H-1 confirm tail,
- * the second tail, the host M1 loop) each shrank the disagreement band;
+ * FAILED_HANDSHAKE, and the room code was burned — a fresh hosting
+ * attempt gets a fresh advertised endpoint (or, pre-#155, a fresh
+ * nonce), so there was no way back. Four prior mechanisms (the settle
+ * window, the H-1 confirm tail, the second tail, the host M1 loop) each
+ * shrank the disagreement band;
  * none could close it, because commit/abort agreement over a lossy
  * channel is Two Generals. This module stops trying to prevent the
  * disagreement and makes it CHEAP instead: the connected side keeps
@@ -75,9 +76,12 @@
  *   "the peer's NAT mapping moved" and "a different host behind the same
  *   public IP" are byte-identical at late_punch.c:280. The token does not
  *   separate them either: it is derived from the room code alone
- *   (SHA-256("3SXR-PT3" || ip || port || nonce)[0..7], rendezvous.c:146-152,
- *   nonce carried in the code's low 32 bits, room_code.h:233-236), so
- *   anyone holding the code can produce it without observing a packet.
+ *   (SHA-256("3SXR-PT4" || ip || port || nonce)[0..7], rendezvous.c
+ *   Rendezvous_DerivePunchToken — as of task #155 the room code carries
+ *   no nonce and every caller fixes it at ROOM_CODE_V4_FIXED_NONCE,
+ *   room_code.h), so anyone holding the code — or, post-#155, anyone
+ *   who merely knows or scans the (ip, port) — can produce it without
+ *   observing a packet.
  *   That is by design and cannot be fixed here; a same-IP code holder is
  *   inside the token's trust boundary. Nothing downstream narrows it
  *   either — the MIST compat gate (classify_peer_payload,
