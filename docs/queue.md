@@ -1464,6 +1464,59 @@ exact at its own citing commit. That is a sweep, not a standing gate.
 
 - *The bare-shorthand form.* Claim: citing `game_state.c` by basename plus a
   line number slips past the gate that catches the full path. It does not.
+
+**CLOSED by `2178b7da`.**
+
+Both `process_session` cases now latch a reason before teardown, through the
+same notify/park path the connect-phase failures use. Two codes appended to
+`ConnectFailCode`: `CONNECT_FAIL_PEER_DISCONNECTED` ("Opponent disconnected.")
+and `CONNECT_FAIL_DESYNC_DETECTED` ("Session desynced. Ending match.") — 22
+and 31 chars against a real 48-char ceiling (8px cells, 384px canvas,
+`SSPutStrTexInputPro`).
+
+Kept in the same taxonomy, not a parallel one: the enum already carries
+post-handoff session-gate failures and `DirectP2P_NotifySessionFailed`'s doc
+comment already generalized to "ANY post-handoff session failure".
+`direct_p2p.c` needed no plumbing — the park mechanism was already generic
+over the code.
+
+The reason demonstrably reaches the player, traced link by link: notify sets
+`s_status`/`fail_code`/latch at frame N; `handle_disconnection` runs
+`Soft_Reset_Sub` and sets EXITING; frame N+1 the teardown callback consumes
+the latch and parks `DIRECT_P2P_FAILED_HANDSHAKE` instead of IDLE; from N+2
+`NetplayScreen_Render`'s `ns==IDLE && DirectP2P_GetState()!=IDLE` branch draws
+"ERROR" plus the reason at priority 1, above attract and PRESS ANY BUTTON.
+Nothing clears it on the way out — the state is terminal, the only production
+`DirectP2P_Cancel` caller is the user leaving the network menu, and surviving
+`Soft_Reset_Sub` is the documented R-1 design of the park.
+
+Notify is first-wins. One event batch carrying both a disconnect and a desync
+ran both notifies, last winning the text. A second reason is now dropped while
+one is latched. This cannot swallow a better reason: the MIST reject and
+CONNECTING-timeout paths each set EXITING inside their own `switch` case and
+never reach the event loop. The latch is cleared at teardown AND at
+`BeginHost`/`BeginJoin`/`Cancel`, so nothing leaks across sessions — checked
+because `DirectP2P_NotifySessionRejected` routes through
+`NotifySessionFailed` and inherits the guard.
+
+Pinned by three tests in `test_bilateral_punch.c`: 42 (each code parks
+FAILED_HANDSHAKE, never IDLE, with distinct text), 43 (the extracted
+`session_fail_code_for_event` mapping, including unrelated events staying at
+NONE), 44 (first-wins, with the guard observably firing).
+
+**RESIDUAL — the call wiring is NOT pinned.** Deleting both
+`DirectP2P_NotifySessionFailed` calls in `process_session` leaves tests
+42/43/44 green: they drive the mechanism and the mapping directly, never
+through `process_session`, which has no test seam. Closing this needs that
+seam plus two real UDP peers carried past the MIST handshake — new scope, not
+smuggled in here. The overlay's actual rendering for this flow is also
+unverified by automation and belongs to an on-device test.
+
+Event queue untouched — its removal is #152.
+
+Gates GREEN; `arm-cross-build` NOT RUN. `check_baselines.py`: `scopes=11
+breached=0 slack=0` after repointing five citations these edits drifted in
+`docs/plan-netplay-connection.md`.
   `Repo.resolve()` returns the shorthand as an `exact` hit on
   `src/netplay/game_state.c` when the basename is unique, so both spellings
   reach the anchor-required check identically. Planted in a throwaway worktree,
@@ -3140,7 +3193,7 @@ Gates GREEN; `arm-cross-build` NOT RUN (accumulated-branch gate).
 `check_baselines.py`: `scopes=11 breached=0 slack=0`. Rollback determinism
 fast mode on the code commit: `verdict=PASS divergent=0 feedback=0`.
 
-## #144 — mid-game disconnect and desync reach the player as silence — OPEN
+## #144 — mid-game disconnect and desync reach the player as silence — CLOSED
 
 `process_session` (`src/netplay/netplay.c`) cases `GekkoPlayerDisconnected`
 (`:1779`) and `GekkoDesyncDetected` (`:1847`) log, `push_event`, and call
