@@ -103,6 +103,13 @@ bool Netplay_TestHook_SessionLogPath(char* out, size_t cap);
  * process_session()'s handlers call DirectP2P_NotifySessionFailed at all
  * — see test 42/43's own comments for that residual. */
 ConnectFailCode Netplay_TestHook_SessionFailCodeForEvent(GekkoSessionEventType type);
+/* #145: pure predicates behind the deferred menu-exit (VS_Result case 7
+ * runs inside the rollback simulation; the EXITING latch is deferred
+ * until the requesting frame can no longer be rolled back, and canceled
+ * by a load that rewinds past it). See netplay.c for the GekkoNet
+ * 7be848c derivation of the confirmation bound. */
+bool Netplay_TestHook_MenuExitConfirmed(int head_frame, int request_frame, int pred_window);
+bool Netplay_TestHook_MenuExitErasedByLoad(int load_frame, int request_frame);
 #endif
 void Netplay_SetMatchmakingParams(const char* server_ip, int server_port);
 void Netplay_BeginMatchmaking();

@@ -117,6 +117,57 @@ static NetworkStats network_stats = { 0 };
 // the per-second heartbeat telemetry in update_network_stats().
 static int s_last_advance_frame = 0;
 
+// === Task #145: deferred menu-exit ===
+// Netplay_HandleMenuExit is called from INSIDE the simulation (menu.c
+// VS_Result case 7 runs under advance_game for predicted and replayed
+// frames alike), but session_state lives outside GameState, so a
+// rollback that erases the quit press cannot un-latch EXITING. The
+// reachable failure is the rematch-confirm vs. quit-back-out race: the
+// remote's rematch-confirm press (made while our rematch was still
+// armed) is in flight when we disarm and quit inside the prediction
+// window; the corrected timeline completes the rematch (VS_Result_Move_Sub
+// r_no[2]=6) and the local quit press is never re-processed — but the
+// speculative EXITING latch would tear the session down anyway, leaving
+// the peer to rematch into GekkoNet's 5 s DISCONNECT_TIMEOUT.
+//
+// So a RUNNING-state exit is latched as a REQUEST stamped with the
+// simulated frame, and Netplay_Run acts on it only once that frame can
+// no longer be rolled back. A GekkoLoadEvent that rewinds past the
+// request frame cancels it; if the corrected timeline still quits,
+// VS_Result case 7 re-executes on the replay leg and re-latches.
+//
+// s_sim_frame is the frame advance_game is currently simulating (valid
+// on replay legs too, unlike s_last_advance_frame which tracks only
+// render frames). s_menu_exit_request_frame == -1 means no request.
+// s_pred_window mirrors config.input_prediction_window for this session.
+static int s_sim_frame = -1;
+static int s_menu_exit_request_frame = -1;
+static int s_pred_window = 8;
+
+// Pure #145 predicates, extracted for unit testability (same shape as
+// session_fail_code_for_event, task #144 review Item A).
+//
+// Confirmation bound, derived from GekkoNet @ 7be848c (the pinned ref,
+// build-deps.sh GEKKONET_REF): predicted remote inputs are capped at
+// input_prediction_window CONSECUTIVE frames (input.cpp ->
+// HandleInputPrediction refuses once `window > diff` fails; event.cpp ->
+// AddAdvanceEvent then returns false and the session stalls), and
+// HandleRollback runs before every advance (game_session.cpp ->
+// UpdateSession) and rewinds to min_incorrect - 1. A misprediction at
+// frame <= R therefore cannot coexist with head >= R + window — the
+// predicted run would have to span window + 1 frames — so once
+// head - R >= window, frame R can never be re-simulated.
+static bool menu_exit_request_confirmed(int head_frame, int request_frame, int pred_window) {
+    return request_frame >= 0 && head_frame - request_frame >= pred_window;
+}
+
+// A load to frame L restores state AT L and re-advances from L + 1, so
+// the request made while simulating frame R is erased iff L < R (L == R
+// restores post-R state; R's own sim is not re-run).
+static bool menu_exit_request_erased_by_load(int load_frame, int request_frame) {
+    return request_frame >= 0 && load_frame < request_frame;
+}
+
 // === Netplay diagnostics state (gated by CFG_KEY_NETPLAY_DIAG_ENABLE) ===
 // Captured at session start and used by:
 //   - the per-second heartbeat (update_network_stats)
@@ -1571,6 +1622,12 @@ static void configure_gekko() {
     if (cfg_pred_window < 1 || cfg_pred_window > 32) cfg_pred_window = 8;
     config.input_prediction_window = (unsigned char)cfg_pred_window;
 
+    // #145: the deferred menu-exit bound must match THIS session's window,
+    // and no request or sim-frame stamp may leak in from a prior session.
+    s_pred_window = cfg_pred_window;
+    s_menu_exit_request_frame = -1;
+    s_sim_frame = -1;
+
     // Unconditional: the focused checksum runs in Release too (Phase 3).
     // Research §19 risk 5: shipping without detection means silent desyncs.
     config.desync_detection = true;
@@ -1763,6 +1820,10 @@ static void advance_game(GekkoGameEvent* event, bool render) {
     const u16* inputs = (u16*)event->data.adv.inputs;
     const int frame = event->data.adv.frame;
 
+    // #145: the frame being simulated, replay legs included — read by
+    // Netplay_HandleMenuExit to stamp a deferred exit request.
+    s_sim_frame = frame;
+
     if (render) {
         s_last_advance_frame = frame;
     }
@@ -1781,6 +1842,21 @@ static void advance_game(GekkoGameEvent* event, bool render) {
 static void handle_disconnection() {
     if (session_state == NETPLAY_SESSION_EXITING || session_state == NETPLAY_SESSION_IDLE) {
         return;
+    }
+
+    // #145: a pending menu-exit request only ever reaches here still
+    // latched when disconnect/desync teardown beats
+    // menu_exit_request_confirmed() to it — the request's own frame
+    // can no longer be rolled back at this point (RUNNING is the only
+    // state that latches one, and this function isn't reached again
+    // once EXITING), so it's superseded, not erased. s_session_end_reason
+    // is already stamped by the caller (peer-disconnected/desync), which
+    // is the truer cause and stands; this line exists only so a
+    // confused player's .log also shows they'd asked to quit first.
+    if (s_menu_exit_request_frame >= 0) {
+        SDL_Log("[netplay sess=%08x] event=menu-exit-superseded request_frame=%d reason=%s",
+                s_session_uuid, s_menu_exit_request_frame,
+                s_session_end_reason[0] ? s_session_end_reason : "unknown");
     }
 
     clean_input_buffers();
@@ -1811,6 +1887,21 @@ static ConnectFailCode session_fail_code_for_event(GekkoSessionEventType type) {
 #ifdef NETPLAY_TEST_HOOKS
 ConnectFailCode Netplay_TestHook_SessionFailCodeForEvent(GekkoSessionEventType type) {
     return session_fail_code_for_event(type);
+}
+
+/* #145: the deferred-menu-exit decision predicates. Driving the full
+ * latch/cancel/fire cycle needs a live Gekko session (two peers past the
+ * MIST handshake), so what IS pinned is the pure math both sites run on:
+ * the confirmation bound (head - request >= window, derived from
+ * GekkoNet 7be848c's prediction cap) and the load-cancel boundary
+ * (load < request erases; load == request does not — a load to R
+ * restores post-R state without re-running R's sim). */
+bool Netplay_TestHook_MenuExitConfirmed(int head_frame, int request_frame, int pred_window) {
+    return menu_exit_request_confirmed(head_frame, request_frame, pred_window);
+}
+
+bool Netplay_TestHook_MenuExitErasedByLoad(int load_frame, int request_frame) {
+    return menu_exit_request_erased_by_load(load_frame, request_frame);
 }
 #endif
 
@@ -2023,6 +2114,12 @@ static void process_events(bool drawing_allowed) {
                 }
             }
 #endif
+            // #145: a rollback past the exit-request frame re-simulates
+            // it — the request only stands if the corrected timeline
+            // re-executes VS_Result case 7 (which re-latches it).
+            if (menu_exit_request_erased_by_load(event->data.load.frame, s_menu_exit_request_frame)) {
+                s_menu_exit_request_frame = -1;
+            }
             load_state_from_event(event);
             break;
 
@@ -2604,6 +2701,20 @@ void Netplay_Run() {
             s_connect_status[0] = '\0';
         }
         run_netplay();
+        // #145: fire a simulation-latched menu exit only once its frame
+        // can no longer be rolled back (<= pred_window frames, ~133 ms at
+        // the default 8 — the exit fade covers it). Re-check RUNNING:
+        // run_netplay may have torn down via disconnect/desync, which
+        // owns its own reason.
+        if (session_state == NETPLAY_SESSION_RUNNING &&
+            menu_exit_request_confirmed(s_sim_frame, s_menu_exit_request_frame, s_pred_window)) {
+            s_menu_exit_request_frame = -1;
+            if (s_session_end_reason[0] == '\0') {
+                SDL_strlcpy(s_session_end_reason, "user-canceled", sizeof(s_session_end_reason));
+                s_session_end_frame = s_last_advance_frame;
+            }
+            session_state = NETPLAY_SESSION_EXITING;
+        }
         break;
 
     case NETPLAY_SESSION_EXITING:
@@ -2844,12 +2955,27 @@ void Netplay_HandleMenuExit() {
 
     case NETPLAY_SESSION_TRANSITIONING:
     case NETPLAY_SESSION_CONNECTING:
-    case NETPLAY_SESSION_RUNNING:
+        // Pre-match states are driven by real local UI, not by the Gekko
+        // simulation — no rollback can erase the intent, act immediately.
         if (s_session_end_reason[0] == '\0') {
             SDL_strlcpy(s_session_end_reason, "user-canceled", sizeof(s_session_end_reason));
             s_session_end_frame = s_last_advance_frame;
         }
         session_state = NETPLAY_SESSION_EXITING;
+        break;
+
+    case NETPLAY_SESSION_RUNNING:
+        // #145: RUNNING-state calls come only from inside the simulation
+        // (menu.c VS_Result case 7, the sole caller, runs under
+        // advance_game), so this frame may still be rolled back. Latch a
+        // request stamped with the frame being simulated; Netplay_Run
+        // fires it once menu_exit_request_confirmed() proves the frame
+        // final. Keep the FIRST frame — case 7 re-calls every frame
+        // until the exit fade completes, and the confirmation clock must
+        // run from the earliest occurrence.
+        if (s_menu_exit_request_frame < 0) {
+            s_menu_exit_request_frame = (s_sim_frame >= 0) ? s_sim_frame : 0;
+        }
         break;
     }
 }

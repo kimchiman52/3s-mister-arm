@@ -52,6 +52,7 @@
 #include "netplay/connect_fail.h"
 #include "netplay/direct_p2p.h"
 #include "netplay/natpmp.h"
+#include "netplay/netplay.h" /* #145: Netplay_TestHook_MenuExit* predicates */
 #include "netplay/rendezvous.h"
 #include "netplay/stun.h"
 
@@ -92,7 +93,7 @@ static int checks_run = 0;
  * computes, so commenting a call out of the dispatch is a FAILURE and
  * not a smaller green run. The assertion floor catches the other shape:
  * a test that runs but whose body was short-circuited. */
-#define EXPECTED_TESTS 15
+#define EXPECTED_TESTS 16
 
 /* The real figure is 1059 and is printed in the summary. This sits below
  * it and above what a short-circuited run would produce. Not an exact
@@ -2137,6 +2138,72 @@ static int unit_natpmp_deadline_math(void) {
     return (fail_count == fails_before) ? 0 : 1;
 }
 
+/* ---------------------------------------------------------------- */
+/* #145 — the deferred menu-exit decision math.
+ *
+ * VS_Result case 7 (menu.c) runs inside the rollback simulation, so a
+ * RUNNING-state Netplay_HandleMenuExit only LATCHES a request stamped
+ * with the simulated frame. Two pure predicates then decide its fate:
+ *
+ *   confirmed(head, R, W):  fire once head - R >= W. GekkoNet @ 7be848c
+ *     caps predicted remote input at W consecutive frames and rolls back
+ *     before every advance, so a frame R with head >= R + W can never be
+ *     re-simulated. >= W (not W + 1) also matters for liveness: a peer
+ *     that already quit stops sending, and prediction can carry the head
+ *     exactly W frames past R — one frame shorter and a mutual clean
+ *     quit would stall into the 5 s disconnect timeout.
+ *
+ *   erased(L, R):  a GekkoLoadEvent to frame L cancels iff L < R. A
+ *     load to R restores post-R state without re-running R's sim, so
+ *     the request survives it; L < R re-simulates R, and only a
+ *     corrected timeline that still quits re-latches (case 7 re-executes
+ *     on the replay leg). */
+static int unit_menu_exit_deferral(void) {
+    tests_run++;
+    fprintf(stderr, "[test_netplay_units] menu_exit_deferral: #145 confirm/"
+                    "cancel boundaries\n");
+    const int fails_before = fail_count;
+
+    /* No pending request (-1 sentinel): neither predicate ever acts. */
+    EXPECT_FALSE("mx-none", Netplay_TestHook_MenuExitConfirmed(1000, -1, 8));
+    EXPECT_FALSE("mx-none", Netplay_TestHook_MenuExitErasedByLoad(0, -1));
+
+    /* Confirmation boundary at the default window (8): one frame short
+     * holds, exactly W fires, beyond W fires. */
+    EXPECT_FALSE("mx-conf-edge", Netplay_TestHook_MenuExitConfirmed(507, 500, 8));
+    EXPECT_TRUE("mx-conf-edge", Netplay_TestHook_MenuExitConfirmed(508, 500, 8));
+    EXPECT_TRUE("mx-conf-edge", Netplay_TestHook_MenuExitConfirmed(509, 500, 8));
+    /* Same frame as the request: never (a request cannot be older than
+     * the head that latched it, but the head can equal it). */
+    EXPECT_FALSE("mx-conf-same", Netplay_TestHook_MenuExitConfirmed(500, 500, 8));
+
+    /* The bound tracks the CONFIGURED window (1..32 per configure_gekko's
+     * clamp), not a constant. */
+    EXPECT_TRUE("mx-conf-w1", Netplay_TestHook_MenuExitConfirmed(501, 500, 1));
+    EXPECT_FALSE("mx-conf-w32", Netplay_TestHook_MenuExitConfirmed(531, 500, 32));
+    EXPECT_TRUE("mx-conf-w32", Netplay_TestHook_MenuExitConfirmed(532, 500, 32));
+
+    /* Frame 0 request (the s_sim_frame < 0 fallback latch). */
+    EXPECT_FALSE("mx-conf-zero", Netplay_TestHook_MenuExitConfirmed(7, 0, 8));
+    EXPECT_TRUE("mx-conf-zero", Netplay_TestHook_MenuExitConfirmed(8, 0, 8));
+
+    /* Load-cancel boundary: rewinding PAST the request frame erases it;
+     * a load TO it (post-R state, R not re-run) or beyond does not. */
+    EXPECT_TRUE("mx-erase", Netplay_TestHook_MenuExitErasedByLoad(499, 500));
+    EXPECT_FALSE("mx-erase-same", Netplay_TestHook_MenuExitErasedByLoad(500, 500));
+    EXPECT_FALSE("mx-erase-after", Netplay_TestHook_MenuExitErasedByLoad(501, 500));
+
+    /* The reachable trigger, as a walk: quit latched at R=500; the
+     * remote's in-flight rematch-confirm forces a rollback loading 497
+     * -> request erased; the corrected timeline completes the rematch
+     * (VS_Result_Move_Sub r_no[2]=6), case 7 never re-runs, and with no
+     * request the head sailing past 508 fires nothing. */
+    EXPECT_TRUE("mx-race", Netplay_TestHook_MenuExitErasedByLoad(497, 500));
+    EXPECT_FALSE("mx-race", Netplay_TestHook_MenuExitConfirmed(520, -1, 8));
+
+    return (fail_count == fails_before) ? 0 : 1;
+}
+
 /* ================================================================== */
 
 int Netplay_Test_NetplayUnits(void) {
@@ -2160,6 +2227,7 @@ int Netplay_Test_NetplayUnits(void) {
     rc |= unit_portmap_renew_cadence();
     rc |= unit_orch_cascade();
     rc |= unit_natpmp_deadline_math();
+    rc |= unit_menu_exit_deferral();
 
     fprintf(stderr, "[test_netplay_units] summary: %d test(s), %d assertion(s), "
                     "%d failure(s)\n", tests_run, checks_run, fail_count);
