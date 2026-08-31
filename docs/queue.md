@@ -3677,3 +3677,59 @@ meant to work.**
 
 Gates GREEN, harness count 13; `arm-cross-build` NOT RUN.
 `check_baselines.py`: `scopes=11 breached=0 slack=0`.
+
+---
+
+## #153 — `ENABLE_NETPLAY=OFF` has never compiled — OPEN
+
+Surfaced by #152 (`4fe47024`) while proving the deletion safe in every
+configuration; **pre-existing, not caused by it**.
+
+`src/args.c` uses bare `#if ENABLE_NETPLAY`; `src/sf33rd/Source/Game/effect/eff61.c`
+uses bare `#if NETPLAY_ENABLED`. Both macros are defined only by
+`target_compile_definitions(...)` inside `if(ENABLE_NETPLAY)` in `CMakeLists.txt`,
+so with the option OFF they are undefined. The project builds with `-Wundef`
+and `-Werror`, so the preprocessor fails the build before any link step.
+Confirmed against `HEAD` — the same bare directives predate the #152 diff.
+
+Consequences worth knowing:
+
+- **No gate builds this configuration**, so nothing would catch a regression
+  in it. `tools/gates/run-gates.sh` builds `ENABLE_NETPLAY=ON` twice
+  (hooks OFF and ON) and cross-compiles the shipped config for ARM.
+- `src/netplay/netplay_stub.c` exists to satisfy that configuration's link.
+  **No buildable configuration compiles it**, so its contents are unverified
+  by anything — it is maintained on faith.
+
+Decide deliberately, do not drift: either the OFF build is meant to work — in
+which case it needs the bare `#if`s converted and a gate that builds it — or it
+is not, in which case `netplay_stub.c` and the `ENABLE_NETPLAY` option itself
+are dead weight and should follow #152's matchmaking client out of the tree.
+
+Not fixed under #152: that task's mandate was three approved deletions, and
+this is a scope decision the maintainer has not made.
+
+## #154 — migrate the GekkoNet patch set to a reviewable `.patch` series — OPEN
+
+Surfaced by #146 (`eb0a428b`). Deliberately not folded in, because it would
+rewrite the exact lines that commit adds.
+
+`build-deps.sh` now carries two hardening sets (R-2 and #146) applied as
+in-line `perl -0pi` substitutions, each wrapped in hand-written pre-condition
+and post-condition `grep`s so a `GEKKONET_REF` bump that drifts the source
+refuses to build. The fail-loud discipline works — #146's replay against a
+pristine clone proved every anchor matches exactly once — but the durable
+record of what we changed in a security-sensitive dependency is a shell script,
+not a diff.
+
+A numbered `.patch` series against `7be848c` would make the hardening set
+reviewable as ordinary diffs and let `git apply --check` be the drift detector
+instead of bespoke greps. That matters most at the moment it is hardest: a
+future ref bump, when someone must decide whether each guard still applies.
+
+Note the existing cache sentinels are proxies. The R-2 sentinel lives in
+`compression.h` and the #146 sentinel in `backend.h`, while several guards land
+in `backend.cpp`, `game_session.cpp` and `zpp/serializer.h` — files not copied
+into the cached include tree. Defensible only because every patch applies in
+the same atomic rebuild block; a `.patch` series would make that structural
+rather than argued.
