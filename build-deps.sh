@@ -507,22 +507,27 @@ elif [ -d "$GEKKONET_BUILD" ] && \
      perl -0ne 'exit(!(/u8 value = 0;\s*\n\s*while \(idx \+ 1 < length\)/))' \
         "$GEKKONET_BUILD/include/compression.h" 2>/dev/null && \
      grep -q '3s-arm M-4: cap RLE-decompressed output' \
-        "$GEKKONET_BUILD/include/compression.h" 2>/dev/null; then
+        "$GEKKONET_BUILD/include/compression.h" 2>/dev/null && \
+     grep -q '3s-arm #146' \
+        "$GEKKONET_BUILD/include/backend.h" 2>/dev/null; then
     # Self-healing: only treat the cache as valid if the cached libGekkoNet.a
     # exists non-empty AND both the RLEDecode OOB guard and the R-2 hardening
-    # marker are present in the cached header (see the security-patch block
-    # below). The R-2 marker in compression.h is the version sentinel for the
-    # whole R-2 patch set: the C-1/C-2/L-2 guards live in src/backend.cpp and
-    # the M-4 resize guard in thirdparty/zpp/serializer.h — neither file is
-    # copied into the cached include tree, but all patches are applied in the
-    # same rebuild block, which populates the cache by staging headers + .a
-    # into a temp dir and atomically renaming it into place. A kill at any
+    # marker are present in the cached header AND the #146 sentinel is present
+    # in the cached backend.h (see the security-patch blocks below). The R-2
+    # marker in compression.h is the version sentinel for the whole R-2 patch
+    # set, and the #146 marker in backend.h for the #146 set: the C-1/C-2/L-2
+    # guards live in src/backend.cpp, the M-4 resize guard in
+    # thirdparty/zpp/serializer.h, and the #146 H-1/S-1 guards in
+    # src/backend.cpp with A-1/A-2 in src/game_session.cpp — none of those
+    # files are copied into the cached include tree, but all patches are
+    # applied in the same rebuild block, which populates the cache by staging
+    # headers + .a into a temp dir and atomically renaming it into place. A kill at any
     # point therefore leaves either (a) the previous cache untouched — which
     # still fails whichever check sent us down the rebuild path, (b) a
     # partially deleted or absent cache — rejected by the -d / -s / header
     # checks, or (c) the complete new cache. The marker can never sit next to
     # a stale unpatched libGekkoNet.a, so it is never silently reused.
-    echo "GekkoNet already built (RLEDecode + R-2 hardening patched) at $GEKKONET_BUILD"
+    echo "GekkoNet already built (RLEDecode + R-2 + #146 hardening patched) at $GEKKONET_BUILD"
 else
     echo "Building GekkoNet @ $GEKKONET_REF..."
 
@@ -773,6 +778,196 @@ else
         exit 1
     fi
     echo "GekkoNet: applied M-4 RLEDecode output cap"
+
+    # ---------------------------------------------------------------------
+    # 3s-arm security patch (#146) — session_health unbounded growth + three
+    # smaller remote-influence items the R-2 sweep missed. Same discipline as
+    # R-2: every substitution asserts its vulnerable pre-condition source form
+    # first and its guard post-condition after, so a GEKKONET_REF bump that
+    # drifts the source fails loudly and forces re-review.
+    # ---------------------------------------------------------------------
+    GEKKONET_GAME_SESSION_CPP="$GEKKONET_SRC/GekkoLib/src/game_session.cpp"
+    GEKKONET_BACKEND_H="$GEKKONET_SRC/GekkoLib/include/backend.h"
+
+    # --- H-1 (session_health unbounded growth) ---------------------------
+    # OnSessionHealth inserts session_health[frame] with a wire-controlled
+    # Frame (i32, SessionHealthMsg::frame). Its own cleanup erases only
+    # frame < last_added_input - 128, and SessionIntegrityCheck erases only
+    # keys matching a local_health entry (bounded near the confirmed frame),
+    # so attacker-chosen FAR-FUTURE frames survive both forever: one std::map
+    # node per packet, at the peer's send rate, no receive-side rate limit,
+    # on a ~1GB device -> OOM. Bound insertion to last_added_input +/- 128.
+    # Window justification: a legitimate sender's health frame is its own
+    # confirmed frame C_r - W_r - 1, and C_r can exceed OUR last_added_input
+    # for that player by at most our prediction window (<=32, netplay.c
+    # clamps cfg_pred_window to 1..32) plus our local input delay
+    # (DELAY_FRAMES=1), because the sender cannot advance past the inputs we
+    # have actually sent. 128 is >= 3x that worst case AND matches upstream's
+    # own trailing -128 window, so a real peer running ahead is never
+    # dropped; dropping tighter than the true skew would silently disable
+    # desync detection for the dropped frames.
+    H1_ANCHOR='        if (player->address.Equals(addr)) {
+            player->SetChecksum(frame, checksum);'
+    export H1_ANCHOR
+    if ! perl -0ne 'my $c = () = /\Q$ENV{H1_ANCHOR}\E/g; exit($c != 1)' "$GEKKONET_BACKEND_CPP"; then
+        echo "ERROR: GekkoNet OnSessionHealth not in expected pre-patch form at ref $GEKKONET_REF (#146 H-1);" >&2
+        echo "       expected exactly 1 SetChecksum insertion site. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    H1_REPL='        if (player->address.Equals(addr)) {
+            // 3s-arm #146 H-1: frame is wire-controlled. Out-of-window keys
+            // survive both cleanup paths (the erase loop below trims only
+            // < last_added - 128; SessionIntegrityCheck erases only keys
+            // local_health reaches), so a hostile peer grows one map node
+            // per packet without bound. Bound insertion to +/-128 around the
+            // last input actually received from this player; worst-case
+            // legitimate sender skew is prediction_window (<=32) + local
+            // delay, so 128 never drops a real peer.
+            const Frame h1_last_added = _net_player_queue[player->handle].last_added_input;
+            if (frame < h1_last_added - 128 || frame > h1_last_added + 128) {
+                return; // drop out-of-window session-health frame
+            }
+            player->SetChecksum(frame, checksum);'
+    export H1_REPL
+    perl -0pi -e 's/\Q$ENV{H1_ANCHOR}\E/$ENV{H1_REPL}/' "$GEKKONET_BACKEND_CPP"
+    if ! grep -qF '3s-arm #146 H-1' "$GEKKONET_BACKEND_CPP"; then
+        echo "ERROR: GekkoNet #146 H-1 session_health window guard failed to apply." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied #146 H-1 session_health insertion window (+/-128)"
+
+    # --- S-1 (SpectatorInputs accepted by a non-spectator session) -------
+    # ParsePacket routes SpectatorInputs to OnInputs, whose spectator branch
+    # injects peer-supplied data into _net_player_queue[0.._num_players] --
+    # including LOCAL player queues. C-1 bounds the read and the sequential
+    # last_added_input+1 guard drops most of it, so this is accounting
+    # pollution rather than memory unsafety, but we ship max_spectators = 0
+    # and never run as a spectator, so no such packet is ever legitimate for
+    # us. A session with local players is never a spectator (SpectatorSession
+    # never populates locals: AddActor rejects non-remote types and
+    # AddLocalInput is a no-op), so gate on that -- a real spectator session
+    # (locals empty) still accepts host relays.
+    S1_ANCHOR='    const bool is_spectator = (pkt.header.type == SpectatorInputs);'
+    if [ "$(grep -cF "$S1_ANCHOR" "$GEKKONET_BACKEND_CPP")" -ne 1 ]; then
+        echo "ERROR: GekkoNet OnInputs not in expected pre-patch form at ref $GEKKONET_REF (#146 S-1);" >&2
+        echo "       expected exactly 1 is_spectator declaration. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    S1_REPL='    const bool is_spectator = (pkt.header.type == SpectatorInputs);
+
+    // 3s-arm #146 S-1: a session with local players is never a spectator,
+    // so SpectatorInputs arriving here would inject peer-supplied data into
+    // LOCAL player input queues. Drop them; a real spectator session (no
+    // locals) is unaffected.
+    if (is_spectator && !locals.empty()) {
+        return;
+    }'
+    export S1_ANCHOR S1_REPL
+    perl -0pi -e 's/\Q$ENV{S1_ANCHOR}\E/$ENV{S1_REPL}/' "$GEKKONET_BACKEND_CPP"
+    if ! grep -qF '3s-arm #146 S-1' "$GEKKONET_BACKEND_CPP"; then
+        echo "ERROR: GekkoNet #146 S-1 spectator-input reject failed to apply." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied #146 S-1 non-spectator SpectatorInputs reject"
+
+    # --- A-1 (remote-influenced assert in HandleReceivedInputs) ----------
+    # assert(last_added - last_recv <= 128): a peer bursting sequential input
+    # frames (input_count up to the C-1/M-4 ceiling per packet) pushes the
+    # gap past 128 between polls -> remote abort if this were ever built
+    # Debug. It isn't: GekkoNet is always built with -DCMAKE_BUILD_TYPE=
+    # Release here (see the cmake invocations below), so the assert is
+    # already inert in every artifact this project has shipped, testers'
+    # Debug-flavor builds included -- that flavor only changes the game's
+    # own compile flags, not this vendored library's. This is defense-in-
+    # depth, not a fix for anything hit today: it keeps a future Debug-built
+    # GekkoNet from being remotely aborted by a peer. The min_frame bound
+    # below the assert guards all queue indexing either way, so removal
+    # changes nothing in Release.
+    A1_ANCHOR='            assert(last_added - last_recv <= 128); // more then 128 frames behind sounds incorrect.'
+    if [ "$(grep -cF "$A1_ANCHOR" "$GEKKONET_GAME_SESSION_CPP")" -ne 1 ]; then
+        echo "ERROR: GekkoNet HandleReceivedInputs assert not in expected pre-patch form at ref $GEKKONET_REF (#146 A-1);" >&2
+        echo "       expected exactly 1 occurrence. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    A1_REPL='            // 3s-arm #146 A-1: upstream assert(last_added - last_recv <= 128)
+            // removed -- a peer bursting sequential inputs makes it a remote
+            // abort in Debug builds. Release compiled it out already; the
+            // min_frame bound below guards all queue indexing either way.'
+    export A1_ANCHOR A1_REPL
+    perl -0pi -e 's/\Q$ENV{A1_ANCHOR}\E/$ENV{A1_REPL}/' "$GEKKONET_GAME_SESSION_CPP"
+    if ! grep -qF '3s-arm #146 A-1' "$GEKKONET_GAME_SESSION_CPP" || \
+       grep -qF 'more then 128 frames behind' "$GEKKONET_GAME_SESSION_CPP"; then
+        echo "ERROR: GekkoNet #146 A-1 assert removal failed to apply." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied #146 A-1 HandleReceivedInputs assert removal"
+
+    # --- A-2 (remote-influenced assert in SendSessionHealthCheck) --------
+    # assert(sav->frame == confirmed): StateStorage::GetState is a modulo
+    # ring whose slot occupancy tracks remote-paced rollback/advance, so a
+    # mismatch is remote-influenced. The real payoff here is a Release bug
+    # fix, not a Debug-abort fix -- GekkoNet is always built Release in this
+    # project (see the cmake invocations below), so the assert was already
+    # inert in every shipped artifact. What Release actually does today:
+    # upstream proceeds past the mismatch and SENDS a checksum stamped with
+    # the wrong frame, fabricating a false desync on the peer. Convert to a
+    # skip: _last_sent_healthcheck is not advanced, so the report is retried
+    # on the next confirmed frame; desync detection is never silently
+    # disabled. This also removes the (already-inert) Debug abort.
+    A2_ANCHOR='    auto sav = _storage.GetState(confirmed);
+
+    assert(sav->frame == confirmed);'
+    export A2_ANCHOR
+    if ! perl -0ne 'my $c = () = /\Q$ENV{A2_ANCHOR}\E/g; exit($c != 1)' "$GEKKONET_GAME_SESSION_CPP"; then
+        echo "ERROR: GekkoNet SendSessionHealthCheck assert not in expected pre-patch form at ref $GEKKONET_REF (#146 A-2);" >&2
+        echo "       expected exactly 1 GetState/assert pair. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    A2_REPL='    auto sav = _storage.GetState(confirmed);
+
+    // 3s-arm #146 A-2: upstream asserted sav->frame == confirmed (Debug
+    // remote abort; in Release it would send a checksum stamped with the
+    // wrong frame and fabricate a false desync on the peer). Skip this
+    // report instead; _last_sent_healthcheck is untouched so the next
+    // confirmed frame retries.
+    if (sav->frame != confirmed) {
+        return;
+    }'
+    export A2_REPL
+    perl -0pi -e 's/\Q$ENV{A2_ANCHOR}\E/$ENV{A2_REPL}/' "$GEKKONET_GAME_SESSION_CPP"
+    if ! grep -qF '3s-arm #146 A-2' "$GEKKONET_GAME_SESSION_CPP" || \
+       grep -qF 'assert(sav->frame == confirmed);' "$GEKKONET_GAME_SESSION_CPP"; then
+        echo "ERROR: GekkoNet #146 A-2 assert-to-skip conversion failed to apply." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied #146 A-2 SendSessionHealthCheck assert-to-skip"
+
+    # --- #146 cache sentinel (backend.h) ---------------------------------
+    # The H-1/S-1 guards live in src/backend.cpp and A-1/A-2 in
+    # src/game_session.cpp, none of which are copied into the cached include
+    # tree, so stamp the sentinel into backend.h (which is) next to the map
+    # the patch set bounds. The "already built" check greps for it; same
+    # crash-safety argument as the R-2 marker (all patches + the .a are
+    # staged and renamed into place atomically below).
+    SENT_ANCHOR='        std::map<Frame, u32> session_health;'
+    if [ "$(grep -cF "$SENT_ANCHOR" "$GEKKONET_BACKEND_H")" -ne 1 ]; then
+        echo "ERROR: GekkoNet backend.h session_health declaration not in expected form at ref $GEKKONET_REF (#146);" >&2
+        echo "       expected exactly 1 occurrence. Refusing to build unpatched." >&2
+        exit 1
+    fi
+    SENT_REPL='        // 3s-arm #146: insertion into this map is bounded to
+        // last_added_input +/- 128 by the H-1 guard in
+        // MessageSystem::OnSessionHealth (backend.cpp). This comment is also
+        // the build-deps.sh cache sentinel for the #146 patch set
+        // (H-1/S-1/A-1/A-2).
+        std::map<Frame, u32> session_health;'
+    export SENT_ANCHOR SENT_REPL
+    perl -0pi -e 's/\Q$ENV{SENT_ANCHOR}\E/$ENV{SENT_REPL}/' "$GEKKONET_BACKEND_H"
+    if ! grep -qF '3s-arm #146' "$GEKKONET_BACKEND_H"; then
+        echo "ERROR: GekkoNet #146 cache sentinel failed to apply to backend.h." >&2
+        exit 1
+    fi
+    echo "GekkoNet: applied #146 cache sentinel (backend.h)"
 
     cmake -S "$GEKKONET_SRC" -B "$GEKKONET_SRC/cmake-build" \
         -DCMAKE_BUILD_TYPE=Release \
