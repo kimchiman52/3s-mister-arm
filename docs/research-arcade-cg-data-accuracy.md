@@ -126,7 +126,7 @@ command and its observed output, or a named primary source. Things that were
 | Elena crash fix | **LANDED** `23326679` — range applied in `src/arcade/arcade_char_data.c`; gate `cg_audit.py` class (a) 66 → 0 (§8.A) |
 | Remy crash fix | **LANDED** `a5bc6a5b` — range applied in `src/arcade/arcade_char_data.c`; gate `residual_audit.py` residual-OOB 6 → 0 (§8.K) |
 | Elena OVCT unpatched tail | **OPEN** — latent, **undefended** (not "unreachable" — §18) |
-| 1,694 wrong-sprite cells | **OPEN** — enumerated, not triaged individually (§8.C-E) |
+| 1,694 wrong-sprite cells | **MOSTLY LANDED** items D, E, N (§8.D, §8.E, §8.N) — class (c) 1688 (post-§8.K baseline) → 89; item F (Chun-Li, 72 of the 89) investigated, deliberately left as-is (§8.F); remaining 17 enumerated with reasons (§8.D's Urien 0x52D9 ambiguity, and Necro/Hugo/Yun/Akuma's smaller own-group family — a *different* instance of the same per-raw-value ambiguity, not a scope decision) |
 | Shape-divergent scripts (316) | **OPEN** — enumerated; §11.4 now offers an oracle |
 | Upstream issue #363 | **OPEN** upstream; our findings not yet reported (§13) |
 | **The other 13 sections** (issue **#325**) | **AUDITED, no defect** — differences enumerated and classified (§15) |
@@ -149,6 +149,17 @@ touch `cg_maps[]`). §17 and §18 were run **both ways** for the Elena range: th
 Elena OVCT findings are identical with and without it; the class-(a) count
 moves (0 with it, 66 without), and the residual-OOB count moves independently
 with the Remy range (0 with it, 6 without) — see §17.3.
+
+**Update 2026-08-31.** Items **D**, **E**, **N** are landed (`CgRemapRange`
+additions) and item **F** is investigated with no code change, all on
+`fix/arcade-cg-mapping`, all still **uncommitted, unmerged, and not on-device
+verified** — see their status blocks in §8. `cg_audit.py`'s class (c) total
+(the post-§8.K baseline, 1688) is now **89**, of which 72 are item F's
+deliberately-unfixed Chun-Li cells and 17 are enumerated, reasoned remainders
+(§8.D's Urien `0x52D9` ambiguity; Necro/Hugo/Yun/Akuma's smaller own-group
+family — the same per-raw-value ambiguity, not a scope decision, §8.P).
+Class (a) and `manu` (316) are unchanged.
+`residual_audit.py` and `data_audit.py` both still hold their invariants.
 
 ---
 
@@ -179,7 +190,7 @@ own framing, from Artem in Discord (2026-08-22):
    `cps3_decrypt.c:33-37`).
 4. For each of `NUM_CHARS` = 20 characters (`src/constants.h:36`), 25 sections
    are parsed at hard-coded ROM offsets from `location_data[]`
-   (`arcade_char_data.c:843-1384`) into `CharDataImage.spans[]`.
+   (`arcade_char_data.c` -> `location_data[]`) into `CharDataImage.spans[]`.
 5. `coalesce_adjacent_sections` (`arcade_char_data.c:263-314`) merges adjacent
    ROM runs "because CPS3 data sometimes indexes across named section
    boundaries" (`:543-544`).
@@ -617,10 +628,12 @@ terminator), so not a live fault.
 ## 8. Worklist
 
 Ordered by severity. Item lettering is historical (A-J from the first two
-passes, K-M added by the third, N-O added by the fourth); the two crash-class
+passes, K-M added by the third, N-O added by the fourth, P added by this
+pass); the two crash-class
 items are **A** and **K**, and they are independent of each other. **As of
-2026-08-30, A and K are LANDED — `23326679` and `a5bc6a5b` (see their status blocks
-below and §3); everything else in this worklist is unimplemented.**
+2026-08-31, A, K, D, E and N are LANDED** (see their status blocks below and
+§3) and **F is CLOSED as investigated-not-a-defect** (§8.F); everything else
+in this worklist remains unimplemented.
 
 ### Standing requirement for every remaining item: balance gating
 
@@ -737,6 +750,42 @@ Mechanical: the PS2 counterparts give the exact per-script deltas. Ibuki needs
 −0x74CF for `saca[56..59]` and parts of `yuca`; Urien needs up to ten distinct
 deltas for `yuca[8..15]`. Both are range-table work, no model change needed.
 
+> #### Status 2026-08-31: LANDED
+>
+> Committed to `fix/arcade-cg-mapping` as edits to `src/arcade/arcade_char_data.c`.
+>
+> **Ibuki**: the existing `0x9BA8-0x9C6F` range's delta was corrected from
+> −0x74D0 to −0x74CF — a single-constant fix, not a refactor. The span (200
+> raw slots, `0x9BA8-0x9C6F`, mapping 1:1 onto the dense contiguous PS2 run
+> `9945..10144`) is referenced by 85 distinct raw CGs across Ibuki's scripts.
+> 65 of those are directly measurable (`cg_audit.json`) and unanimous at
+> −0x74CF. The other 20 sit in five shape-divergent `yuca` scripts
+> (`[14]`, `[15]`, `[37]`, `[38]`, `[43]`) where PS2 carries exactly one extra
+> control cell per script that the naive shape check can't see past; dropping
+> that one cell aligns every remaining control cell (`code`/`koc`/`ix`) and
+> every remaining L-cell exactly, and every one of the 20 resolves to the
+> same −0x74CF. So: 65 measured directly, 20 more resolved by that one-cell
+> alignment, all 85 unanimous, and all land in Ibuki's own group (8). Class
+> (c)-own-group for Ibuki: 408 → 0.
+>
+> **Urien**: added `{0x52DA-0x52E2, -0xC78}` plus ten discrete single-value
+> rows for `0x52E3-0x52EC` (deltas −0xC6F..−0xC78, one per raw value, since
+> the delta steps by one as the raw value increases and cannot be expressed
+> as one range). Class (c)-own-group for Urien: 256 → 8.
+>
+> **Deliberately left unfixed: raw `0x52D9`, 8 cells (`yuca[8..15]` script
+> index 8-15, cell 0).** This raw value is used in *two* different script
+> contexts with two different correct deltas: `yuca[0..7]` (single-cell
+> scripts) already resolves it correctly via the default delta −0xC60;
+> `yuca[8..15]`'s first cell needs −0xC78. The per-raw-value remap model has
+> no way to distinguish the two call sites — a range covering `0x52D9` was
+> tried and confirmed (by re-running `cg_audit.py`) to fix the 8 `yuca[8..15]`
+> cells while breaking the 8 `yuca[0..7]` cells that were already correct, a
+> net wash. Left at the pre-existing baseline (8 cells broken, matching
+> upstream/PS2-adjacent behavior before this change) rather than trade one
+> set of broken cells for another. Not fixable without a context-aware model
+> (see item E's option 2).
+
 ### E. The cross-bank cluster — 949 cells (needs a model decision)
 
 The 13-character `yuca[68..75]` cluster and Makoto/Twelve/Q/Sean/Ken cannot be
@@ -752,10 +801,71 @@ character's* delta. Two ways out:
 
 Recommend deciding this **with Artem** before writing code (§13).
 
+> #### Status 2026-08-31: LANDED (option 1 — more ranges)
+>
+> Committed to `fix/arcade-cg-mapping` as `CgRemapRange` additions to
+> `src/arcade/arcade_char_data.c`, derived programmatically from
+> `cg_audit.json`'s measured `(raw, ps2)` pairs rather than the doc's
+> hand-summarized "13 characters" figure. The measured data refines that
+> summary: the literal `yuca[68..75]` raw `0x0CB4` slot is referenced by
+> **12** characters (not 13) — Ryu included, 53 cells — of which **11** need a
+> row: **8** (Dudley, Necro, Hugo, Ibuki, Elena, Oro, Yang, Urien) resolve via
+> Ryu's own −0x1E0, and **3** (Ken, Sean, Akuma) resolve via their own
+> distinct, character-specific deltas (0x2D40, 0x3160, 0x3B60) — still a
+> single measured constant each, added as single-value rows. Ryu himself
+> needs no row: his own `default_delta` is already −0x1E0. Makoto (521 cells,
+> uniformly −0x1E0), Twelve (88, uniformly −0x600, the X.C.O.P.Y./Necro
+> family), Q (29, uniformly −0x1E0), Sean's other 8 named cells (folded into
+> one 8-row, uniform-+0x3160 family together with its `0xCB4` cell — same
+> delta, same audit oracle), and Ken's named 3 cells (`0x1201`, −0x420) are
+> all included. Every family's rows are maximal contiguous-raw runs sharing
+> one measured delta — never a range that would sweep an unmeasured raw value
+> (see doc §8.N's warning, applied identically here for Makoto/Twelve/Q).
+>
+> Class (c)-wrong-group: **902 → 0** for item E's own share (all of it — this
+> closes item E entirely, using more-ranges rather than a model change; no
+> target-bank concept was added, no code outside `src/arcade/` was touched).
+> The commonly-quoted "949" figure is the *pre-item-K* count (`23326679`,
+> before Remy's residual fix moved 6 cells out of this class); the correct
+> post-K baseline (`a5bc6a5b`, the tree this item was measured against) is
+> **943**, of which **41 are Remy's** and are item **N**'s to claim (§8.N: "41
+> → 0"), not double-counted here. 943 − 41 = **902**, item E's actual share,
+> confirmed by re-running `cg_audit.py` against both commits.
+>
+> This does not change `remap_cg_number`'s model or reach non-arcade code, so
+> the model-change question in option 2 above is now moot for the measured
+> cast; leaving this note for the record in case a future crash surfaces a
+> cross-bank case this audit's oracle can't see (§11).
+
 ### F. Chun-Li's 72 blank-CG cells — verify intent, probably no-op
 
 Confirm whether 3SX intentionally blanked those sprites. If intentional, mark
 them excluded in the audit so they stop appearing as findings.
+
+> #### Status 2026-08-31: INVESTIGATED, NO CHANGE
+>
+> All 72 cells are one raw CG (`0x5FEE`) across `saca[44..47]` (SA-I
+> activation, `asstbl_lv_9900_g[0..3]`). Decoded both sides cell-by-cell:
+> every field *except* `num` (`ctr`, `se`, `olc`, `att`, `hit`, `eff`,
+> `eftype`) is byte-identical between the arcade ROM and the PS2 AFS at each
+> of the 18 repeating cells per script (an `olc`-stepped hold sequence). Only
+> `num` differs: arcade carries a real, in-bounds Chun-Li sprite
+> (`0x5FEE` remaps to her own group 16); PS2's shipped data has `0` there
+> (blank) at every one of those cells, on all four near-identical scripts.
+>
+> **This is not something 3SX added.** The arcade side is unmodified ROM
+> bytes; `0x5FEE` reads straight out of the decrypted CPS3 image. The `0` is
+> what PS2's own shipped `SF33RD.AFS` carries at that position — a property
+> of the PS2 port's data, not of 3SX's adaptation. Since arcade balance's
+> entire purpose is to draw arcade-accurate sprites where they differ from
+> PS2 (§4.1), drawing Chun-Li's real ROM sprite here is the *correct* arcade
+> behavior, not a defect — remapping it to `0` would be actively wrong
+> (it would suppress a real, in-bounds, arcade-accurate sprite to match a
+> PS2-only omission). **No code change.** Left as a documented, expected
+> arcade-vs-PS2 divergence; `cg_audit.py` was not modified to exclude it
+> (out of the constraints for this task), so it will keep appearing in future
+> `cg_audit.py` runs as a `c_mismatch_own_group` finding for CHUNLI — that is
+> expected, not a regression.
 
 ### G. Over-declared section sizes (§7.6, **corrected by §19.7**)
 
@@ -950,10 +1060,31 @@ interpolation stated explicitly** (and verified against a wider cell-aligned
 sample first) — not a bare `{first, last}` spanning `0x0636`-`0x0744`, which
 would silently remap those six unmeasured values too.
 
-### O. Items A and K's fixes change the netplay balance digest — release-note this
+> #### Status 2026-08-31: LANDED
+>
+> The scoping decision above predates this task; a later, wider pass (doc
+> §8, standing balance-gating requirement) explicitly brought item N back
+> in scope alongside D, E and F. Committed to `fix/arcade-cg-mapping` as
+> **discrete rows** on `remy_cg_ranges` — exactly the "safe forms" this
+> section called for, not the unsafe interpolated span: eight rows covering
+> the 19 measured raw values (`0x0655-0x065C`, `0x0669`, `0x0676`, `0x0678`,
+> `0x067C-0x067D`, `0x0683-0x0684`, `0x0690-0x0692`, `0x0744`), all
+> `delta = +0x20`, plus a separate single-value row for `0x0C01` at
+> `delta = -0x1E0` — kept as its own row per this section's explicit warning
+> not to merge it with the Alex-bank family. The 20 unmeasured raw values
+> listed above (`dmca[3]/[90]/[91]`'s shape-divergent cells) were left
+> untouched — no range covers them, by construction (the rows above are
+> discrete, not a span). Class (c)-wrong-group for Remy: 41 → 0.
 
-Both applied ranges change `cg_maps[]`, which is hashed into
-`ArcadeCharData_ComputeDigest()` (`arcade_char_data.c:567`) →
+### O. Items A, K, D, E and N's fixes change the netplay balance digest — release-note this
+
+All five items' ranges change `cg_maps[]` (not just A and K — every
+`CgRemapRange` addition or edit does, D/E/N included), and `remap_cg_number`'s
+output is written straight into the parsed script buffer
+(`arcade_char_data.c` -> `read_char_table`'s
+`cg_number = remap_cg_number(...)` assignment) that
+`ArcadeCharData_ComputeDigest()` (`arcade_char_data.c` -> `ArcadeCharData_ComputeDigest`)
+later hashes span-by-span →
 `ArcadeBalance_GetDigest()` (`arcade_balance.c:152`) →
 `mist_handshake_set_balance_digest()` (`netplay.c:1305`) → compared against
 the peer's digest at `mist_handshake.c:364`, which rejects the pairing with
@@ -961,14 +1092,55 @@ the peer's digest at `mist_handshake.c:364`, which rejects the pairing with
 string at `:395`). This is the same mechanism item **G** already flagged for
 the (not yet applied) over-declared-span fix — "a peer-compatibility-breaking
 change [that] must ship on both sides together" — and it applies here too, now
-that A and K are landed: **every peer on a build
-without these two ranges becomes unpairable with every peer on a build with
-them**, silently, at handshake time, with no other symptom. No pinned digest
-constant or test vector exists in the tree (checked: no reference to a
-specific digest value anywhere in `src/netplay/` or `src/test/`), so nothing
-catches this at build time. Worth a release note when A and/or K ship, and
-worth considering whether item **G**'s and these two fixes' digest changes
-should be bundled into one compatibility bump rather than landing separately.
+that A, K, D, E and N are all landed: **every peer on a build without these
+five items' ranges becomes unpairable with every peer on a build with them**,
+silently, at handshake time, with no other symptom. No pinned digest constant
+or test vector exists in the tree (checked: no reference to a specific digest
+value anywhere in `src/netplay/` or `src/test/`), so nothing catches this at
+build time. Worth a release note when any of A/K/D/E/N ship, and worth
+considering whether item **G**'s and these five fixes' digest changes should
+all be bundled into one compatibility bump rather than landing separately —
+they already are one uncommitted change as of this pass, so in practice they
+will ship together.
+
+### P. Necro/Hugo/Yun/Akuma's remaining 9 own-group cells — same ambiguity as Urien's `0x52D9`, not a scope decision
+
+§3 previously called these "explicitly out of scope"; that is wrong. Measured
+against `cg_audit.json` (all cells referencing the raw, not just the currently
+mismatching ones), each of these raw CGs is required by *different cells* to
+resolve to *two different deltas*, exactly the failure mode item **D**
+documents for Urien's `0x52D9`:
+
+```
+YUN   0x129B {-1052:1, -1056:3}    NECRO 0x1E5F {-1536:2, -1560:1}
+HUGO  0x26C9 {-1824:5, -1822:1}    AKUMA 0x5440 {-3232:3, -3231:1}
+AKUMA 0x5441 {-3232:4, -3233:1}    AKUMA 0x546A {-3274:1, -3273:1}
+```
+
+`AKUMA 0x546B` (`{-3266:2}` plus 2 more cells with no cell-aligned PS2
+counterpart) is a different problem — a single measured delta blocked only by
+the no-oracle rule (§11), not an ambiguity — and is not counted above.
+
+The blocker is structural, not a missing range: `remap_cg_number` maps one
+raw CG to one delta regardless of which script cell asked, so it cannot
+express "this raw needs delta X from script A and delta Y from script B." A
+range covering these values would necessarily break whichever side it didn't
+target — the same trade item D found and declined for `0x52D9`.
+
+In 5 of these 6 ambiguous raws the character's current `default_delta`
+already happens to match the majority-measured delta, so the majority of
+cells are already correct and only the minority are wrong (`YUN`: 3 correct /
+1 wrong; `NECRO`: 2/1; `HUGO`: 5/1; `AKUMA 0x5440`: 3/1; `AKUMA 0x5441`: 4/1).
+`AKUMA 0x546A` is the exception — it splits 1-1 with no majority, so both of
+its cells are wrong under the current mapping and neither delta can be
+preferred over the other by range-table means.
+
+**Not fixable without a context-aware remap model** (the same option item
+**E** declined to build, since the per-raw-value model covered the measured
+cast without it). Recorded here so a future pass doesn't spend time writing a
+range row for these raws — it cannot work by construction. If the model ever
+gains a context-aware mode (script/cell-qualified rather than raw-CG-only),
+these 9 cells plus Urien's 8 (§8.D) are exactly its test cases.
 
 ---
 
@@ -2264,7 +2436,7 @@ characters = **500 spans** were checked.
 ### 19.1 The structural fact that governs everything: the 500 spans tile the ROM
 
 Sorting every declared `[offset, offset+size)` by offset
-(`arcade_char_data.c:853-1394`):
+(`arcade_char_data.c` -> `location_data[]`):
 
 - **overlaps: 0**
 - **negative gaps: 0**
