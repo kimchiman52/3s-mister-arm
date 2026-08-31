@@ -40,6 +40,8 @@ const char* ConnectFail_Code(ConnectFailCode code) {
     case CONNECT_FAIL_RENDEZVOUS_BUSY:      return "P2P_FAIL_RENDEZVOUS_BUSY";
     case CONNECT_FAIL_RENDEZVOUS_BADFRAME:  return "P2P_FAIL_RENDEZVOUS_BADFRAME";
     case CONNECT_FAIL_RENDEZVOUS_REFUSED:   return "P2P_FAIL_RENDEZVOUS_REFUSED";
+    case CONNECT_FAIL_PEER_DISCONNECTED:    return "P2P_FAIL_PEER_DISCONNECTED";
+    case CONNECT_FAIL_DESYNC_DETECTED:      return "P2P_FAIL_DESYNC_DETECTED";
     }
     return "P2P_FAIL_UNKNOWN";
 }
@@ -159,6 +161,17 @@ const char* ConnectFail_UserText(ConnectFailCode code) {
          * to say is that the server refused us and the number is in the
          * log; inventing a cause would be exactly the H-1 error. */
         return "Matchmaking refused us. See log.";
+
+    /* Task #144: mid-session (RUNNING-phase) failures. Deliberately
+     * DISTINCT strings — a player dropped by their opponent should not
+     * read the same message as one whose session desynced (queue #144's
+     * whole complaint is that today they read NOTHING, not that they read
+     * the same thing, but a future reader conflating the two would
+     * recreate half of that complaint). */
+    case CONNECT_FAIL_PEER_DISCONNECTED:
+        return "Opponent disconnected.";
+    case CONNECT_FAIL_DESYNC_DETECTED:
+        return "Session desynced. Ending match.";
     }
     return "Connection failed.";
 }

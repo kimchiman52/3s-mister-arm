@@ -1792,6 +1792,28 @@ static void handle_disconnection() {
     session_state = NETPLAY_SESSION_EXITING;
 }
 
+/* Task #144 review Item A: process_session() has no test seam — driving a
+ * live GekkoPlayerDisconnected/GekkoDesyncDetected needs two real UDP
+ * peers carried past the MIST handshake into a running GekkoNet session —
+ * so nothing pins that the two RUNNING-phase handlers below actually CALL
+ * DirectP2P_NotifySessionFailed at all; deleting both calls would leave
+ * the suite green. This pure helper at least pins the narrower claim that
+ * IS testable in isolation: the event->code MAPPING. See
+ * Netplay_TestHook_SessionFailCodeForEvent below and test 43. */
+static ConnectFailCode session_fail_code_for_event(GekkoSessionEventType type) {
+    switch (type) {
+    case GekkoPlayerDisconnected: return CONNECT_FAIL_PEER_DISCONNECTED;
+    case GekkoDesyncDetected:     return CONNECT_FAIL_DESYNC_DETECTED;
+    default:                      return CONNECT_FAIL_NONE;
+    }
+}
+
+#ifdef NETPLAY_TEST_HOOKS
+ConnectFailCode Netplay_TestHook_SessionFailCodeForEvent(GekkoSessionEventType type) {
+    return session_fail_code_for_event(type);
+}
+#endif
+
 static void process_session() {
     frames_behind = -gekko_frames_ahead(session);
 
@@ -1852,6 +1874,16 @@ static void process_session() {
                     s_session_uuid, s_last_advance_frame);
             SDL_strlcpy(s_session_end_reason, "peer-disconnected", sizeof(s_session_end_reason));
             s_session_end_frame = s_last_advance_frame;
+
+            // Task #144: this is a post-handoff (RUNNING-phase) session
+            // failure exactly like the MIST reject / CONNECTING-deadline
+            // cases below already route through DirectP2P_NotifySessionFailed
+            // — latch BEFORE push_event/handle_disconnection so the teardown
+            // callback that handle_disconnection's EXITING pass eventually
+            // fires (direct_p2p_on_teardown) sees the latch and parks
+            // FAILED_HANDSHAKE with a distinct "Opponent disconnected."
+            // overlay instead of falling to IDLE (silent drop to attract).
+            DirectP2P_NotifySessionFailed(session_fail_code_for_event(event->type), NULL);
 
             // Tier-1 netplay diag — Item 4: dump packet ring on disconnect
             // so we capture the most recent ~512 packets when the 5-second
@@ -1947,6 +1979,14 @@ static void process_session() {
             // the lobby UI can react, then clean input buffers and soft-reset
             // via handle_disconnection(). Event queue arrived in Phase 6 Step 2
             // (see docs/archive/plan-netplay-phase6.md).
+            //
+            // Task #144: also latch a taxonomy code, same rationale as
+            // GekkoPlayerDisconnected above — without this, teardown parks
+            // IDLE and a desynced player sees the same silent drop as a
+            // clean exit. CONNECT_FAIL_DESYNC_DETECTED gets its own overlay
+            // text ("Session desynced...") so "opponent left" and "we
+            // desynced" no longer read identically on screen.
+            DirectP2P_NotifySessionFailed(session_fail_code_for_event(event->type), NULL);
             printf("[netplay] desync at frame %d — terminating session\n", frame);
             push_event(NETPLAY_EVENT_DISCONNECTED);
             handle_disconnection();

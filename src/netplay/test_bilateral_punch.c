@@ -55,12 +55,15 @@
 #include "netplay/connect_fail.h"
 #include "netplay/direct_p2p.h"
 #include "netplay/natpmp.h" /* S7, test 18 */
+#include "netplay/netplay.h" /* task #144 review Item A: Netplay_TestHook_SessionFailCodeForEvent, test 43 */
 #include "netplay/netplay_nav.h" /* task #76, test 40 */
 #include "netplay/net_tuning.h"
 #include "netplay/rendezvous.h"
 #include "netplay/room_code.h"
 #include "netplay/upnp.h" /* M-1: Upnp_TestHook_DiscoverAttempts, test 23e */
 #include "port/config/config.h"
+
+#include "gekkonet.h" /* GekkoPlayerDisconnected/GekkoDesyncDetected, test 43 */
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
@@ -6787,6 +6790,222 @@ static int test_nav_orch_deadline_is_derived(void) {
     return (fail_count == fails_before) ? 0 : 1;
 }
 
+/* --- Test 42: mid-session failure taxonomy reaches teardown (task #144) */
+/*
+ * Regression for queue #144: GekkoPlayerDisconnected and GekkoDesyncDetected
+ * in netplay.c's process_session() used to push_event() and
+ * handle_disconnection() without ever calling DirectP2P_NotifySessionFailed,
+ * so a mid-match peer drop or a detected desync parked the orchestrator in
+ * IDLE at teardown — the reason-bearing overlay only ever fired for
+ * connect-phase failures, and a RUNNING-phase failure dropped the player to
+ * attract mode with no on-screen explanation at all.
+ *
+ * This harness cannot drive netplay.c's process_session() to a live
+ * GekkoPlayerDisconnected/GekkoDesyncDetected event — that needs two real
+ * UDP peers carried past the MIST handshake into a running GekkoNet
+ * session, and process_session() itself has no test seam. What IS
+ * testable, and what this pins, is the exact mechanism the fix threads the
+ * two new codes through — the same DirectP2P_NotifySessionFailed /
+ * direct_p2p_on_teardown latch the connect-phase failures (test 9) already
+ * use, called with the same arguments netplay.c's two handlers now pass:
+ *   (1) each new taxonomy code reaches direct_p2p_on_teardown and parks
+ *       DIRECT_P2P_FAILED_HANDSHAKE — a reason-bearing terminal state —
+ *       never DIRECT_P2P_IDLE (the reason-less silent drop #144 reports);
+ *   (2) the two reasons render DISTINCT overlay status text, so "opponent
+ *       left" and "we desynced" are told apart on screen, which is the
+ *       whole ask in #144's second paragraph.
+ */
+static int test_midsession_failure_taxonomy(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 42: mid-session failure taxonomy "
+            "(task #144)\n");
+    const int fails_before = fail_count;
+    char disc_text[128] = { 0 };
+    char desync_text[128] = { 0 };
+
+    NET_Init();
+    DirectP2P_Init();
+
+    /* Start from a proven-clean IDLE: run the REAL teardown callback with
+     * nothing latched first, exactly like test 9's own setup, so the
+     * "reason-less teardown reaches IDLE" baseline this test's assertions
+     * depend on is demonstrated by the same machinery, not assumed. */
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) {
+        FAIL("test42-baseline", "teardown hook did not reset the orchestrator to IDLE");
+        goto done;
+    }
+
+    /* --- (a) GekkoPlayerDisconnected's exact call ---------------------- */
+    DirectP2P_NotifySessionFailed(CONNECT_FAIL_PEER_DISCONNECTED, NULL);
+    DirectP2P_TestHook_RunTeardown();
+    EXPECT_TRUE("test42-disc-parks-failed-handshake",
+                DirectP2P_GetState() == DIRECT_P2P_FAILED_HANDSHAKE);
+    SDL_strlcpy(disc_text, DirectP2P_GetStatusText(), sizeof(disc_text));
+    EXPECT_TRUE("test42-disc-text-matches-code",
+                strcmp(disc_text, ConnectFail_UserText(CONNECT_FAIL_PEER_DISCONNECTED)) == 0);
+
+    /* Reset to IDLE between cases the way the network menu's exit does. */
+    DirectP2P_Cancel();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) {
+        FAIL("test42-cancel-resets", "DirectP2P_Cancel did not return to IDLE between cases");
+        goto done;
+    }
+
+    /* --- (b) GekkoDesyncDetected's exact call --------------------------- */
+    DirectP2P_NotifySessionFailed(CONNECT_FAIL_DESYNC_DETECTED, NULL);
+    DirectP2P_TestHook_RunTeardown();
+    EXPECT_TRUE("test42-desync-parks-failed-handshake",
+                DirectP2P_GetState() == DIRECT_P2P_FAILED_HANDSHAKE);
+    SDL_strlcpy(desync_text, DirectP2P_GetStatusText(), sizeof(desync_text));
+    EXPECT_TRUE("test42-desync-text-matches-code",
+                strcmp(desync_text, ConnectFail_UserText(CONNECT_FAIL_DESYNC_DETECTED)) == 0);
+
+    /* --- (c) the two reasons are told apart on screen ------------------- */
+    EXPECT_TRUE("test42-reasons-distinct-text", strcmp(disc_text, desync_text) != 0);
+
+    DirectP2P_Cancel(); /* back to IDLE for whatever test runs next */
+
+done:
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 42 OK — GekkoPlayerDisconnected/"
+                "GekkoDesyncDetected's new taxonomy codes each park "
+                "FAILED_HANDSHAKE (never IDLE) with distinct overlay text: "
+                "\"%s\" / \"%s\"\n", disc_text, desync_text);
+    }
+    return (fail_count == fails_before) ? 0 : 1;
+}
+
+/* --- Test 43: RUNNING-phase event->code mapping (task #144 review Item A) */
+/*
+ * Step-2 review's Item A: test 42 pins the latch/park/text MECHANISM inside
+ * direct_p2p.c, but nothing pinned that netplay.c's process_session()
+ * actually calls DirectP2P_NotifySessionFailed for GekkoPlayerDisconnected
+ * and GekkoDesyncDetected — deleting both call sites would leave test 42
+ * green, since test 42 drives the mechanism directly rather than through
+ * process_session(). process_session() itself still has no test seam (a
+ * live GekkoPlayerDisconnected/GekkoDesyncDetected needs two real UDP
+ * peers carried past the MIST handshake into a running GekkoNet session),
+ * so the call WIRING remains unpinned — that residual is recorded in the
+ * task's closeout, not silently dropped.
+ *
+ * What this test pins is the narrower, genuinely testable claim: the pure
+ * event->code MAPPING netplay.c extracted into session_fail_code_for_event
+ * (exposed here as Netplay_TestHook_SessionFailCodeForEvent) maps
+ * GekkoPlayerDisconnected to CONNECT_FAIL_PEER_DISCONNECTED and
+ * GekkoDesyncDetected to CONNECT_FAIL_DESYNC_DETECTED — so "the mapping is
+ * pinned; only the call wiring at the two process_session() sites is not."
+ * A future edit that swapped the two codes, or that pointed both events at
+ * the same code, fails this test even though it cannot fail test 42.
+ */
+static int test_session_fail_code_mapping(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 43: RUNNING-phase event->code "
+            "mapping (task #144 review Item A)\n");
+    const int fails_before = fail_count;
+
+    EXPECT_TRUE("test43-disconnect-maps-to-peer-disconnected",
+                Netplay_TestHook_SessionFailCodeForEvent(GekkoPlayerDisconnected)
+                    == CONNECT_FAIL_PEER_DISCONNECTED);
+    EXPECT_TRUE("test43-desync-maps-to-desync-detected",
+                Netplay_TestHook_SessionFailCodeForEvent(GekkoDesyncDetected)
+                    == CONNECT_FAIL_DESYNC_DETECTED);
+    /* The two RUNNING-phase codes must not collapse onto each other — a
+     * regression that makes both events map to the same code would slip
+     * past the first two assertions in the (unlikely) case both are wrong
+     * in the same direction, but not past this one. */
+    EXPECT_TRUE("test43-disconnect-and-desync-codes-distinct",
+                Netplay_TestHook_SessionFailCodeForEvent(GekkoPlayerDisconnected)
+                    != Netplay_TestHook_SessionFailCodeForEvent(GekkoDesyncDetected));
+    /* An event outside the taxonomy (e.g. a clean connect) must not map to
+     * either failure code — the helper's default case is CONNECT_FAIL_NONE,
+     * not a silent fallthrough onto one of the two new codes. */
+    EXPECT_TRUE("test43-unrelated-event-maps-to-none",
+                Netplay_TestHook_SessionFailCodeForEvent(GekkoPlayerConnected)
+                    == CONNECT_FAIL_NONE);
+
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 43 OK — "
+                "session_fail_code_for_event maps GekkoPlayerDisconnected -> "
+                "PEER_DISCONNECTED, GekkoDesyncDetected -> DESYNC_DETECTED, "
+                "distinctly, and leaves unrelated events at NONE\n");
+    }
+    return (fail_count == fails_before) ? 0 : 1;
+}
+
+/* --- Test 44: same-batch overwrite is first-wins (task #144 review Item B) */
+/*
+ * Step-2 review's Item B: a single gekko_session_events() batch can carry
+ * both a disconnect and a desync event. handle_disconnection()'s EXITING
+ * guard stops the second TEARDOWN, but DirectP2P_NotifySessionFailed used
+ * to run unconditionally before that guard on EVERY event, so a
+ * disconnect-then-desync batch would silently overwrite the disconnect's
+ * status text with the desync's — misattributing the overlay to whichever
+ * event happened to sort last. Both reasons are truthful about a failed
+ * session, so this was cosmetic misattribution, not a correctness bug, but
+ * it is fixed anyway: DirectP2P_NotifySessionFailed is now first-wins for a
+ * latched session (direct_p2p.c).
+ *
+ * This test calls it twice back-to-back with NO intervening teardown or
+ * Cancel — reproducing the exact same-batch shape process_session()'s
+ * for-loop produces when both events land in one poll — and pins that the
+ * FIRST reason's text survives the SECOND call untouched.
+ */
+static int test_notify_session_failed_first_wins(void) {
+    fprintf(stderr,
+            "[test_bilateral_punch] test 44: same-batch notify is "
+            "first-wins (task #144 review Item B)\n");
+    const int fails_before = fail_count;
+    char text_after_first[128] = { 0 };
+    char text_after_second[128] = { 0 };
+
+    NET_Init();
+    DirectP2P_Init();
+
+    DirectP2P_TestHook_RunTeardown();
+    if (DirectP2P_GetState() != DIRECT_P2P_IDLE) {
+        FAIL("test44-baseline", "teardown hook did not reset the orchestrator to IDLE");
+        goto done;
+    }
+
+    /* First event of the batch: disconnect. */
+    DirectP2P_NotifySessionFailed(CONNECT_FAIL_PEER_DISCONNECTED, NULL);
+    SDL_strlcpy(text_after_first, DirectP2P_GetStatusText(), sizeof(text_after_first));
+    EXPECT_TRUE("test44-first-call-sets-disconnect-text",
+                strcmp(text_after_first, ConnectFail_UserText(CONNECT_FAIL_PEER_DISCONNECTED)) == 0);
+
+    /* Second event of the SAME batch: desync. No teardown/Cancel between —
+     * this is exactly the shape of two events landing in one
+     * gekko_session_events() poll before handle_disconnection()'s EXITING
+     * guard can stop anything. */
+    DirectP2P_NotifySessionFailed(CONNECT_FAIL_DESYNC_DETECTED, NULL);
+    SDL_strlcpy(text_after_second, DirectP2P_GetStatusText(), sizeof(text_after_second));
+    EXPECT_TRUE("test44-second-call-does-not-overwrite",
+                strcmp(text_after_second, text_after_first) == 0);
+    EXPECT_TRUE("test44-first-reason-still-disconnect-not-desync",
+                strcmp(text_after_second, ConnectFail_UserText(CONNECT_FAIL_DESYNC_DETECTED)) != 0);
+
+    /* Teardown still parks FAILED_HANDSHAKE with the FIRST reason. */
+    DirectP2P_TestHook_RunTeardown();
+    EXPECT_TRUE("test44-teardown-parks-failed-handshake",
+                DirectP2P_GetState() == DIRECT_P2P_FAILED_HANDSHAKE);
+    EXPECT_TRUE("test44-teardown-text-is-first-reason",
+                strcmp(DirectP2P_GetStatusText(), ConnectFail_UserText(CONNECT_FAIL_PEER_DISCONNECTED)) == 0);
+
+    DirectP2P_Cancel(); /* back to IDLE for whatever test runs next */
+
+done:
+    if (fail_count == fails_before) {
+        fprintf(stderr,
+                "[test_bilateral_punch] test 44 OK — a second same-batch "
+                "DirectP2P_NotifySessionFailed call is dropped; the first "
+                "reason (\"%s\") survives to teardown\n", text_after_first);
+    }
+    return (fail_count == fails_before) ? 0 : 1;
+}
+
 /* --- Entry point ------------------------------------------------------ */
 
 int Netplay_Test_BilateralPunch(void) {
@@ -6818,6 +7037,9 @@ int Netplay_Test_BilateralPunch(void) {
     rc |= test_s7_natpmp_kill_switch(); /* S7 review: test 23c */
     rc |= test_s7_lost_mapping();       /* S7 review: test 23d */
     rc |= test_nav_orch_deadline_is_derived(); /* task #76: test 40 */
+    rc |= test_midsession_failure_taxonomy(); /* task #144: test 42 */
+    rc |= test_session_fail_code_mapping(); /* task #144 review Item A: test 43 */
+    rc |= test_notify_session_failed_first_wins(); /* task #144 review Item B: test 44 */
     rc |= test_host_cookie_rejected(); /* last: ~31 s of wall clock */
 
     if (fail_count > 0 || rc != 0) {

@@ -5499,8 +5499,40 @@ void DirectP2P_Cancel(void) {
 /* S3 — see direct_p2p.h. Latch a post-handoff session failure with its
  * taxonomy code: status text for the overlay now, FAILED_HANDSHAKE park
  * at teardown, and one machine-coded report line from Tick's reporting
- * path once the terminal state is visible. */
+ * path once the terminal state is visible.
+ *
+ * Task #144 review Item B: FIRST-WINS. netplay.c's process_session() can
+ * see both a disconnect and a desync GekkoSessionEvent in the SAME batch
+ * (handle_disconnection's EXITING guard stops the second TEARDOWN, but
+ * this function ran before that guard, once per event, so without this
+ * check the second call's text would silently overwrite the first's —
+ * misattributing the overlay to whichever event happened to sort last).
+ * Skipping a later call cannot swallow a MORE informative reason: the
+ * three call families that reach here — the MIST reject in
+ * NETPLAY_SESSION_TRANSITIONING, the CONNECTING-deadline timeout, and the
+ * RUNNING-phase disconnect/desync pair in process_session() — are
+ * mutually exclusive PER SESSION. The first two set session_state =
+ * NETPLAY_SESSION_EXITING and `break` out of the SAME switch statement
+ * (netplay.c) that gates process_session() behind `case
+ * NETPLAY_SESSION_RUNNING:`, so a session that took either of those exits
+ * never reaches RUNNING and process_session()'s event loop — the only
+ * other caller of this function — never runs for it. The sole real
+ * collision is therefore disconnect-vs-desync within one RUNNING-phase
+ * event batch, and connect_fail.c's user-text comment already treats
+ * both as equally truthful ("a player dropped by their opponent should
+ * not read the same message as one whose session desynced" — neither is
+ * ranked more informative than the other). The latch this checks is
+ * cleared once at teardown consumption and again at every BeginHost /
+ * BeginJoin / Cancel call (see direct_p2p_on_teardown and the R-1 comment on
+ * s_handshake_reject_latched), so first-wins never leaks across
+ * sessions. */
 void DirectP2P_NotifySessionFailed(ConnectFailCode code, const char* reason) {
+    if (s_handshake_reject_latched) {
+        SDL_Log("[direct_p2p] session failure (%s) dropped — a reason is "
+                "already latched for this session: %s",
+                ConnectFail_Code(code), reason ? reason : "(no reason)");
+        return;
+    }
     set_status((reason != NULL && reason[0] != '\0')
                    ? reason
                    : ConnectFail_UserText(code));

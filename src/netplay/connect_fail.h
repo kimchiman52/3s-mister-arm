@@ -234,16 +234,51 @@ typedef enum ConnectFailCode {
                                            coerced onto a name that would be a
                                            guess.                            */
 
-    /* Append new codes ABOVE this marker and bump the bound in
-     * test_bilateral_punch.c test 7f (which sweeps NONE..LAST proving
-     * every code has a distinct machine string).
+    /* --- Task #144: mid-session (RUNNING-phase) session failures ---------
+     *
+     * Every code above classifies either a pre-handoff establishment
+     * failure, or one of the two EARLIER post-handoff session-gate
+     * failures (CONNECT_FAIL_PEER_REJECTED at the MIST handshake,
+     * CONNECT_FAIL_TIMEOUT_CONNECTING at the sync deadline) — i.e. a
+     * session that never reached GekkoSessionStarted / RUNNING. These two
+     * are the first codes for a session that WAS running and then ended
+     * for a reason the player needs distinguished on screen:
+     * GekkoPlayerDisconnected and GekkoDesyncDetected in netplay.c's
+     * process_session(), which used to push_event() and
+     * handle_disconnection() without ever calling
+     * DirectP2P_NotifySessionFailed — so the player reached attract mode
+     * with no explanation at all (queue #144).
+     *
+     * These reuse the SAME post-handoff mechanism the "Post-handoff /
+     * session-gate failures" section above already generalized to: see
+     * DirectP2P_NotifySessionFailed's doc comment in direct_p2p.h, "latch
+     * ANY post-handoff session failure (MIST reject, CONNECTING-deadline
+     * timeout, ...)". A taxonomy code here is not connect-phase-specific —
+     * it is "the attributable reason DIRECT_P2P_FAILED_HANDSHAKE is about
+     * to show". A RUNNING-phase drop is exactly that shape, so it gets its
+     * own codes in the SAME enum and reuses the SAME latch/park/overlay
+     * path (DirectP2P_NotifySessionFailed -> s_handshake_reject_latched ->
+     * direct_p2p_on_teardown -> DIRECT_P2P_FAILED_HANDSHAKE) rather than a
+     * parallel mechanism, which would duplicate all of that machinery to
+     * show the player two different-looking error screens for what is,
+     * from the overlay's point of view, the same kind of event. */
+    CONNECT_FAIL_PEER_DISCONNECTED, /* GekkoPlayerDisconnected: the peer's
+                                       GekkoNet actor dropped mid-match     */
+    CONNECT_FAIL_DESYNC_DETECTED,   /* GekkoDesyncDetected: local and
+                                       remote checksums diverged mid-match  */
+
+    /* Append new codes ABOVE this marker. The completeness sweep that
+     * proves every code has a distinct machine string and a distinct user
+     * string is generic over NONE..LAST_ (test_netplay_units.c, "7f: every
+     * code has a distinct machine string and a user string") — it needs no
+     * manual bump when a code is appended here.
      *
      * NOTE: the four CONNECT_FAIL_RELAY_* codes that used to sit here
      * were deleted with the relay rung. They were the LAST entries, so
      * their removal renumbered nothing — every surviving code keeps the
      * numeric value it had, which is what the append-only rule at the
      * top of this file protects. */
-    CONNECT_FAIL_LAST_ = CONNECT_FAIL_RENDEZVOUS_REFUSED,
+    CONNECT_FAIL_LAST_ = CONNECT_FAIL_DESYNC_DETECTED,
 } ConnectFailCode;
 
 /* Stable machine code string, e.g. "P2P_FAIL_STUN_ALLDOWN". Never NULL.

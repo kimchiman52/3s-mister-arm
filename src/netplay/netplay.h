@@ -74,6 +74,8 @@ void Netplay_LogSinkInit(void);
  * per-session file a tester actually sends us. */
 void Netplay_LogConnectEventMT(const char* line);
 #ifdef NETPLAY_TEST_HOOKS
+#include "netplay/connect_fail.h" /* ConnectFailCode, for SessionFailCodeForEvent */
+#include "gekkonet.h"             /* GekkoSessionEventType, for SessionFailCodeForEvent */
 /* #44 test seams. Both are compiled out of the shipped build.
  *
  * LogPrune runs the production session-log prune against an arbitrary
@@ -91,6 +93,16 @@ void Netplay_TestHook_ReportDir(const char* dir);
  * to guess it from the newest name in a shared directory. False (and
  * an empty string) when no session log is open. */
 bool Netplay_TestHook_SessionLogPath(char* out, size_t cap);
+/* Task #144 review Item A: exposes process_session()'s pure event->code
+ * mapping (session_fail_code_for_event, netplay.c) for the two RUNNING-
+ * phase failure taxonomy codes. process_session() itself has no test seam
+ * — driving a live GekkoPlayerDisconnected/GekkoDesyncDetected needs two
+ * real UDP peers past the MIST handshake — so this pins the narrower,
+ * testable claim: disconnect maps to CONNECT_FAIL_PEER_DISCONNECTED,
+ * desync maps to CONNECT_FAIL_DESYNC_DETECTED. It does NOT pin that
+ * process_session()'s handlers call DirectP2P_NotifySessionFailed at all
+ * — see test 42/43's own comments for that residual. */
+ConnectFailCode Netplay_TestHook_SessionFailCodeForEvent(GekkoSessionEventType type);
 #endif
 void Netplay_SetMatchmakingParams(const char* server_ip, int server_port);
 void Netplay_BeginMatchmaking();
