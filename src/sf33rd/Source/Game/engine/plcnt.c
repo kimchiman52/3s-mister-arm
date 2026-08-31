@@ -36,6 +36,7 @@
 #include "sf33rd/Source/Game/engine/slowf.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include "sf33rd/Source/Game/io/pulpul.h"
+#include "sf33rd/Source/Game/menu/menu.h"
 #include "sf33rd/Source/Game/rendering/aboutspr.h"
 #include "sf33rd/Source/Game/rendering/color3rd.h"
 #include "sf33rd/Source/Game/rendering/texcash.h"
@@ -490,6 +491,21 @@ void plcnt_init() { // 🟡
 
     appear_initalize[appear_type]();
     move_player_work();
+
+    /* Training-mode SELECT reset, position presets (menu.c). This is the only
+     * point in the frame that sees the start positions plmv_1020 just wrote and
+     * still runs before anything consumes them: add_next_position (position_x),
+     * check_cg_zoom (scr_mv_x), TATE00 (camera + parallax) and reqPlayerDraw
+     * (the sprite flip, taken from rl_flag at draw time in mtrans.c) are all
+     * later in the same frame. Wait_Pause_in_Tr cannot do it -- TASK_MENU runs
+     * before TASK_GAME, so a write from there is either overwritten by
+     * plmv_1020 later that frame or a frame late.
+     *
+     * Inert outside training: the override early-returns unless a menu.c static
+     * that only Tr_Reset_Apply sets is non-zero, and that path is gated on
+     * Is_Training_Mode. plcnt_init itself only runs while pcon_rno[0] == 0, i.e.
+     * during a round appear, never during live play. */
+    Tr_Reset_Position_Override();
 }
 
 void init_app_10000() {

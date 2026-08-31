@@ -15,4 +15,10 @@ s32 Setup_Final_Cursor_Pos(s8 cursor_x, s16 dir);
 void Default_Training_Data(s32 flag);
 void Decide_PL(s16 PL_id);
 
+/* Training-mode SELECT reset: applies the swap / left-corner / right-corner
+ * position presets. Called from plcnt_init (TASK_GAME) immediately after
+ * move_player_work, which is the frame and the moment plmv_1020 writes the
+ * start positions. No-op unless a reset is in flight. */
+void Tr_Reset_Position_Override();
+
 #endif

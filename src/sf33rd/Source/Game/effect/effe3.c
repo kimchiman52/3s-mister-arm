@@ -123,6 +123,19 @@ void effect_E3_move(WORK_Other* ewk) {
         }
 
         ewk->wu.routine_no[0]++;
+        /* These are the PERSISTENT engine DIP globals, not training-scoped
+         * state -- plw[].spmv_ng_flag/flag2 are seeded from them at match init.
+         * A training setting therefore survives leaving training mode, and is
+         * cleared only by init_omop() (sysdir.c), which zeroes both slots and
+         * re-derives them. init_omop() runs on the character-select exit path
+         * (Exit_6th, sel_pl.c), which every match -- including netplay --
+         * passes through.
+         *
+         * That single call is the whole guarantee. It became load-bearing with
+         * [TM-02]: before then the CPS3 path had no reader for the SA-gauge
+         * bits, so a leaked INFINITY/MAXIMUM setting was inert under arcade.
+         * It is not any more -- a match entered without init_omop() would carry
+         * the training gauge setting into real play. */
         omop_spmv_ng_table[mwk->wu.id] = mwk->spmv_ng_flag;
         omop_spmv_ng_table2[mwk->wu.id] = mwk->spmv_ng_flag2;
         /* fallthrough */
@@ -151,12 +164,15 @@ void effect_E3_move(WORK_Other* ewk) {
             switch (Training[0].contents[0][0][2]) {
             case 0:
             sw1_case_0:
-                mwk->spmv_ng_flag2 |= DIP_UNKNOWN_9;
+                /* [TM-10] DIP2 name on a flag2 field. DIP_UNKNOWN_9 (Dipswitch)
+                 * and DIP2_QUICK_STAND_DISABLED (Dipswitch2) are both 1 << 9, so
+                 * the old spelling worked only by numeric coincidence. */
+                mwk->spmv_ng_flag2 |= DIP2_QUICK_STAND_DISABLED;
                 break;
 
             case 1:
             sw1_case_1:
-                mwk->spmv_ng_flag2 &= ~DIP_UNKNOWN_9;
+                mwk->spmv_ng_flag2 &= ~DIP2_QUICK_STAND_DISABLED;
                 break;
 
             default:
@@ -230,8 +246,15 @@ void effect_E3_move(WORK_Other* ewk) {
             sw2_case_3:
                 mwk->spmv_ng_flag |= DIP_AUTO_GUARD_DISABLED;
                 mwk->spmv_ng_flag &= ~DIP_AUTO_PARRY_DISABLED;
+                /* Missing '~'. The structurally identical PARRYING setup at the
+                 * top of this file does `&= 0xFFFFF0FF`, i.e. CLEAR bits 8-11.
+                 * Without the complement this KEEPS only bits 8-11 and wipes
+                 * every other DIP1 bit -- including the DIP_AUTO_GUARD_DISABLED
+                 * set two lines above, so PARRYING silently also enabled
+                 * auto-guard. Latent until [TM-01] made the CPS3 path actually
+                 * read these bits. */
                 mwk->spmv_ng_flag &=
-                    (DIP_UNKNOWN_8 | DIP_UNKNOWN_9 | DIP_AIR_PARRY_DISABLED | DIP_ANTI_AIR_PARRY_DISABLED);
+                    ~(DIP_UNKNOWN_8 | DIP_UNKNOWN_9 | DIP_AIR_PARRY_DISABLED | DIP_ANTI_AIR_PARRY_DISABLED);
                 break;
 
             case 4:

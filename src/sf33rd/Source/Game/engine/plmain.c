@@ -152,9 +152,17 @@ void player_mv_0000(PLW* wk) { // 🟡
     wk->metamor_over = 0;
     wk->sa_healing = 0;
 
-    if (!ArcadeBalance_IsEnabled()) {
-        wk->resurrection_resv = 0;
-    }
+    /* [TM-06 follow-up] Un-gated deliberately. check_omop_vital() now reads
+     * resurrection_resv every frame in BOTH balance modes, and that read forces
+     * vital_new = -1 with an early return. Its only setter (plcnt.c,
+     * check_sa_resurrection) is still arcade-gated, so the field cannot become
+     * set under arcade today -- but leaving the round-init clear gated while
+     * the read is ungated is an asymmetry waiting to bite: relaxing the setter
+     * for arcade (the obvious next step for SA-III resurrection) would pin
+     * vital_new = -1 for the whole round with nothing to clear it.
+     * Clearing an already-zero field is a no-op, so this costs nothing now and
+     * removes the trap. */
+    wk->resurrection_resv = 0;
 
     wk->dm_hos_flag = 0;
     wk->kezurijini_flag = 0;
@@ -180,27 +188,35 @@ void player_mv_0000(PLW* wk) { // 🟡
         metamor_color_restore(wk->wu.id);
     }
 
-    if (!ArcadeBalance_IsEnabled()) {
-        wk->omop_vital_timer = 40;
+    /* [TM-06] Round-start reset for the vitality-recovery timer. Ungated
+     * alongside check_omop_vital below -- the timer is that feature's, and
+     * leaving it gated would starve it. */
+    wk->omop_vital_timer = 40;
 
-        switch (wk->spmv_ng_flag2 & (DIP2_SA_GAUGE_ROUND_RESET_DISABLED | DIP2_SA_GAUGE_MAX_START_DISABLED)) {
-        case DIP2_SA_GAUGE_MAX_START_DISABLED:
-            clear_super_arts_point(wk);
-            spgauge_cont_init();
-            break;
+    /* [TM-05] The per-round SA-gauge handler was inside the arcade gate above,
+     * so the system Extra Options "SA gauge MAX START" and "SA gauge ROUND
+     * RESET" did nothing under arcade balance -- their only reader in the tree
+     * is this switch. Safe in both modes: Dir_Default_Data.contents[7] is all
+     * zeroes, so init_omop() sets BOTH DIP bits by default and the masked
+     * value matches no case here. It only acts once the player turns one of
+     * those options on. */
+    switch (wk->spmv_ng_flag2 & (DIP2_SA_GAUGE_ROUND_RESET_DISABLED | DIP2_SA_GAUGE_MAX_START_DISABLED)) {
+    case DIP2_SA_GAUGE_MAX_START_DISABLED:
+        clear_super_arts_point(wk);
+        spgauge_cont_init();
+        break;
 
-        case DIP2_SA_GAUGE_ROUND_RESET_DISABLED:
-            if (Round_num != 0) {
-                break;
-            }
-
-            /* fallthrough */
-
-        case 0:
-            demo_set_sa_full(wk->sa);
-            spgauge_cont_demo_init();
+    case DIP2_SA_GAUGE_ROUND_RESET_DISABLED:
+        if (Round_num != 0) {
             break;
         }
+
+        /* fallthrough */
+
+    case 0:
+        demo_set_sa_full(wk->sa);
+        spgauge_cont_demo_init();
+        break;
     }
 
     about_gauge_process(wk);
@@ -332,9 +348,15 @@ void player_mv_4000(PLW* wk) { // 🟡
             wk->zuru_flag = false;
         }
 
-        if (!ArcadeBalance_IsEnabled()) {
-            check_omop_vital(wk);
-        }
+        /* [TM-06] The Extra Options vitality-recovery setting (omop_vital_ix)
+         * has exactly one consumer -- check_omop_vital -- and it was skipped
+         * under arcade balance, so the recovery half of that option did
+         * nothing. (The *initial* vitality option was always honoured, in
+         * setup_vitality.) Safe in both modes: Game_Default_Data ships
+         * extra_option.contents[0][0] = 1 (NORMAL), and the switch inside
+         * check_omop_vital has cases 0/2/3/4 with no case 1 and no default,
+         * so the default setting is a no-op. */
+        check_omop_vital(wk);
     }
 
     if (Timer_Freeze == 0) {
@@ -490,10 +512,15 @@ void about_gauge_process(PLW* wk) { // 🟡
     sag_union(wk);
     mpg_union(wk);
 
-    // CPS3 has no equivalent max-gauge bit update.
-    if (!ArcadeBalance_IsEnabled()) {
-        add_sp_arts_gauge_maxbit(wk);
-    }
+    /* [TM-02] Bits 16/19 of spmv_ng_flag2 (the INFINITY trickle and the
+     * MAXIMUM refill) have exactly one reader in the tree -- this function --
+     * and it used to be skipped entirely under arcade balance, so every
+     * S.A.GAUGE training option and the system S.A. GAUGE TYPE option were
+     * inert. Safe to run in both modes: at defaults init_omop() sets BOTH
+     * bits (sysdir.c, S.A. GAUGE TYPE = NORMAL -> 0x90000), which makes this
+     * a no-op. It only acts when the player explicitly selects
+     * INFINITY/MAXIMUM in the training menu or Extra Options. */
+    add_sp_arts_gauge_maxbit(wk);
 }
 
 void mpg_union(PLW* wk) { // 🟡

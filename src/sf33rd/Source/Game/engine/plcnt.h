@@ -85,6 +85,10 @@ void clear_super_arts_point(PLW* wk);
 s16 check_combo_end(s16 ix);
 void set_quake(PLW* wk);
 void add_next_position(PLW* wk);
+/* Recomputes scrl/scrr from get_center_position(). Player_control calls it once
+ * per frame before player_main_process; exposed so a caller that moves the
+ * camera after that point can bring the field walls back in step with it. */
+void set_scrrrl();
 void store_player_after_image_data();
 void setup_base_and_other_data();
 void setup_any_data();

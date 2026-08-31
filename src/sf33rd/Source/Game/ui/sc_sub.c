@@ -38,7 +38,13 @@
 #define TRAINING_INPUT_HISTORY_BUTTONS_MASK 0x770
 #define TRAINING_INPUT_HISTORY_TEXT_ATR 9
 #define TRAINING_INPUT_HISTORY_BUTTON_ATR 13
-#define TRAINING_INPUT_HISTORY_TEXT_PRIORITY 2
+/* [TM-04] Was 2 -- the same PrioBase slot the combo popup draws at
+ * (combo_message_set), so the two had identical Z and the tie fell to draw
+ * order, hiding the "N HITS" text behind the history column. 6 is the first
+ * free slot after the HUD band (2..5 = TopHUD text/shadow/face/vital), still
+ * far in front of gameplay (characters ~30). Engine convention: LOWER index
+ * = closer to camera. */
+#define TRAINING_INPUT_HISTORY_TEXT_PRIORITY 6
 #define TRAINING_INPUT_HISTORY_TEXT_SCALE 1.0f
 #define TRAINING_INPUT_HISTORY_CHAR_WIDTH 8
 #define TRAINING_INPUT_HISTORY_GLYPH_WIDTH 8
@@ -347,7 +353,11 @@ static void draw_training_input_history() {
         direction_glyph = training_input_direction_glyph(input);
         direction_drawn = false;
 
-        SDL_snprintf(line_buffer, sizeof(line_buffer), "%2u ", training_input_history[i].frames);
+        /* No trailing space: the direction glyph butts straight up against the
+         * frame count. The %2u pad is kept -- it is column alignment for
+         * single-digit counts, not a separator, and frames are capped at
+         * TRAINING_INPUT_HISTORY_MAX_FRAMES (99) so this is always 2 chars. */
+        SDL_snprintf(line_buffer, sizeof(line_buffer), "%2u", training_input_history[i].frames);
 
         line_y = line_y_base + (i * line_y_step);
         SSPutStr_Bigger((u16)line_x,
@@ -383,7 +393,11 @@ static void draw_training_input_history() {
         }
 
         if (buttons != 0) {
-            buttons_x = direction_x + TRAINING_INPUT_HISTORY_CHAR_WIDTH;
+            /* Buttons butt straight up against the direction glyph; the old
+             * one-character gap here was the second of the two horizontal
+             * spacers. draw_training_input_buttons already packs the buttons
+             * themselves at BUTTON_LABEL_WIDTH with no gap. */
+            buttons_x = direction_x;
             draw_training_input_buttons(buttons_x, line_y, input);
         }
     }

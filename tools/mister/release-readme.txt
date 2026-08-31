@@ -115,6 +115,24 @@ If the core immediately exits back to MiSTer, the most common cause is
 a missing SF33RD.AFS file.
 
 
+TRAINING MODE
+-------------
+
+Press SELECT during training to reset both characters back to their
+round-start positions. There is no screen wipe and the music keeps
+playing, so it is much faster than restarting the round from the menu.
+A short confirmation sound plays when the reset fires.
+
+Holding DOWN while pressing SELECT does the same thing. Holding UP,
+LEFT or RIGHT does nothing yet — those will pick a starting arrangement
+(side swap, and cornering either player) in a later release.
+
+START + SELECT is unchanged and still soft-resets the core.
+
+The reset is disabled while a recording or replay is running, so a
+recorded dummy sequence cannot be knocked out of sync.
+
+
 OVERCLOCK
 ---------
 
