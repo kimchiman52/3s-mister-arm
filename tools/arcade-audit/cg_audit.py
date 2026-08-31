@@ -118,10 +118,40 @@ N_SE      = count_fnptr_table("src/sf33rd/Source/Game/sound/se_data.c", "const s
 N_TAMA    = int(re.search(r'const TAMA tama_data\[(\d+)\]', src("src/sf33rd/Source/Game/effect/eff13.c")).group(1))
 N_SASIGN  = int(re.search(r'const s16 sa_sign_data\[(\d+)\]\[5\]', src("src/sf33rd/Source/Game/effect/eff41.c")).group(1))
 OGT_N     = len(OGT)
+# Parsed, not hardcoded (doc §8, item 7 of the 2026-08-31 cleanup pass): a
+# hardcoded 0x400 here would silently desync from the compiler if
+# CG_REMAP_CUTOFF ever moved within its _Static_assert's allowed band
+# (<= 0x601, arcade_char_data.c).
+CG_REMAP_CUTOFF = int(
+    re.search(r'#define CG_REMAP_CUTOFF (0x[0-9A-Fa-f]+)', src("src/arcade/arcade_char_data.c")).group(1), 16)
+
+# ---------------------------------------------------------------- range-overlap guard
+def check_range_overlaps():
+    """Mirrors arcade_char_data.c's validate_cg_ranges(): remap_cg_number
+    takes the first matching row and stops, so a later row that shadows an
+    earlier one in the same character's table would silently remap to the
+    wrong delta with no diagnostic. validate_cg_ranges() is `#if DEBUG`,
+    and DEBUG is only defined for CMAKE_BUILD_TYPE=Debug
+    (CMakeLists.txt); every shipping pipeline (tools/mister/build-game.sh)
+    configures Release, so that guard protects nothing in a shipped build
+    (doc §8, item 6 of the 2026-08-31 cleanup pass). This is the guard that
+    actually runs, every time the audit runs, regardless of build config."""
+    overlaps = []
+    for ci in range(20):
+        ranges = CGMAP[ci]['ranges']
+        for i in range(len(ranges)):
+            a = ranges[i]
+            if a[0] > a[1]:
+                overlaps.append(dict(character=NAMES[ci], kind='inverted', row=i, range=a))
+            for j in range(i + 1, len(ranges)):
+                b = ranges[j]
+                if a[0] <= b[1] and b[0] <= a[1]:
+                    overlaps.append(dict(character=NAMES[ci], kind='overlap', row_a=i, a=a, row_b=j, b=b))
+    return overlaps
 
 # ---------------------------------------------------------------- remap (mirrors arcade_char_data.c:85-109)
 def remap(value, ci):
-    if value < 0x400: return value
+    if value < CG_REMAP_CUTOFF: return value
     m = CGMAP[ci]; delta = m['default_delta']
     for (f, l, d) in m['ranges']:
         if f <= value <= l: delta = d; break
@@ -282,6 +312,7 @@ def audit(cgmap_override=None, quiet=False):
         salab = sa_labels(ci)
         cells_seen = 0
         cls = dict(a_oob=0, b_gap=0, c_wrong_group=0, c_same_group=0, needs_manual=0,
+                   extra_script=0, extra_cells=0,
                    se_oob=0, eff_oob=0, tama_oob=0, sasign_oob=0, code_oob=0, koc_oob=0, idx_oob=0)
         for koc, sec in KOC2SEC.items():
             an, pn = len(arc_tabs[sec]), len(ps2_tabs[sec][2])
@@ -290,6 +321,20 @@ def audit(cgmap_override=None, quiet=False):
                 pcells = None
                 if si < pn:
                     pcgd, pcells = ps2_parse(blob, ps2_tabs[sec][0], ps2_tabs[sec][1], ps2_tabs[sec][2], si)
+                elif acells:
+                    # si >= pn: the PS2 offset table is SHORTER than the arcade
+                    # one (a real 0x00000000 terminator word, not truncation --
+                    # doc §11.2), so this script has NO PS2 counterpart at all --
+                    # not "shape differs" (needs_manual below), no oracle exists,
+                    # period. Previously invisible: pcells stayed None and
+                    # needs_manual's `pcells is not None` guard skipped it
+                    # entirely. Counted here so it shows up somewhere.
+                    lcells = [c for c in acells if c[0] == 'L']
+                    if lcells:
+                        cls['extra_script'] += 1
+                        cls['extra_cells'] += len(lcells)
+                        rec['violations'].append(dict(cls='extra_script_no_oracle', table=sec, script=si,
+                                                      arc_cells=len(acells), l_cells=len(lcells)))
                 shape_ok = (pcells is not None and len(pcells) == len(acells)
                             and all(a[0] == p[0] for a, p in zip(acells, pcells)))
                 if pcells is not None and not shape_ok and acells:
@@ -396,24 +441,37 @@ def audit(cgmap_override=None, quiet=False):
     return result
 
 if __name__ == "__main__":
-    print("constants: obj_group_table=%d effinitjptbl=%d decode_chcmd=%d sound_effect_request=%d tama_data=%d sa_sign_data=%d"
-          % (OGT_N, N_EFFINIT, N_CHCMD, N_SE, N_TAMA, N_SASIGN))
+    print("constants: obj_group_table=%d effinitjptbl=%d decode_chcmd=%d sound_effect_request=%d tama_data=%d sa_sign_data=%d cg_remap_cutoff=0x%x"
+          % (OGT_N, N_EFFINIT, N_CHCMD, N_SE, N_TAMA, N_SASIGN, CG_REMAP_CUTOFF))
+
+    overlaps = check_range_overlaps()
+    if overlaps:
+        print("FATAL: %d CgRemapRange overlap/inversion(s) found (doc §8, item C/6):" % len(overlaps))
+        for o in overlaps:
+            if o['kind'] == 'inverted':
+                print("  %s row %d: first > last: %r" % (o['character'], o['row'], o['range']))
+            else:
+                print("  %s: row %d %r overlaps row %d %r" % (o['character'], o['row_a'], o['a'], o['row_b'], o['b']))
+        sys.exit(1)
+    print("range-overlap check: 0 overlaps, 0 inversions (20/20 characters)")
+
     res = audit()
     json.dump(res, open(os.path.join(HERE, "cg_audit.json"), "w"), indent=1)
-    hdr = ("%-7s %5s | %4s %4s %5s %5s %5s | %5s %5s %5s %5s %5s %5s %5s | %s"
-           % ("char","cells","(a)","(b)","(c)wg","(c)og","manu","se","eff","tama","sasi","code","koc","sidx","ovct a/p  ovix a/p"))
+    hdr = ("%-7s %5s | %4s %4s %5s %5s %5s %5s | %5s %5s %5s %5s %5s %5s %5s | %s"
+           % ("char","cells","(a)","(b)","(c)wg","(c)og","manu","extra","se","eff","tama","sasi","code","koc","sidx","ovct a/p  ovix a/p"))
     print(hdr); print("-"*len(hdr))
     T = {}
     for n in NAMES:
         r = res[n]; s = r['stats']
         for k, v in s.items(): T[k] = T.get(k, 0) + (v if isinstance(v, int) else 0)
-        print("%-7s %5d | %4d %4d %5d %5d %5d | %5d %5d %5d %5d %5d %5d %5d | %d/%d %s  %d/%d %s"
+        print("%-7s %5d | %4d %4d %5d %5d %5d %5d | %5d %5d %5d %5d %5d %5d %5d | %d/%d %s  %d/%d %s"
               % (n, s['cells'], s['a_oob'], s['b_gap'], s['c_wrong_group'], s['c_same_group'], s['needs_manual'],
+                 s['extra_script'],
                  s['se_oob'], s['eff_oob'], s['tama_oob'], s['sasign_oob'], s['code_oob'], s['koc_oob'], s['idx_oob'],
                  s['ovct_arcade'], s['ovct_ps2'], "UNPATCHED-TAIL!" if s['ovct_unpatched_tail'] else "ok",
                  s['ovix_arcade'], s['ovix_ps2'], "short" if s['ovix_arcade_shorter_by'] else "ok"))
     print("-"*len(hdr))
-    print("TOTAL         | %4d %4d %5d %5d %5d | %5d %5d %5d %5d %5d %5d %5d"
-          % (T['a_oob'], T['b_gap'], T['c_wrong_group'], T['c_same_group'], T['needs_manual'],
+    print("TOTAL         | %4d %4d %5d %5d %5d %5d | %5d %5d %5d %5d %5d %5d %5d"
+          % (T['a_oob'], T['b_gap'], T['c_wrong_group'], T['c_same_group'], T['needs_manual'], T['extra_script'],
              T['se_oob'], T['eff_oob'], T['tama_oob'], T['sasign_oob'], T['code_oob'], T['koc_oob'], T['idx_oob']))
     print("cells audited:", T['cells'])

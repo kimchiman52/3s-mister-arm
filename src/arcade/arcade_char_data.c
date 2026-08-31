@@ -959,11 +959,23 @@ static const CharacterCgMap cg_maps[NUM_CHARS] = {
 };
 
 #if DEBUG
-// doc §8.4 (range-overlap guard): remap_cg_number takes the first matching
+// doc §8.C (range-overlap guard): remap_cg_number takes the first matching
 // row and stops (see above), so a future row that shadows an earlier one in
 // the same character's table would silently remap to the wrong delta with
 // no diagnostic. Tables are hand-authored and unsorted, so nothing else
-// catches that. Boot-time, arcade-only, zero release cost.
+// catches that.
+//
+// DEVELOPER CONVENIENCE ONLY -- this is compiled out entirely in every
+// shipped build. `DEBUG` is defined only for CMAKE_BUILD_TYPE=Debug
+// (CMakeLists.txt's target_compile_definitions), and every shipping
+// pipeline (tools/mister/build-game.sh) configures Release, so this
+// SDL_assert never runs where a user could hit it. It also runs
+// unconditionally at the top of ArcadeCharData_Init(), before the ROM is
+// even located, so it is not "arcade-only": it runs on PS2-balance Debug
+// launches too (ROM missing, or full-cast adaptation failing) -- it is
+// gated on build config, not on arcade balance being enabled. The check
+// that actually runs in every build, release included, is
+// tools/arcade-audit/cg_audit.py's check_range_overlaps().
 static void validate_cg_ranges(void) {
     for (int character = 0; character < NUM_CHARS; character++) {
         const CharacterCgMap* map = &cg_maps[character];

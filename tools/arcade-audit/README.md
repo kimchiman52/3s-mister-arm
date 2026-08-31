@@ -47,6 +47,12 @@ residual < 0                    : 0
 residual >= offset-table length : 0
 ```
 
+**That invariant covers the script-cell residual only.** The same script also
+runs a separate bounds check over the OVCT `parts_char -> cg_number` path
+(`eff01.c:169`, printed as "R2b" in its output) and, as of this writing,
+reports **6** post-adaptation violations there — all Elena parts 85-90. That
+is doc worklist item **B** (§18) and it is still **OPEN**; "0/0" on the two
+assertions above does not mean every out-of-bounds door in this tool is shut.
 See the doc, §17.
 
 Expected at the time of writing (`fix/arcade-cg-mapping` branch point):

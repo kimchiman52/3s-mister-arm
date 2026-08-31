@@ -126,7 +126,7 @@ command and its observed output, or a named primary source. Things that were
 | Elena crash fix | **LANDED** `23326679` — range applied in `src/arcade/arcade_char_data.c`; gate `cg_audit.py` class (a) 66 → 0 (§8.A) |
 | Remy crash fix | **LANDED** `a5bc6a5b` — range applied in `src/arcade/arcade_char_data.c`; gate `residual_audit.py` residual-OOB 6 → 0 (§8.K) |
 | Elena OVCT unpatched tail | **OPEN** — latent, **undefended** (not "unreachable" — §18) |
-| 1,694 wrong-sprite cells | **MOSTLY LANDED** items D, E, N (§8.D, §8.E, §8.N) — class (c) 1688 (post-§8.K baseline) → 89; item F (Chun-Li, 72 of the 89) investigated, deliberately left as-is (§8.F); remaining 17 enumerated with reasons (§8.D's Urien 0x52D9 ambiguity, and Necro/Hugo/Yun/Akuma's smaller own-group family — a *different* instance of the same per-raw-value ambiguity, not a scope decision) |
+| 1,694 wrong-sprite cells (measured against the audit's oracle reach — §11.2 notes 162 more scripts, 2,441 cells, with no oracle at all) | **MOSTLY LANDED** items D, E, N (§8.D, §8.E, §8.N) — class (c) 1688 (post-§8.K baseline) → 89; item F (Chun-Li, 72 of the 89) investigated, deliberately left as-is (§8.F); remaining 17 enumerated with reasons (§8.D's Urien 0x52D9 ambiguity, and 7 of Necro/Hugo/Yun/Akuma's 9 smaller own-group cells — the same per-raw-value ambiguity; Akuma's other 2, `0x546B`, are a no-oracle block on a unanimous delta, not an ambiguity — §8.P) |
 | Shape-divergent scripts (316) | **OPEN** — enumerated; §11.4 now offers an oracle |
 | Upstream issue #363 | **OPEN** upstream; our findings not yet reported (§13) |
 | **The other 13 sections** (issue **#325**) | **AUDITED, no defect** — differences enumerated and classified (§15) |
@@ -137,27 +137,35 @@ command and its observed output, or a named primary source. Things that were
 | Unreferenced script in `IBUKI atca` | **OPEN, benign** — 376 B, real data, outside the 133,901-cell census; all CGs in bounds (§19.6) |
 | **Texture-group offset-table lengths** | **DERIVED** — all 71 groups, statically, from `SF33RD.AFS` (§17.2) |
 | **Group load reachability model** | **DERIVED** — from `ldreq_tbl[]`/`ldreq_ix[]` (§17.4) |
-| Any *committed* code change | **NONE** — see the caveat below |
+| Any *committed* code change | **YES, as of 2026-08-30/31** — see the note below; committed to `fix/arcade-cg-mapping`, not merged to `main`/`mister`, not on-device verified |
 
-**Caveat on "no code change".** The first pass modified nothing. As of
-2026-08-30 the `fix/arcade-cg-mapping` branch carries **two landed
-edits** to `src/arcade/arcade_char_data.c` — the candidate Elena range
-described in §8.A, and the candidate Remy range described in §8.K. Both are
-**proposed and unlanded**, under review, and neither is on any branch. Every
-measurement in §15, §16 and §19 is independent of them (those sections do not
-touch `cg_maps[]`). §17 and §18 were run **both ways** for the Elena range: the
+**Note on "committed" vs. "landed" (historical; corrects an earlier
+self-contradiction).** The first pass modified nothing. Starting 2026-08-30
+the `fix/arcade-cg-mapping` branch carries **committed** edits to
+`src/arcade/arcade_char_data.c`: `23326679` (item A, the Elena range,
+§8.A) and `a5bc6a5b` (item K, the Remy range, §8.K). An earlier draft of
+this doc called these edits "landed" in one sentence and "proposed and
+unlanded... not committed, not on any branch" in the next — that was wrong;
+both are real commits, on this branch (`git branch -a --contains
+23326679` / `a5bc6a5b` show only `fix/arcade-cg-mapping`), just not merged
+upstream of it and not yet verified on-device. Every measurement in §15,
+§16 and §19 is independent of them (those sections do not touch
+`cg_maps[]`). §17 and §18 were run **both ways** for the Elena range: the
 Elena OVCT findings are identical with and without it; the class-(a) count
 moves (0 with it, 66 without), and the residual-OOB count moves independently
 with the Remy range (0 with it, 6 without) — see §17.3.
 
 **Update 2026-08-31.** Items **D**, **E**, **N** are landed (`CgRemapRange`
-additions) and item **F** is investigated with no code change, all on
-`fix/arcade-cg-mapping`, all still **uncommitted, unmerged, and not on-device
+additions, commit `86a4d948`) and item **F** is investigated with no code
+change, all on `fix/arcade-cg-mapping`, all still **committed to this
+branch, unmerged to `main`/`mister`, and not on-device
 verified** — see their status blocks in §8. `cg_audit.py`'s class (c) total
 (the post-§8.K baseline, 1688) is now **89**, of which 72 are item F's
 deliberately-unfixed Chun-Li cells and 17 are enumerated, reasoned remainders
-(§8.D's Urien `0x52D9` ambiguity; Necro/Hugo/Yun/Akuma's smaller own-group
-family — the same per-raw-value ambiguity, not a scope decision, §8.P).
+(§8.D's Urien `0x52D9` ambiguity; 7 of Necro/Hugo/Yun/Akuma's 9 smaller
+own-group cells — the same per-raw-value ambiguity, not a scope decision;
+Akuma's other 2, `0x546B`, are a no-oracle block on a unanimous delta, a
+different reason — §8.P).
 Class (a) and `manu` (316) are unchanged.
 `residual_audit.py` and `data_audit.py` both still hold their invariants.
 
@@ -429,7 +437,9 @@ balance — confirming the crash path is arcade-balance-only.
 ## 6. The audit: method
 
 `cg_audit.py` (preserved, §9) decodes **every** arcade script cell for all 20
-characters and pairs it against the PS2 counterpart.
+characters and attempts to pair it against a PS2 counterpart — **162 of those
+scripts (2,441 cells) have no PS2 counterpart to pair against at all** and are
+counted separately (§11.2), not silently treated as passing.
 
 - **Constants are parsed from source at run time, not hand-copied** — so the
   audit stays honest as the code changes. Verified header line:
@@ -641,12 +651,29 @@ in this worklist remains unimplemented.
 behaviour. Arcade-only is the contract, the same one upstream's #290 / #359 /
 #360 hold to.
 
-For the CG range tables (items D, E, F, N) this holds *by construction* and
-should be stated rather than assumed: `remap_cg_number`
-(`src/arcade/arcade_char_data.c`) is called only from `read_char_table`, which
-runs only inside `ArcadeCharData_Init`, which runs only when
-`ArcadeBalance_Init` resolves to arcade (`src/arcade/arcade_balance.c`). A PS2
-session never enters that code, so a range-table edit cannot reach it.
+For the CG range tables (items D, E, F, N), **the guarantee that actually holds
+is "no PS2-session behaviour change," not "a PS2 session cannot reach any of
+this"** — those are different claims, and the second one is false. Verified in
+`arcade_balance.c` -> `ArcadeBalance_Init()`: `ArcadeCharData_Init()` is called
+unconditionally, *before* `is_enabled = true` is set, inside the same `do { ...
+} while (0)` block that later checks `adapt_all_characters()`. So on any launch
+where the CPS3 ROM is present but `adapt_all_characters()` subsequently fails,
+`ArcadeCharData_Init()` -> `read_char_table` -> `remap_cg_number` has already
+run for all 20 characters in a session that goes on to run PS2 balance
+(`is_enabled` stays `false`). `validate_cg_ranges()` (§8.C above) runs even
+earlier and even more broadly — unconditionally at the top of
+`ArcadeCharData_Init()`, in Debug builds, on every launch regardless of
+ROM presence.
+
+**What actually holds:** every *consumer* of the parsed arcade tables —
+every render/OGT/mtrans site, every place `ArcadeCharData_ComputeDigest()` or
+the parsed buffers are read — is behind `ArcadeBalance_IsEnabled()`, which is
+`false` whenever the session isn't arcade. So a range-table edit changes
+*execution* on some PS2-balance launches (the CG remap runs, its result is
+computed and discarded) but never changes *observable PS2-session behaviour*,
+because nothing downstream reads that result when `is_enabled` is false. That
+is the contract this worklist actually verifies — narrower than "a PS2 session
+never enters that code."
 
 The exposure is item **E**. If the cross-bank cluster is solved by changing the
 remap *model* — letting a range name a target bank rather than a bare delta —
@@ -696,11 +723,14 @@ visually or via a replay that exercises it.
 > raw CG values in the block land in group **9**, Elena's own texture group
 > (`own_group = character + 1`, `cg_audit.py`).
 >
-> **This is a proposal, not a landed fix.** It is not committed, not on any
-> branch, not built, and not run in-game. The `exca[58..65]` run still has no
-> cell-aligned PS2 oracle (§12), so "lands in group 9" is a necessary condition,
-> not proof the sprites are the intended ones. §11.4 now describes the tool that
-> could settle it.
+> **Committed, unmerged (corrects an earlier self-contradiction in this
+> block).** This edit is commit `23326679` on `fix/arcade-cg-mapping` — it is
+> committed and on that branch, contrary to an earlier draft's "not
+> committed, not on any branch" in this same spot. It is not merged to
+> `main`/`mister` and not verified on-device. The `exca[58..65]` run still
+> has no cell-aligned PS2 oracle (§12), so "lands in group 9" is a necessary
+> condition, not proof the sprites are the intended ones. §11.4 now describes
+> the tool that could settle it.
 
 > #### Severity, from the trigger analysis (§20)
 >
@@ -743,6 +773,22 @@ layout-dependent SIGSEGV into a dropped sprite plus a log line — which is
 exactly what the 2026-04-29 trap sweep did elsewhere in the tree. Consider both:
 a clamp/reject in `remap_cg_number` (with a log) and a bounds check at the
 `obj_group_table[n]` sites.
+
+**A related but distinct guard: `CgRemapRange` row overlaps.**
+`arcade_char_data.c`'s `validate_cg_ranges()` checks a different hazard —
+`remap_cg_number` takes the *first* matching row in a character's table and
+stops, so a later row that shadows an earlier one would silently apply the
+wrong delta with no diagnostic. It is `#if DEBUG`, and `DEBUG` is defined only
+for `CMAKE_BUILD_TYPE=Debug` (`CMakeLists.txt`); every shipping pipeline
+(`tools/mister/build-game.sh`) configures Release, so **this guard protects
+nothing in a build a user runs.** Decision, 2026-08-31 cleanup pass: do
+**not** promote it to `SDL_assert_always` — turning a wrong sprite into a
+crash for the user inverts the point of this whole branch. Instead the check
+now runs where it actually gates something: `tools/arcade-audit/cg_audit.py`'s
+`check_range_overlaps()` re-derives the same check from source on every audit
+run (any build config) and exits non-zero if it ever finds one. The `#if
+DEBUG` assert stays, as a developer convenience only, with its comment
+corrected to say so.
 
 ### D. The off-by-N deltas — Ibuki (408) and Urien (256)
 
@@ -913,7 +959,12 @@ CI or pre-release check `cg_audit.py` ends up in, with the assertion "zero
 assertions: **`residual < 0` == 0** and **`residual >= offset-table length` ==
 0**. The second was **6** at the pre-fix baseline (§17.3) and required item
 **K** to land first; with K's range applied it reads **0** (landed `a5bc6a5b`, as of
-2026-08-30).
+2026-08-30). **This gate covers the script-cell residual only.**
+`residual_audit.py` runs a separate check over the OVCT `parts_char` path
+(§17.3's "OVCT path" paragraph) that is **not** part of either assertion above
+and currently reports **6** (Elena parts 85-90, item **B**, §18) — still open.
+A gate on "zero script-cell residual violations" would pass today without
+that door being shut.
 
 ---
 
@@ -960,8 +1011,11 @@ measure the same `+0x20` delta and are left unfixed, deliberately — see item
 > So: the six residual-OOB violations (§17.3) → 0, and `in bounds` gains
 > exactly those six cells (133604 → 133610).
 >
-> **This is a proposal, not a landed fix.** It is not committed, not on any
-> branch, and not run in-game; it has been compiled for the host target
+> **Committed, unmerged (corrects an earlier self-contradiction in this
+> block).** This edit is commit `a5bc6a5b` on `fix/arcade-cg-mapping` — it is
+> committed and on that branch, contrary to an earlier draft's "not
+> committed, not on any branch" in this same spot. It is not merged to
+> `main`/`mister` and not run in-game; it has been compiled for the host target
 > (`cmake --build build/host`) but not for a device target. §20's
 > "APPARENTLY UNREACHABLE" verdict (below) is unchanged by the fix — it bears
 > on priority/severity, not on whether the fix is correct.
@@ -1103,7 +1157,7 @@ all be bundled into one compatibility bump rather than landing separately —
 they already are one uncommitted change as of this pass, so in practice they
 will ship together.
 
-### P. Necro/Hugo/Yun/Akuma's remaining 9 own-group cells — same ambiguity as Urien's `0x52D9`, not a scope decision
+### P. Necro/Hugo/Yun/Akuma's remaining 9 own-group cells — 7 are the same ambiguity as Urien's `0x52D9`; Akuma's other 2 are not
 
 §3 previously called these "explicitly out of scope"; that is wrong. Measured
 against `cg_audit.json` (all cells referencing the raw, not just the currently
@@ -1118,8 +1172,30 @@ AKUMA 0x5441 {-3232:4, -3233:1}    AKUMA 0x546A {-3274:1, -3273:1}
 ```
 
 `AKUMA 0x546B` (`{-3266:2}` plus 2 more cells with no cell-aligned PS2
-counterpart) is a different problem — a single measured delta blocked only by
-the no-oracle rule (§11), not an ambiguity — and is not counted above.
+counterpart) is a different problem — a **single, unanimous** measured delta
+(`-3266`, over the 2 cell-aligned cells) blocked only by the no-oracle rule
+(§11), not an ambiguity — and is not counted in the six-raw table above.
+**But it is counted in this section's own "9" title-count**: the two
+`0x546B` cells are own-group-mismatched (`cg_audit.json`'s AKUMA `(c)og`
+column is 6, decomposing as `0x5440`(1) + `0x5441`(1) + `0x546A`(2) +
+`0x546B`(2)), so of this section's 9 cells, **7 are genuinely ambiguous
+and 2 (`0x546B`) are not** — verified against `cg_audit.py`'s own output.
+Do not read this section's title or the sentence above as meaning all 9 are
+the same failure mode as Urien's `0x52D9`.
+
+**Policy inconsistency, flagged rather than resolved.** The no-oracle rule
+(§11) is applied strictly here: `0x546B`'s unanimous `-3266` delta is
+*measured*, on 2 cell-aligned cells, and is still left unfixed because 2
+more of its cells have no cell-aligned PS2 counterpart to confirm the
+pattern holds for them too. Item **A** (§8.A) does not apply that rule the
+same way: of the 41 distinct raw CG values in Elena's `0x9CFC-0x9D24` block,
+only a subset have a cell-aligned PS2 counterpart (`dmca[82,83,86,87]`,
+`btca[15]`) — the `exca[58..65]` run has **no** cell-aligned oracle at all
+(§8.A's own text) — yet the whole 41-value contiguous range was applied on
+the strength of "all 41 land in group 9," not a per-value measurement. Both
+decisions are recorded as intentional (item A: committed, `23326679`; item
+P: deliberately left unfixed); this section states the inconsistency between
+them rather than hiding it. Neither decision is changed here.
 
 The blocker is structural, not a missing range: `remap_cg_number` maps one
 raw CG to one delta regardless of which script cell asked, so it cannot
@@ -1263,6 +1339,25 @@ read `target variable is_enabled` (upstream: the static at
 - **316 shape-mismatched scripts** (arcade vs PS2 cell counts differ) have no
   automatic verdict. They are enumerated in `cg_audit.json` (`manu` column) and
   are exactly where tier-3 bugs live.
+- **162 more scripts, 2,441 L-cells, have no oracle at all — a class the
+  audit didn't even count until this pass.** `cg_audit.py`'s `audit()` sets
+  `pcells = None` when the arcade table has more scripts than the PS2 table
+  (`si >= pn`), and the pre-existing `needs_manual` counter only increments
+  when `pcells is not None` — so a script index past the end of the PS2
+  offset table was **neither compared nor counted anywhere**, not even in
+  `manu`. The PS2 tables genuinely terminate early here (real
+  `0x00000000` terminator words, not truncation — see §19 on truncation).
+  Measured (`cg_audit.py`'s new `extra` column): **162 scripts, 2,441
+  L-cells** — YANG 1,524, GILL 570, ELENA 200, YUN 93, HUGO 33, ORO 21.
+  **This is an accounting gap, not crash exposure**: the crash-door checks
+  (class (a), the residual door) still cover these cells — they are inside
+  the 133,901-cell census and `residual_audit.py` walks all of it — so no
+  OOB door was silently open. What was silently open is the count: the
+  wrong-sprite class was never "closed" against these 2,441 cells, because
+  nothing ever looked at them. **So the accurate framing of the wrong-sprite
+  class is: closed relative to the oracle's reach** (89 remaining `(c)og`
+  cells, §3), **with 89 remainders + 316 `manu` + 162 extra-script outside
+  that reach** — not "closed" without qualification.
 - **A concrete example found on the Denjin path itself:** `cbca[19..23]` — the
   five scripts `uja7` lands on after the projectile is released — differ:
 
@@ -1514,11 +1609,12 @@ directly dissolves part of the §11.2 residue:
    `cg_audit.py` and require class (a) = 0. **And fix Remy's 6** (§8.K) — one
    range, delta +0x20, then re-run `residual_audit.py` and require the residual
    violation count = 0. They are the same defect class through two different
-   doors, and neither is fixed by the other. **Status 2026-08-30: both ranges
-   are applied in the `fix/arcade-cg-mapping` worktree and audit-verified —
-   see the status blocks in §8.A and §8.K — but neither is committed.** The
-   remaining step is landing them (and reading item **O**'s netplay-digest
-   note first).
+   doors, and neither is fixed by the other. **Status, updated 2026-08-31:
+   both ranges are committed to `fix/arcade-cg-mapping` (`23326679`,
+   `a5bc6a5b`) and audit-verified — see the status blocks in §8.A and
+   §8.K — but neither is merged to `main`/`mister` or verified on-device.**
+   The remaining step is merging them and testing on-device (and reading
+   item **O**'s netplay-digest note first).
 2. **Add the bounds guard** (§8.C **and §8.L**) — converts the whole future
    class from layout-dependent crashes into logged sprite drops. The guard must
    cover **both** `obj_group_table[n]` and the residual index; guarding only the
@@ -2199,12 +2295,20 @@ group — so every one of them is gated on a specific opponent being present, an
 - Every group's offset-table length is now known statically, and 68 of 71 match
   `obj_group_table` exactly; the tool re-derives all of it on each run and will
   flag any future divergence.
-- Across all 133,901 script cells and all 20 OVCT tables, the pre-fix baseline
-  measured the residual out of bounds in exactly **6** places, all Remy →
-  Gill's group, all arcade-adaptation-only (§17.3). **With the §8.K range
-  applied (landed `a5bc6a5b`, 2026-08-30), the current tree measures 0.**
+- Across all 133,901 script cells, the pre-fix baseline measured the residual
+  out of bounds in exactly **6** places, all Remy → Gill's group, all
+  arcade-adaptation-only (§17.3). **With the §8.K range applied (landed
+  `a5bc6a5b`, 2026-08-30), the current tree measures 0.**
 
 **Not closed:**
+
+- **The OVCT `parts_char` path — a separate, still-open 6.** §17.3's "OVCT
+  path" paragraph runs the same bounds check over `parts_char → cg_number`
+  (`eff01.c:169`) for all 20 characters and finds **6 violations, all Elena
+  parts 85-90** — unrelated to Remy's six and untouched by §8.K. This is
+  worklist item **B** (§18), and it is still **OPEN**. Do not read the bullet
+  above as covering "all 20 OVCT tables"; it covers the script-cell residual
+  only.
 
 - **Whether Remy's `nmca[48]` / `exca[30,37,38]` are ever executed.** No jump
   inside Remy's own ten script tables targets them (checked: 0 `jmp`/`jpss`/`jsr`
@@ -2260,10 +2364,18 @@ constant-sourced — but the *field* is shared, and the arithmetic
 > residual door is not empty.** With §8.A applied, class (a) is 0; the residual
 > class is **6** and needs §8.K. When both land, the statement becomes:
 >
-> *"Across all 133,901 arcade script cells and all 20 OVCT tables, no
-> `cg_number` that arcade balance can produce is out of range for
-> `obj_group_table`, and none produces a residual outside its group's offset
-> table."*
+> *"Across all 133,901 arcade script cells, no `cg_number` that arcade balance
+> can produce is out of range for `obj_group_table`, and none produces a
+> residual outside its group's offset table."*
+>
+> **This does NOT extend to the OVCT `parts_char` path.** An earlier draft of
+> this boxed conclusion also claimed "and all 20 OVCT tables" here — that is
+> false and conflicts with §18: Elena's unpatched OVCT tail (parts 85-90,
+> `parts_char` 40182-40187, all ≥ 37664) is exactly an `a_ogt_oob` violation
+> through the OVCT path, and `residual_audit.py`'s R2b check reports it as
+> **6 open violations**, unchanged by either §8.A or §8.K (see §17.3's "OVCT
+> path" paragraph and §18). That is worklist item **B**, and it is still
+> **OPEN** — see §3.
 >
 > **That rests on five things**, each of which the tooling re-checks per run:
 > 1. the parse being complete — **§19 shows no span truncates**, but §19.6 found
