@@ -3673,9 +3673,9 @@ void Decide_PL(s16 PL_id) {
  * the arrangement; bare SELECT repeats whichever one was used last.
  *
  *   down   centre, original sides   P1 = centre - 88, P2 = centre + 88
- *   up     swap sides               P1 = centre + 88, P2 = centre - 88
- *   left   P1 in the left corner    P1 cornered,      P2 = P1 + 176
- *   right  P2 in the right corner   P2 cornered,      P1 = P2 - 176
+ *   up     swap sides in place      last location, sides swapped
+ *   left   left corner, original    wall player touching the far one
+ *   right  right corner, original   wall player touching the far one
  *
  * Directions are screen-absolute, not relative to whoever pressed SELECT:
  * "left" always means the left corner of the stage. Each is tested as a bit
@@ -3684,37 +3684,53 @@ void Decide_PL(s16 PL_id) {
  * ordinary resting stick positions in training), and up-back and up-forward are
  * swap. Down wins over up if a pad somehow reports both.
  *
- * Presets are absolute, not composable: up then left gives "P1 cornered,
- * original sides", not "swapped and cornered".
+ * Location (centre / left / right) and swap are two separate, independently
+ * latched axes, not one flat preset list. down/left/right are absolute: each
+ * sets the location AND clears the swap, so they always give "original
+ * sides" at that location regardless of history. up is the one relative axis:
+ * it sets the swap bit without touching the location, so it means "wherever
+ * we are, put the far player on the wall instead" -- SELECT+right then
+ * SELECT+up leaves both players in the right corner, touching, with sides
+ * swapped, not recentred. Pressing up again is idempotent (still "this
+ * location, swapped"), not a toggle; down/left/right are what clears the
+ * swap bit back to "original sides".
  *
  * The latch is a file-static rather than a GameState field on purpose:
  * MIST_STATE_VER is sizeof(GameState), so a field here would force a
  * MIST_PROTO_VER bump for a mode netplay cannot reach.
  */
-enum TrResetPreset {
-    TR_RESET_CENTRE = 0, /* zero-init default */
-    TR_RESET_SWAP,
-    TR_RESET_LEFT,
-    TR_RESET_RIGHT
+enum TrResetLocation {
+    TR_LOC_CENTRE = 0, /* zero-init default */
+    TR_LOC_LEFT,
+    TR_LOC_RIGHT
 };
 
 /* The half-separation plmv_1020 is called with on the training appear path:
  * player_mv_1000's APPEAR_TYPE_NON_ANIMATED case passes 88, giving P1 and P2
- * 176 apart. The presets reuse both numbers so every arrangement keeps the
- * spacing the engine's own start position has. */
+ * 176 apart. Centre and swap reuse both numbers so those two arrangements
+ * keep the spacing the engine's own start position has. The corners do NOT
+ * use this -- see the touching-distance derivation in
+ * Tr_Reset_Position_Override, which reads the real per-character pushbox
+ * instead of assuming any fixed gap. */
 #define TR_RESET_STEP 88
 
-static s8 Tr_Reset_Preset;
+/* Location and swap are latched independently -- see the header comment for
+ * why up is the one axis that does not reset location. Both zero-init to
+ * "centre, original sides", matching plmv_1020's own output, which is why
+ * that combination alone needs no position override at all. */
+static s8 Tr_Reset_Location;
+static s8 Tr_Reset_Swapped;
 
 /* Set on the reset frame, consumed on the next one. It carries the two halves
  * of the teardown that cannot both happen in the same frame: clearing
  * Suicide[0] again, and rebuilding the effect_84 singleton the pulse kills. */
 static s8 Tr_Reset_Teardown_Pending;
 
-/* Set on the reset frame for the three presets that need a position override,
- * consumed by Tr_Reset_Position_Override from TASK_GAME on the frame plmv_1020
- * writes the start positions. Never set for TR_RESET_CENTRE -- plmv_1020
- * already writes exactly that arrangement, so that path stays untouched. */
+/* Set on the reset frame for every (location, swap) combination that needs a
+ * position override, consumed by Tr_Reset_Position_Override from TASK_GAME on
+ * the frame plmv_1020 writes the start positions. Never set for
+ * (TR_LOC_CENTRE, unswapped) -- plmv_1020 already writes exactly that
+ * arrangement, so that path stays untouched. */
 static s8 Tr_Reset_Position_Pending;
 
 /* Returns 1 and latches the preset when a reset should run this frame.
@@ -3773,16 +3789,26 @@ static s32 Tr_Reset_Read_Input() {
          * training. Vertical is checked before horizontal for the same reason --
          * up-back and up-forward are still "swap", not "corner".
          *
-         * held == 0 falls through with the latch untouched, which is the
-         * "bare SELECT repeats the last preset" case. */
+         * held == 0 falls through with both latches untouched, which is the
+         * "bare SELECT repeats the last (location, swap) combination" case.
+         *
+         * down/left/right are absolute: each sets the location and clears the
+         * swap bit, so they always give "original sides" at that location no
+         * matter what came before. up is the one relative axis -- it sets the
+         * swap bit and deliberately does NOT touch Tr_Reset_Location, so it
+         * means "swap sides at whatever location is already latched" rather
+         * than "recentre and swap". See the file header comment. */
         if (held & SWK_DOWN) {
-            Tr_Reset_Preset = TR_RESET_CENTRE;
+            Tr_Reset_Location = TR_LOC_CENTRE;
+            Tr_Reset_Swapped = 0;
         } else if (held & SWK_UP) {
-            Tr_Reset_Preset = TR_RESET_SWAP;
+            Tr_Reset_Swapped = 1;
         } else if (held & SWK_LEFT) {
-            Tr_Reset_Preset = TR_RESET_LEFT;
+            Tr_Reset_Location = TR_LOC_LEFT;
+            Tr_Reset_Swapped = 0;
         } else if (held & SWK_RIGHT) {
-            Tr_Reset_Preset = TR_RESET_RIGHT;
+            Tr_Reset_Location = TR_LOC_RIGHT;
+            Tr_Reset_Swapped = 0;
         }
 
         return 1;
@@ -3888,6 +3914,92 @@ static void Tr_Reset_Clamp_To_Field(PLW* wk) {
  * wu.target_adrs, which set_rl_waza dereferences, survives the reset teardown:
  * setup_any_data goes through set_base_data_tiny, which does not write it, and
  * it points into the file-scope plw[2] array so it cannot dangle. */
+
+/* hit_check_subroutine (engine/hitcheck.c) computes two X-axis candidate
+ * separations for a pair of pushboxes -- d2 (right edge of the far box minus
+ * left edge of the near box) and d3-d2 (right edge of the near box minus left
+ * edge of the far box) -- and returns whichever is SMALLER, because during
+ * live combat the boxes are already only lightly interpenetrating and the
+ * smaller candidate is the true (shallow) penetration depth on whichever side
+ * the boxes actually overlap.
+ *
+ * That assumption breaks here. The corner override stacks the far player
+ * exactly on top of the near one (zero separation, not a shallow live-combat
+ * overlap) and always needs the SAME one of the two candidates for a given
+ * corner side -- not whichever happens to be smaller. For the left corner
+ * (near player mirrored, facing right) the needed quantity is the far box's
+ * right edge distance from the near box's own right edge, i.e. d3-d2; for the
+ * right corner (near player unmirrored, facing left) it is d2. Concretely:
+ * with both boxes at the same X, d2 = hd_near[0]+hd_near[1]+hd_far[0]+hd_far[1]
+ * and d3-d2 = -(hd_near[0]+hd_far[0]) for the left corner, and the mirror
+ * image for the right corner -- so hit_check_subroutine's min() picks the
+ * WRONG one whenever hd_near[0]+hd_far[0] is not exactly -(hd_near[1]+hd_far[1])/2,
+ * i.e. whenever the two boxes are not exactly X-symmetric about the character
+ * origin as a pair. Measured against the shipped ROM (all 20 characters'
+ * standing/appear-pose HOSA entries, traced via plmv_1010 ->
+ * Player_normal(routine_no[2]==1) -> Normal_01000 -> set_char_move_init(&wu,
+ * 0, 0) -> char_table[0][0] -> nmca script 0, cell 0 -> HIIT.hoix -> HOSA):
+ * every character's standing pushbox is exactly origin-symmetric (hd0 ==
+ * -hd1/2), so hit_check_subroutine's min() happens to agree with the correct
+ * directional value for every reachable matchup today -- the bug was latent,
+ * not currently visible on any pad. It is not a property this code can rely
+ * on: HOSA entries for non-standing poses are NOT generally symmetric (72% of
+ * all 657 live HOSA entries across the roster have a nonzero centre offset),
+ * so a future balance change to a standing box, or any other pose ever routed
+ * through this path, could reintroduce the shortfall silently.
+ *
+ * This duplicates hit_check_subroutine's X/Y overlap arithmetic verbatim
+ * rather than reusing it, because the function that computes both candidates
+ * collapses them to a single min() before returning and has other call sites
+ * (hitcheck.c:1848, :1988) that must keep that behaviour. want_far_edge picks
+ * which candidate this corner needs: 1 (d3-d2) for the left corner, 0 (d2)
+ * for the right corner -- see Tr_Reset_Position_Override's caller, which
+ * passes Tr_Reset_Location == TR_LOC_LEFT directly. Returns 0, matching
+ * hit_check_subroutine's own convention, when the boxes do not overlap once
+ * stacked at zero separation (X or Y) -- the caller's existing raw_meri <= 0
+ * fallback still catches that case. */
+static s16 Tr_Reset_Body_Separation(WORK* near_wk, WORK* far_wk, const s16* near_hd, const s16* far_hd, s16 want_far_edge) {
+    s16 d0;
+    s16 d1;
+    s16 d2;
+    s16 d3;
+
+    d0 = *near_hd++;
+    d1 = *near_hd++;
+
+    if (near_wk->rl_flag) {
+        d0 = -d0;
+        d0 -= d1;
+    }
+
+    d0 += near_wk->xyz[0].disp.pos;
+    d2 = *far_hd++;
+    d3 = *far_hd++;
+
+    if (far_wk->rl_flag) {
+        d2 = -d2;
+        d2 -= d3;
+    }
+
+    d2 += far_wk->xyz[0].disp.pos;
+    d2 += d3 - d0;
+    d3 += d1;
+
+    if ((u32)d2 >= d3) {
+        return 0;
+    }
+
+    d0 = (near_wk->xyz[1].disp.pos + *near_hd++) - (far_wk->xyz[1].disp.pos + *far_hd++);
+    d0 += d1 = *near_hd;
+    d1 += *far_hd;
+
+    if ((u32)d0 >= d1) {
+        return 0;
+    }
+
+    return want_far_edge ? (d3 - d2) : d2;
+}
+
 void Tr_Reset_Position_Override() {
     s16 centre;
 
@@ -3912,20 +4024,19 @@ void Tr_Reset_Position_Override() {
 
     Tr_Reset_Position_Pending = 0;
 
-    switch (Tr_Reset_Preset) {
-    case TR_RESET_SWAP:
-        /* Stage-default camera, so the walls Player_control already computed
-         * this frame still hold and centre is the one plmv_1020 just used. */
+    if (Tr_Reset_Location == TR_LOC_CENTRE) {
+        /* Only reachable as (centre, swapped) -- Tr_Reset_Apply never arms
+         * this override for (centre, unswapped); plmv_1020's own output
+         * already is that arrangement. Stage-default camera, so the walls
+         * Player_control already computed this frame still hold and centre
+         * is the one plmv_1020 just used. */
         centre = get_center_position();
         plw[0].wu.xyz[0].disp.pos = centre + TR_RESET_STEP;
         plw[1].wu.xyz[0].disp.pos = centre - TR_RESET_STEP;
         Tr_Reset_Clamp_To_Field(&plw[0]);
         Tr_Reset_Clamp_To_Field(&plw[1]);
-        break;
-
-    case TR_RESET_LEFT:
-    case TR_RESET_RIGHT: {
-        s16 limit = (Tr_Reset_Preset == TR_RESET_LEFT) ? bg_w.bgw[1].l_limit2 : bg_w.bgw[1].r_limit2;
+    } else {
+        s16 limit = (Tr_Reset_Location == TR_LOC_LEFT) ? bg_w.bgw[1].l_limit2 : bg_w.bgw[1].r_limit2;
 
         /* The camera has to be moved before the players, because the field
          * walls are derived from it: set_scrrrl puts scrl/scrr at
@@ -4011,30 +4122,126 @@ void Tr_Reset_Position_Override() {
          * case the clamp is skipped (bg_app / bg_app_stop): the character is
          * half a body width off the corner instead of stuck outside the field.
          *
-         * The far player is placed from the *clamped* near player, so the
-         * spacing is exactly 176 whatever the near character's width is. */
-        if (Tr_Reset_Preset == TR_RESET_LEFT) {
-            plw[0].wu.xyz[0].disp.pos = scrl;
-            Tr_Reset_Clamp_To_Field(&plw[0]);
-            plw[1].wu.xyz[0].disp.pos = plw[0].wu.xyz[0].disp.pos + (2 * TR_RESET_STEP);
-            Tr_Reset_Clamp_To_Field(&plw[1]);
-        } else {
-            plw[1].wu.xyz[0].disp.pos = scrr;
-            Tr_Reset_Clamp_To_Field(&plw[1]);
-            plw[0].wu.xyz[0].disp.pos = plw[1].wu.xyz[0].disp.pos - (2 * TR_RESET_STEP);
-            Tr_Reset_Clamp_To_Field(&plw[0]);
+         * near_ix is whichever player the swap bit puts on the wall: P1 for
+         * (left, unswapped) or (right, swapped), P0 otherwise. That is the
+         * only thing the swap bit changes about a corner reset -- the wall
+         * side itself still comes from Tr_Reset_Location alone. */
+        {
+            s16 near_ix;
+            s16 far_ix;
+            s16 wall_pos;
+            s16 near_rl;
+            s16 raw_meri;
+
+            if (Tr_Reset_Location == TR_LOC_LEFT) {
+                near_ix = Tr_Reset_Swapped ? 1 : 0;
+                wall_pos = scrl;
+                near_rl = 1; /* faces right, toward the far player */
+            } else {
+                near_ix = Tr_Reset_Swapped ? 0 : 1;
+                wall_pos = scrr;
+                near_rl = 0; /* faces left, toward the far player */
+            }
+            far_ix = near_ix ^ 1;
+
+            plw[near_ix].wu.xyz[0].disp.pos = wall_pos;
+            Tr_Reset_Clamp_To_Field(&plw[near_ix]);
+
+            /* Touching, not a fixed gap: this is BUG 1 from the design doc --
+             * a hardcoded 176 (the *centre* preset's spacing) left the same
+             * gap in the corner as standing at centre, and the true minimum
+             * is per-character (satse alone is the field-wall half-width,
+             * not the body-to-body one). set_rl_waza normally derives
+             * rl_flag every frame from relative X, but that has not run for
+             * these positions yet, and hit_check_subroutine (and the local
+             * variant below) mirrors each pushbox off rl_flag -- so both
+             * flags are set from the known corner geometry (the wall player
+             * always faces the far one) before the box read, not left at
+             * whatever plmv_1020 or a stale frame wrote.
+             *
+             * The far player is placed exactly on top of the near one first,
+             * so Tr_Reset_Body_Separation's return -- the real per-frame
+             * pushbox overlap for this exact character pair, read from
+             * wu.h_hos->hos_box (charset.c: h_hos = hosei_adrs +
+             * cg_ja.hoix, i.e. ROM data for the current animation cel, not a
+             * constant this code could hardcode) -- *is* the pixel gap the
+             * two boxes need, not a damped per-frame push. check_body_touch
+             * (pls02.c) applies meri_case_switch to hit_check_subroutine's own
+             * return to turn it into a gradual live-combat shove; that
+             * damping is deliberately skipped here for an instant, exact
+             * snap, and check_body_touch's own branch selection (one/two,
+             * gated on the ichikannkei global) is skipped too -- ichikannkei
+             * is computed once per frame in move_player_work, *before*
+             * Player_move runs, so on this exact frame it still reflects the
+             * pre-reset positions and cannot be trusted for where the corner
+             * is putting these two now. Which player is "near" and which is
+             * "far" is already known from Tr_Reset_Location and
+             * Tr_Reset_Swapped, so none of that branch logic is needed: the
+             * far player is simply pushed away from the wall by the
+             * separation Tr_Reset_Body_Separation reports.
+             *
+             * Tr_Reset_Body_Separation, not hit_check_subroutine directly:
+             * hit_check_subroutine returns min(d2, d3-d2), which is only the
+             * correct separation for a live, lightly-interpenetrating hit --
+             * at the zero-separation stack this override creates, the corner
+             * needs a SPECIFIC one of those two candidates, not whichever is
+             * smaller (see Tr_Reset_Body_Separation's own comment for the
+             * full derivation and the measured ROM data backing it). Every
+             * character's shipped standing/appear pushbox happens to be
+             * exactly origin-symmetric, which is exactly the condition under
+             * which the two candidates agree -- so this was not reachable
+             * with today's roster, but is not something this code can lean
+             * on for any future pose or balance change.
+             *
+             * hos_box[0] == 0 is check_body_touch's own "no pushbox this
+             * pose" guard, copied verbatim; it should not be reachable for a
+             * standing appear, but if it is, or the boxes somehow do not
+             * overlap at zero separation, this falls back to the old fixed
+             * spacing rather than leaving the two stacked on the wall. */
+            plw[near_ix].wu.rl_flag = near_rl;
+            plw[far_ix].wu.rl_flag = near_rl ^ 1;
+            plw[far_ix].wu.xyz[0].disp.pos = plw[near_ix].wu.xyz[0].disp.pos;
+
+            if (plw[near_ix].wu.h_hos->hos_box[0] != 0 && plw[far_ix].wu.h_hos->hos_box[0] != 0) {
+                raw_meri = Tr_Reset_Body_Separation(
+                    &plw[near_ix].wu, &plw[far_ix].wu, plw[near_ix].wu.h_hos->hos_box, plw[far_ix].wu.h_hos->hos_box,
+                    (Tr_Reset_Location == TR_LOC_LEFT)
+                );
+            } else {
+                raw_meri = 0;
+            }
+
+            if (raw_meri <= 0) {
+                raw_meri = 2 * TR_RESET_STEP;
+            }
+
+            /* This clamp can only quietly reopen a gap if it moves the far
+             * player TOWARD the near one, which needs
+             * satse[far] > satse[near] + raw_meri (the far player's own
+             * near-wall bound sits closer to the wall than where raw_meri
+             * already placed it). satse's widest-to-narrowest spread is
+             * 40-24 = 16 (satse[20], pls02.c), so that can only happen when
+             * raw_meri < 16. A correct standing-pose separation never gets
+             * that small: every character's real ROM pushbox width (hd1) is
+             * 42-60, so raw_meri is at minimum roughly half that even in the
+             * most lopsided real pairing -- see Increment 4's measured
+             * values (Ryu/Makoto 50, Hugo/Yun 51). Only the disabled-pushbox
+             * fallback above (2 * TR_RESET_STEP = 176) is anywhere near this
+             * clamp's reach, and 176 is also well clear of 16. */
+            plw[far_ix].wu.xyz[0].disp.pos = (Tr_Reset_Location == TR_LOC_LEFT)
+                                                  ? plw[near_ix].wu.xyz[0].disp.pos + raw_meri
+                                                  : plw[near_ix].wu.xyz[0].disp.pos - raw_meri;
+            Tr_Reset_Clamp_To_Field(&plw[far_ix]);
         }
-
-        break;
-    }
-
-    default:
-        return;
     }
 
     /* set_rl_waza's rule: greater X faces left (0), lesser X faces right (1).
-     * Its equal-X tie-break cannot be reached from here -- the presets always
-     * leave the two 176 apart. */
+     * This just reconfirms what the branches above already set (centre/swap
+     * from the fixed 176 spacing, corners from near_rl and the derived
+     * touching separation) -- kept as a single unconditional tail so every
+     * arrangement goes through the same final rule instead of each branch
+     * hand-deriving it. Its equal-X tie-break cannot be reached from here --
+     * no branch above can leave the two at the same X. */
     plw[0].wu.rl_flag = (plw[0].wu.xyz[0].disp.pos > plw[1].wu.xyz[0].disp.pos) ? 0 : 1;
     plw[1].wu.rl_flag = (plw[1].wu.xyz[0].disp.pos > plw[0].wu.xyz[0].disp.pos) ? 0 : 1;
     plw[0].wu.rl_waza = plw[0].wu.rl_flag;
@@ -4143,10 +4350,11 @@ static void Tr_Reset_Apply() {
     Suicide[0] = 1;
     Tr_Reset_Teardown_Pending = 1;
 
-    /* Armed here, two frames before it fires. TR_RESET_CENTRE is deliberately
-     * excluded: plmv_1020 already writes that arrangement, so leaving the flag
-     * clear keeps the shipped centre path byte-for-byte as it was. */
-    Tr_Reset_Position_Pending = (Tr_Reset_Preset != TR_RESET_CENTRE);
+    /* Armed here, two frames before it fires. (centre, unswapped) is
+     * deliberately excluded: plmv_1020 already writes that arrangement, so
+     * leaving the flag clear keeps the shipped centre path byte-for-byte as
+     * it was. Every other (location, swap) combination needs the override. */
+    Tr_Reset_Position_Pending = !(Tr_Reset_Location == TR_LOC_CENTRE && !Tr_Reset_Swapped);
 
     Tr_Reset_Release_L8();
 

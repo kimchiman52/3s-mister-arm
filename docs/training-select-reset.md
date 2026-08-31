@@ -15,19 +15,33 @@ timestamp, not an address, and is not maintained (see `AGENTS.md`).
 
 ## What ships today
 
-| Input | Result | P1 X | P2 X | Camera |
+Location (centre / left / right) and swap (original sides / sides swapped)
+are two independently latched axes now, not one flat preset list —
+`Tr_Reset_Location` and `Tr_Reset_Swapped`, both `menu.c` file-statics. down,
+left and right are absolute: each sets the location **and clears the swap
+bit**, so they always give "original sides" at that location regardless of
+history. up is the one relative axis: it sets the swap bit **without
+touching the location**, so it means "sides swapped, wherever we already
+are" — SELECT+→ then SELECT+↑ leaves both players in the right corner,
+touching, with sides swapped, not recentred.
+
+| Input | Result | Near/wall side | Far side | Camera |
 |---|---|---|---|---|
-| SELECT, no direction | Repeat the last preset | — | — | — |
-| SELECT + ↓ (incl. ↓↙ / ↓↘) | Centre, original sides | `centre − 88` | `centre + 88` | stage default |
-| SELECT + ↑ (incl. ↑↖ / ↑↗) | Swap sides | `centre + 88` | `centre − 88` | stage default |
-| SELECT + ← | P1 in the left corner | cornered | P1 + 176 | `bgw[1].l_limit2` |
-| SELECT + → | P2 in the right corner | P2 − 176 | cornered | `bgw[1].r_limit2` |
+| SELECT, no direction | Repeat the last (location, swap) combination | — | — | — |
+| SELECT + ↓ (incl. ↓↙ / ↓↘) | Centre, original sides | — | — | stage default |
+| SELECT + ↑ (incl. ↑↖ / ↑↗) | Swap sides at the current location | — | — | unchanged from current location |
+| SELECT + ← | Left corner, original sides | P1 cornered | P2, touching | `bgw[1].l_limit2` |
+| SELECT + → | Right corner, original sides | P2 cornered | P1, touching | `bgw[1].r_limit2` |
+| SELECT + ← then SELECT + ↑ | Left corner, swapped | P2 cornered | P1, touching | `bgw[1].l_limit2` |
+| SELECT + → then SELECT + ↑ | Right corner, swapped | P1 cornered | P2, touching | `bgw[1].r_limit2` |
 | START + SELECT | Unchanged: soft reset (`Check_Reset_IO`) | | | |
 
-`centre` is `get_center_position()` — 512 on most stages, 464 on stages 0
-and 19. 88 is the `step` `player_mv_1000` passes `plmv_1020` on the
-`APPEAR_TYPE_NON_ANIMATED` path, which is the one training takes; 176 is the
-separation that produces.
+At centre the arrangement is still the fixed spacing plmv_1020 itself uses:
+`centre ∓ 88` (`centre` is `get_center_position()` — 512 on most stages, 464
+on stages 0 and 19; 88 is the `step` `player_mv_1000` passes `plmv_1020` on
+the `APPEAR_TYPE_NON_ANIMATED` path, which is the one training takes). The
+corners do **not** use this spacing — see *Corners: what is computed and
+what is not* for the touching-distance derivation, which is BUG 1's fix.
 
 Directions are **screen-absolute**, not relative to whoever pressed SELECT:
 ← is always the left corner. Each is tested as a bit, so the diagonals resolve
@@ -36,9 +50,13 @@ tested first because down-back and down-forward are the ordinary resting stick
 positions in training; an exact word match would swallow the reset for most of
 what a player actually holds.
 
-Presets are **absolute, not composable**: ↑ then ← gives "P1 cornered, original
-sides", not "swapped and cornered". Bare SELECT repeats the latch
-(`Tr_Reset_Preset`), which is a `menu.c` file-static — see *Netplay safety*.
+down/left/right are still **absolute**: ↓ then ← gives "left corner, original
+sides" no matter what came before, because each of those three clears the
+swap bit as well as setting the location. ↑ is the one **composable** axis —
+"same location, swapped" — which is BUG 2's fix; pressing ↑ twice in a row is
+idempotent, not a toggle, since it always means "this location, swapped," and
+only down/left/right clear the swap bit back to "original sides." Bare SELECT
+repeats the latched (location, swap) pair — see *Netplay safety*.
 
 The reset plays the menu confirm one-shot, `SE_selected()`
 (`SsRequest(98)`, `sound/sound3rd.c`), on the frame the teardown runs. That is
@@ -180,14 +198,77 @@ latch, on the same reasoning as the teardown latch it clears beside it.
 
 ### Corners: what is computed and what is not
 
-- **No corner arithmetic.** `set_field_hosei_flag` (`engine/pls02.c`) clamps to
-  `[scrl + satse, scrr - satse]`, with `satse[20]` the per-character
-  half-width. The override writes X *to the wall* and re-runs the clamp pair in
+- **No wall arithmetic for the near player.** `set_field_hosei_flag`
+  (`engine/pls02.c`) clamps to `[scrl + satse, scrr - satse]`, with
+  `satse[20]` the per-character half-width used only for the *field* wall.
+  The override writes X *to the wall* and re-runs the clamp pair in
   `move_P1_move_P2`'s exact shape (`scrr` first, `scrl` only if the first
   reported the player was inside). Writing to the wall rather than past it also
   degrades gracefully if `bg_app` / `bg_app_stop` ever suppress the clamp.
-  The far player is then placed 176 from the *clamped* near player, so the
-  spacing is exact whatever the near character's width is.
+  `near_ix` — which of the two players ends up on the wall — is the only thing
+  the swap bit changes about a corner reset; the wall side itself still comes
+  from `Tr_Reset_Location` alone.
+- **No corner arithmetic for the far player either, and no fixed gap.** An
+  earlier revision placed the far player a hardcoded 176 from the clamped near
+  one — the same separation the *centre* preset uses — which left the same
+  visible gap in the corner as standing at centre (the design doc's own BUG 1).
+  `satse` is not the right table to fix it with either: it is the field-wall
+  half-width, not the body-to-body one. The real body-to-body distance is the
+  per-character, per-animation-cel **pushbox**, `wu.h_hos->hos_box`
+  (`charset.c`: `h_hos = hosei_adrs + cg_ja.hoix`, i.e. ROM data selected by
+  the current sprite cel, not a constant this code could hardcode or derive
+  from source alone — same category as the `cg_zoom` data noted under
+  *Unverified in simulation*, below).
+
+  `check_body_touch` (`engine/pls02.c`) is the engine's own body-collision
+  push-apart, and it already runs every frame — including during an ordinary
+  appear, so this is not new machinery, just reused earlier. But calling it
+  as-is is not safe from here: it applies `meri_case_switch` to damp the push
+  into a gradual per-frame shove (correct for a live hit, wrong for an instant
+  snap — it would take several visible frames to fully separate), and its
+  one/two branch selection is gated on the `ichikannkei` global, which
+  `move_player_work` computes once per frame **before** `Player_move` runs —
+  so on this exact frame it still reflects the *pre-reset* positions and
+  cannot be trusted for where the corner is placing these two now.
+
+  The override sidesteps both problems rather than reimplementing them: which
+  player is near and which is far is already known from `Tr_Reset_Location`
+  and `Tr_Reset_Swapped`, so `ichikannkei`'s branch logic is not needed at
+  all. It sets `rl_flag` for both players from that known geometry (the wall
+  player always faces the far one — `set_rl_waza` has not run for these
+  positions yet, and `hit_check_subroutine` mirrors each pushbox off
+  `rl_flag`), places the far player exactly on top of the near one, and calls
+  `Tr_Reset_Body_Separation` (`menu.c`, a local helper, see Increment 4) — the
+  **raw**, undamped overlap depth, from the same X/Y arithmetic
+  `check_body_touch` uses before applying `meri_case_switch`. **Not
+  `hit_check_subroutine` directly**: that function collapses its two
+  candidate separations to `min(d2, d3-d2)`, which is only correct for a
+  live, lightly-interpenetrating hit; at this override's zero-starting-
+  separation stack, a given corner needs a *specific* one of the two
+  candidates, not whichever is smaller, so `Tr_Reset_Body_Separation`
+  duplicates the arithmetic and returns the corner-selected candidate
+  instead — see Increment 4 for the bug this replaced and how it was
+  verified against real character data. With that selection, the returned
+  value *is* the exact pixel gap the two pushboxes need: the far player is
+  placed `near ± raw_meri` (away from the wall) in one write, then
+  re-clamped to the field. No loop, no multi-frame convergence, no visible
+  chase — it lands on the same frame as everything else the override writes.
+
+  `hos_box[0] == 0` is `check_body_touch`'s own "no pushbox this pose" guard,
+  copied verbatim; if either box is disabled, or the boxes somehow don't
+  overlap at zero separation, the override falls back to the old fixed
+  176 spacing rather than leaving the two stacked on the wall. That fallback
+  is believed unreachable for a standing appear pose but is not proven —
+  see *Unverified in simulation*.
+
+  This makes the touching distance genuinely **character-pair-dependent** by
+  construction: it is read fresh from each character's own ROM pushbox data
+  every time the corner preset fires, not a constant tuned for one matchup.
+  It has now been spot-checked against real character data (a separate,
+  read-only ROM audit checkout, not this worktree) — see Increment 4 for the
+  full derivation, the standing-pose pushbox values for all 20 characters,
+  and why the fix does not change behavior for any of them despite being a
+  genuine correctness fix. See *Verification status*.
 - **The camera must move before the players.** `set_scrrrl` (`engine/plcnt.c`)
   is the only writer of `scrl` / `scrr` and derives them from
   `get_center_position()`; `Player_control` runs it at the top of the frame,
@@ -402,10 +483,15 @@ purpose. `MIST_STATE_VER` is `sizeof(GameState)` (`src/netplay/mist_handshake.c`
 so a field there would force an `EXPECTED_GAME_STATE_SIZE` re-pin *and* a
 `MIST_PROTO_VER` bump for a mode netplay cannot reach.
 
-`sizeof(GameState)` is unchanged at 17772 and `MIST_PROTO_VER` remains 4; the
-`_Static_assert` in `game_state.c` proves the first at build time. Everything
-the feature writes (`plw`, `bg_w`, `Suicide`, `pcon_rno`) is already
-rollback-tracked.
+`sizeof(GameState)` is unchanged at 17772 and `MIST_PROTO_VER` remains 4,
+because the feature adds no `GameState` field at all -- `Tr_Reset_Location`,
+`Tr_Reset_Swapped` and the other reset-latch statics are plain `menu.c`
+file-statics (see above). The `_Static_assert` in `game_state.c` that pins
+`EXPECTED_GAME_STATE_SIZE` only evaluates on a 32-bit build
+(`#if UINTPTR_MAX == 0xffffffff`; the `#else` arm says so explicitly: "64-bit
+build: tripwires are disabled"), so it does not run, and proves nothing, on a
+64-bit host compile. Everything the feature writes (`plw`, `bg_w`, `Suicide`,
+`pcon_rno`) is already rollback-tracked.
 
 ## Arcade balance
 
@@ -477,6 +563,117 @@ simulation-logic change — the reset writes only training-gated state) and the
 desync/rollback gates (training-only, netplay-unreachable, no `GameState`
 change).
 
+### Increment 3: corner touching-distance and composable up-swap
+
+Fixed two user-reported bugs, both on device (Makoto vs Ryu): the corner
+presets left the same gap the centre preset does (no actual "touching"), and
+↑ always recentred-and-swapped instead of swapping in place at whatever
+corner was already latched. Both are covered above (the *What ships today*
+table, *Corners: what is computed and what is not*, and the header comment on
+`Tr_Reset_Read_Input`).
+
+Verified this round: host build (`cmake -B build/host && cmake --build
+build/host -j8`), clean, no warnings in `menu.c`. `sizeof(GameState)` staying
+at 17772 is a structural fact about this diff, not something this build
+proved: `Tr_Reset_Location` and `Tr_Reset_Swapped` are plain `menu.c`
+file-statics, not `GameState` fields, same as the latch they replace, so no
+`GameState` layout change is possible here regardless of what any build
+checks. The `game_state.c` `_Static_assert` that pins `EXPECTED_GAME_STATE_SIZE`
+does **not** run on this host build at all — it sits inside
+`#if UINTPTR_MAX == 0xffffffff`, and the host is 64-bit macOS, so the `#else`
+arm ("64-bit build: tripwires are disabled") is what actually compiled; the
+assert evaluates nothing here. It would need a 32-bit or ARM cross-compile to
+mean anything as a build-time check. **Not built for ARM or deployed to
+device this round** — no ROM/character-data assets are present in this
+worktree, so an ARM build was not possible here; everything below the build
+is a mechanical/code trace, not an observed result. See the new checklist
+items below.
+
+### Increment 4: corner separation used the wrong candidate of a min()
+
+A review of Increment 3 found that `hit_check_subroutine`'s return is not the
+right quantity for the corner override to apply directly. That function
+computes two X-axis candidate separations for a pair of pushboxes — the far
+box's right edge distance from the near box's left edge (`d2`), and the near
+box's right edge distance from the far box's left edge (`d3-d2`) — and returns
+`min(d2, d3-d2)`, because during live combat the boxes are only lightly
+interpenetrating and the smaller candidate is the true shallow-penetration
+depth on whichever side they actually overlap. That reasoning does not hold at
+the override's zero-separation stack: the far player is placed exactly on top
+of the near one, not lightly overlapping it, and a given corner always needs
+the *same* one of the two candidates — d3-d2 for the left corner, d2 for the
+right (near player mirrored vs. unmirrored respectively) — not whichever is
+smaller. The two candidates are equal only when the near/far box pair is
+exactly X-symmetric about the character origin as a pair; otherwise `min()`
+silently picks the wall-toward quantity instead of the wall-away one for one
+of the two corners, under-separating the pair by up to `2·|c_near + c_far|`
+where `c = hd[0] + hd[1]/2` is each box's own centre offset.
+
+**Fix:** `Tr_Reset_Body_Separation`, a new static helper right above
+`Tr_Reset_Position_Override`, duplicates `hit_check_subroutine`'s X/Y overlap
+arithmetic verbatim (that function has other call sites — hitcheck.c:1848,
+:1988 — that must keep taking the min, so it is not changed) but returns the
+corner-selected candidate instead of the min. The call site passes
+`Tr_Reset_Location == TR_LOC_LEFT` as the selector. Everything else about the
+approach (per-character ROM pushbox data, instant snap, the `hos_box[0] == 0`
+fallback) is unchanged.
+
+**Verified this round, three ways:**
+
+1. *Synthetic arithmetic*, compiled and run (not hand-traced): a C harness
+   (`hit_check_subroutine` and `Tr_Reset_Body_Separation` copied verbatim,
+   plus a small driver that stacks two boxes at zero separation, applies the
+   candidate as a push, and re-runs `hit_check_subroutine` to measure residual
+   overlap) reproduces the predicted bug exactly — a back-skewed symmetric
+   matchup (`hd0=-30, hd1=40`) leaves `residual_overlap=40` under the old
+   code in both corners, and `0` under the fix, in every case tried
+   (symmetric, forward-skew, back-skew, and two genuinely mismatched
+   near/far shapes).
+2. *Host build*: `cmake -B build/host && cmake --build build/host -j8` is
+   clean, no warnings in `menu.c`.
+3. *Real ROM pushbox data*: the "no ROM/character-data assets in this
+   worktree" limitation noted in Increment 3 was about this worktree, not the
+   machine — a sibling checkout
+   (`3sx-mister-arcade/tools/arcade-audit`, read-only, its own
+   `cg_audit.py`/`data_audit.py`) already decodes every character's HOSA
+   (pushbox) table out of the decrypted CPS3 ROM. Used it (via a private
+   script, not committed to that repo) to pull the actual standing/appear-pose
+   pushbox for all 20 characters. The pose itself is traced through source,
+   not assumed: `plmv_1010` sets `routine_no = [3,0,1,0]`; `Player_normal`
+   dispatches on `routine_no[2]==1` to `Normal_01000` (`plpnm.c`), whose
+   `routine_no[3]==0` branch calls `set_char_move_init(&wk->wu, 0, 0)`
+   (`charset.c`) — `char_table[0][0]`, i.e. `KOC2SEC[0]` = the `nmca` script
+   table, script index 0, cell 0 — the exact cel active when
+   `Tr_Reset_Position_Override` reads `h_hos` later the same frame.
+
+   **Result: every one of the 20 characters' standing/appear pushboxes is
+   exactly origin-symmetric** (`hd0 == -hd1/2`, e.g. Ryu `(-25, 50, 0, 84)`,
+   Makoto `(-25, 50, 0, 71)`, Hugo — the widest, `hd1=60` — `(-30, 60, 0,
+   101)`, Yun — the narrowest, `hd1=42` — `(-21, 42, 0, 70)`). That is exactly
+   the condition under which the old `min()` code and the fix agree, so **the
+   bug was latent, not visible on any pad with the shipped roster**: Ryu vs.
+   Makoto (the pair actually tested on device) and Hugo vs. Yun were both
+   re-run through the same compiled harness using these real values in all
+   four corner/near-far combinations, and old and fixed code produce the
+   identical separation (50 for Ryu/Makoto, 51 for Hugo/Yun) with zero
+   residual either way. The fix is not a behavior change for today's roster —
+   it is a correctness fix for an assumption the old code depended on without
+   checking. That the assumption happens to hold is not something this code
+   should keep relying on: a full census of every live HOSA entry (any
+   `hos_box[0] != 0`) across all 20 characters — 657 entries, covering every
+   pose, not just standing — found 475 of them (72.3%) are **not**
+   origin-symmetric. Standing poses are uniformly symmetric in this ROM, but
+   nothing enforces that as an invariant, so a future balance change to a
+   standing box, or this path ever being reached from a non-standing pose,
+   could reintroduce the shortfall silently were the fix not in place.
+
+**Not built for ARM or deployed to device this round** — this worktree still
+has no ROM/character-data assets to link into a running build here, only the
+separately-checked-out ROM used for the read-only data audit above; an
+on-device retest of Makoto vs Ryu (or any pair) is still needed to confirm the
+visible behavior, though the geometry itself is now verified against the real
+data those characters ship with, not a synthetic stand-in.
+
 ### Still outstanding — needs a human with a pad, under arcade balance
 
 - [ ] **Acceptance criterion:** after a reset, both pads control their
@@ -502,17 +699,29 @@ Per preset (↑ / ← / →), under arcade balance:
 
 - [ ] Positions **and facing** are right on frame 1, not frame 2 — no one-frame
       back-to-back render.
-- [ ] ↑ swaps sides; ↓ afterwards puts them back (presets are absolute).
-- [ ] ← puts P1 **corner-adjacent** on the left, → puts P2 corner-adjacent on
-      the right, and the gap looks the same for a wide character (Hugo,
-      `satse` 40) and a narrow one (Ibuki/Yun, 24).
+- [ ] ↓ afterwards recentres and un-swaps regardless of history (down/left/right
+      are absolute).
+- [ ] Corner touching, no gap: ← and → put the two characters **touching**, not
+      the centre preset's spacing, and the pushbox-derived distance holds up
+      for a wide character (Hugo) and a narrow one (Ibuki/Yun) — this is BUG 1.
+      Watch specifically for the fallback firing (176 spacing again, i.e. the
+      old gap) — that would mean `hos_box[0] == 0` was hit for a standing
+      appear pose, which is believed unreachable but not proven.
+- [ ] **↑ is composable, not absolute (BUG 2):** SELECT+→ then SELECT+↑ leaves
+      both players in the **right** corner, touching, sides swapped — not
+      recentred. Same for SELECT+← then SELECT+↑ in the left corner. Pressing
+      ↑ a second time in a row is a no-op (still "this location, swapped"),
+      not a toggle back to original sides — only ↓/←/→ clear the swap bit.
 - [ ] Corner camera lands on the same frame as the characters, with **no
-      visible chase** and no parallax layer left behind at its stage default.
+      visible chase** and no parallax layer left behind at its stage default —
+      including after a swap-in-place (↑ at a corner), which moves no camera.
 - [ ] The same, **taken mid-super** (a Super Art with a camera move, e.g. a
       cinematic freeze) — this is the case an in-flight `chase_flag` used to
       break, and the one that exercises both chase clears.
-- [ ] Bare SELECT repeats the last preset, across all four.
-- [ ] ↑↖ / ↑↗ swap (they do not corner), ↓↙ / ↓↘ still centre.
+- [ ] Bare SELECT repeats the last (location, swap) combination, including a
+      swapped corner.
+- [ ] ↑↖ / ↑↗ swap in place (they do not corner or recentre), ↓↙ / ↓↘ still
+      centre and un-swap.
 - [ ] A reset that is interrupted (training menu, soft reset) does not leave a
       preset armed for the next round's appear.
 
