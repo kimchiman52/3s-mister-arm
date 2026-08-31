@@ -3672,23 +3672,37 @@ void Decide_PL(s16 PL_id) {
  * black wipe, no BGM restart and no round transition. A held direction picks
  * the arrangement; bare SELECT repeats whichever one was used last.
  *
- * Only the centre preset (down, or bare SELECT) exists so far. The other three
- * need a post-Player_move position override plus a facing recompute, so
- * Tr_Reset_Read_Input deliberately ignores up/left/right for now rather than
- * quietly resolving them to centre.
+ *   down   centre, original sides   P1 = centre - 88, P2 = centre + 88
+ *   up     swap sides               P1 = centre + 88, P2 = centre - 88
+ *   left   P1 in the left corner    P1 cornered,      P2 = P1 + 176
+ *   right  P2 in the right corner   P2 cornered,      P1 = P2 - 176
+ *
+ * Directions are screen-absolute, not relative to whoever pressed SELECT:
+ * "left" always means the left corner of the stage. Each is tested as a bit
+ * rather than as an exact word, so the diagonals resolve to their vertical
+ * component first -- down-back and down-forward are centre (they are the
+ * ordinary resting stick positions in training), and up-back and up-forward are
+ * swap. Down wins over up if a pad somehow reports both.
+ *
+ * Presets are absolute, not composable: up then left gives "P1 cornered,
+ * original sides", not "swapped and cornered".
  *
  * The latch is a file-static rather than a GameState field on purpose:
  * MIST_STATE_VER is sizeof(GameState), so a field here would force a
- * MIST_PROTO_VER bump for a mode netplay cannot reach. Only one value is
- * reachable today, so the apply path does not branch on it yet; increment 2 is
- * where it starts selecting a position override.
+ * MIST_PROTO_VER bump for a mode netplay cannot reach.
  */
 enum TrResetPreset {
-    TR_RESET_CENTRE = 0, /* zero-init default, and the only one implemented */
+    TR_RESET_CENTRE = 0, /* zero-init default */
     TR_RESET_SWAP,
     TR_RESET_LEFT,
     TR_RESET_RIGHT
 };
+
+/* The half-separation plmv_1020 is called with on the training appear path:
+ * player_mv_1000's APPEAR_TYPE_NON_ANIMATED case passes 88, giving P1 and P2
+ * 176 apart. The presets reuse both numbers so every arrangement keeps the
+ * spacing the engine's own start position has. */
+#define TR_RESET_STEP 88
 
 static s8 Tr_Reset_Preset;
 
@@ -3696,6 +3710,12 @@ static s8 Tr_Reset_Preset;
  * of the teardown that cannot both happen in the same frame: clearing
  * Suicide[0] again, and rebuilding the effect_84 singleton the pulse kills. */
 static s8 Tr_Reset_Teardown_Pending;
+
+/* Set on the reset frame for the three presets that need a position override,
+ * consumed by Tr_Reset_Position_Override from TASK_GAME on the frame plmv_1020
+ * writes the start positions. Never set for TR_RESET_CENTRE -- plmv_1020
+ * already writes exactly that arrangement, so that path stays untouched. */
+static s8 Tr_Reset_Position_Pending;
 
 /* Returns 1 and latches the preset when a reset should run this frame.
  * SELECT is an edge, the direction a level, per Pause_Check_Tr's idiom. The
@@ -3746,20 +3766,26 @@ static s32 Tr_Reset_Read_Input() {
 
         held = PLsw[PL_id][0] & SWK_DIRECTIONS;
 
-        /* Down is tested as a bit, not as an exact word. Down-back and
-         * down-forward are the ordinary resting stick positions in training, so
-         * an exact `held == SWK_DOWN` would swallow the reset for most of the
-         * inputs a player actually holds. Up/left/right (and the up diagonals)
-         * still fall through to "no reset" rather than resolving to centre:
-         * those are increment 2's presets and answering them with the centre
-         * arrangement would teach the wrong mapping before they exist. */
-        if (held == 0 || (held & SWK_DOWN)) {
-            if (held & SWK_DOWN) {
-                Tr_Reset_Preset = TR_RESET_CENTRE;
-            }
-
-            return 1;
+        /* Each direction is tested as a bit, not as an exact word, so the
+         * diagonals resolve to their vertical component: an exact
+         * `held == SWK_DOWN` would swallow the reset for down-back and
+         * down-forward, which are the ordinary resting stick positions in
+         * training. Vertical is checked before horizontal for the same reason --
+         * up-back and up-forward are still "swap", not "corner".
+         *
+         * held == 0 falls through with the latch untouched, which is the
+         * "bare SELECT repeats the last preset" case. */
+        if (held & SWK_DOWN) {
+            Tr_Reset_Preset = TR_RESET_CENTRE;
+        } else if (held & SWK_UP) {
+            Tr_Reset_Preset = TR_RESET_SWAP;
+        } else if (held & SWK_LEFT) {
+            Tr_Reset_Preset = TR_RESET_LEFT;
+        } else if (held & SWK_RIGHT) {
+            Tr_Reset_Preset = TR_RESET_RIGHT;
         }
+
+        return 1;
     }
 
     return 0;
@@ -3821,6 +3847,228 @@ static void Tr_Reset_Release_L8() {
     }
 }
 
+/* Re-runs the field clamp move_P1_move_P2 applies right after every
+ * Player_move, so a position written past a wall snaps back to exactly
+ * corner-adjacent. set_field_hosei_flag (pls02.c) does the arithmetic with
+ * satse[player_number], the per-character half-width, which is why the presets
+ * below never compute a corner coordinate themselves. The scrr-then-scrl shape
+ * and the bg_app guard are copied from move_P1_move_P2 (plcnt.c) verbatim: the
+ * left check only runs when the right one reported the player was inside. */
+static void Tr_Reset_Clamp_To_Field(PLW* wk) {
+    if (bg_app_stop != 0 || bg_app != 0) {
+        return;
+    }
+
+    if (set_field_hosei_flag(wk, scrr, 1) != 0) {
+        set_field_hosei_flag(wk, scrl, 0);
+    }
+}
+
+/* The swap and corner presets, applied from plcnt_init (TASK_GAME) on the one
+ * frame that can carry them -- see the call site.
+ *
+ * plmv_1020 hardcodes both the position and rl_flag from wu.id and cannot be
+ * given a side without changing its signature and every caller, so the presets
+ * that are not "centre, original sides" overwrite what it wrote. The centre
+ * preset is not listed below at all: plmv_1020's own output *is* the centre
+ * arrangement, so Tr_Reset_Apply never arms this for it.
+ *
+ * Facing is RECOMPUTED, not flipped. set_rl_waza (pls01.c) derives the desired
+ * facing every frame from relative X alone, and move_player_work calls it for
+ * both players *before* Player_move -- i.e. from the pre-reset positions. So
+ * after moving anyone, rl_flag has to be re-derived with set_rl_waza's own
+ * rule applied to the new positions. Flipping instead of recomputing is only
+ * accidentally correct for the swap preset and wrong for both corners. rl_waza
+ * is set to match so the next frame agrees with this one; without that the
+ * neutral stance re-latches rl_flag = rl_waza and the pair render back-to-back
+ * for a frame. mtrans.c takes the sprite flip from `cg_flip ^ rl_flag` at draw
+ * time and reqPlayerDraw runs later in this same frame, so the write lands on
+ * the frame the characters move, not the one after.
+ *
+ * wu.target_adrs, which set_rl_waza dereferences, survives the reset teardown:
+ * setup_any_data goes through set_base_data_tiny, which does not write it, and
+ * it points into the file-scope plw[2] array so it cannot dangle. */
+void Tr_Reset_Position_Override() {
+    s16 centre;
+
+    if (!Tr_Reset_Position_Pending) {
+        return;
+    }
+
+    if (!Is_Training_Mode(Mode_Type)) {
+        Tr_Reset_Position_Pending = 0;
+        return;
+    }
+
+    /* Fire on the frame plmv_1010 moved both players to routine_no[0] == 3,
+     * which is the same frame plmv_1020 wrote the start positions. The reset
+     * spans three frames and this state is unique to the middle one: on the
+     * teardown frame player_mv_0000 has just left them at 1, and on the frame
+     * after, pli_1000 sets 4 from init_app_10000 -- which plcnt_init calls
+     * before move_player_work, so it is already 4 by the time we look. */
+    if (plw[0].wu.routine_no[0] != 3 || plw[1].wu.routine_no[0] != 3) {
+        return;
+    }
+
+    Tr_Reset_Position_Pending = 0;
+
+    switch (Tr_Reset_Preset) {
+    case TR_RESET_SWAP:
+        /* Stage-default camera, so the walls Player_control already computed
+         * this frame still hold and centre is the one plmv_1020 just used. */
+        centre = get_center_position();
+        plw[0].wu.xyz[0].disp.pos = centre + TR_RESET_STEP;
+        plw[1].wu.xyz[0].disp.pos = centre - TR_RESET_STEP;
+        Tr_Reset_Clamp_To_Field(&plw[0]);
+        Tr_Reset_Clamp_To_Field(&plw[1]);
+        break;
+
+    case TR_RESET_LEFT:
+    case TR_RESET_RIGHT: {
+        s16 limit = (Tr_Reset_Preset == TR_RESET_LEFT) ? bg_w.bgw[1].l_limit2 : bg_w.bgw[1].r_limit2;
+
+        /* The camera has to be moved before the players, because the field
+         * walls are derived from it: set_scrrrl puts scrl/scrr at
+         * get_center_position() -/+ 192, and Player_control ran it at the top of
+         * this frame against the stage-default camera compel_bg_init_position
+         * left on the teardown frame. Writing the camera and then re-running
+         * set_scrrrl brings the two back in step, and the walls are then the
+         * same ones Player_control will compute for itself next frame.
+         *
+         * A direct write rather than compel_bg_init_position, which snaps to
+         * the stage default, and rather than letting the camera converge: the
+         * base layer moves at most bg_w.max_x (8) per frame scaled by
+         * remake_x_mvstep (x 80/100), i.e. 6 px, so it would visibly chase.
+         *
+         * bgw[1] alone is enough for the parallax. TATE00 runs later in this
+         * same frame and moves the base layer first (BG010 and its siblings set
+         * bgw_ptr = &bg_w.bgw[1] before any other layer); bg_base_x_move_check
+         * then publishes bg_w.bg2_sp_x2 = wxy[0].disp.pos - pos_x_work, and
+         * bg_x_move_check recomputes every other layer *absolutely* from it --
+         * `wxy[0].cal = xy[0].cal = speed_x * bg_w.bg2_sp_x2` followed by
+         * `+= pos_x_work` -- rather than accumulating. Each BGxxx mover ends
+         * with bg_pos_hosei2() and one of the Bg_Family_Set variants, so the
+         * hardware push happens there too and duplicating it here would only
+         * publish a half-updated frame in which the base sits at the limit and
+         * the others at their stage default. That answers half of the design
+         * doc's open item 3 -- no non-base layer needs an explicit write. The
+         * other half is the chase copy, handled just below.
+         *
+         * The camera cannot drift back off the limit, but not because the
+         * clamp is unconditional -- bg_base_x_move_check's whole move-and-clamp
+         * block sits inside `if (!bg_stop && !bg_app_stop)`. Both halves hold:
+         * when bg_stop / bg_app_stop is set the move is skipped entirely so
+         * there is nothing to drift, and when they are clear both corner
+         * presets leave both players in the same half of the screen, so the
+         * scroll target (scr_11_20 on the left, scr_10_22 on the right) lies
+         * past the limit and the clamp pins wxy[0] / xy[0] to it. bg_stop is
+         * genuinely reachable here: effect_I3_move (effect/effi3.c) sets it at
+         * routine_no[0] == 0 and clears it only at case 2, and its work has id
+         * 183 while erase_extra_plef_work sweeps list 3 for 0x91 / 0x93 / 0x94
+         * only, so the work survives the teardown. */
+        bg_w.bgw[1].xy[0].disp.pos = bg_w.bgw[1].wxy[0].disp.pos = limit;
+        bg_w.bgw[1].xy[0].disp.low = bg_w.bgw[1].wxy[0].disp.low = 0;
+
+        /* An X chase in flight would silently swallow the write above.
+         * bg_pos_hosei2 reads chase_xy[0] instead of wxy[0] whenever
+         * bg_w.chase_flag & 0xF is set, chase_xy_move then overwrites
+         * bg_w.bg2_sp_x2 from chase_xy[0] after bg_base_x_move_check published
+         * it from wxy[0], and bg_base_x_move_check re-syncs the chase copy only
+         * while the flag is CLEAR. The result would be every layer parked on
+         * the chase camera -- near the stage default -- for up to six frames
+         * with both players already in the corner and scrl / scrr already at
+         * the limit, then a snap when the chase expires.
+         *
+         * It is reachable: a reset taken during a super leaves the zoom request
+         * dropping on the teardown frame, and chase_start_check's else branch
+         * answers that with chase_flag |= 2 and chase_time_x = 6 -- and it runs
+         * in TATE00, i.e. after Tr_Reset_Apply has already cleared the flag on
+         * that frame. compel_bg_init_position does not clear chase_flag at all.
+         *
+         * Clearing rather than writing chase_xy[0]: with the flag set,
+         * chase_xy_move would keep moving the copy toward chase_x, so writing
+         * it would only hold for one frame. With the flag clear the camera
+         * behaves normally, anchored at the limit, and bg_base_x_move_check's
+         * own tail re-syncs chase_xy[0] from wxy[0] later this same frame
+         * (bg_base_move_common runs it immediately before bg_chase_move). Only
+         * the X nibble is touched -- the override writes no Y camera, and the Y
+         * chase is independent in both bg_pos_hosei2 and chase_xy_move.
+         * old_chase_flag has no reader anywhere in the tree; it is cleared
+         * alongside to match bg_initialize and chase_xy_move's own idiom.
+         *
+         * chase_x / chase_time_x are deliberately left alone: nothing reads
+         * either while the flag bits are clear, every new chase re-seeds both,
+         * and this is the same residue chase_xy_move leaves when a chase ends
+         * normally. */
+        bg_w.chase_flag &= ~0xF;
+        bg_w.old_chase_flag &= ~0xF;
+
+        set_scrrrl();
+
+        /* Written to the wall itself, not past it. The clamp turns scrl into
+         * scrl + satse and scrr into scrr - satse, which is the corner. Landing
+         * on the wall rather than beyond it also degrades gracefully in the one
+         * case the clamp is skipped (bg_app / bg_app_stop): the character is
+         * half a body width off the corner instead of stuck outside the field.
+         *
+         * The far player is placed from the *clamped* near player, so the
+         * spacing is exactly 176 whatever the near character's width is. */
+        if (Tr_Reset_Preset == TR_RESET_LEFT) {
+            plw[0].wu.xyz[0].disp.pos = scrl;
+            Tr_Reset_Clamp_To_Field(&plw[0]);
+            plw[1].wu.xyz[0].disp.pos = plw[0].wu.xyz[0].disp.pos + (2 * TR_RESET_STEP);
+            Tr_Reset_Clamp_To_Field(&plw[1]);
+        } else {
+            plw[1].wu.xyz[0].disp.pos = scrr;
+            Tr_Reset_Clamp_To_Field(&plw[1]);
+            plw[0].wu.xyz[0].disp.pos = plw[1].wu.xyz[0].disp.pos - (2 * TR_RESET_STEP);
+            Tr_Reset_Clamp_To_Field(&plw[0]);
+        }
+
+        break;
+    }
+
+    default:
+        return;
+    }
+
+    /* set_rl_waza's rule: greater X faces left (0), lesser X faces right (1).
+     * Its equal-X tie-break cannot be reached from here -- the presets always
+     * leave the two 176 apart. */
+    plw[0].wu.rl_flag = (plw[0].wu.xyz[0].disp.pos > plw[1].wu.xyz[0].disp.pos) ? 0 : 1;
+    plw[1].wu.rl_flag = (plw[1].wu.xyz[0].disp.pos > plw[0].wu.xyz[0].disp.pos) ? 0 : 1;
+    plw[0].wu.rl_waza = plw[0].wu.rl_flag;
+    plw[1].wu.rl_waza = plw[1].wu.rl_flag;
+
+    /* Same reason Tr_Reset_Apply clears the fractions: plmv_1020 and the writes
+     * above set only .disp.pos, so a leftover .disp.low would land the "same"
+     * preset a fraction of a pixel differently every time. */
+    plw[0].wu.xyz[0].disp.low = 0;
+    plw[1].wu.xyz[0].disp.low = 0;
+
+    /* set_field_hosei_flag records pl->hosei_amari = -hami, the distance it had
+     * to push the player back inside the field. A normal walk overshoots a wall
+     * by a few pixels; a preset that writes X exactly to scrl / scrr overshoots
+     * by a whole satse[player_number] (24-40 px). check_damage_hosei runs later
+     * this frame (Player_control calls it right after player_main_process) and
+     * copies that value into muriyari_ugoku unconditionally, and effect_02_move
+     * adds muriyari_ugoku to any hit mark mastered by that player.
+     *
+     * It is inert today -- check_damage_hosei_dageki is gated on dm_hos_flag,
+     * which player_mv_0000 cleared on the teardown frame with nothing able to
+     * set it during the appear, check_damage_hosei_nage needs tsukami_f /
+     * tsukamare_f, which the same function cleared, and effect_02 reads
+     * muriyari_ugoku only in its case 0, the frame it is created, which needs a
+     * hit that cannot land here. But list 2 is not one of the lists
+     * erase_extra_plef_work sweeps and effect_02_move answers Suicide[6], not
+     * Suicide[0], so hit marks do outlive the reset. Zeroing the amount costs
+     * one line and removes the whole question. micchaku_flag and hos_fi_flag
+     * are deliberately left as the clamp set them: "pinned to this wall" is
+     * exactly true here and several consumers rely on it. */
+    plw[0].hosei_amari = 0;
+    plw[1].hosei_amari = 0;
+}
+
 /* Puts both players back through the engine's own start-position path.
  *
  * Clearing routine_no is only half of it. Player_move dispatches
@@ -3828,7 +4076,9 @@ static void Tr_Reset_Release_L8() {
  * and hands off to player_mv_1000 -> plmv_1010 (routine_no[0] = 3) and
  * plmv_1020 (training's appear type is APPEAR_TYPE_NON_ANIMATED, so step is 88;
  * it writes centre-88 for P1 and centre+88 for P2 with the matching rl_flag,
- * which is exactly the centre preset -- hence no position override here).
+ * which is exactly the centre preset -- hence no position override for that
+ * one. The other three arm Tr_Reset_Position_Override, which runs from
+ * plcnt_init on the frame plmv_1020 writes those positions).
  *
  * But routine_no[0] == 3 dispatches to player_mv_3000, which is Player_normal
  * and nothing else. check_lever_data -- the sole entry point for pad input into
@@ -3892,6 +4142,11 @@ static void Tr_Reset_Apply() {
      * reads Suicide, so they survive it. */
     Suicide[0] = 1;
     Tr_Reset_Teardown_Pending = 1;
+
+    /* Armed here, two frames before it fires. TR_RESET_CENTRE is deliberately
+     * excluded: plmv_1020 already writes that arrangement, so leaving the flag
+     * clear keeps the shipped centre path byte-for-byte as it was. */
+    Tr_Reset_Position_Pending = (Tr_Reset_Preset != TR_RESET_CENTRE);
 
     Tr_Reset_Release_L8();
 
@@ -3986,6 +4241,34 @@ static void Tr_Reset_Apply() {
     pcon_rno[2] = 0;
     pcon_rno[3] = 0;
 
+    /* Stage default for every preset, including the corners. The corner camera
+     * write is deliberately left to Tr_Reset_Position_Override two frames from
+     * now, so it lands on the same frame as the characters: doing it here would
+     * put the camera in a corner while both players are still standing wherever
+     * they were, which for a reset taken from the opposite side of the stage
+     * means a frame with nobody on screen. compel_bg_init_position also resets
+     * the zoom, frame and scroll-stop state, which the corners want too, so it
+     * runs for all four.
+     *
+     * The chase clear has to come first, and applies to every preset including
+     * the two that were already shipping. compel_bg_init_position writes
+     * xy / wxy and resets the zoom, but it does not touch chase_flag or
+     * chase_xy; bg_pos_hosei2, on the very next line, then reads chase_xy
+     * instead of wxy / xy on whichever axis bg_w.chase_flag still has set. So a
+     * reset taken while a super's camera chase is running would publish the
+     * chase camera here rather than the stage default this comment promises.
+     * bg_initialize's `bg_w.old_chase_flag = bg_w.chase_flag = 0;` is the
+     * in-tree form; both axes are cleared because compel_bg_init_position
+     * re-homes both.
+     *
+     * This does not make Tr_Reset_Position_Override's own clear redundant.
+     * TASK_MENU runs before TASK_GAME, and chase_start_check -- reached from
+     * TATE00 later in this same frame -- answers the zoom request the teardown
+     * just dropped by arming a fresh six-frame settle chase. For centre and
+     * swap that chase converges on the stage default and is self-correcting;
+     * for the corners it converges on the wrong place, which is why the corner
+     * branch clears it again on the frame it moves the camera. */
+    bg_w.old_chase_flag = bg_w.chase_flag = 0;
     compel_bg_init_position();
     bg_pos_hosei2();
     Bg_Family_Set();
@@ -4586,6 +4869,17 @@ void Training_Init(struct _TASK* task_ptr) {
      * Tr_Reset_Finish_Teardown. No-op unless a reset's teardown escaped
      * Wait_Pause_in_Tr without being finished there. */
     Tr_Reset_Finish_Teardown();
+
+    /* Same safety net for the position latch. Its firing condition -- both
+     * players at routine_no[0] == 3 under pcon_rno[0] == 0 -- is not unique to
+     * a SELECT reset: an ordinary training round appear reaches it too. So a
+     * latch stranded by a reset whose three-frame sequence never completed
+     * (a soft reset, or a return to this menu in between) would move the
+     * players into a preset at the start of the next round. Training_Init is
+     * the r_no[1] == 0 sub-state of Training_Menu and Next_Be_Tr_Menu, the only
+     * exit from Wait_Pause_in_Tr, lands on it, so anything that escapes is
+     * cleared before another appear can run. */
+    Tr_Reset_Position_Pending = 0;
 
     task_ptr->r_no[1] = 1;
     Pause_Down = 1;

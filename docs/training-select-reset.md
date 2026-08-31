@@ -5,24 +5,40 @@ round-start position — no black wipe, no BGM restart, no round transition.
 
 Implemented in `src/sf33rd/Source/Game/menu/menu.c`
 (`Tr_Reset_Check` / `Tr_Reset_Apply` / `Tr_Reset_Read_Input` /
-`Tr_Reset_Release_L8` / `Tr_Reset_Finish_Teardown`), hooked at the top of
-`Wait_Pause_in_Tr` ahead of `Control_Player_Tr`.
+`Tr_Reset_Release_L8` / `Tr_Reset_Finish_Teardown` /
+`Tr_Reset_Position_Override` / `Tr_Reset_Clamp_To_Field`), hooked at the top of
+`Wait_Pause_in_Tr` ahead of `Control_Player_Tr` — plus one call to
+`Tr_Reset_Position_Override` from `plcnt_init` (`engine/plcnt.c`).
 
 Citations here are **symbol-first**: grep the symbol. Any line number is a
 timestamp, not an address, and is not maintained (see `AGENTS.md`).
 
-## What ships today (increment 1)
+## What ships today
 
-| Input | Result |
-|---|---|
-| SELECT, no direction | Reset to centre, original sides |
-| SELECT + ↓ (including ↓↙ / ↓↘) | Same — reset to centre |
-| SELECT + ↑ / ← / → | **Nothing.** Increment 2. |
-| START + SELECT | Unchanged: soft reset (`Check_Reset_IO`) |
+| Input | Result | P1 X | P2 X | Camera |
+|---|---|---|---|---|
+| SELECT, no direction | Repeat the last preset | — | — | — |
+| SELECT + ↓ (incl. ↓↙ / ↓↘) | Centre, original sides | `centre − 88` | `centre + 88` | stage default |
+| SELECT + ↑ (incl. ↑↖ / ↑↗) | Swap sides | `centre + 88` | `centre − 88` | stage default |
+| SELECT + ← | P1 in the left corner | cornered | P1 + 176 | `bgw[1].l_limit2` |
+| SELECT + → | P2 in the right corner | P2 − 176 | cornered | `bgw[1].r_limit2` |
+| START + SELECT | Unchanged: soft reset (`Check_Reset_IO`) | | | |
 
-Both characters land at `centre − 88` (P1) and `centre + 88` (P2), where
 `centre` is `get_center_position()` — 512 on most stages, 464 on stages 0
-and 19.
+and 19. 88 is the `step` `player_mv_1000` passes `plmv_1020` on the
+`APPEAR_TYPE_NON_ANIMATED` path, which is the one training takes; 176 is the
+separation that produces.
+
+Directions are **screen-absolute**, not relative to whoever pressed SELECT:
+← is always the left corner. Each is tested as a bit, so the diagonals resolve
+to their vertical component — ↓↙ / ↓↘ are centre, ↑↖ / ↑↗ are swap. Down is
+tested first because down-back and down-forward are the ordinary resting stick
+positions in training; an exact word match would swallow the reset for most of
+what a player actually holds.
+
+Presets are **absolute, not composable**: ↑ then ← gives "P1 cornered, original
+sides", not "swapped and cornered". Bare SELECT repeats the latch
+(`Tr_Reset_Preset`), which is a `menu.c` file-static — see *Netplay safety*.
 
 The reset plays the menu confirm one-shot, `SE_selected()`
 (`SsRequest(98)`, `sound/sound3rd.c`), on the frame the teardown runs. That is
@@ -30,22 +46,6 @@ deliberately earlier than the visual settles — see the frame sequence below �
 so the player gets immediate confirmation instead of waiting out the snap.
 It is safe mid-round rather than menu-only: `Setup_Pause` and `Setup_Come_Out`
 (`system/pause.c`) already call it during live gameplay.
-
-Down is tested as a **bit**, not an exact word, so down-back and down-forward
-work. Those are the ordinary resting stick positions in training; an exact
-match would swallow the reset for most of what a player actually holds.
-
-Up, left and right deliberately do nothing rather than resolving to centre —
-answering them with the centre arrangement would teach the wrong mapping
-before increment 2's presets exist.
-
-### Not yet implemented (increment 2)
-
-The side-swap and the two corner presets. They need a post-`Player_move`
-position override, a facing recompute from the new relative positions, and a
-direct `bg_w.bgw[1]` camera write for the corners. The preset latch
-(`Tr_Reset_Preset`) already exists but only ever holds `TR_RESET_CENTRE`, so
-the apply path does not branch on it yet.
 
 ## When it will not fire
 
@@ -83,15 +83,16 @@ which re-runs the round-start clears (vitality, hit stop, throw flags, stun,
 ukemi, super-art state, and the per-round S.A.GAUGE training option) and hands
 off to `player_mv_1000` → `plmv_1010` → `plmv_1020`. Training's appear type is
 `APPEAR_TYPE_NON_ANIMATED`, so the step is 88 and `plmv_1020` already writes
-exactly the centre preset with the correct `rl_flag` per side. **No position
-override is needed for increment 1.**
+exactly the centre preset with the correct `rl_flag` per side. **The centre
+preset needs no position override at all**; the other three overwrite what
+`plmv_1020` wrote, on the frame it writes it.
 
 It takes three frames, and the parts do not land together:
 
 | Frame | What happens | What the player sees |
 |---|---|---|
 | N | Teardown; `player_mv_0000` runs | Effects vanish, bars refill, combo counter clears, camera snaps to stage default — but **the characters have not moved yet**. `SE_selected()` fires here. |
-| N+1 | `player_mv_1000` → `plmv_1010` → `plmv_1020` | Characters teleport to `centre ± 88` |
+| N+1 | `player_mv_1000` → `plmv_1010` → `plmv_1020`, then `Tr_Reset_Position_Override` | Characters teleport to the preset; for a corner the camera lands the same frame |
 | N+2 | `pli_1000` sets `routine_no[0] = 4` | Input comes back |
 
 So there is a one-frame window (~17 ms) where the camera has already jumped but
@@ -124,6 +125,170 @@ Entering at case 2 skips it and still ends at `pli_1000`.
 
 This is not invented: `Game_Manage_2_3`'s training branch already does exactly
 this, down to the `pcon_rno[1] = 2` constant.
+
+### Why the position override runs from `plcnt_init`, not from the menu task
+
+The design doc's §11 step 5 says to override the positions "after `Player_move`
+has run for both players". That instruction predates the `pcon_rno` fix and no
+longer names a reachable moment from `menu.c`.
+
+`Tr_Reset_Check` is called from `Wait_Pause_in_Tr`, which runs in **`TASK_MENU`
+(3), before `TASK_GAME` (5)** — `cpLoopTask` (`src/main.c`) walks `task[i]`
+ascending. So the menu task can never see the positions `plmv_1020` wrote in
+the same frame. Writing an override from there on frame N+1 is overwritten by
+`plmv_1020` later that frame; writing it on N+2 shows the player one frame at
+centre before the snap.
+
+The override therefore runs **inside `TASK_GAME`, at the end of `plcnt_init`
+(`engine/plcnt.c`), immediately after `move_player_work()`.** That is the only
+point in the frame that both sees the new positions and still precedes every
+consumer of them:
+
+| Consumer | Reads | Runs |
+|---|---|---|
+| `add_next_position` | `xyz[0].disp.pos` → `wu.position_x` | later in `Player_control` |
+| `check_cg_zoom` | `xyz[0].disp.pos` → `wu.scr_mv_x` (when `scr_pos_set_flag`) | later in `Player_control` |
+| `TATE00` | `bg_w.bgw[1]` → camera + every parallax layer | after `Player_control` in `Game2_1` |
+| `reqPlayerDraw` → `mtrans.c` | `cg_flip ^ rl_flag` | after `TATE00` in `Game2_1` |
+
+The cost is one call and one predicate test. `plcnt_init` is
+`player_main_process[0]`, so it only runs while `pcon_rno[0] == 0` — during a
+round appear, never during live play — and the override early-returns unless
+`Tr_Reset_Position_Pending`, a `menu.c` file-static that only `Tr_Reset_Apply`
+sets, behind the `Is_Training_Mode` gate. It is inert in arcade and netplay by
+construction.
+
+Two alternatives were rejected against the code:
+
+- **`Game_Management`** also runs after `Player_control` in `Game2_1`, and
+  `Game_Manage_2_3`'s training branch is the precedent for engine surgery from
+  there. But it runs *after* `TATE00`, so the camera write would need a
+  hand-rolled `bg_pos_hosei2()` + `Bg_Family_Set()` that publishes `bgw[1]` at
+  the corner while every other parallax layer still sits at its stage default,
+  and `wu.scr_mv_x` would be a frame stale.
+- **Suppressing the render for the extra frame** (`disp_flag = 0` through N+1,
+  override on N+2 from the menu task) costs a second invisible frame and still
+  leaves the camera and the characters landing on different frames.
+
+`Tr_Reset_Position_Pending` fires on the unique state `plw[0].wu.routine_no[0]
+== plw[1].wu.routine_no[0] == 3`: `player_mv_0000` leaves both at 1 on frame N,
+`plmv_1010` sets 3 on N+1, and on N+2 `pli_1000` has already set 4 by the time
+the override looks — `init_app_10000` runs before `move_player_work` inside
+`plcnt_init`. That state is *not* unique to a SELECT reset, though — an
+ordinary training round appear reaches it too — so `Training_Init` clears the
+latch, on the same reasoning as the teardown latch it clears beside it.
+
+### Corners: what is computed and what is not
+
+- **No corner arithmetic.** `set_field_hosei_flag` (`engine/pls02.c`) clamps to
+  `[scrl + satse, scrr - satse]`, with `satse[20]` the per-character
+  half-width. The override writes X *to the wall* and re-runs the clamp pair in
+  `move_P1_move_P2`'s exact shape (`scrr` first, `scrl` only if the first
+  reported the player was inside). Writing to the wall rather than past it also
+  degrades gracefully if `bg_app` / `bg_app_stop` ever suppress the clamp.
+  The far player is then placed 176 from the *clamped* near player, so the
+  spacing is exact whatever the near character's width is.
+- **The camera must move before the players.** `set_scrrrl` (`engine/plcnt.c`)
+  is the only writer of `scrl` / `scrr` and derives them from
+  `get_center_position()`; `Player_control` runs it at the top of the frame,
+  against the stage-default camera `compel_bg_init_position` left on frame N.
+  So the override writes `bg_w.bgw[1]`, then re-runs `set_scrrrl` itself, and
+  only then places the players.
+- **A direct `bgw[1]` write, not `compel_bg_init_position`**, which snaps to
+  the stage default. Not convergence either: `bg_base_x_move_check` moves the
+  base layer at most `bg_w.max_x` (8) per frame scaled by `remake_x_mvstep`
+  (× 80/100) — 6 px — so the camera would visibly chase.
+- **No non-base parallax layer needs an explicit write.** `TATE00` runs later
+  in the same frame; each `BGxxx` mover sets `bgw_ptr = &bg_w.bgw[1]` and runs
+  `bg_base_move_common` *before* any other layer, which publishes
+  `bg_w.bg2_sp_x2 = wxy[0].disp.pos - pos_x_work`, and `bg_x_move_check` then
+  recomputes every other layer **absolutely** from it —
+  `wxy[0].cal = xy[0].cal = speed_x * bg_w.bg2_sp_x2` — rather than
+  accumulating. Each mover ends with `bg_pos_hosei2()` and a `Bg_Family_Set`
+  variant, so the override deliberately does *not* call those itself: doing so
+  would publish a half-updated frame with the base at the limit and the rest at
+  their stage default.
+
+  This is **half** of the design doc's §12 item 3, not all of it — see the
+  next bullet for the part a `bgw[1]` write alone genuinely does not cover.
+- **The X chase copy must be cleared, or the camera write is silently
+  swallowed.** `bg_pos_hosei2` reads `bgw[bg_no].chase_xy[0].disp.pos` instead
+  of `wxy[0].disp.pos` whenever `bg_w.chase_flag & 0xF` is set;
+  `chase_xy_move` re-publishes `bg_w.bg2_sp_x2` from `chase_xy[0]` *after*
+  `bg_base_x_move_check` published it from `wxy[0]` (`bg_base_move_common`
+  order is base-x, base-y, chase); and `bg_base_x_move_check` re-syncs
+  `chase_xy[0].disp.pos = wxy[0].disp.pos` only while the flag is **clear**.
+  With the flag set, every layer therefore sits on the chase camera — near the
+  stage default — while both players are already in the corner and
+  `scrl` / `scrr` are already at the limit, until the chase expires and the
+  camera snaps.
+
+  It is reachable. `chase_start_check` (`stage/bg_sub.c`) arms
+  `chase_flag |= 2`, `chase_time_x = 6` on the frame a zoom request *drops* —
+  exactly what a reset taken during a super produces — and
+  `compel_bg_init_position` does not clear `chase_flag`. So the flag is
+  cleared twice: once in `Tr_Reset_Apply` before `compel_bg_init_position`, so
+  frame N's own `bg_pos_hosei2()` publishes the stage default (this covers the
+  centre and swap presets too — it was a hole in increment 1), and again in the
+  corner branch of the override, because `chase_start_check` runs from `TATE00`
+  *after* `Tr_Reset_Apply` and re-arms the settle chase on that same frame N.
+  The override clears only the X nibble; `Tr_Reset_Apply` clears both axes,
+  matching `bg_initialize`'s `bg_w.old_chase_flag = bg_w.chase_flag = 0;`.
+  `old_chase_flag` has no reader anywhere in the tree and is cleared only to
+  keep the idiom; `chase_x` / `chase_time_x` are left alone, which is the same
+  residue a chase that ends normally leaves.
+- The camera cannot drift back off the limit — but **not** because the clamp is
+  unconditional. `bg_base_x_move_check`'s whole move-and-clamp block sits
+  inside `if (!bg_stop && !bg_app_stop)`; only the `bg2_sp_x` / `bg2_sp_x2`
+  publish and the `chase_xy` sync are outside it. Both halves hold anyway: with
+  `bg_stop` / `bg_app_stop` set the move is skipped entirely so there is
+  nothing to drift, and with them clear both corner presets leave both players
+  in the same half of the screen, so the scroll target (`scr_11_20` for the
+  left corner, `scr_10_22` for the right) lies past the limit and the clamp
+  pins `wxy[0]` / `xy[0]` to it.
+
+  `bg_stop` is genuinely reachable on the override frame: `effect_I3_move`
+  (`effect/effi3.c`) sets it at `routine_no[0] == 0` and clears it only at
+  case 2, and its work has id 183 while `erase_extra_plef_work` sweeps list 3
+  for `0x91` / `0x93` / `0x94` only, so the work survives the teardown. Note
+  `bg_app` gates `zoom_ud_check`, not this — the two flags that gate the field
+  clamp in `move_P1_move_P2` (and therefore in `Tr_Reset_Clamp_To_Field`) are
+  `bg_app` and `bg_app_stop`, which is a different pair.
+- **`hosei_amari` is zeroed after the clamps.** `set_field_hosei_flag` records
+  `pl->hosei_amari = -hami`, the push-back distance. A walk overshoots a wall
+  by a few pixels; a preset that writes X exactly to `scrl` / `scrr` overshoots
+  by a whole `satse[player_number]` (24–40 px). `check_damage_hosei`
+  (`engine/plcnt.c`) runs later in the same frame and copies it into
+  `muriyari_ugoku` unconditionally, and `effect_02_move` adds that to hit marks
+  mastered by the player. It is inert today —
+  `check_damage_hosei_dageki` needs `dm_hos_flag` and
+  `check_damage_hosei_nage` needs `tsukami_f` / `tsukamare_f`, all three of
+  which `player_mv_0000` cleared on frame N with nothing able to set them
+  during the appear, and `effect_02` reads `muriyari_ugoku` only in its case 0,
+  the frame it is created. But list 2 is not one of the lists
+  `erase_extra_plef_work` sweeps and `effect_02_move` answers `Suicide[6]`, not
+  `Suicide[0]`, so hit marks *do* outlive the reset. One line removes the
+  question. `micchaku_flag` / `hos_fi_flag` are left as the clamp set them:
+  "pinned to this wall" is exactly true and several consumers rely on it.
+
+### Facing is recomputed, never flipped
+
+`set_rl_waza` (`engine/pls01.c`) derives the desired facing every frame from
+relative X alone, and `move_player_work` calls it for both players **before**
+`Player_move` — i.e. from the pre-reset positions. `plmv_1020` then hardcodes
+`rl_flag` from `wu.id`. So the override re-derives `rl_flag` with
+`set_rl_waza`'s own rule applied to the new positions, and sets `rl_waza` to
+match so the next frame agrees with this one. Flipping instead is only
+accidentally correct for the swap preset and wrong for both corners; without
+the `rl_waza` write the neutral stance re-latches `rl_flag = rl_waza` and the
+pair render back-to-back for a frame.
+
+`mtrans.c` takes the sprite flip from `cg_flip ^ rl_flag` at draw time and
+`reqPlayerDraw` runs later in the same frame, so the write lands on the frame
+the characters move, not the one after.
+
+`wu.target_adrs`, which `set_rl_waza` dereferences, survives the teardown —
+see correction 6 below.
 
 ## Four defects handled, with their evidence
 
@@ -225,6 +390,13 @@ simulation change on the shared arcade/netplay path for a training-only feature.
 Netplay-invisible by construction: gated on `Is_Training_Mode`, which excludes
 `MODE_NETWORK`, and `Wait_Pause_in_Tr` is unreachable online regardless.
 
+The one call that lives on the shared simulation path — `plcnt_init` →
+`Tr_Reset_Position_Override` — is gated twice over: `Tr_Reset_Position_Pending`
+is a `menu.c` file-static written only by `Tr_Reset_Apply`, itself behind
+`Is_Training_Mode`, and the override re-tests `Is_Training_Mode` before doing
+anything. The static is zero on both peers in every netplay frame, so the call
+is deterministic and cannot be observed by a rollback.
+
 The preset latch is a `menu.c` file-static, **not** a `GameState` field, on
 purpose. `MIST_STATE_VER` is `sizeof(GameState)` (`src/netplay/mist_handshake.c`),
 so a field there would force an `EXPECTED_GAME_STATE_SIZE` re-pin *and* a
@@ -246,8 +418,7 @@ and `set_base_data_tiny` are ungated.
 ## Corrections to the design doc
 
 The design doc is `~/Desktop/3sx-training-reset-position-2026-08-30.md`
-(not in-tree). Six of its claims are wrong or incomplete; anyone building
-increment 2 from it should read these first.
+(not in-tree). Eight of its claims are wrong, incomplete or now resolved.
 
 1. **§11's recipe omits `pcon_rno` entirely.** This is the most important gap —
    following §11 as written produces a reset after which nobody can move.
@@ -266,6 +437,35 @@ increment 2 from it should read these first.
    `setup_any_data` goes through `set_base_data_tiny`, which does not write
    `target_adrs`; only the full `set_base_data` does, and the pointer targets the
    file-scope `plw[2]` array so it cannot dangle.
+7. **§11 step 5's "after `Player_move` has run" names no reachable moment
+   from `menu.c`.** It predates the `pcon_rno` fix; the reset now spans three
+   frames and `Wait_Pause_in_Tr` runs in `TASK_MENU`, before `TASK_GAME`. See
+   *Why the position override runs from `plcnt_init`*.
+8. **§12 item 3 (whether a `bgw[1]` write alone suffices) resolves in two
+   halves, not one.** The *non-base parallax layers* need no explicit
+   handling: `bg_x_move_check` recomputes each of them absolutely from
+   `bg_w.bg2_sp_x2`, which `bg_base_x_move_check` publishes from `bgw[1]`. But
+   `bgw[1]`'s own **chase copy** does need handling — with
+   `bg_w.chase_flag & 0xF` set, `bg_pos_hosei2` reads `chase_xy[0]` and the
+   `wxy[0]` write is never published at all. See *Corners: what is computed and
+   what is not*. Anyone reading this item as simply "closed" will ship the
+   corner presets with a camera that ignores them after a reset taken during a
+   super.
+
+   Partial verification of the surrounding claim: all 22 `ta_move_tbl` slots
+   (`stage/tate00.c`), 20 distinct movers, were audited and every one reaches
+   `bg_pos_hosei2()` unconditionally. Two publish through variants rather than
+   plain `Bg_Family_Set()` — `BG020` uses `Bg_Family_Set_appoint(1)` +
+   `Bg_Family_Set_2_appoint(0)` + `Bg_Family_Set_appoint(2)`, `BG040` uses
+   `Bg_Family_Set_2()` — so "ends with `bg_pos_hosei2()` + `Bg_Family_Set()`"
+   is loose wording, though the conclusion holds. **Open:** `BG000`'s base
+   layer dispatches `{ bg0001_init00, bg0000_demo, bg_base_move_common }` on
+   `bgw_ptr->r_no_0`, so at `r_no_0 == 1` it runs `bg0000_demo` instead of
+   `bg_base_move_common` — and `bg0000_init00` sets `bg_app = 1` on that path.
+   Whether that state can still be live mid-round in training on stage 0 was
+   not cleared; `bg_pos_hosei2()` still runs unconditionally in `BG000`, so the
+   camera write itself is unaffected, but `bg_app` is one of the two flags that
+   suppress the field clamp.
 
 ## Verification status
 
@@ -298,8 +498,48 @@ change).
       practice.
 - [ ] START + SELECT soft reset still works from inside training.
 
+Per preset (↑ / ← / →), under arcade balance:
+
+- [ ] Positions **and facing** are right on frame 1, not frame 2 — no one-frame
+      back-to-back render.
+- [ ] ↑ swaps sides; ↓ afterwards puts them back (presets are absolute).
+- [ ] ← puts P1 **corner-adjacent** on the left, → puts P2 corner-adjacent on
+      the right, and the gap looks the same for a wide character (Hugo,
+      `satse` 40) and a narrow one (Ibuki/Yun, 24).
+- [ ] Corner camera lands on the same frame as the characters, with **no
+      visible chase** and no parallax layer left behind at its stage default.
+- [ ] The same, **taken mid-super** (a Super Art with a camera move, e.g. a
+      cinematic freeze) — this is the case an in-flight `chase_flag` used to
+      break, and the one that exercises both chase clears.
+- [ ] Bare SELECT repeats the last preset, across all four.
+- [ ] ↑↖ / ↑↗ swap (they do not corner), ↓↙ / ↓↘ still centre.
+- [ ] A reset that is interrupted (training menu, soft reset) does not leave a
+      preset armed for the next round's appear.
+
 ### Unverified in simulation
 
+- Whether the corner camera write ever fights `check_cg_zoom`'s zoom request.
+  The *chase* half of that question is now closed and fixed — see the
+  `chase_flag` bullet under *Corners*. What remains: `check_cg_zoom` runs
+  later in the same frame as the override (`Player_control` order is
+  `set_scrrrl` → `player_main_process[0]` → … → `check_cg_zoom`), and
+  `chase_start_check` runs later still, inside `TATE00`. If the appear pattern
+  ever carried a `wu.cg_zoom` with bits `0xE200` set, `chase_start_check` could
+  arm a **fresh** chase after the override cleared the flag, seeding
+  `chase_xy[0]` from the previous frame's `abs_x` — i.e. the stage default.
+  `cg_zoom` is per-animation-frame ROM data written through
+  `setupCharTableData`, so it could not be read out of the tree; the standing
+  appear pattern is assumed to request no camera move, and that assumption is
+  **not verified**. Symptom if wrong: the corner camera chases in from the
+  stage default over ~6 frames instead of landing.
+  `compel_bg_init_position` runs `Zoomf_Init()` and resets `bg_f_x` /
+  `frame_flag`, so a reset does start from an un-zoomed camera.
+- Whether `bg_app` / `bg_app_stop` can be non-zero on the override frame. Both
+  gate the field clamp in `move_P1_move_P2` and the override copies that guard;
+  the `Allow_a_battle_f` gate in `Tr_Reset_Check` argues they cannot be, but
+  that was not proven. Writing X to the wall rather than past it means the
+  failure mode is a half-body-width gap, not a character stuck outside the
+  field.
 - Whether skipping `plcnt_move` for the three reset frames — so `time_over_check`,
   `settle_check` and the training `dm_nodeathattack` write do not run — has any
   observable effect. Argued inert (no player can act, attacks were torn down,
