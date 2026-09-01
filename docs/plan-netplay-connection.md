@@ -693,7 +693,7 @@ REGISTER resends are built on the rendezvous **worker** thread, so the
 8-byte cookie crosses via a seqlock (`signal_cookie_publish`, direct_p2p.c:928;
 `signal_cookie_snapshot`, direct_p2p.c:943) and the main thread also
 echoes immediately (`host_handle_challenge`, direct_p2p.c:5244).
-`Rendezvous_ParseChallenge` (rendezvous.c:197) validates magic, version,
+`Rendezvous_ParseChallenge` (rendezvous.c:202) validates magic, version,
 type **and** that the frame carries *our* session key (cross-talk +
 forgery gate — the key embeds the S4b nonce), and **zeroes its output on
 every reject**, so a caller that ignores the return value cannot echo
@@ -1064,7 +1064,7 @@ no live-infrastructure impact.
 
 > **Separate live defect, NOT caused by this removal.** That same
 > evidence means the deployed server speaks **v1** while this tree's
-> client speaks **v2** (`REND_VERSION 2`, `rendezvous.c:28`, 36-byte
+> client speaks **v2** (`REND_VERSION 2`, `rendezvous.c:33`, 36-byte
 > REGISTER). The deployed v1 `onMessage` drops any datagram whose
 > version byte is not 1, so **no build on this branch can complete
 > rendezvous signalling against the live server at all** — every attempt
@@ -1522,7 +1522,7 @@ Four `NETPLAY_TEST_HOOKS`-only seams make that possible:
   failure mode past its up-front `ip`/`port` guard — `Stun_PunchBegin`
   (`stun.c:781-798`) — and the only slot the race ever RE-arms takes its IP
   from `Rendezvous_ParseDeliverEx`, which emits `inet_ntop` output and
-  therefore always a resolvable dotted quad (`rendezvous.c:300-303`). The
+  therefore always a resolvable dotted quad (`rendezvous.c:305-308`). The
   wire cannot produce the case M-2 half (i) is about; the seam can, and the
   failure it produces is the real `NET_ResolveHostname` one.
 - **`DirectP2P_TestHook_RaceRelayArmMs` / `..._RaceRelayGraceMs`** exposed the

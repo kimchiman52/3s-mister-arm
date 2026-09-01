@@ -597,7 +597,6 @@ target_link_libraries(3s-arm PRIVATE
     "${MINIZIP_NG_ROOT}/lib/libminizip-ng.a"
     "${TF_PSA_CRYPTO_ROOT}/lib/libtfpsacrypto.a"
     ZLIB::ZLIB
-    stdc++
 )
 
 if(ENABLE_ISO_IMPORT)
@@ -678,6 +677,15 @@ elseif(UNIX)
         ${SDL3_ROOT}/lib/libSDL3.so
     )
 endif()
+
+# The C++ runtime has to come LAST on the link line, after every static
+# archive that might need it. GNU ld resolves archives strictly in order, so
+# with stdc++ listed before libGekkoNet.a -- where it used to be, up with
+# zlib and minizip -- GekkoNet's zpp serializer left a wall of undefined
+# references to std::runtime_error and std::logic_error at link time on
+# MinGW. macOS and the ARM cross-build never showed it: neither linker cares
+# about archive order here, so this only ever surfaced on Windows.
+target_link_libraries(3s-arm PRIVATE stdc++)
 
 # ======================================
 # Desktop netplay launcher (task #157)
