@@ -688,6 +688,28 @@ else
     if ! perl -0ne 'my $c = () = /\Q$ENV{C1_HOIST_ANCHOR}\E/g; exit($c != 1)' "$GEKKONET_BACKEND_CPP"; then
         echo "ERROR: GekkoNet OnInputs handles fetch not in expected pre-patch form at ref $GEKKONET_REF (L-4);" >&2
         echo "       expected exactly 1 handles/player_count pair. Refusing to build unpatched." >&2
+        # TEMPORARY DIAGNOSTIC (not a fix): three prior attempts at this exact
+        # failure -- forcing LF on the GekkoNet clone, persisting that into
+        # the clone's repo config, disabling autocrlf globally before
+        # actions/checkout -- all produced this identical error on Windows
+        # CI, unchanged. That is real evidence the line-ending theory is
+        # wrong, or at least incomplete, not confirmation to try a fourth
+        # guess. Dump the actual bytes instead. Remove this block once the
+        # real cause is known.
+        echo "--- L-4 diagnostic: git autocrlf ---" >&2
+        git config --global core.autocrlf 2>&1 >&2 || true
+        git -C "$GEKKONET_SRC" config core.autocrlf 2>&1 >&2 || true
+        echo "--- L-4 diagnostic: anchor variable, raw bytes ---" >&2
+        printf '%s' "$C1_HOIST_ANCHOR" | od -c | head -5 >&2
+        echo "--- L-4 diagnostic: where GetRemoteHandlesForAddress actually appears ---" >&2
+        grep -n 'GetRemoteHandlesForAddress' "$GEKKONET_BACKEND_CPP" >&2 || true
+        echo "--- L-4 diagnostic: raw bytes at the first match +/- 1 line ---" >&2
+        FIRST_LINE=$(grep -n 'GetRemoteHandlesForAddress' "$GEKKONET_BACKEND_CPP" | head -1 | cut -d: -f1)
+        if [ -n "$FIRST_LINE" ]; then
+            sed -n "$((FIRST_LINE > 1 ? FIRST_LINE - 1 : 1)),$((FIRST_LINE + 2))p" "$GEKKONET_BACKEND_CPP" | od -c | head -20 >&2
+        fi
+        echo "--- L-4 diagnostic: file size / line count ---" >&2
+        wc -lc "$GEKKONET_BACKEND_CPP" >&2 || true
         exit 1
     fi
     C1_HOIST_REPL='        auto handles = std::move(c1_handles); // 3s-arm L-4: reuse C-1 fetch
