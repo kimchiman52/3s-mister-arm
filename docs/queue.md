@@ -3925,3 +3925,70 @@ char-select texture-block fix (`2e7778f1`). Reading diffs cannot distinguish
 them; building can. ~5 builds with a human glancing at any `1`.
 
 Unrelated to the netplay work in #143-#155; do not conflate.
+
+## #157 — desktop netplay launcher (SDL3) + netplay.status export — OPEN
+
+Goal: host or join a netplay game from Windows/Mac/Linux without hand-writing a
+handoff file. Must serve MiSTer<->desktop and desktop<->desktop; MiSTer<->MiSTer
+already works through the OSD and is out of scope.
+
+### Why this is small
+
+**The handoff file is already a control API.** The game self-navigates from a
+cold launch: write `mode=host|join`, `port=`, `peer_code=`, pass
+`--direct-p2p-handoff <path>`, and `netplay_nav` injects START presses to walk
+Title -> Mode Select -> Versus and calls `Netplay_BeginDirectP2P()` at
+character select, unaided (`src/netplay/direct_p2p_handoff.h`, `src/main.c`,
+`src/netplay/netplay_nav.h`). The MiSTer OSD is one caller. This is a second.
+No engine or protocol change is required.
+
+Hosting on desktop ALREADY works end to end today — the code renders in the
+overlay. The only missing capability is **entering** a code.
+
+### Part 1 — `netplay.status` (the enabling change)
+
+Mirror `arcade_balance.c`'s `write_status_file()` exactly (same pref-path
+location, same line-oriented shape, same "write on every resolution" habit):
+
+    <pref>/netplay.status
+      line 1: state   -- HOSTING | IDLE
+      line 2: room code, or empty when not hosting
+
+Written where the host publishes (`direct_p2p.c`, the "HOST_WAITING published"
+site) and cleared on teardown/cancel so a stale code can never be read back.
+
+Note the log deliberately REDACTS the code (`RoomCode_Redact`, 3 chars). This
+file is the unredacted surface, which is the point — it is local, in the user's
+own pref dir, and it is what a launcher (and later a lobby agent) consumes
+instead of screen-scraping.
+
+### Part 2 — the launcher
+
+A **second CMake target** in this project, not a separate app: SDL3 is already
+vendored and built for all four targets, so this adds zero runtime dependencies
+and ships inside the existing package. A friend double-clicks one thing.
+
+Everything it needs exists in the vendored SDL3, verified present:
+`SDL_CreateProcess` (portable spawn -- no per-platform fork/exec),
+`SDL_SetClipboardText`, `SDL_StartTextInput`.
+
+Modes:
+1. **Host** -- write `mode=host`, spawn the game, poll `netplay.status`,
+   display the code and copy it to the clipboard.
+2. **Join** -- text field for the code, write `mode=join` + `peer_code=`, spawn.
+3. **LAN** -- `--p2p-remote-ip <ip> --p2p-local-player <1|2>`, no rendezvous,
+   no room code. Cheap to include and it is the configuration that would have
+   saved most of the 2026-08-31 cross-arch debugging session.
+
+Validate a pasted code with `RoomCode_Decode` BEFORE spawning, so a typo
+reports "invalid room code" in the launcher instead of costing a 15 s punch
+against a stranger's address. v4 codes are 12 chars; the decoder also reports
+OLD_FORMAT for 11/14/18-char legacy codes, which the launcher should surface as
+"code is from an older version" rather than a generic failure.
+
+### Constraints
+
+- Do not change the handoff format, the wire protocol, or `MIST_PROTO_VER`.
+- Do not regress the MiSTer OSD path -- it writes the same handoff file.
+- The launcher must not depend on Python or any runtime the game does not
+  already ship.
