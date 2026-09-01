@@ -13,7 +13,12 @@
 #include <stdlib.h>     /* strtoul */
 #include <string.h>     /* memcpy / memset / memcmp / strchr / strncmp */
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>   /* inet_ntop */
+#else
 #include <arpa/inet.h>  /* inet_ntop */
+#endif
 
 #include "utils/sha256.h"
 
