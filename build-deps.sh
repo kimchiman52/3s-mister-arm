@@ -550,6 +550,19 @@ else
     git -C "$GEKKONET_SRC" config core.autocrlf false
     git -C "$GEKKONET_SRC" -c advice.detachedHead=false checkout "$GEKKONET_REF"
 
+    # TEMPORARY DIAGNOSTIC (see the L-4 failure block below): count the L-4
+    # anchor in the PRISTINE checkout, before any patch has touched the file.
+    # This separates "the checkout itself differs on this platform" from "a
+    # preceding patch corrupted the site". Remove with the other block.
+    L4_BASE='        auto handles = GetRemoteHandlesForAddress(&addr);
+        const u32 player_count = (u32)handles.size();'
+    export L4_BASE
+    printf 'DIAG pristine L-4 anchor count: '
+    perl -0ne 'my $c = () = /\Q$ENV{L4_BASE}\E/g; print "$c\n"' \
+        "$GEKKONET_SRC/GekkoLib/src/backend.cpp"
+    printf 'DIAG pristine backend.cpp: '
+    wc -lc "$GEKKONET_SRC/GekkoLib/src/backend.cpp"
+
     # 3s-arm security patch — GekkoNet RLEDecode 1-byte OOB heap read.
     # compression.h RLEDecode() reads data[idx+1] with only an `idx < length`
     # loop guard, so an odd-length (hostile/corrupt) compressed InputMsg
@@ -703,11 +716,14 @@ else
         printf '%s' "$C1_HOIST_ANCHOR" | od -c | head -5 >&2
         echo "--- L-4 diagnostic: where GetRemoteHandlesForAddress actually appears ---" >&2
         grep -n 'GetRemoteHandlesForAddress' "$GEKKONET_BACKEND_CPP" >&2 || true
-        echo "--- L-4 diagnostic: raw bytes at the first match +/- 1 line ---" >&2
-        FIRST_LINE=$(grep -n 'GetRemoteHandlesForAddress' "$GEKKONET_BACKEND_CPP" | head -1 | cut -d: -f1)
-        if [ -n "$FIRST_LINE" ]; then
-            sed -n "$((FIRST_LINE > 1 ? FIRST_LINE - 1 : 1)),$((FIRST_LINE + 2))p" "$GEKKONET_BACKEND_CPP" | od -c | head -20 >&2
-        fi
+        echo "--- L-4 diagnostic: actual match count ---" >&2
+        perl -0ne 'my $c = () = /\Q$ENV{C1_HOIST_ANCHOR}\E/g; print "count=$c\n"' \
+            "$GEKKONET_BACKEND_CPP" >&2
+        echo "--- L-4 diagnostic: each 'auto handles =' site, with 3 lines after ---" >&2
+        for L in $(grep -n 'auto handles = GetRemoteHandlesForAddress' "$GEKKONET_BACKEND_CPP" | cut -d: -f1); do
+            echo "  ---- site at line $L ----" >&2
+            sed -n "${L},$((L + 3))p" "$GEKKONET_BACKEND_CPP" | od -c >&2
+        done
         echo "--- L-4 diagnostic: file size / line count ---" >&2
         wc -lc "$GEKKONET_BACKEND_CPP" >&2 || true
         exit 1
