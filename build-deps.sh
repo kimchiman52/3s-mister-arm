@@ -1095,7 +1095,48 @@ else
 
     SDL3_NET_SRC=$(mktemp -d)
     git clone https://github.com/libsdl-org/SDL_net.git "$SDL3_NET_SRC"
+    git -C "$SDL3_NET_SRC" config core.autocrlf false
+    git -C "$SDL3_NET_SRC" config core.eol lf
     git -C "$SDL3_NET_SRC" -c advice.detachedHead=false checkout "$SDL3_NET_REF"
+    perl -pi -e 's/\r\n/\n/g' "$SDL3_NET_SRC/src/SDL_net.c"
+
+    # --- MinGW `write`/`read` collision -----------------------------------
+    # SDL_net.c defines Windows-only static shims literally named `write`
+    # and `read`, so that its three call sites can use the POSIX names
+    # unconditionally. MinGW's <io.h> ALSO declares write/read -- pulled in
+    # transitively via SDL_stdinc.h -> wchar.h -> sys/stat.h -> io.h -- with
+    # different signatures, so the build dies with "conflicting types for
+    # 'write'". MSVC does not declare them, which is why upstream has never
+    # hit this; the tip of SDL_net still has the same two definitions, so
+    # there is no newer ref to bump to.
+    #
+    # Renaming the shims is the fix, NOT a #define: WindowsPoll passes the
+    # bare tokens `read` and `write` as macro arguments (ALLOC_FDSET(read),
+    # CHECKSET(write, POLLOUT)), which a macro would silently mangle. So
+    # rename the two definitions, alias the names back on POSIX where the
+    # real syscalls are wanted, and repoint the three call sites.
+    SDLNET_C="$SDL3_NET_SRC/src/SDL_net.c"
+    if [ "$(grep -cE '^static int (write|read)\(SOCKET' "$SDLNET_C")" -ne 2 ]; then
+        echo "ERROR: SDL_net.c write/read shims not in expected pre-patch form at ref $SDL3_NET_REF;" >&2
+        echo "       expected exactly 2 'static int write|read(SOCKET' definitions." >&2
+        exit 1
+    fi
+    perl -pi -e 's/^static int write\(SOCKET/static int SDLNet_sock_write(SOCKET/;
+                 s/^static int read\(SOCKET/static int SDLNet_sock_read(SOCKET/' "$SDLNET_C"
+
+    # POSIX keeps using the real syscalls under the new names. Placed at the
+    # platform #else so it lands after <unistd.h> is in scope.
+    perl -0pi -e 's/\Q#else\E\n\Q#include <sys\/types.h>\E/#else\n#define SDLNet_sock_write write\n#define SDLNet_sock_read read\n#include <sys\/types.h>/' "$SDLNET_C"
+
+    perl -pi -e 's/\bwrite\(sock->handle/SDLNet_sock_write(sock->handle/g;
+                 s/\bread\(sock->handle/SDLNet_sock_read(sock->handle/g' "$SDLNET_C"
+
+    if [ "$(grep -cE 'SDLNet_sock_(write|read)' "$SDLNET_C")" -lt 7 ]; then
+        echo "ERROR: SDL_net.c write/read rename did not apply cleanly" >&2
+        echo "       (expected 2 definitions + 2 POSIX aliases + 3 call sites)." >&2
+        exit 1
+    fi
+    echo "SDL_net: renamed write/read shims (MinGW <io.h> collision)"
 
     cmake -S "$SDL3_NET_SRC" -B "$SDL3_NET_SRC/cmake-build" \
         -DCMAKE_BUILD_TYPE=Release \
