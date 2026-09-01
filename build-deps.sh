@@ -532,15 +532,22 @@ else
     echo "Building GekkoNet @ $GEKKONET_REF..."
 
     GEKKONET_SRC=$(mktemp -d)
-    # -c core.autocrlf=false: every patch below matches a literal multi-line
-    # \n-joined anchor string against this checkout. A CRLF checkout (the
-    # Windows/MSYS2 git default, observed on the windows-latest CI runner)
-    # turns every \n in the source into \r\n, so a two-line anchor never
-    # matches and the patch refuses to apply -- correctly, per its own
-    # fail-loud contract, but for a reason that has nothing to do with
-    # GekkoNet actually drifting. Force LF so the anchors see the same bytes
-    # on every platform this script runs on.
+    # Force LF, persistently (see below): every patch below matches a
+    # literal multi-line \n-joined anchor string against this checkout. A
+    # CRLF checkout (the Windows/MSYS2 git default, observed on the
+    # windows-latest CI runner) turns every \n in the source into \r\n, so a
+    # two-line anchor never matches and the patch refuses to apply --
+    # correctly, per its own fail-loud contract, but for a reason that has
+    # nothing to do with GekkoNet actually drifting.
+    # `-c core.autocrlf=false` on `clone` alone is NOT enough: it scopes to
+    # that one invocation and is never written to $GEKKONET_SRC/.git/config,
+    # so the very next command -- a separate `checkout` of $GEKKONET_REF --
+    # runs under the runner's ambient default again and can re-write every
+    # file back to CRLF on exactly the checkout whose content is what the
+    # patches below actually see. Persist it into the repo's local config so
+    # every subsequent git operation in this checkout honors it too.
     git -c core.autocrlf=false clone https://github.com/HeatXD/GekkoNet.git "$GEKKONET_SRC"
+    git -C "$GEKKONET_SRC" config core.autocrlf false
     git -C "$GEKKONET_SRC" -c advice.detachedHead=false checkout "$GEKKONET_REF"
 
     # 3s-arm security patch — GekkoNet RLEDecode 1-byte OOB heap read.
