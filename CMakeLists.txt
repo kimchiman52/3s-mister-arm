@@ -696,10 +696,12 @@ target_link_libraries(3s-arm PRIVATE stdc++)
 # netplay_launcher.c has the full rationale). Everything it needs is
 # already vendored — SDL3 for the window/spawn/clipboard, and three
 # self-contained game TUs: room_code.c (pre-spawn code validation),
-# csprng.c (room_code.c's only dependency), and paths.c (so the pref dir
+# csprng.c (room_code.c's only dependency), paths.c (so the pref dir
 # — where it reads netplay.status and writes launcher.handoff — resolves
-# IDENTICALLY to the game's, THIRDSARM_HOME override included). Zero new
-# runtime dependencies by construction.
+# IDENTICALLY to the game's, THIRDSARM_HOME override included), and
+# keymap.c + config_helpers.c (so the key-binding screen edits the same
+# table the game reads, defaults included, rather than a second copy).
+# Zero new runtime dependencies by construction.
 #
 # Not built for the embedded ports: MiSTer hosts/joins through the OSD
 # (which writes the same handoff file), and the Miyoo has no netplay
@@ -708,6 +710,8 @@ if(ENABLE_NETPLAY AND NOT PORT_MISTER AND NOT PORT_MIYOO_MINI_PLUS AND NOT PORT_
     add_executable(3s-netplay-launcher
         src/launcher/netplay_launcher.c
         src/netplay/room_code.c
+        src/port/config/config_helpers.c
+        src/port/config/keymap.c
         src/port/paths.c
         src/utils/csprng.c
     )

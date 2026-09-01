@@ -54,7 +54,7 @@ static const SDL_Scancode default_keymap[KEYMAP_BUTTON_COUNT][KEYMAP_CODES_PER_B
 static SDL_Scancode keymap[KEYMAP_BUTTON_COUNT][KEYMAP_CODES_PER_BUTTON] = {};
 static bool initialized_buttons[KEYMAP_BUTTON_COUNT] = { false };
 
-static const char* get_button_name(KeymapButton button) {
+const char* Keymap_GetButtonName(KeymapButton button) {
     switch (button) {
     case KEYMAP_BUTTON_UP:
         return "up";
@@ -97,7 +97,7 @@ static const char* get_button_name(KeymapButton button) {
 
 static KeymapButton get_button(const char* name) {
     for (int i = 0; i < KEYMAP_BUTTON_COUNT; i++) {
-        const char* this_name = get_button_name(i);
+        const char* this_name = Keymap_GetButtonName(i);
 
         if (SDL_strcmp(name, this_name) == 0) {
             return i;
@@ -107,16 +107,24 @@ static KeymapButton get_button(const char* name) {
     return -1;
 }
 
-static void write_defaults(const char* dst_path) {
+/* `table` is the flat base of a [KEYMAP_BUTTON_COUNT][KEYMAP_CODES_PER_BUTTON]
+ * array; flat because C will not implicitly convert SDL_Scancode(*)[4] to
+ * const SDL_Scancode(*)[4], which a 2-D parameter would need at one of the
+ * two call sites. */
+static bool write_table(const char* dst_path, const SDL_Scancode* table) {
     SDL_IOStream* io = SDL_IOFromFile(dst_path, "w");
 
+    if (io == NULL) {
+        return false;
+    }
+
     for (int i = 0; i < KEYMAP_BUTTON_COUNT; i++) {
-        io_printf(io, "%s = ", get_button_name(i));
+        io_printf(io, "%s = ", Keymap_GetButtonName(i));
 
         bool is_first = true;
 
         for (int j = 0; j < KEYMAP_CODES_PER_BUTTON; j++) {
-            const SDL_Scancode code = default_keymap[i][j];
+            const SDL_Scancode code = table[i * KEYMAP_CODES_PER_BUTTON + j];
 
             if (code == SDL_SCANCODE_UNKNOWN) {
                 break;
@@ -127,13 +135,17 @@ static void write_defaults(const char* dst_path) {
             }
 
             is_first = false;
-            io_printf(io, SDL_GetScancodeName(code));
+            io_printf(io, "%s", SDL_GetScancodeName(code));
         }
 
         io_printf(io, "\n");
     }
 
-    SDL_CloseIO(io);
+    return SDL_CloseIO(io);
+}
+
+static void write_defaults(const char* dst_path) {
+    write_table(dst_path, &default_keymap[0][0]);
 }
 
 static bool dict_iterator(const char* key, const char* value) {
@@ -203,7 +215,7 @@ void Keymap_Init() {
     /* Diagnostic: dump parsed keymap so we can verify file→runtime
      * binding. Log to stderr so it lands in launch.log. */
     for (int i = 0; i < KEYMAP_BUTTON_COUNT; i++) {
-        SDL_Log("[keymap] %s =", get_button_name(i));
+        SDL_Log("[keymap] %s =", Keymap_GetButtonName(i));
         for (int j = 0; j < KEYMAP_CODES_PER_BUTTON; j++) {
             SDL_Scancode c = keymap[i][j];
             if (c != SDL_SCANCODE_UNKNOWN) {
@@ -215,4 +227,32 @@ void Keymap_Init() {
 
 const SDL_Scancode* Keymap_GetScancodes(KeymapButton button) {
     return keymap[button];
+}
+
+const SDL_Scancode* Keymap_GetDefaultScancodes(KeymapButton button) {
+    return default_keymap[button];
+}
+
+void Keymap_SetScancodes(KeymapButton button, const SDL_Scancode* codes, int count) {
+    for (int i = 0; i < KEYMAP_CODES_PER_BUTTON; i++) {
+        keymap[button][i] = i < count ? codes[i] : SDL_SCANCODE_UNKNOWN;
+    }
+
+    /* An editor that binds a button before Keymap_Init() has filled the
+     * rest would otherwise have its edit overwritten by the defaults on
+     * the next initialize_empty_buttons(). */
+    initialized_buttons[button] = true;
+}
+
+bool Keymap_Save(void) {
+    char* keymap_path = NULL;
+    SDL_asprintf(&keymap_path, "%skeymap", Paths_GetPrefPath());
+
+    if (keymap_path == NULL) {
+        return false;
+    }
+
+    const bool ok = write_table(keymap_path, &keymap[0][0]);
+    SDL_free(keymap_path);
+    return ok;
 }

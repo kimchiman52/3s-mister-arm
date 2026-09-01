@@ -27,6 +27,10 @@
  * paths.c (so the pref dir resolves IDENTICALLY to the game's,
  * THIRDSARM_HOME override included).
  *
+ * The key-binding screen edits <pref>/keymap through keymap.c's own
+ * editing API rather than a second copy of the defaults table, so the
+ * launcher and the game can never disagree about what a default is.
+ *
  * A pasted code is validated with RoomCode_Decode BEFORE spawning, so a
  * typo reports "invalid room code" here instead of costing a 15 s punch
  * at an uninvolved stranger's address — and the decoder's distinct
@@ -35,6 +39,7 @@
  */
 
 #include "netplay/room_code.h"
+#include "port/config/keymap.h"
 #include "port/paths.h"
 
 #include <SDL3/SDL.h>
@@ -58,6 +63,7 @@ typedef enum {
     SCREEN_HOST,
     SCREEN_JOIN,
     SCREEN_LAN,
+    SCREEN_KEYS,
 } Screen;
 
 static SDL_Window* g_win = NULL;
@@ -87,6 +93,11 @@ static char g_code_entry[32] = { 0 };
 static char g_ip_entry[64] = { 0 };
 static int g_lan_player = 1;
 
+/* Key screen state. -1 = not capturing; otherwise the g_key_rows index
+ * whose next keypress becomes its binding. */
+static int g_key_capture = -1;
+static bool g_keymap_loaded = false;
+
 /* One-line (plus optional second line) message area, per screen. */
 static char g_msg[128] = { 0 };
 static char g_msg2[128] = { 0 };
@@ -108,9 +119,58 @@ static void draw_text(float x, float y, float scale, SDL_Color c, const char* s)
     SDL_SetRenderScale(g_ren, 1.0f, 1.0f);
 }
 
-static void draw_text_centered(float cx, float y, float scale, SDL_Color c, const char* s) {
-    const float w = (float)strlen(s) * GLYPH * scale;
-    draw_text(cx - w / 2.0f, y, scale, c, s);
+/* Widest a line of text may be before it starts leaving the window. */
+#define TEXT_MAX_W ((float)WIN_W - 32.0f)
+
+/* Fits `s` into `max_w`: steps the scale down towards 1.0 first, then
+ * truncates with an ellipsis. Returns the scale to draw `out` at.
+ *
+ * Every text draw goes through this because the window is fixed at 640px
+ * and a message only has to run a few words long to bleed off both edges
+ * -- "Game starting - waiting for the room code..." is 43 chars, which at
+ * the message area's scale 2 is 688px. Shortening the offending string is
+ * not a fix; the next one just does it again. */
+static float fit_text(char* out, size_t out_len, const char* s, float desired, float max_w) {
+    float scale = desired;
+    while (scale > 1.0f && (float)strlen(s) * GLYPH * scale > max_w) {
+        scale -= 0.5f;
+    }
+    if (scale < 1.0f) {
+        scale = 1.0f;
+    }
+
+    size_t max_chars = (size_t)(max_w / (GLYPH * scale));
+    if (max_chars > out_len - 1) {
+        max_chars = out_len - 1;
+    }
+
+    if (strlen(s) <= max_chars) {
+        SDL_strlcpy(out, s, out_len);
+    } else if (max_chars > 3) {
+        SDL_memcpy(out, s, max_chars - 3);
+        SDL_strlcpy(out + max_chars - 3, "...", out_len - (max_chars - 3));
+    } else {
+        SDL_strlcpy(out, s, max_chars + 1);
+    }
+
+    return scale;
+}
+
+/* Returns the drawn width, so callers that place something after the
+ * text (the entry caret) stay aligned with what was actually drawn. */
+static float draw_text_fit(float x, float y, float desired, SDL_Color c, const char* s, float max_w) {
+    char buf[192];
+    const float scale = fit_text(buf, sizeof(buf), s, desired, max_w);
+    draw_text(x, y, scale, c, buf);
+    return (float)strlen(buf) * GLYPH * scale;
+}
+
+static void draw_text_centered(float cx, float y, float desired, SDL_Color c, const char* s,
+                               float max_w) {
+    char buf[192];
+    const float scale = fit_text(buf, sizeof(buf), s, desired, max_w);
+    const float w = (float)strlen(buf) * GLYPH * scale;
+    draw_text(cx - w / 2.0f, y, scale, c, buf);
 }
 
 static float g_mouse_x = 0.0f;
@@ -138,7 +198,7 @@ static bool button(const Button* b) {
 
     draw_text_centered(b->rect.x + b->rect.w / 2.0f,
                        b->rect.y + (b->rect.h - GLYPH * 2.0f) / 2.0f,
-                       2.0f, COL_TEXT, b->label);
+                       2.0f, COL_TEXT, b->label, b->rect.w - 8.0f);
 
     return hover && g_mouse_clicked;
 }
@@ -504,6 +564,7 @@ static size_t active_entry_cap(void) {
 
 static void enter_screen(Screen s) {
     g_screen = s;
+    g_key_capture = -1;
     set_msg(COL_TEXT, "", NULL);
     if (s == SCREEN_JOIN || s == SCREEN_LAN) {
         SDL_StartTextInput(g_win);
@@ -520,26 +581,26 @@ static void render_child_state(float y) {
         return;
     }
     if (child_running()) {
-        draw_text(24, y, 1.0f, COL_DIM, "game process: running");
+        draw_text_fit(24, y, 1.0f, COL_DIM, "game process: running", TEXT_MAX_W);
     } else {
         char line[64];
         SDL_snprintf(line, sizeof(line), "game process: exited (code %d)", g_child_exit_code);
-        draw_text(24, y, 1.0f, COL_DIM, line);
+        draw_text_fit(24, y, 1.0f, COL_DIM, line, TEXT_MAX_W);
     }
 }
 
 static void render_msg(float y) {
     if (g_msg[0] != '\0') {
-        draw_text_centered(WIN_W / 2.0f, y, 2.0f, g_msg_color, g_msg);
+        draw_text_centered(WIN_W / 2.0f, y, 2.0f, g_msg_color, g_msg, TEXT_MAX_W);
     }
     if (g_msg2[0] != '\0') {
-        draw_text_centered(WIN_W / 2.0f, y + 24, 1.0f, COL_DIM, g_msg2);
+        draw_text_centered(WIN_W / 2.0f, y + 24, 1.0f, COL_DIM, g_msg2, TEXT_MAX_W);
     }
 }
 
 static void screen_menu(void) {
-    draw_text_centered(WIN_W / 2.0f, 48, 3.0f, COL_ACCENT, "3S NETPLAY");
-    draw_text_centered(WIN_W / 2.0f, 84, 1.0f, COL_DIM, "host or join a match without editing files");
+    draw_text_centered(WIN_W / 2.0f, 48, 3.0f, COL_ACCENT, "3S NETPLAY", TEXT_MAX_W);
+    draw_text_centered(WIN_W / 2.0f, 84, 1.0f, COL_DIM, "host or join a match without editing files", TEXT_MAX_W);
 
     const Button b_host = { { 170, 140, 300, 52 }, "HOST A GAME" };
     const Button b_join = { { 170, 210, 300, 52 }, "JOIN WITH A CODE" };
@@ -557,18 +618,26 @@ static void screen_menu(void) {
     }
 
     render_msg(360);
+
+    /* Corner button: key config is a rare, one-off errand next to the
+     * three things this launcher exists to do. */
+    const Button b_keys = { { 516, 398, 108, 34 }, "KEYS" };
+    if (button(&b_keys)) {
+        enter_screen(SCREEN_KEYS);
+    }
+
     render_child_state(440);
-    draw_text_centered(WIN_W / 2.0f, 456, 1.0f, COL_DIM, "esc quits");
+    draw_text_centered(WIN_W / 2.0f, 456, 1.0f, COL_DIM, "esc quits", TEXT_MAX_W);
 }
 
 static void screen_host(void) {
-    draw_text_centered(WIN_W / 2.0f, 40, 2.0f, COL_TEXT, "HOSTING");
+    draw_text_centered(WIN_W / 2.0f, 40, 2.0f, COL_TEXT, "HOSTING", TEXT_MAX_W);
 
     host_poll();
 
     if (g_host_code[0] != '\0') {
-        draw_text_centered(WIN_W / 2.0f, 96, 1.0f, COL_DIM, "give this code to the other player:");
-        draw_text_centered(WIN_W / 2.0f, 130, 4.0f, COL_ACCENT, g_host_code);
+        draw_text_centered(WIN_W / 2.0f, 96, 1.0f, COL_DIM, "give this code to the other player:", TEXT_MAX_W);
+        draw_text_centered(WIN_W / 2.0f, 130, 4.0f, COL_ACCENT, g_host_code, TEXT_MAX_W);
 
         const Button b_copy = { { 220, 200, 200, 40 }, "COPY AGAIN" };
         if (button(&b_copy)) {
@@ -580,12 +649,12 @@ static void screen_host(void) {
         }
         if (strcmp(g_host_status, "HOSTING") != 0) {
             draw_text_centered(WIN_W / 2.0f, 260, 1.0f, COL_DIM,
-                               "no longer advertising - peer connected, or hosting ended");
+                               "no longer advertising - peer connected, or hosting ended", TEXT_MAX_W);
         }
     } else {
-        draw_text_centered(WIN_W / 2.0f, 140, 2.0f, COL_DIM, "waiting for the room code...");
+        draw_text_centered(WIN_W / 2.0f, 140, 2.0f, COL_DIM, "waiting for the room code...", TEXT_MAX_W);
         draw_text_centered(WIN_W / 2.0f, 170, 1.0f, COL_DIM,
-                           "the game is discovering its public address");
+                           "the game is discovering its public address", TEXT_MAX_W);
     }
 
     render_msg(320);
@@ -596,7 +665,7 @@ static void screen_host(void) {
     }
     render_child_state(440);
     draw_text_centered(WIN_W / 2.0f, 456, 1.0f, COL_DIM,
-                       "back leaves the game running - quit it from the game window");
+                       "back leaves the game running - quit it from the game window", TEXT_MAX_W);
 }
 
 static void render_entry_field(const char* value, const char* placeholder) {
@@ -606,14 +675,18 @@ static void render_entry_field(const char* value, const char* placeholder) {
     SDL_SetRenderDrawColor(g_ren, 120, 120, 150, 255);
     SDL_RenderRect(g_ren, &field);
 
+    /* The caret follows the width actually drawn, not strlen(value), so a
+     * long hostname that had to be shrunk to fit does not push it out of
+     * the field. */
+    float text_w = 0.0f;
     if (value[0] != '\0') {
-        draw_text(field.x + 12, field.y + 14, 2.0f, COL_TEXT, value);
+        text_w = draw_text_fit(field.x + 12, field.y + 14, 2.0f, COL_TEXT, value, field.w - 24.0f);
     } else {
-        draw_text(field.x + 12, field.y + 14, 2.0f, COL_DIM, placeholder);
+        draw_text_fit(field.x + 12, field.y + 14, 2.0f, COL_DIM, placeholder, field.w - 24.0f);
     }
     /* Blinking caret. */
     if ((SDL_GetTicks() / 500) % 2 == 0) {
-        const float cx = field.x + 12 + (float)strlen(value) * GLYPH * 2.0f;
+        const float cx = field.x + 12 + text_w;
         const SDL_FRect caret = { cx, field.y + 12, 3, 20 };
         SDL_SetRenderDrawColor(g_ren, 230, 230, 235, 255);
         SDL_RenderFillRect(g_ren, &caret);
@@ -621,9 +694,9 @@ static void render_entry_field(const char* value, const char* placeholder) {
 }
 
 static void screen_join(void) {
-    draw_text_centered(WIN_W / 2.0f, 40, 2.0f, COL_TEXT, "JOIN WITH A CODE");
+    draw_text_centered(WIN_W / 2.0f, 40, 2.0f, COL_TEXT, "JOIN WITH A CODE", TEXT_MAX_W);
     draw_text_centered(WIN_W / 2.0f, 110, 1.0f, COL_DIM,
-                       "type or paste the host's room code (ctrl+v / cmd+v)");
+                       "type or paste the host's room code (ctrl+v / cmd+v)", TEXT_MAX_W);
 
     render_entry_field(g_code_entry, "room code");
 
@@ -639,13 +712,13 @@ static void screen_join(void) {
         enter_screen(SCREEN_MENU);
     }
     render_child_state(440);
-    draw_text_centered(WIN_W / 2.0f, 456, 1.0f, COL_DIM, "enter joins - esc goes back");
+    draw_text_centered(WIN_W / 2.0f, 456, 1.0f, COL_DIM, "enter joins - esc goes back", TEXT_MAX_W);
 }
 
 static void screen_lan(void) {
-    draw_text_centered(WIN_W / 2.0f, 40, 2.0f, COL_TEXT, "LAN GAME");
+    draw_text_centered(WIN_W / 2.0f, 40, 2.0f, COL_TEXT, "LAN GAME", TEXT_MAX_W);
     draw_text_centered(WIN_W / 2.0f, 110, 1.0f, COL_DIM,
-                       "no room code needed - enter the other machine's IP");
+                       "no room code needed - enter the other machine's IP", TEXT_MAX_W);
 
     render_entry_field(g_ip_entry, "192.168.1.50");
 
@@ -669,7 +742,239 @@ static void screen_lan(void) {
     }
     render_child_state(440);
     draw_text_centered(WIN_W / 2.0f, 456, 1.0f, COL_DIM,
-                       "one machine is player 1, the other player 2");
+                       "one machine is player 1, the other player 2", TEXT_MAX_W);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Key bindings.
+ *
+ * The pad-button names in the labels are what the game's own config
+ * screens call these buttons; the attack names are what they do under the
+ * default button config (ioConvInitData -> Convert_Data in sys_sub.c) and
+ * under the identity config netplay forces (netplay.c, netplay_nav.c).
+ * L1 and L2 are not listed because both configs leave them unassigned,
+ * and left-stick/right-stick because the game does not use them -- all
+ * four still round-trip through the file, because Keymap_Save() writes
+ * the whole table. */
+
+typedef struct {
+    KeymapButton button;
+    const char* label;
+} KeyRow;
+
+static const KeyRow g_key_rows[] = {
+    { KEYMAP_BUTTON_UP, "UP" },
+    { KEYMAP_BUTTON_DOWN, "DOWN" },
+    { KEYMAP_BUTTON_LEFT, "LEFT" },
+    { KEYMAP_BUTTON_RIGHT, "RIGHT" },
+    { KEYMAP_BUTTON_WEST, "LP (Square)" },
+    { KEYMAP_BUTTON_NORTH, "MP (Triangle)" },
+    { KEYMAP_BUTTON_RIGHT_SHOULDER, "HP (R1)" },
+    { KEYMAP_BUTTON_SOUTH, "LK (Cross)" },
+    { KEYMAP_BUTTON_EAST, "MK (Circle)" },
+    { KEYMAP_BUTTON_RIGHT_TRIGGER, "HK (R2)" },
+    { KEYMAP_BUTTON_START, "START" },
+    { KEYMAP_BUTTON_BACK, "SELECT" },
+};
+
+#define KEY_ROW_COUNT ((int)SDL_arraysize(g_key_rows))
+#define KEY_ROWS_PER_COL 6
+
+static void keys_load(void) {
+    if (g_keymap_loaded) {
+        return;
+    }
+    /* Keymap_Init() writes the defaults file when none exists. Doing that
+     * from here is the same thing the game's first run would do, and it
+     * means the screen always has a concrete binding to show. */
+    Keymap_Init();
+    g_keymap_loaded = true;
+}
+
+static void keys_binding_text(KeymapButton button, char* out, size_t out_len) {
+    const SDL_Scancode* codes = Keymap_GetScancodes(button);
+
+    out[0] = '\0';
+    for (int i = 0; i < KEYMAP_CODES_PER_BUTTON; i++) {
+        if (codes[i] == SDL_SCANCODE_UNKNOWN) {
+            break;
+        }
+        if (out[0] != '\0') {
+            SDL_strlcat(out, ", ", out_len);
+        }
+        const char* name = SDL_GetScancodeName(codes[i]);
+        SDL_strlcat(out, name != NULL && name[0] != '\0' ? name : "?", out_len);
+    }
+    if (out[0] == '\0') {
+        SDL_strlcpy(out, "(none)", out_len);
+    }
+}
+
+/* Prefer the row label ("LP (Square)") over the raw keymap name ("west")
+ * so a duplicate-binding warning names the button the way the screen
+ * does; buttons with no row fall back to the file's own spelling. */
+static const char* keys_button_label(KeymapButton button) {
+    for (int i = 0; i < KEY_ROW_COUNT; i++) {
+        if (g_key_rows[i].button == button) {
+            return g_key_rows[i].label;
+        }
+    }
+    return Keymap_GetButtonName(button);
+}
+
+static bool keys_save(void) {
+    if (Keymap_Save()) {
+        return true;
+    }
+    set_msg(COL_ERR, "Could not write the keymap file.", Paths_GetPrefPath());
+    return false;
+}
+
+static void keys_reset_defaults(void) {
+    for (int i = 0; i < KEYMAP_BUTTON_COUNT; i++) {
+        const SDL_Scancode* defaults = Keymap_GetDefaultScancodes(i);
+        int count = 0;
+        while (count < KEYMAP_CODES_PER_BUTTON && defaults[count] != SDL_SCANCODE_UNKNOWN) {
+            count++;
+        }
+        Keymap_SetScancodes(i, defaults, count);
+    }
+    if (keys_save()) {
+        set_msg(COL_OK, "All keys restored to defaults.", NULL);
+    }
+}
+
+/* Handles the one keypress that ends a capture. */
+static void keys_capture(SDL_Scancode scancode, SDL_Keycode key) {
+    const KeyRow* row = &g_key_rows[g_key_capture];
+    g_key_capture = -1;
+
+    if (key == SDLK_ESCAPE) {
+        set_msg(COL_TEXT, "Rebind cancelled.", NULL);
+        return;
+    }
+
+    if (key == SDLK_BACKSPACE || key == SDLK_DELETE) {
+        Keymap_SetScancodes(row->button, NULL, 0);
+        if (keys_save()) {
+            char line[96];
+            SDL_snprintf(line, sizeof(line), "%s unbound.", row->label);
+            /* The keymap file has no way to spell "deliberately unbound":
+             * a button with no key parses as absent, and an absent button
+             * gets its default back at the next Keymap_Init(). Say so
+             * rather than let the binding quietly reappear. */
+            set_msg(COL_ACCENT, line, "an unbound button returns to its default the next time the game starts");
+        }
+        return;
+    }
+
+    if (scancode == SDL_SCANCODE_UNKNOWN) {
+        set_msg(COL_ERR, "That key has no name SDL can store.", NULL);
+        return;
+    }
+
+    int clash = -1;
+    for (int i = 0; i < KEYMAP_BUTTON_COUNT; i++) {
+        if (i == row->button) {
+            continue;
+        }
+        const SDL_Scancode* codes = Keymap_GetScancodes(i);
+        for (int j = 0; j < KEYMAP_CODES_PER_BUTTON; j++) {
+            if (codes[j] == scancode) {
+                clash = i;
+            }
+        }
+    }
+
+    Keymap_SetScancodes(row->button, &scancode, 1);
+    if (!keys_save()) {
+        return;
+    }
+
+    char line[96];
+    SDL_snprintf(line, sizeof(line), "%s = %s", row->label, SDL_GetScancodeName(scancode));
+
+    /* A key on two buttons is confusing but legal -- the game ORs both --
+     * so warn and apply rather than silently stealing it from the other
+     * button, which would lose a binding the user never asked to change. */
+    if (clash >= 0) {
+        char warn[128];
+        SDL_snprintf(warn, sizeof(warn), "note: %s is also bound to %s",
+                     SDL_GetScancodeName(scancode), keys_button_label((KeymapButton)clash));
+        set_msg(COL_ACCENT, line, warn);
+    } else {
+        set_msg(COL_OK, line, NULL);
+    }
+}
+
+static bool key_cell(const SDL_FRect* r, bool capturing) {
+    const bool hover = g_mouse_x >= r->x && g_mouse_x < r->x + r->w && g_mouse_y >= r->y &&
+                       g_mouse_y < r->y + r->h;
+
+    if (capturing) {
+        SDL_SetRenderDrawColor(g_ren, 96, 76, 34, 255);
+    } else if (hover) {
+        SDL_SetRenderDrawColor(g_ren, 62, 62, 88, 255);
+    } else {
+        SDL_SetRenderDrawColor(g_ren, 40, 40, 56, 255);
+    }
+    SDL_RenderFillRect(g_ren, r);
+    SDL_SetRenderDrawColor(g_ren, capturing ? 255 : 100, capturing ? 208 : 100,
+                           capturing ? 64 : 130, 255);
+    SDL_RenderRect(g_ren, r);
+
+    return hover && g_mouse_clicked;
+}
+
+static void screen_keys(void) {
+    keys_load();
+
+    draw_text_centered(WIN_W / 2.0f, 14, 2.0f, COL_ACCENT, "KEY BINDINGS", TEXT_MAX_W);
+
+    for (int i = 0; i < KEY_ROW_COUNT; i++) {
+        const SDL_FRect cell = { i < KEY_ROWS_PER_COL ? 20.0f : 328.0f,
+                                 48.0f + 40.0f * (float)(i % KEY_ROWS_PER_COL), 292.0f, 36.0f };
+        const bool capturing = g_key_capture == i;
+
+        if (key_cell(&cell, capturing)) {
+            g_key_capture = i;
+            set_msg(COL_TEXT, "", NULL);
+        }
+
+        draw_text_fit(cell.x + 8, cell.y + 4, 1.5f, COL_ACCENT, g_key_rows[i].label, cell.w - 16.0f);
+
+        char binding[160];
+        if (capturing) {
+            SDL_strlcpy(binding, "press a key...", sizeof(binding));
+        } else {
+            keys_binding_text(g_key_rows[i].button, binding, sizeof(binding));
+        }
+        draw_text_fit(cell.x + 8, cell.y + 20, 1.5f, capturing ? COL_ACCENT : COL_TEXT, binding,
+                      cell.w - 16.0f);
+    }
+
+    draw_text_centered(WIN_W / 2.0f, 296, 1.0f, COL_DIM,
+                       "click a row, then press a key - esc cancels, backspace unbinds",
+                       TEXT_MAX_W);
+
+    render_msg(316);
+
+    const Button b_reset = { { 142, 386, 240, 36 }, "RESET TO DEFAULTS" };
+    if (button(&b_reset)) {
+        g_key_capture = -1;
+        keys_reset_defaults();
+    }
+
+    const Button b_back = { { 398, 386, 100, 36 }, "BACK" };
+    if (button(&b_back)) {
+        enter_screen(SCREEN_MENU);
+    }
+
+    draw_text_centered(WIN_W / 2.0f, 440, 1.0f, COL_DIM,
+                       "changes apply the next time the game starts", TEXT_MAX_W);
+    draw_text_centered(WIN_W / 2.0f, 456, 1.0f, COL_DIM,
+                       "gamepads use SDL's standard gamepad mapping - not configurable here",
+                       TEXT_MAX_W);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -703,6 +1008,13 @@ static void handle_event(const SDL_Event* ev) {
     }
 
     case SDL_EVENT_KEY_DOWN: {
+        /* A capture consumes the whole keypress -- including ESC, which
+         * must cancel the capture without also leaving the screen. */
+        if (g_screen == SCREEN_KEYS && g_key_capture >= 0) {
+            keys_capture(ev->key.scancode, ev->key.key);
+            break;
+        }
+
         char* buf = active_entry_buf();
         if (ev->key.key == SDLK_ESCAPE) {
             if (g_screen == SCREEN_MENU) {
@@ -761,9 +1073,11 @@ int main(int argc, char** argv) {
 
     /* Optional auto-start flags — the button actions, triggerable from
      * the command line (scripting / testing; the UI stays up either
-     * way): --host, --join <code>, --lan <ip> <player 1|2>. */
+     * way): --host, --join <code>, --lan <ip> <player 1|2>, --keys. */
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--host") == 0) {
+        if (strcmp(argv[i], "--keys") == 0) {
+            enter_screen(SCREEN_KEYS);
+        } else if (strcmp(argv[i], "--host") == 0) {
             enter_screen(SCREEN_HOST);
             start_host();
         } else if (strcmp(argv[i], "--join") == 0 && i + 1 < argc) {
@@ -804,6 +1118,9 @@ int main(int argc, char** argv) {
             break;
         case SCREEN_LAN:
             screen_lan();
+            break;
+        case SCREEN_KEYS:
+            screen_keys();
             break;
         }
 
