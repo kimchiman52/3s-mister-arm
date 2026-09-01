@@ -3,6 +3,7 @@ name: Build (Windows)
 on:
     pull_request:
         branches: [ "main" ]
+    workflow_dispatch: {}
 
 jobs:
     build:
@@ -46,9 +47,26 @@ jobs:
 
                 cmake --build build --parallel 2>&1 | tee build.log
 
+          - name: Stage the distributable build
+            if: github.event_name == 'workflow_dispatch'
+            run: |
+                # Reuses this project's own install() rules (CMakeLists.txt's
+                # WIN32 branch), which already stage the game exe, the
+                # desktop netplay launcher, SDL3.dll and every other runtime
+                # dependency together via RUNTIME_DEPENDENCY_SET -- so this
+                # step does not hand-maintain a second list of what ships.
+                cmake --install build --config Release --prefix install
+
           - name: Upload build log
             if: always()
             uses: actions/upload-artifact@v4
             with:
                 name: build-log
                 path: build.log
+
+          - name: Upload Windows build
+            if: github.event_name == 'workflow_dispatch'
+            uses: actions/upload-artifact@v4
+            with:
+                name: 3s-arm-windows
+                path: install/bin
