@@ -312,6 +312,16 @@ static bool spawn_game(const char* const* extra, int nextra) {
 /* Mode wiring. */
 
 static bool start_host(void) {
+    /* #157 review P-2: the refusal must come BEFORE the clear. Clearing first
+     * wiped the status file of a game that was genuinely still hosting, and
+     * since the game only republishes on a state transition or a drift
+     * re-encode, the launcher then waited forever for a code that had already
+     * been published. */
+    if (child_running()) {
+        set_msg(COL_ERR, "The game is already running.", "Close it before starting another.");
+        return false;
+    }
+
     clear_status_file();
     g_host_code[0] = '\0';
     g_host_status[0] = '\0';
@@ -360,8 +370,12 @@ static void start_join(void) {
         return;
     case ROOM_CODE_FUTURE_VERSION:
         SDL_Log("[launcher] join refused: ROOM_CODE_FUTURE_VERSION");
-        set_msg(COL_ERR, "This code is from a NEWER game version.",
-                "Update this game, then try again.");
+        /* #157 review P-2: RoomCode_Decode gates the version char BEFORE the
+         * checksum, so ANY 12-char string not starting with '4' lands here --
+         * including a mis-heard first character, which is a typo, not a version
+         * skew. Do not tell the user to update on that evidence alone. */
+        set_msg(COL_ERR, "Code not recognised - it may be from a NEWER game version.",
+                "Check the first character, or ask the host to confirm the code.");
         return;
     default:
         SDL_Log("[launcher] join refused: unrecognized decode result");
@@ -416,6 +430,24 @@ static void host_poll(void) {
     char code[64];
     read_status_file(state, sizeof(state), code, sizeof(code));
     SDL_strlcpy(g_host_status, state, sizeof(g_host_status));
+
+    /* #157 review P-1: netplay.status is written by the game, and NOTHING on
+     * the game's own shutdown path clears it -- a graceful quit (Cmd+Q) while
+     * hosting leaves HOSTING+code on disk. Polling the file alone would keep
+     * presenting a dead endpoint as live, and the user would hand that code to
+     * someone who then punches a stranger's address for 15 s. The child's
+     * liveness is the authority here, not the file: a code is live only while
+     * the process that published it is still running. */
+    if (!child_running()) {
+        if (g_host_code[0] != '\0') {
+            g_host_code[0] = '\0';
+            g_code_copied = false;
+            set_msg(COL_ERR, "The game exited - that room code is no longer valid.",
+                    "Start hosting again to get a new one.");
+        }
+        SDL_strlcpy(g_host_status, "IDLE", sizeof(g_host_status));
+        return;
+    }
 
     if (strcmp(state, "HOSTING") == 0) {
         uint32_t ip_be = 0;

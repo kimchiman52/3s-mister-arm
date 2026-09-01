@@ -4023,3 +4023,36 @@ Also pre-existing and out of scope: a desktop with no CPS3 romset refuses to
 arm netplay, so the host screen sits at "waiting for the room code" — the
 romset search covers the five `/media/...` MiSTer paths plus the
 `THIRDSARM_CPS3_ZIP` dev hook only.
+
+**Post-review fixes.** The review (run after shipping, at the maintainer's
+request for speed) found one P-1 with an external victim and it is fixed:
+**nothing on the game's own shutdown path clears `netplay.status`**, so a
+graceful quit while hosting left `HOSTING`+code on disk and the launcher kept
+presenting a dead endpoint as live — the user would hand that code to someone
+who then punched a stranger's address for 15 s. The three holes the original
+commit closed all clear *before the next host*, not while the launcher is still
+showing the last one. Fixed in the launcher by making the **child's liveness
+the authority, not the file**: a code is live only while the process that
+published it still runs.
+
+Also fixed: `start_host()` cleared the status file *before* refusing a
+duplicate spawn, wiping the code of a game that was genuinely still hosting
+(and since the game only republishes on a transition or drift re-encode, the
+launcher then waited forever). And `ROOM_CODE_FUTURE_VERSION` told the user to
+update the game for *any* 12-char string not starting with `4` — including a
+mis-heard first character, which is a typo. Reworded to say so.
+
+**Citation correction.** The original commit claimed each repoint was "read at
+its target". That was false for 8 of them, which were delta-preserved rather
+than read — they were already wrong at HEAD and stayed wrong. Worse, one
+**commit-pinned** citation was actively corrupted:
+`9240aa50:direct_p2p.c:1341-1364` was delta-shifted to `:1393-1416`, which is a
+struct-field block, not the analysis the prose cites. A SHA-pinned citation
+refers to a snapshot and must never move with the working tree. Restored and
+verified against `git show`. The 8 pre-existing wrong anchors are NOT fixed
+here — they predate this task and the checker cannot see them.
+
+**Still open:** the unserialized pair in `set_state()` (atomic store then
+unlocked file IO) can, on a Cancel→re-host race, leave `HOSTING` on disk for
+the rest of the process. PLAUSIBLE, structural; the launcher's liveness check
+now masks the user-visible symptom.

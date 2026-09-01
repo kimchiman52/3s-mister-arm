@@ -1274,7 +1274,7 @@ in section 2 of `p2p_race`:
   and where it does not, the residual band is `2d - G` wide and sits
   just past the send window. This is the same condition the second S6
   review derived and measured over five `(owd, grace)` configurations
-  (`9240aa50:src/netplay/direct_p2p.c:1393-1416`); only the trigger
+  (`9240aa50:src/netplay/direct_p2p.c:1341-1364`); only the trigger
   changed. 600 ms covers every pair up to a 600 ms RTT.
 - **The send window is NOT shortened to make room.** The S5-era code
   capped it so `send_end + grace` fell before `race_budget_ms`. That
