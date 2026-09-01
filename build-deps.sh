@@ -547,8 +547,27 @@ else
     # patches below actually see. Persist it into the repo's local config so
     # every subsequent git operation in this checkout honors it too.
     git -c core.autocrlf=false clone https://github.com/HeatXD/GekkoNet.git "$GEKKONET_SRC"
+    # GekkoNet ships a .gitattributes containing `* text=auto`, and
+    # .gitattributes OUTRANKS core.autocrlf. So `autocrlf=false` is not
+    # enough on its own: text=auto still normalizes on checkout to whatever
+    # core.eol says, and core.eol defaults to `native` -- CRLF on Windows.
+    # That is why the Windows runner produced a CRLF backend.cpp while the
+    # diagnostic simultaneously (and truthfully) reported autocrlf=false.
+    # core.eol=lf is the setting text=auto actually consults.
     git -C "$GEKKONET_SRC" config core.autocrlf false
+    git -C "$GEKKONET_SRC" config core.eol lf
     git -C "$GEKKONET_SRC" -c advice.detachedHead=false checkout "$GEKKONET_REF"
+
+    # Belt and braces. Every patch below matches literal multi-line anchors,
+    # and a single stray \r silently turns a correct patch into a refusal to
+    # build. Rather than trust that the git config above covers every git
+    # version and platform this script will ever run on, strip CR outright
+    # from the two files that get patched. Cheap, and it cannot regress.
+    for f in "$GEKKONET_SRC/GekkoLib/src/backend.cpp" \
+             "$GEKKONET_SRC/GekkoLib/include/compression.h" \
+             "$GEKKONET_SRC/GekkoLib/include/backend.h"; do
+        [ -f "$f" ] && perl -pi -e 's/\r\n/\n/g' "$f"
+    done
 
     # TEMPORARY DIAGNOSTIC (see the L-4 failure block below): count the L-4
     # anchor in the PRISTINE checkout, before any patch has touched the file.
