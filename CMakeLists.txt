@@ -285,6 +285,17 @@ target_compile_definitions(3s-arm PRIVATE
     # CPS3
 )
 
+if(WIN32)
+    # include/structs.h defines a `Polygon` typedef (a vertex, per its own
+    # FIXME) and Windows' wingdi.h declares a Polygon() function, which
+    # every netplay TU pulls in via winsock2.h -> windows.h. NOGDI drops the
+    # GDI declarations and the collision with them. Safe here because this
+    # project renders through SDL and references no GDI type anywhere --
+    # renaming the typedef instead would touch 9 files of decompiled code
+    # to work around a header we do not use.
+    target_compile_definitions(3s-arm PRIVATE NOGDI)
+endif()
+
 if(PORT_MISTER)
     target_compile_definitions(3s-arm PRIVATE PORT_MISTER)
     target_include_directories(3s-arm PRIVATE ${PROJECT_SOURCE_DIR}/vendor/Main_MiSTer)

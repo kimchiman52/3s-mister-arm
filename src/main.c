@@ -147,10 +147,12 @@ static void log_shutdown_signal_safe(int signo) {
 #endif
 
 static void on_shutdown_signal(int signo) {
+#ifdef SIGUSR1
     if (signo == SIGUSR1) {
         fps_toggle_requested = 1;
         return;
     }
+#endif
 
 #ifdef SIGRTMIN
     if (signo == SIGRTMIN + 2) {
@@ -176,6 +178,16 @@ static void on_shutdown_signal(int signo) {
 }
 
 static void install_shutdown_signal_handlers() {
+#if defined(_WIN32)
+    /* MinGW has signal() and SIGINT/SIGTERM, but no sigaction, SIGHUP or
+     * SIGUSR1. The absent ones are all MiSTer-side controls -- the wrapper
+     * raises SIGUSR1 to toggle the FPS overlay and the SIGRTMIN range to
+     * cycle settings -- and nothing on the desktop sends them. Ctrl+C and
+     * a normal terminate are the two that still need to shut down cleanly,
+     * and both exist here. */
+    signal(SIGINT, on_shutdown_signal);
+    signal(SIGTERM, on_shutdown_signal);
+#else
     struct sigaction action;
     SDL_zero(action);
     action.sa_handler = on_shutdown_signal;
@@ -190,13 +202,18 @@ static void install_shutdown_signal_handlers() {
     sigaction(SIGRTMIN + 3, &action, NULL);
     sigaction(SIGRTMIN + 4, &action, NULL);
 #endif
+#endif
 }
 
 static void restore_shutdown_signal_handlers() {
     signal(SIGINT, SIG_DFL);
-    signal(SIGHUP, SIG_DFL);
     signal(SIGTERM, SIG_DFL);
+#ifdef SIGHUP
+    signal(SIGHUP, SIG_DFL);
+#endif
+#ifdef SIGUSR1
     signal(SIGUSR1, SIG_DFL);
+#endif
 #ifdef SIGRTMIN
     signal(SIGRTMIN + 2, SIG_DFL);
     signal(SIGRTMIN + 3, SIG_DFL);
