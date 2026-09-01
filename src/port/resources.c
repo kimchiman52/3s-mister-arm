@@ -277,7 +277,30 @@ bool Resources_RunResourceCopyingFlow() {
 
 const char* Resources_GetAFSPath() {
     if (afs_path == NULL) {
-        afs_path = Resources_GetPath("SF33RD.AFS");
+        /* Portable layout first: a resources/ directory sitting next to the
+         * executable. That is what a downloaded desktop build looks like --
+         * everything in one folder the player can move around -- and it is
+         * where someone unpacking a zip will naturally put the game data.
+         *
+         * Only the READ is portable. Resources_GetPath() stays pointed at
+         * the pref directory because it is also the ISO-import destination
+         * (create_resources_directory writes there), and the install folder
+         * may well be read-only. So a portable copy is preferred when it
+         * exists, and the pref directory remains both the fallback and the
+         * only thing anything writes to. */
+        char* base_path = NULL;
+        const char* base = SDL_GetBasePath();
+
+        if (base != NULL) {
+            SDL_asprintf(&base_path, "%sresources/SF33RD.AFS", base);
+        }
+
+        if (base_path != NULL && file_exists(base_path)) {
+            afs_path = base_path;
+        } else {
+            SDL_free(base_path);
+            afs_path = Resources_GetPath("SF33RD.AFS");
+        }
     }
 
     return afs_path;

@@ -1,6 +1,7 @@
 #include "arcade/arcade_char_data.h"
 #include "arcade/rom_load.h"
 #include "constants.h"
+#include "port/paths.h"
 #include "structs.h"
 #include "utils/sha256.h"
 
@@ -661,6 +662,78 @@ void ArcadeCharData_Init() {
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                         "ArcadeCharData: $THIRDSARM_CPS3_ZIP=%s does not exist", env_path);
         }
+    }
+
+    /* Every directory in cps3_rom_dirs is a MiSTer absolute path, so on a
+     * desktop install none of them exist and there is nowhere a player can
+     * put the romset -- leaving $THIRDSARM_CPS3_ZIP, which is a dev hook,
+     * as the only route. That is not a cosmetic gap: netplay arms ONLY in
+     * verified-arcade balance (netplay.c's arm-time predicate), so a
+     * desktop build with no discoverable romset cannot host or join at all.
+     *
+     * So also probe the executable's own directory and the pref directory,
+     * each with an optional roms/ subdirectory. The executable's directory
+     * comes first: a downloaded desktop build is a single folder the player
+     * moves around, and a romset dropped in beside the .exe should win over
+     * whatever an older install left behind. On MiSTer these resolve to
+     * /media/fat/games/3s-arm/bin/ and /media/fat/games/3s-arm/, both
+     * harmless to probe and arguably useful. Content verification is unchanged:
+     * this only widens WHERE a romset may be found, never what is
+     * accepted. */
+    const char* pref = Paths_GetPrefPath();
+    const char* base = SDL_GetBasePath();
+    char* extra_dirs[4] = { NULL, NULL, NULL, NULL };
+
+    /* Portable layout first, so a self-contained folder wins over whatever
+     * an older install left in the pref directory. */
+    if (base != NULL) {
+        SDL_asprintf(&extra_dirs[0], "%sroms", base);
+        SDL_asprintf(&extra_dirs[1], "%s", base);
+    }
+
+    if (pref != NULL) {
+        SDL_asprintf(&extra_dirs[2], "%sroms", pref);
+        SDL_asprintf(&extra_dirs[3], "%s", pref);
+    }
+
+    for (size_t d = 0; rom == NULL && d < SDL_arraysize(extra_dirs); d++) {
+        if (extra_dirs[d] == NULL) {
+            continue;
+        }
+
+        if (path_is(extra_dirs[d], SDL_PATHTYPE_DIRECTORY)) {
+            dirs_present++;
+        }
+
+        for (size_t n = 0; rom == NULL && n < CPS3_ROM_ZIP_NAME_COUNT; n++) {
+            char* path = NULL;
+            SDL_asprintf(&path, "%s/%s", extra_dirs[d], cps3_rom_zip_names[n]);
+
+            if (path == NULL) {
+                continue;
+            }
+
+            const bool zip_found = path_is(path, SDL_PATHTYPE_FILE);
+
+            probed++;
+            rom = Rom_Load(path, &rom_size);
+
+            if (rom != NULL) {
+                SDL_Log("ArcadeCharData: CPS3 ROM load satisfied by %s", path);
+            } else if (zip_found) {
+                zips_found++;
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                            "ArcadeCharData: %s exists but FAILED CONTENT VERIFICATION "
+                            "-- wrong romset revision, not a missing ROM",
+                            path);
+            }
+
+            SDL_free(path);
+        }
+    }
+
+    for (size_t d = 0; d < SDL_arraysize(extra_dirs); d++) {
+        SDL_free(extra_dirs[d]);
     }
 
     /* dirs x names, outer loop over directories so the directory stat is
