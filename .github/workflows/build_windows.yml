@@ -20,6 +20,26 @@ jobs:
                 update: true
                 msystem: MINGW64
 
+          # Git for Windows on this runner defaults core.autocrlf=true, so
+          # actions/checkout below would silently rewrite every text file's
+          # LF to CRLF as it lands on disk -- including build-deps.sh, whose
+          # GekkoNet patches match literal multi-line bash string anchors
+          # against the (separately, correctly LF) cloned dependency source.
+          # A checked-out build-deps.sh with \r\n line endings turns those
+          # bash single-quoted literals into "...\r\n..." internally, which
+          # can never match an LF-only file no matter how that file is
+          # cloned -- this is why fixing the GekkoNet clone's own line
+          # endings alone did not resolve the failure. Disabling autocrlf
+          # globally BEFORE checkout, in the same shell git-for-windows
+          # itself uses (bash, not the msys2 job default -- a separate git
+          # install with its own config), stops the corruption at its
+          # source instead of chasing it downstream. `requirements-windows.
+          # txt`'s pre-existing `tr -d '\r'` a few lines below is the same
+          # symptom, worked around per-file rather than fixed at the root.
+          - name: Disable autocrlf before checkout
+            shell: bash
+            run: git config --global core.autocrlf false
+
           - name: Checkout repository
             uses: actions/checkout@v4
             with:
