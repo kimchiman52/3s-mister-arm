@@ -525,6 +525,17 @@ static void dump_data(CharInitData* data, Character character) {
  * card's. We probe every entry instead. That is safe precisely because
  * acceptance is by content digest, not by presence -- a decoy or
  * wrong-revision zip in an earlier directory cannot mask a good one later. */
+/* Length of `s` with one trailing '/' or '\\' removed, if present. */
+static size_t trim_trailing_slash_len(const char* s) {
+    size_t n = SDL_strlen(s);
+
+    if (n > 0 && (s[n - 1] == '/' || s[n - 1] == '\\')) {
+        n--;
+    }
+
+    return n;
+}
+
 static const char* const cps3_rom_dirs[] = {
     "/media/usb0/mame", "/media/usb0/games/mame",
     "/media/fat/mame",  "/media/fat/games/mame",
@@ -686,14 +697,17 @@ void ArcadeCharData_Init() {
 
     /* Portable layout first, so a self-contained folder wins over whatever
      * an older install left in the pref directory. */
+    /* Paths_GetPrefPath and SDL_GetBasePath both end in a separator, and the
+     * candidate below joins with one of its own, so trim it here rather than
+     * emit "dir//sfiii3.zip" into every log line this search prints. */
     if (base != NULL) {
         SDL_asprintf(&extra_dirs[0], "%sroms", base);
-        SDL_asprintf(&extra_dirs[1], "%s", base);
+        SDL_asprintf(&extra_dirs[1], "%.*s", (int)trim_trailing_slash_len(base), base);
     }
 
     if (pref != NULL) {
         SDL_asprintf(&extra_dirs[2], "%sroms", pref);
-        SDL_asprintf(&extra_dirs[3], "%s", pref);
+        SDL_asprintf(&extra_dirs[3], "%.*s", (int)trim_trailing_slash_len(pref), pref);
     }
 
     for (size_t d = 0; rom == NULL && d < SDL_arraysize(extra_dirs); d++) {

@@ -288,17 +288,38 @@ const char* Resources_GetAFSPath() {
          * may well be read-only. So a portable copy is preferred when it
          * exists, and the pref directory remains both the fallback and the
          * only thing anything writes to. */
-        char* base_path = NULL;
         const char* base = SDL_GetBasePath();
 
+        /* Loose beside the executable first, then under resources/. The
+         * romset search already accepts both shapes -- <base>/sfiii3.zip and
+         * <base>/roms/sfiii3.zip -- and there is no reason for the two game
+         * files to follow different rules in the same folder. Dropping both
+         * files next to the .exe is the layout someone unpacking a zip will
+         * actually produce, and it now just works; the subdirectory stays
+         * supported for anyone who prefers to keep the folder tidy. */
+        static const char* const base_rel[] = {
+            "SF33RD.AFS",
+            "resources/SF33RD.AFS",
+        };
+
         if (base != NULL) {
-            SDL_asprintf(&base_path, "%sresources/SF33RD.AFS", base);
+            for (size_t i = 0; afs_path == NULL && i < SDL_arraysize(base_rel); i++) {
+                char* candidate = NULL;
+                SDL_asprintf(&candidate, "%s%s", base, base_rel[i]);
+
+                if (candidate == NULL) {
+                    continue;
+                }
+
+                if (file_exists(candidate)) {
+                    afs_path = candidate;
+                } else {
+                    SDL_free(candidate);
+                }
+            }
         }
 
-        if (base_path != NULL && file_exists(base_path)) {
-            afs_path = base_path;
-        } else {
-            SDL_free(base_path);
+        if (afs_path == NULL) {
             afs_path = Resources_GetPath("SF33RD.AFS");
         }
     }
