@@ -3926,7 +3926,7 @@ them; building can. ~5 builds with a human glancing at any `1`.
 
 Unrelated to the netplay work in #143-#155; do not conflate.
 
-## #157 — desktop netplay launcher (SDL3) + netplay.status export — OPEN
+## #157 — desktop netplay launcher (SDL3) + netplay.status export — CLOSED
 
 Goal: host or join a netplay game from Windows/Mac/Linux without hand-writing a
 handoff file. Must serve MiSTer<->desktop and desktop<->desktop; MiSTer<->MiSTer
@@ -3992,3 +3992,34 @@ OLD_FORMAT for 11/14/18-char legacy codes, which the launcher should surface as
 - Do not regress the MiSTer OSD path -- it writes the same handoff file.
 - The launcher must not depend on Python or any runtime the game does not
   already ship.
+
+**CLOSED.** Part 1: `netplay_status_publish()` mirrors `arcade_balance.c`'s
+`write_status_file()`. Hooked into `set_state()` — the single writer of
+`s_state` — so HOSTING/IDLE tracks HOST_WAITING **by construction** rather than
+by enumerating exits. Three gaps closed deliberately: `host_commit_endpoint()`
+refreshes on a drift re-encode (the one code change with no state transition),
+`DirectP2P_Init()` clears at boot (SIGKILL-while-hosting leaves HOSTING on
+disk), and the launcher rewrites IDLE before every host spawn so anything it
+reads was written by the child it spawned. Unredacted on purpose: local pref
+dir, and it exists so a launcher need not screen-scrape.
+
+Part 2: `3s-netplay-launcher`, desktop-only, excluded from ARM/Miyoo/fbdev so
+the cross-build never sees it. `SDL_RenderDebugText` for UI — deliberately
+independent of the game's proportional-font atlas, so #156's corrupt `'1'`
+cannot reach a screen whose whole job is displaying room codes.
+`SDL_CreateProcess` for spawn (no per-platform fork/exec), clipboard, text
+input. Host / Join / LAN plus CLI equivalents. `RoomCode_Decode` runs BEFORE
+spawn; MALFORMED / OLD_FORMAT / FUTURE_VERSION each get their own actionable
+message instead of one generic failure.
+
+Verified live on macOS: host end-to-end (launcher → game → HOST_WAITING → code
+in `netplay.status` → clipboard), join validate-then-spawn, LAN spawn reaching
+nav-armed Versus, and a crash-stale code cleared by the next boot.
+
+**Residual:** Windows/Linux launcher builds are untested (the target compiles
+only where it is configured, and only macOS was exercised); no two-machine
+host↔join through the launcher yet; no macOS packaging rule for the launcher.
+Also pre-existing and out of scope: a desktop with no CPS3 romset refuses to
+arm netplay, so the host screen sits at "waiting for the room code" — the
+romset search covers the five `/media/...` MiSTer paths plus the
+`THIRDSARM_CPS3_ZIP` dev hook only.

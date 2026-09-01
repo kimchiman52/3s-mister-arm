@@ -52,6 +52,7 @@
 #include "netplay/stun.h"
 #include "netplay/upnp.h"
 #include "port/config/config.h"
+#include "port/paths.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3_net/SDL_net.h>
@@ -580,8 +581,59 @@ static bool s_init_done = false;
 
 /* --- internal helpers -------------------------------------------------- */
 
+/* Task #157: machine-readable hosting status for the desktop launcher.
+ *   <pref>/netplay.status
+ *     line 1: HOSTING | IDLE
+ *     line 2: room code, or empty when not hosting
+ * Same pref-path location, line-oriented shape and SDL_IOStream idiom as
+ * arcade_balance.c's write_status_file(). The code here is deliberately
+ * UNREDACTED — unlike the log lines (RoomCode_Redact), this file exists
+ * precisely so a local launcher can read the live code instead of
+ * screen-scraping, and it never leaves the user's own pref dir.
+ *
+ * Write/clear sites: set_state() below rewrites it on every transition
+ * into or out of DIRECT_P2P_HOST_WAITING, host_commit_endpoint()
+ * refreshes it when a drift re-encode replaces the code WITHOUT a state
+ * transition, and DirectP2P_Init() clears it at boot so a code left by
+ * a crashed run cannot be read back by a later launcher run. */
+static void netplay_status_publish(bool hosting, const char* code) {
+    char* path = NULL;
+    SDL_asprintf(&path, "%snetplay.status", Paths_GetPrefPath());
+
+    if (path == NULL) {
+        return;
+    }
+
+    SDL_IOStream* io = SDL_IOFromFile(path, "w");
+
+    if (io != NULL) {
+        SDL_IOprintf(io, "%s\n%s\n", hosting ? "HOSTING" : "IDLE",
+                     (hosting && code != NULL) ? code : "");
+        SDL_CloseIO(io);
+    }
+
+    SDL_free(path);
+}
+
 static void set_state(DirectP2PState s) {
-    SDL_SetAtomicInt(&s_state, (int)s);
+    DirectP2PState prev = (DirectP2PState)SDL_SetAtomicInt(&s_state, (int)s);
+
+    /* Task #157: netplay.status tracks HOST_WAITING exactly. Every
+     * state transition goes through this function — the only other
+     * writer of s_state is DirectP2P_Init's once-per-process IDLE reset,
+     * which runs before any hosting session can exist — so hooking the
+     * transition here is what proves no path out of HOST_WAITING
+     * (handoff, Cancel, teardown, bilateral failure, drift, quit-to-
+     * FAILED_*) can leave a live code behind. Both HOST_WAITING entry
+     * sites (host_thread_fn's publish and the M1 bilateral-failure
+     * return in DirectP2P_Tick) have s_work.host_code fully written by
+     * the calling thread before they publish, so the read below is
+     * race-free. */
+    if (s == DIRECT_P2P_HOST_WAITING) {
+        netplay_status_publish(true, s_work.host_code);
+    } else if (prev == DIRECT_P2P_HOST_WAITING) {
+        netplay_status_publish(false, NULL);
+    }
 }
 
 static DirectP2PState get_state(void) {
@@ -4932,6 +4984,16 @@ static void host_commit_endpoint(const char* ip, uint16_t port, const char* why)
                 old_redacted, new_redacted);
         SDL_strlcpy(s_work.host_code, new_code, sizeof(s_work.host_code));
         set_status("Network changed! Share the NEW code.");
+        /* Task #157: a drift re-encode replaces the code without a state
+         * transition, so set_state's netplay.status hook never sees it —
+         * refresh the file here. Only while HOST_WAITING: in the
+         * FALLBACK_* / HANDOFF states the file already says IDLE and a
+         * launcher must not read a code nobody is advertising (the
+         * bilateral-failure return to HOST_WAITING republishes the fresh
+         * s_work.host_code through set_state). */
+        if (get_state() == DIRECT_P2P_HOST_WAITING) {
+            netplay_status_publish(true, s_work.host_code);
+        }
     }
     s_work.advertised_port = new_adv_port;
 
@@ -5467,6 +5529,14 @@ void DirectP2P_Init(void) {
     s_upnp_next_renew_ms = 0;
     s_status[0] = '\0';
     Netplay_SetSessionTeardownCallback(direct_p2p_on_teardown);
+    /* Task #157: clear netplay.status at boot. Covers the one lifecycle
+     * hole the set_state hook cannot: a process that died while
+     * HOST_WAITING (crash, SIGKILL) leaves HOSTING + a dead code on
+     * disk, and a launcher reading it would send a joiner to a dead
+     * endpoint. The launcher also rewrites the file to IDLE before it
+     * spawns the game, so between the two no stale code survives to be
+     * read. */
+    netplay_status_publish(false, NULL);
     s_init_done = true;
 }
 

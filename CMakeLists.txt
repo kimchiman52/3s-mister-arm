@@ -184,6 +184,9 @@ include_directories(
 
 file(GLOB_RECURSE GAME_SRC CONFIGURE_DEPENDS src/*.c)
 list(FILTER GAME_SRC EXCLUDE REGEX "^.*/src/netplay/netplay_stub\\.c$")
+# Task #157: src/launcher/ holds the desktop netplay launcher — a separate
+# executable with its own main(); it must never be compiled into the game.
+list(FILTER GAME_SRC EXCLUDE REGEX "^.*/src/launcher/.*\\.c$")
 
 if(NOT ENABLE_NETPLAY)
     list(FILTER GAME_SRC EXCLUDE REGEX "^.*/src/netplay/.*\\.c$")
@@ -666,6 +669,57 @@ elseif(UNIX)
 endif()
 
 # ======================================
+# Desktop netplay launcher (task #157)
+# ======================================
+#
+# Second executable, desktop only: hosts/joins direct-P2P netplay by
+# writing the handoff file and spawning the game (src/launcher/
+# netplay_launcher.c has the full rationale). Everything it needs is
+# already vendored — SDL3 for the window/spawn/clipboard, and three
+# self-contained game TUs: room_code.c (pre-spawn code validation),
+# csprng.c (room_code.c's only dependency), and paths.c (so the pref dir
+# — where it reads netplay.status and writes launcher.handoff — resolves
+# IDENTICALLY to the game's, THIRDSARM_HOME override included). Zero new
+# runtime dependencies by construction.
+#
+# Not built for the embedded ports: MiSTer hosts/joins through the OSD
+# (which writes the same handoff file), and the Miyoo has no netplay
+# use case for a second windowed process.
+if(ENABLE_NETPLAY AND NOT PORT_MISTER AND NOT PORT_MIYOO_MINI_PLUS AND NOT PORT_ARM_FBDEV)
+    add_executable(3s-netplay-launcher
+        src/launcher/netplay_launcher.c
+        src/netplay/room_code.c
+        src/port/paths.c
+        src/utils/csprng.c
+    )
+    target_compile_options(3s-netplay-launcher PRIVATE
+        -Wall
+        -Werror
+        -Wundef
+        ${DISABLED_WARNINGS}
+    )
+    if(APPLE)
+        target_link_libraries(3s-netplay-launcher PRIVATE
+            ${SDL3_ROOT}/lib/libSDL3.0.dylib
+        )
+        set_target_properties(3s-netplay-launcher PROPERTIES
+            INSTALL_RPATH "@executable_path/../Frameworks;@executable_path"
+        )
+    elseif(WIN32)
+        target_link_libraries(3s-netplay-launcher PRIVATE
+            ${SDL3_ROOT}/lib/libSDL3.dll.a
+        )
+    elseif(UNIX)
+        target_link_libraries(3s-netplay-launcher PRIVATE
+            ${SDL3_ROOT}/lib/libSDL3.so
+        )
+        set_target_properties(3s-netplay-launcher PROPERTIES
+            INSTALL_RPATH "\$ORIGIN/../lib;\$ORIGIN"
+        )
+    endif()
+endif()
+
+# ======================================
 # Installation
 # ======================================
 
@@ -700,6 +754,12 @@ elseif(WIN32)
         RUNTIME DESTINATION bin
     )
 
+    # Task #157: the launcher lands next to the game exe, which is also
+    # where the runtime-dependency staging puts SDL3.dll.
+    if(TARGET 3s-netplay-launcher)
+        install(TARGETS 3s-netplay-launcher RUNTIME DESTINATION bin)
+    endif()
+
     execute_process(COMMAND cygpath -m /mingw64/bin
         OUTPUT_VARIABLE binPath
         OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -730,6 +790,14 @@ elseif(UNIX)
     install(TARGETS 3s-arm
         RUNTIME DESTINATION bin
     )
+
+    # Task #157: guarded because this UNIX branch also covers the
+    # embedded cross-builds (MiSTer, Miyoo), where the launcher target
+    # deliberately does not exist. Its $ORIGIN/../lib rpath finds the
+    # libSDL3.so* staged into lib/ below.
+    if(TARGET 3s-netplay-launcher)
+        install(TARGETS 3s-netplay-launcher RUNTIME DESTINATION bin)
+    endif()
 
     if(ENABLE_FFMPEG_ADX)
         file(GLOB FFMPEG_SO "${FFMPEG_ROOT}/lib/*.so*")
