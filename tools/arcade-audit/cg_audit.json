@@ -587,7 +587,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 9,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 5923,
+   "vb_pairs_preterm": 5923,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 4,
+   "vb_ctr": 0,
+   "vb_olc": 18,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 15,
+   "vb_eff": 4,
+   "vb_eftype": 4,
+   "vb_pre_type": 4,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 18,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 15,
+   "vb_pre_eff": 4,
+   "vb_pre_eftype": 4,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    1
@@ -4004,6 +4035,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "ALEX": {
@@ -4389,7 +4423,38 @@
    "koc_oob_dead": 4,
    "idx_oob_dead": 0,
    "oob_phantom": 5,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 6055,
+   "vb_pairs_preterm": 6031,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 2,
+   "vb_ctr": 0,
+   "vb_olc": 10,
+   "vb_att": 2,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 0,
+   "vb_eff": 0,
+   "vb_eftype": 0,
+   "vb_pre_type": 2,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 2,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 0,
+   "vb_pre_eff": 0,
+   "vb_pre_eftype": 0,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    2
@@ -5413,6 +5478,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "RYU": {
@@ -5672,7 +5740,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 0,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 5016,
+   "vb_pairs_preterm": 4999,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 10,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 2,
+   "vb_eff": 2,
+   "vb_eftype": 1,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 2,
+   "vb_pre_eff": 2,
+   "vb_pre_eftype": 1,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    3
@@ -6158,6 +6257,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "YUN": {
@@ -7011,7 +7113,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 0,
-   "oob_not_phantom": 15
+   "oob_not_phantom": 15,
+   "vb_pairs": 6985,
+   "vb_pairs_preterm": 6720,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 10,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 12,
+   "vb_eff": 0,
+   "vb_eftype": 0,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 12,
+   "vb_pre_eff": 0,
+   "vb_pre_eftype": 0,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    4
@@ -7584,6 +7717,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "DUDLEY": {
@@ -8194,7 +8330,38 @@
    "koc_oob_dead": 33,
    "idx_oob_dead": 0,
    "oob_phantom": 33,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 6794,
+   "vb_pairs_preterm": 6668,
+   "vb_hidden": 8,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 10,
+   "vb_att": 4,
+   "vb_hit": 4,
+   "vb_ext": 0,
+   "vb_canc": 0,
+   "vb_eff": 0,
+   "vb_eftype": 0,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 0,
+   "vb_pre_eff": 0,
+   "vb_pre_eftype": 0,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    3,
@@ -9380,6 +9547,90 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": [
+    {
+     "table": "saca",
+     "script": 57,
+     "cell": 17,
+     "field": "att",
+     "arcade": 0,
+     "ps2": 32,
+     "terminator": 14,
+     "dead": false
+    },
+    {
+     "table": "saca",
+     "script": 57,
+     "cell": 17,
+     "field": "hit",
+     "arcade": 8192,
+     "ps2": 40960,
+     "terminator": 14,
+     "dead": false
+    },
+    {
+     "table": "saca",
+     "script": 58,
+     "cell": 17,
+     "field": "att",
+     "arcade": 0,
+     "ps2": 32,
+     "terminator": 14,
+     "dead": false
+    },
+    {
+     "table": "saca",
+     "script": 58,
+     "cell": 17,
+     "field": "hit",
+     "arcade": 32768,
+     "ps2": 40960,
+     "terminator": 14,
+     "dead": false
+    },
+    {
+     "table": "saca",
+     "script": 59,
+     "cell": 17,
+     "field": "att",
+     "arcade": 0,
+     "ps2": 32,
+     "terminator": 14,
+     "dead": false
+    },
+    {
+     "table": "saca",
+     "script": 59,
+     "cell": 17,
+     "field": "hit",
+     "arcade": 32768,
+     "ps2": 40960,
+     "terminator": 14,
+     "dead": false
+    },
+    {
+     "table": "saca",
+     "script": 60,
+     "cell": 17,
+     "field": "att",
+     "arcade": 0,
+     "ps2": 32,
+     "terminator": 14,
+     "dead": false
+    },
+    {
+     "table": "saca",
+     "script": 60,
+     "cell": 17,
+     "field": "hit",
+     "arcade": 32768,
+     "ps2": 40960,
+     "terminator": 14,
+     "dead": false
+    }
+   ]
   }
  },
  "NECRO": {
@@ -9694,7 +9945,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 1,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 6167,
+   "vb_pairs_preterm": 6143,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 1,
+   "vb_ctr": 4,
+   "vb_olc": 10,
+   "vb_att": 1,
+   "vb_hit": 1,
+   "vb_ext": 0,
+   "vb_canc": 12,
+   "vb_eff": 4,
+   "vb_eftype": 4,
+   "vb_pre_type": 1,
+   "vb_pre_ctr": 4,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 1,
+   "vb_pre_hit": 1,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 12,
+   "vb_pre_eff": 4,
+   "vb_pre_eftype": 4,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    3,
@@ -10264,6 +10546,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "HUGO": {
@@ -10569,7 +10854,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 0,
-   "oob_not_phantom": 1
+   "oob_not_phantom": 1,
+   "vb_pairs": 5737,
+   "vb_pairs_preterm": 5603,
+   "vb_hidden": 15,
+   "vb_hidden_dead": 0,
+   "vb_type": 9,
+   "vb_ctr": 0,
+   "vb_olc": 15,
+   "vb_att": 7,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 0,
+   "vb_eff": 42,
+   "vb_eftype": 42,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 15,
+   "vb_pre_att": 1,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 0,
+   "vb_pre_eff": 42,
+   "vb_pre_eftype": 42,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 22,
+   "vb_absent_hit": 22,
+   "vb_absent_ext": 22,
+   "vb_absent_canc": 22,
+   "vb_absent_eff": 22,
+   "vb_absent_eftype": 22
   },
   "observed_landing_groups": [
    3,
@@ -11043,6 +11359,160 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": [
+    {
+     "table": "caca",
+     "script": 5,
+     "cell": 3,
+     "field": "type",
+     "arcade": 2,
+     "ps2": 0,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 5,
+     "cell": 3,
+     "field": "att",
+     "arcade": -832,
+     "ps2": 0,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 5,
+     "cell": 4,
+     "field": "type",
+     "arcade": 3,
+     "ps2": 2,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 5,
+     "cell": 5,
+     "field": "type",
+     "arcade": 0,
+     "ps2": 3,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 5,
+     "cell": 6,
+     "field": "att",
+     "arcade": 0,
+     "ps2": -832,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 6,
+     "cell": 3,
+     "field": "type",
+     "arcade": 2,
+     "ps2": 0,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 6,
+     "cell": 3,
+     "field": "att",
+     "arcade": -832,
+     "ps2": 0,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 6,
+     "cell": 4,
+     "field": "type",
+     "arcade": 3,
+     "ps2": 2,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 6,
+     "cell": 5,
+     "field": "type",
+     "arcade": 0,
+     "ps2": 3,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 6,
+     "cell": 6,
+     "field": "att",
+     "arcade": 0,
+     "ps2": -832,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 7,
+     "cell": 3,
+     "field": "type",
+     "arcade": 2,
+     "ps2": 0,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 7,
+     "cell": 3,
+     "field": "att",
+     "arcade": -832,
+     "ps2": 0,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 7,
+     "cell": 4,
+     "field": "type",
+     "arcade": 3,
+     "ps2": 2,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 7,
+     "cell": 5,
+     "field": "type",
+     "arcade": 0,
+     "ps2": 3,
+     "terminator": 1,
+     "dead": false
+    },
+    {
+     "table": "caca",
+     "script": 7,
+     "cell": 6,
+     "field": "att",
+     "arcade": 0,
+     "ps2": -832,
+     "terminator": 1,
+     "dead": false
+    }
+   ]
   }
  },
  "IBUKI": {
@@ -11376,7 +11846,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 0,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 7828,
+   "vb_pairs_preterm": 7486,
+   "vb_hidden": 2,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 10,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 21,
+   "vb_eff": 45,
+   "vb_eftype": 4,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 21,
+   "vb_pre_eff": 43,
+   "vb_pre_eftype": 4,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    3,
@@ -14641,6 +15142,30 @@
      "fits": false
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": [
+    {
+     "table": "atca",
+     "script": 50,
+     "cell": 14,
+     "field": "eff",
+     "arcade": 0,
+     "ps2": 21,
+     "terminator": 10,
+     "dead": false
+    },
+    {
+     "table": "atca",
+     "script": 51,
+     "cell": 14,
+     "field": "eff",
+     "arcade": 0,
+     "ps2": 21,
+     "terminator": 10,
+     "dead": false
+    }
+   ]
   }
  },
  "ELENA": {
@@ -14957,7 +15482,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 0,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 7376,
+   "vb_pairs_preterm": 7288,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 89,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 0,
+   "vb_eff": 1,
+   "vb_eftype": 1,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 89,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 0,
+   "vb_pre_eff": 1,
+   "vb_pre_eftype": 1,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    3,
@@ -15573,6 +16129,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "ORO": {
@@ -15836,7 +16395,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 0,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 5564,
+   "vb_pairs_preterm": 5404,
+   "vb_hidden": 3,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 10,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 4,
+   "vb_eff": 1,
+   "vb_eftype": 1,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 3,
+   "vb_pre_eff": 0,
+   "vb_pre_eftype": 0,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    3,
@@ -16377,6 +16967,40 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": [
+    {
+     "table": "saca",
+     "script": 48,
+     "cell": 35,
+     "field": "eff",
+     "arcade": 0,
+     "ps2": 31,
+     "terminator": 2,
+     "dead": false
+    },
+    {
+     "table": "saca",
+     "script": 48,
+     "cell": 35,
+     "field": "eftype",
+     "arcade": 0,
+     "ps2": 1,
+     "terminator": 2,
+     "dead": false
+    },
+    {
+     "table": "saca",
+     "script": 49,
+     "cell": 4,
+     "field": "canc",
+     "arcade": 0,
+     "ps2": 64,
+     "terminator": 2,
+     "dead": false
+    }
+   ]
   }
  },
  "YANG": {
@@ -17816,7 +18440,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 27,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 6505,
+   "vb_pairs_preterm": 6322,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 10,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 0,
+   "vb_eff": 0,
+   "vb_eftype": 0,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 0,
+   "vb_pre_eff": 0,
+   "vb_pre_eftype": 0,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    3,
@@ -19024,6 +19679,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "KEN": {
@@ -19230,7 +19888,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 0,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 4978,
+   "vb_pairs_preterm": 4963,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 10,
+   "vb_att": 8,
+   "vb_hit": 8,
+   "vb_ext": 0,
+   "vb_canc": 0,
+   "vb_eff": 0,
+   "vb_eftype": 0,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 8,
+   "vb_pre_hit": 8,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 0,
+   "vb_pre_eff": 0,
+   "vb_pre_eftype": 0,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    4,
@@ -19946,6 +20635,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "SEAN": {
@@ -20152,7 +20844,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 0,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 5469,
+   "vb_pairs_preterm": 5465,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 10,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 8,
+   "vb_eff": 4,
+   "vb_eftype": 4,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 8,
+   "vb_pre_eff": 4,
+   "vb_pre_eftype": 4,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    13
@@ -20562,6 +21285,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "URIEN": {
@@ -21145,7 +21871,38 @@
    "koc_oob_dead": 6,
    "idx_oob_dead": 0,
    "oob_phantom": 12,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 5783,
+   "vb_pairs_preterm": 5735,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 18,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 0,
+   "vb_eff": 0,
+   "vb_eftype": 0,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 18,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 0,
+   "vb_pre_eff": 0,
+   "vb_pre_eftype": 0,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    3,
@@ -22008,6 +22765,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "AKUMA": {
@@ -22342,7 +23102,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 0,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 5722,
+   "vb_pairs_preterm": 5697,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 4,
+   "vb_olc": 10,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 5,
+   "vb_eff": 4,
+   "vb_eftype": 8,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 4,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 5,
+   "vb_pre_eff": 4,
+   "vb_pre_eftype": 8,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    15
@@ -22755,6 +23546,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "CHUNLI": {
@@ -24185,7 +24979,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 0,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 6601,
+   "vb_pairs_preterm": 6450,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 3,
+   "vb_olc": 10,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 0,
+   "vb_eff": 0,
+   "vb_eftype": 0,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 3,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 0,
+   "vb_pre_eff": 0,
+   "vb_pre_eftype": 0,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    0,
@@ -24570,6 +25395,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "MAKOTO": {
@@ -24835,7 +25663,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 0,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 7065,
+   "vb_pairs_preterm": 6965,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 10,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 0,
+   "vb_eff": 0,
+   "vb_eftype": 0,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 0,
+   "vb_pre_eff": 0,
+   "vb_pre_eftype": 0,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    3,
@@ -25751,6 +26610,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "Q": {
@@ -26016,7 +26878,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 0,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 7032,
+   "vb_pairs_preterm": 6897,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 1,
+   "vb_ctr": 0,
+   "vb_olc": 6,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 0,
+   "vb_eff": 104,
+   "vb_eftype": 104,
+   "vb_pre_type": 1,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 6,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 0,
+   "vb_pre_eff": 104,
+   "vb_pre_eftype": 104,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    3,
@@ -26433,6 +27326,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "TWELVE": {
@@ -26669,7 +27565,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 1,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 7146,
+   "vb_pairs_preterm": 6601,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 10,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 16,
+   "vb_eff": 8,
+   "vb_eftype": 8,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 16,
+   "vb_pre_eff": 8,
+   "vb_pre_eftype": 8,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    6,
@@ -29207,6 +30134,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  },
  "REMY": {
@@ -29860,7 +30790,38 @@
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
    "oob_phantom": 32,
-   "oob_not_phantom": 0
+   "oob_not_phantom": 0,
+   "vb_pairs": 5207,
+   "vb_pairs_preterm": 5177,
+   "vb_hidden": 0,
+   "vb_hidden_dead": 0,
+   "vb_type": 0,
+   "vb_ctr": 0,
+   "vb_olc": 10,
+   "vb_att": 0,
+   "vb_hit": 0,
+   "vb_ext": 0,
+   "vb_canc": 20,
+   "vb_eff": 4,
+   "vb_eftype": 4,
+   "vb_pre_type": 0,
+   "vb_pre_ctr": 0,
+   "vb_pre_olc": 10,
+   "vb_pre_att": 0,
+   "vb_pre_hit": 0,
+   "vb_pre_ext": 0,
+   "vb_pre_canc": 20,
+   "vb_pre_eff": 4,
+   "vb_pre_eftype": 4,
+   "vb_absent_type": 0,
+   "vb_absent_ctr": 0,
+   "vb_absent_olc": 0,
+   "vb_absent_att": 0,
+   "vb_absent_hit": 0,
+   "vb_absent_ext": 0,
+   "vb_absent_canc": 0,
+   "vb_absent_eff": 0,
+   "vb_absent_eftype": 0
   },
   "observed_landing_groups": [
    2,
@@ -30680,6 +31641,9 @@
      "fits": true
     }
    }
+  },
+  "verbatim": {
+   "terminator_cut_hides": []
   }
  }
 }

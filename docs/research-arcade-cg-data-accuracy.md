@@ -109,7 +109,14 @@ command and its observed output, or a named primary source. Things that were
   scan; whole cast, every OOB-index class is 100% dead and the wrong-sprite
   class is 100% live. Do not use §19's "after the first terminator" as a
   reachability test — it is not one (§26.10.2), and neither is a
-  forward-only walk (§28.2).
+  forward-only walk (§28.2). **§36 is what that mistake costs when it is made
+  quietly**: §22 used the first terminator as its liveness proxy and published
+  divergence counts 10 and 4 cells short.
+- **About to quote a per-field divergence count from §22?** §36 first. §22's
+  `cg_att_ix` is 22 not 12, `cg_hit_ix` 13 not 9, `cg_cancel` 115 not
+  114, `cg_rival` 3,235 not 3,023, and §22.5's "242/206 live" are 245/207.
+  `cg_audit.py` now prints the census at **both** scopes on every run and
+  asserts the two agree, so the narrow number can no longer travel alone.
 - **About to call a raw "ambiguous" because two cells want two deltas?** §35.2
   — check the **verbatim** fields of the surrounding cells first. In five of the
   six raws §8.P called ambiguous, the PS2 **re-authored the animation**
@@ -5354,8 +5361,10 @@ The namespace question was the point: `cg_se` indexes PS2-authored *data*
 (TSB banks), and arcade codes named different notes. `cg_effect` indexes
 engine *code* (`effinitjptbl`), and the question was whether CPS3 authored
 its indices against a different table order. It did not. Of 93,947 cgd>=4
-cell pairs, `cg_effect` differs in 245 (242 live), `cg_eftype` in 207 (206
-live) — 0.26% — and **every single divergence is an event added, removed, or
+cell pairs, `cg_effect` differs in 245 (~~242 live~~ — **223 value + 22
+`cgd_type` field-absence; the "242" is the pre-first-terminator count, §36.2**),
+`cg_eftype` in 207 (~~206 live~~ — **185 value + 22 field-absence**)
+ — 0.26% — and **every single divergence is an event added, removed, or
 moved by one cell between the two releases; there is no case of the same
 event carrying different codes**, which is what a namespace error looks like.
 The bulk, by value pair: Q arcade-0/PS2-32 ×104 and Hugo ×34 (that is the
@@ -5430,6 +5439,15 @@ Whether the two encodings produce identical trajectories was not verified
 
 ### 22.7 The rest of the byte-pass list — negative results, one line each
 
+> **THREE FIGURES BELOW ARE WRONG AND ARE CORRECTED BY §36 (2026-09-12).** Every
+> count in this subsection was taken over the cells *before each script's first
+> terminator* — what this section calls "live cells", four days before
+> `k7_entry_walk` existed — while §22.4's and §22.5's denominators were taken
+> over the whole decoded span. `cg_att_ix` is 22 not 12, `cg_hit_ix` 13 not 9,
+> `cg_cancel` 115 not 114, `cg_rival` 3,235 not 3,023. Every *verdict* below
+> survives; §36.6 re-measures all of them and §36.9 records what moved. The
+> original numbers are struck through in place rather than deleted.
+
 Swept in the same run, cell-aligned live cells, so the next pass does not
 re-do them:
 
@@ -5439,7 +5457,8 @@ re-do them:
   `charset.c` -> `check_cm_extended_code`, `wk->cg_ix = (wk->cg_next_ix - 1)
   * wk->cgd_type`). A genuine one-byte Capcom difference in a caught-script
   loop-back; arcade-faithful as-is.
-- **`cg_rival`**: 3,023 divergences, and **100% of them satisfy `arcade * 5
+- **`cg_rival`**: ~~3,023~~ **3,235 (§36.6)** divergences, and **100% of them
+  satisfy `arcade * 5
   == ps2 * 6`** — the RICT 24-vs-20 row stride already established in §15.4
   (four dead opponent slots per group, §8.H). Zero anomalies outside the
   stride law. Self-consistent: arcade `cg_rival` indexes the raw-installed
@@ -5447,12 +5466,19 @@ re-do them:
   character base under arcade balance.
 - **`cg_olc_ix`**: 296 divergences — genuine overlap-selection data
   differences; the namespace is the character's own raw-installed OVIX, so
-  no cross-universe indexing exists to be wrong.
-- **`cg_hit_ix` / `cg_att_ix`**: 9 / 12 value divergences — arcade-vs-PS2
+  no cross-universe indexing exists to be wrong. *(Confirmed twice: §35.8.2 and
+  §36.2. Unaffected by the scope error above because not one of the 296 sits
+  past a terminator — which is why the disagreement looked selective.)*
+- **`cg_hit_ix` / `cg_att_ix`**: ~~9 / 12~~ **13 / 22 (§36.4)** value
+  divergences — arcade-vs-PS2
   frame-data balance, §15's territory; namespaces are the raw-installed
-  HIIT/ATTA-ATIT.
-- **`cg_cancel`**: 114 divergences — cancel-window balance differences
-  between the releases; expected and arcade-faithful.
+  HIIT/ATTA-ATIT. The 10 `att` and 4 `hit` cells this line dropped are HUGO
+  `caca[5..7]` and DUDLEY `saca[57..60]`, enumerated in §36.5; they are the
+  same class, so the routing above is confirmed, not disturbed.
+- **`cg_cancel`**: ~~114~~ **115 (§36.6)** divergences — cancel-window balance
+  differences
+  between the releases; expected and arcade-faithful. The extra cell is ORO
+  `saca[49]` c4.
 - **`cg_add_xy`**: beyond the §22.6 mechanism-swap class, no anomaly.
 
 ### 22.8 Residual unguarded indexes — folded into §8.C / §8.L, like §21.11's
@@ -8085,6 +8111,18 @@ block votes):
 
 (word 1's "neither" is `remap_cg_number`; word 4's is the `cg_rival`/`cg_zoom`
 content the releases genuinely differ on, §22.4.)
+
+> **WORD 5's ROW NEVER DISCRIMINATED — CORRECTED BY §36.8 (2026-09-12).** The
+> 8,413 `u16sw` votes are 7,445 blocks whose two u8 bytes are **equal**, so they
+> vote on `cg_add_xy` alone and say nothing about the `cg_next_ix`|`cg_status`
+> pair. Split by what the record actually is, the blocks that *do* discriminate
+> say: **L records 273 identical / 9 crossed; a cgd-6 C cell's skipped 16-byte
+> tail 8 identical / 896 crossed.** So the field pair does **not** swap — only
+> the unwritten C-cell tail at the same offset does — and this section's
+> accompanying claim that "the u8 pair swaps too", together with its GILL
+> `atca[15]` c28 example (arcade-C against PS2-L, a phantom), is withdrawn in
+> §36.9. The arithmetic in the table above is right; the reading drawn from its
+> word-5 row is not.
 
 Read that table with §21.6's headline sentence in hand and two things fall out.
 
@@ -11028,7 +11066,7 @@ the membership, and now the mechanism.
 | field | status | where |
 |---|---|---|
 | `cg_olc_ix` | **AUDITED cast-wide** | §22.7: *"296 divergences — genuine overlap-selection data differences; the namespace is the character's own raw-installed OVIX, so no cross-universe indexing exists to be wrong."* Re-measured here and **reproduced exactly: 296 cells, over 107 scripts.** |
-| `cg_att_ix` / `cg_hit_ix` | **AUDITED cast-wide** | §22.7, which routes them to §15's arcade-vs-PS2 balance territory; namespaces are the raw-installed HIIT/ATTA-ATIT. (One residual, §35.8.5.) |
+| `cg_att_ix` / `cg_hit_ix` | **AUDITED cast-wide** | §22.7, which routes them to §15's arcade-vs-PS2 balance territory; namespaces are the raw-installed HIIT/ATTA-ATIT. ~~(One residual, §35.8.5.)~~ **The residual is ADJUDICATED by §36: this sweep's 22/13 is right and §22.7's 12/9 was taken over a narrower scope.** |
 | `cg_ctr` | **NOT previously audited — swept here** | not on §4.4's byte-pass list at all |
 | `cg_type` | **NOT previously audited — swept here** | not on §4.4's byte-pass list at all |
 
@@ -11066,6 +11104,28 @@ canc       115       47
 eff        223       98
 eftype     185       79
 ```
+
+> **CORRECTED 2026-09-12 (§36.9): the `scripts` column above mixes predicates.**
+> `cells` counts value divergences only; `scripts` counts the scripts carrying a
+> value divergence **or** a `cgd_type` field-absence — which is how `hit` comes
+> to read 13 cells over 15 scripts, more scripts than cells. The `cells` column
+> is right as printed. The `scripts` column, on the same predicate as the cells:
+>
+> ```
+> field    cells  scripts (value divergences only)      was
+> type        17       10                                10
+> ctr         11        3                                 3
+> olc        296      107                               107
+> att         22       18                            <- 20
+> hit         13       13                            <- 15
+> canc       115       45                            <- 47
+> eff        223       96                            <- 98
+> eftype     185       77                            <- 79
+> ```
+>
+> The 22 field-absence cells are HUGO `saca[0]` and `saca[6]` — 11 cells each,
+> arcade `cgd_type` 4 against PS2 `cgd_type` 2 — which is why every affected
+> row is exactly 2 scripts too high.
 
 **`cg_ctr` diverges in exactly three scripts cast-wide, 11 cells:**
 
@@ -11317,14 +11377,22 @@ values are what the arcade *renders*, and no oracle in this tree can say.
   supply and finds none, and the PS2 clone corroborates it — but the arcade's
   own dispatch tables were not disassembled. That is the single route by which
   the slot could be live on CPS3, and it is left open.
-- **One measurement disagreement is flagged, not resolved.** This sweep counts
+- ~~**One measurement disagreement is flagged, not resolved.** This sweep counts
   `cg_att_ix` **22** and `cg_hit_ix` **13** value divergences where §22.7
   reports **12** and **9**. The methods differ (this sweep is every shape-OK
   script's L cells with `cg_number` excluded; §22.7's is "cell-aligned live
   cells" and may apply a §30 grid filter this one does not). `cg_olc_ix`
   reproduces §22.7 exactly at 296, so the two instruments agree where they are
   plainly comparable. The att/hit difference is **not adjudicated here** and is
-  recorded as an open item for whoever next touches §22.
+  recorded as an open item for whoever next touches §22.~~
+  **ADJUDICATED 2026-09-12 (§36): this sweep's 22 and 13 are right.** §22.7's
+  12 and 9 are the same measurement taken only over each script's cells before
+  its first terminator — §22's stand-in for a liveness model, four days before
+  `k7_entry_walk` existed. It is not a §30 grid filter: the 28 cells it drops
+  (10 `att`, 4 `hit`, 9 `type`, 3 `eff`, 1 `eftype`, 1 `canc`) are aligned, live
+  and enumerated in §36.5. `cg_olc_ix` reproduced because none of its 296 sits
+  past a terminator. `cg_audit.py` now measures both scopes on every run and
+  asserts they agree, so the two cannot silently part again (§36.7).
 - **The 249-script verbatim-divergence total is not a defect count.** Most of it
   is `eff`/`eftype`/`canc`/`olc`, each already adjudicated as arcade-faithful
   balance or namespace data (§22.5, §22.7). It is quoted only to size the
@@ -11385,3 +11453,407 @@ values are what the arcade *renders*, and no oracle in this tree can say.
   re-emits them (§32's RE-EMISSION). The correction is to §22's *scope
   sentence*, not to §4.4: "the rest of §4.4's byte-pass list" is not the same
   set as "every field of a cell", and §35.6 read it as though it were.
+
+## 36. Two instruments, one count: §22.7's `cg_att_ix`/`cg_hit_ix` figures were taken over a narrower scope than its own denominators — the whole-span counts are the right ones, and the audit now measures BOTH on every run (twenty-second pass, 2026-09-12)
+
+> **Measured at `dde47709`**, against `rom.bin` md5
+> `909f5abec4b6b21bf7d2a452a03fdfcc` (rebuilt by `tools/arcade-audit/decrypt.py`)
+> and the repo's `SF33RD.AFS`. Every number below is from a run in this pass;
+> where an earlier figure and one here differ, the derivation is shown and the
+> earlier one is struck through rather than deleted.
+
+### 36.1 The disagreement, stated exactly
+
+§22.7 swept §4.4's byte-pass list cast-wide and published one-line per-field
+divergence counts. §35.8.2 re-measured the same fields over the same domain and
+reproduced one of them exactly while contradicting two:
+
+| field | §22.7 | §35.8 | agree? |
+|---|---|---|---|
+| `cg_olc_ix` | 296 cells, 107 scripts | 296 cells, 107 scripts | **yes, to the cell** |
+| `cg_att_ix` | 12 | 22 | no |
+| `cg_hit_ix` | 9 | 13 | no |
+
+§35.8 flagged this and deliberately did not adjudicate it. The selectivity is
+the whole clue: a difference of denominator or of scope that moved `att` and
+`hit` but left `olc` untouched to the cell is not a wholesale difference.
+
+### 36.2 The cause: the narrow figures stop at each script's first terminator
+
+Measured. Over the identical domain — every arcade script with a shape-OK PS2
+counterpart (equal cell count, identical C/L shape), live L cells by
+`k7_entry_walk` — the per-field divergence counts under the two possible scopes
+are:
+
+```
+field    whole span   before the first terminator
+type          17             8
+ctr           11            11
+olc          296           296        <- identical, and this is why §35.8 reproduced it
+att           22            12        <- §22.7 published 12
+hit           13             9        <- §22.7 published  9
+ext            0             0
+canc         115           114        <- §22.7 published 114
+eff          223           220        <- §22.5 published 220 + 22 absent = 242 "live"
+eftype       185           184        <- §22.5 published 184 + 22 absent = 206 "live"
+```
+
+**Five independent fields, all exact.** `att`, `hit` and `canc` land on §22.7's
+published numbers and `eff`/`eftype` on §22.5's, under one rule and with nothing
+fitted. `cg_olc_ix` agrees under both scopes because **not one** of its 296
+divergent cells sits past a terminator.
+
+**What §22 called the cut: "live".** §22 ran 2026-09-02. `k7_entry_walk` — this
+document's reachability model — did not exist until 2026-09-06 (§26.10.2,
+§28.2), so §22 had no liveness oracle and used a script's first terminator
+C-cell as a proxy for one. That is a defensible thing to do in the absence of a
+model, and it is not what the sentence "9 / 12 value divergences" conveys.
+
+**Its own denominators say the two halves were not taken over the same
+population.** §22.4's *"29,887 cgd-6 cell pairs"* and §22.5's *"93,947 cgd>=4
+cell pairs"* both reproduce **exactly** here as every L cell of a shape-OK
+script over the **whole** span, dead cells included:
+
+```
+all L cells of shape-OK scripts, arcade cgd == 6 : 29887   (§22.4's figure)
+all L cells of shape-OK scripts, arcade cgd >= 4 : 93947   (§22.5's figure)
+the same two with the dead filter on             : 28858 / 91968
+the same two with the terminator cut as well     : 27512 / 89599
+```
+
+So §22 divided a cut numerator by an uncut denominator. §22.5's own
+*"`cg_effect` differs in 245 (242 live)"* is the two scopes printed side by side
+and nobody noticed: 223 whole-span value divergences + 22 field-absence cells =
+**245**, and 220 + 22 = **242**.
+
+### 36.3 The cut was applied while counting, not while parsing — ruled out, not assumed
+
+`arc_parse`/`ps2_parse` stop at a terminator **only in the last script of a
+table** (`if last and code in TERMINATORS: break`), because a non-last script's
+span is bounded by the next entry in the offset table, not by its first exit.
+The obvious hypothesis is that §22's re-implemented parsers (§22.3: *"parsers
+modeled on `cg_audit.py`'s `arc_parse`/`ps2_parse` extended to decode the cgd-6
+tail"*) dropped the `last` guard. **Measured, they did not**: forcing the break
+in every script moves the structural counts §22.3 reports reproducing —
+
+```
+                             shipped parsers    break in every script
+arcade scripts                    14334               14334
+shape-OK with an oracle           13856               14001
+shape-mismatched                    316                 171
+cg_olc_ix divergences               296                 432
+cg_att_ix / cg_hit_ix             22 / 13             16 / 15
+```
+
+— and §22.3 records reproducing 14334 / 13856 / 316 / 162 / 101 exactly before
+any new number was trusted. A parse-time cut also fails to produce §22.7's
+numbers at all (16/15, not 12/9). The cut is therefore in the counting loop.
+
+**Neither harness survives.** `db7d2b00` (§22) and `bb0a67d0` (§35.8) are both
+docs-only commits — each one's file list is
+`docs/research-arcade-cg-data-accuracy.md` and nothing else — so neither
+implementation can be read. Everything above is re-derived from the shipped
+parsers rather than inferred from the two write-ups, which is why the mechanism
+claim is confined to what the numbers prove: the published counts *are* the
+pre-first-terminator counts, whatever the code that produced them looked like.
+
+### 36.4 Which scope is right: the whole span. Three reasons
+
+**(i) A terminator is not a liveness model, and this document has one.** Of the
+28 divergent cells the cut hides, `k7_entry_walk` marks **zero** dead — and
+`k7_entry_walk` fails toward *live*, so that is the weakest of the three
+statements, not the strongest. The audit's own `span_reach` census already
+reports reachable cells past a first terminator as a standing finding (`DUDLEY
+caca: 11 reachable cell(s) past the first terminator`, `DUDLEY saca: 6`, `ELENA
+atca: 1`), so "past a terminator" has been known not to mean "not executed"
+since §28.
+
+**(ii) `audit()` does not stop there, and the census is reported beside it.**
+The shipped audit pairs arcade cell *i* with PS2 cell *i* over the whole decoded
+span and adjudicates `cg_number` on exactly these cells — `cells audited:
+133901` counts them. A per-field census that stopped at the first terminator
+would be measuring a different population from the audit it sits next to, and
+would say "no finding" about cells the same run is busy adjudicating.
+
+**(iii) The number every later sweep validated itself against is the whole-span
+one.** §21.4's first-pass raw `cg_se` count of **37** — reproduced by §21 with
+`cg_audit.py`'s parsers *imported unmodified*, and re-quoted by §22.3 as harness
+validation — is the whole-span count. The terminator cut gives **34**:
+
+```
+raw cg_se divergences, live cell-aligned L cells: whole span 37, pre-terminator 34
+```
+
+So the house scope was fixed in §21, §22 quietly departed from it for its
+numerators, and §35.8 measured the house scope without knowing there was a
+question.
+
+**Verdict: `cg_att_ix` diverges on 22 cells, `cg_hit_ix` on 13.** §22.7's 12 and
+9 are the same measurement with 10 and 4 live cells dropped.
+
+### 36.5 The 28 cells the cut hides, enumerated
+
+Printed by `cg_audit.py` on every run (§36.7), so this table is a transcript,
+not a hand-maintained list. All 28 are live; none is in a script the grid model
+calls a phantom at that cell.
+
+| script | cell | field | arcade | PS2 |
+|---|---|---|---|---|
+| DUDLEY `saca[57]` | c17 | `att` / `hit` | 0 / 8192 | 32 / 40960 |
+| DUDLEY `saca[58]` | c17 | `att` / `hit` | 0 / 32768 | 32 / 40960 |
+| DUDLEY `saca[59]` | c17 | `att` / `hit` | 0 / 32768 | 32 / 40960 |
+| DUDLEY `saca[60]` | c17 | `att` / `hit` | 0 / 32768 | 32 / 40960 |
+| HUGO `caca[5]` | c3, c4, c5 | `type` | 2, 3, 0 | 0, 2, 3 |
+| HUGO `caca[5]` | c3, c6 | `att` | −832, 0 | 0, −832 |
+| HUGO `caca[6]` | c3, c4, c5 | `type` | 2, 3, 0 | 0, 2, 3 |
+| HUGO `caca[6]` | c3, c6 | `att` | −832, 0 | 0, −832 |
+| HUGO `caca[7]` | c3, c4, c5 | `type` | 2, 3, 0 | 0, 2, 3 |
+| HUGO `caca[7]` | c3, c6 | `att` | −832, 0 | 0, −832 |
+| IBUKI `atca[50]` | c14 | `eff` | 0 | 21 |
+| IBUKI `atca[51]` | c14 | `eff` | 0 | 21 |
+| ORO `saca[48]` | c35 | `eff` / `eftype` | 0 / 0 | 31 / 1 |
+| ORO `saca[49]` | c4 | `canc` | 0 | 64 |
+
+**They are ordinary data, not decoder junk, and the cells themselves say so.**
+HUGO `caca[5]`/`[6]`/`[7]` cells 3-7 agree with their PS2 counterparts on `ctr`,
+`olc`, `se`, `ext`, `canc`, `eff` and `eftype` cell for cell, and every one of
+their `cg_number`s remaps to the index the PS2 names — `audit()` adjudicates
+them as class-(c)-clean in the same run. What moves is `cg_type`: arcade
+`[2, 3, 0]` on cells 3/4/5 against PS2 `[0, 2, 3]`, the PS2 holding the same
+attack window one frame later, with `cg_att_ix` −832 moving from c3 to c6 to
+match. That is a re-timing of the same animation — §15's arcade-vs-PS2 balance
+territory, exactly where §22.7 routed the class — and it is the thing the narrow
+count deleted. DUDLEY `saca[57..60]` c17 is the same shape: every field but
+`att`/`hit`/`num` identical, `num` remapping correctly.
+
+**Why these cells are past a terminator at all.** HUGO `caca[5]`/`[6]`/`[7]`
+each begin with the PREVIOUS script's two-cell tail — the `type` 255 / `ctr` 250
+end marker and the C-cell terminator that follows it — before their own body
+starts at cell 2, because the entry offsets in the `caca` table are spaced
+208 bytes apart while the bodies are shorter. Nothing is being decoded off its
+grid: the arcade and the PS2 agree on the C/L shape of all 9 cells and on every
+C-cell's operands. DUDLEY `saca[57..60]` reach cell 17 past a `code 17`
+terminator at cell 14 — and `k7_entry_walk` independently marks cell 15 of those
+scripts dead while leaving 16-21 live, which is a jump landing, not an accident
+of the span.
+
+### 36.6 Every §22 one-liner, re-measured
+
+Whole-span, live cell-aligned L cells, 124,953 pairs over 13,856 shape-OK
+scripts. **Bold** is a figure that moves.
+
+| §22 claim | §22's number | measured here | verdict |
+|---|---|---|---|
+| `cg_extdat` divergences | 0 | 0 (+22 field-absence) | holds |
+| `cg_status` divergences | 0 | 0 | holds |
+| `cg_next_ix` divergences | exactly 1, ALEX `caca[19]` c8, arcade 9 → PS2 0 | exactly 1, same cell, same values | holds (see §36.8) |
+| `cg_rival` divergences | 3,023, 100% on the 24-vs-20 stride law | **3,235**, 100% on the stride law (`arcade * 5 == ps2 * 6`), 0 anomalies | number moves, verdict holds |
+| `cg_olc_ix` divergences | 296 | 296, over 107 scripts | holds |
+| `cg_att_ix` divergences | 12 | **22**, over 18 scripts | **wrong, corrected** |
+| `cg_hit_ix` divergences | 9 | **13**, over 13 scripts | **wrong, corrected** |
+| `cg_cancel` divergences | 114 | **115**, over 45 scripts | **wrong, corrected** |
+| `cg_effect` divergences (§22.5) | 245, "242 live" | **223** value + 22 field-absence = 245 | total holds, "live" figure wrong |
+| `cg_eftype` divergences (§22.5) | 207, "206 live" | **185** value + 22 field-absence = 207 | total holds, "live" figure wrong |
+| `cg_zoom` raw divergences (§22.4) | 927 = 924 absence + 3 | 927 = 924 absence + 3 (YUN `caca[0]` c23/c24/c25, `0x4000` → 0) | holds under **both** scopes |
+| cgd-6 / cgd≥4 pair denominators | 29,887 / 93,947 | 29,887 / 93,947 | holds (whole span, dead included) |
+
+**The `cg_rival` number moves and the verdict does not.** 3,235 whole-span
+against §22.7's 3,023, and **every one of the 3,235 satisfies
+`arcade * 5 == ps2 * 6`** with zero anomalies — so the larger population makes
+the stride law *better* evidenced, not worse. §8.H is unaffected.
+
+**`cg_cancel` 114 → 115.** The extra cell is ORO `saca[49]` c4, arcade 0 → PS2
+64. One cell, the same class §22.7 assigned (cancel-window balance), no new
+item.
+
+**The 22 field-absence cells are all one thing**, in case a later pass counts
+them as divergences again: HUGO `saca[0]` and `saca[6]`, 11 cells each, arcade
+`cgd_type` 4 against PS2 `cgd_type` 2 — the PS2 record has no
+`att`/`hit`/`ext`/`canc`/`eff`/`eftype` word at all. That is §22.6's per-release
+`cgd_type` class, not a value difference, and the census counts it separately.
+
+### 36.7 The defence, in code
+
+`cg_audit.py` now computes the census **twice, in two places, at both scopes**,
+and asserts the two agree — because the failure this replaces was not an
+arithmetic error, it was two instruments measuring different populations with
+nothing in the tree holding them against each other.
+
+- `verbatim_field_census()` walks the shape-OK domain independently and returns,
+  per field, `full` (whole span), `preterm` (before the first terminator) and
+  `absent` (the field present on one side only), plus `hidden` — the difference,
+  **enumerated as rows, not summarised as a count**.
+- `audit()` accumulates the same census in its own cell loop, as `vb_*` counters
+  in each character's `stats` (and the hidden rows under `verbatim` →
+  `terminator_cut_hides` in `cg_audit.json`).
+- `_assert_verbatim_census()` asserts the two agree pair count for pair count
+  and field for field, at **both** scopes, and that `preterm <= full` for every
+  field. A scope change in either instrument — a terminator cut, a dead-cell
+  filter, a different shape test — moves one and not the other, and the run
+  stops instead of publishing the smaller number.
+- **Fail toward the finding.** `hidden_dead` — a divergence past a terminator on
+  a cell `k7_entry_walk` marks dead — is asserted **0**. Such a cell would be a
+  case where the narrow scope is defensible, and it may not ride along on an
+  argument made for live cells; if one ever appears the run stops and it gets
+  its own adjudication.
+- Both scopes are **printed side by side** on every run, with the hidden rows
+  listed underneath. The narrow number can still be quoted; it can no longer be
+  quoted alone.
+
+### 36.8 Found on the way, and NOT applied: §30.2's word-5 u8 pair does not swap
+
+Re-deriving §22.7's `cg_next_ix` line required decoding the cgd-6 tail, which
+`cg_audit.py` skips. §30.2's word table says:
+
+> `word 5  cg_add_xy (u16), cg_next_ix|cg_status  -> per-u16 byte swap -- MEASURED, and unlike word 3 the u8 pair swaps too: the arcade carries next_ix in the low byte of a BE u16 (Gill atca[15] c28, arcade .. 00 DB, PS2 .. DB 00, next_ix 0xDB on both)`
+
+**Measured cast-wide, the u8 pair of an L record does not swap.** Over every
+shape-OK cgd-6 L-cell *pair* whose two bytes differ — the only cells at which
+the two hypotheses are distinguishable at all:
+
+```
+identical bytes (the pair does NOT swap) : 254
+crossed bytes  (the pair DOES swap)      :   0
+neither                                  :   1   <- ALEX caca[19] c8, the one real divergence
+control: the cg_add_xy u16 in the same word, cells where its two bytes differ:
+crossed 27, identical 0                          <- a u16 does swap, so the offsets are right
+```
+
+The `cg_next_ix` and `cg_status` bytes therefore sit at the same offset in both
+releases, in the order `include/structs.h` declares (`u16 cg_add_xy; u8
+cg_next_ix; u8 cg_status;`). **§22.7's `cg_next_ix` line is right under that
+reading and only under it**: exactly one divergence cast-wide, ALEX `caca[19]`
+c8, arcade 9 → PS2 0, and `cg_status` clean. Under §30.2's reading the same
+sweep reports 249 `cg_next_ix` and 250 `cg_status` divergences, nearly all of
+them the stereotyped `0 → N` / `N → 0` pair of one cell's two bytes read
+crosswise.
+
+**§30.2's own word-5 row does not contradict this — it never discriminated.**
+Its table counts blocks where exactly one permutation holds. Re-measured over
+that same population (all 14,087 byte-comparable script pairs, fixed 24-byte
+stride, which is what a cgd-6 record is for **both** C and L cells), the row
+splits like this:
+
+```
+word-5 blocks voting u16sw (1,0,3,2)              8413
+  ... of which the u8 pair's two bytes are EQUAL  7445   <- votes on cg_add_xy alone
+word-5 blocks voting id (0,1,2,3)                  272   <- 269 of these DO discriminate
+
+the blocks that discriminate the u8 pair, by what the record actually is:
+  both sides an L cell   : identical 273, crossed   9, neither 171
+  both sides a C cell    : identical   8, crossed 896, neither 132
+  one side C, one side L : identical  15, crossed  63, neither 375   (grid phantoms)
+```
+
+So the crossing §30.2 saw is real and is **not a field**: a C cell in a cgd-6
+script is 8 bytes of operands followed by 16 bytes that `read_char_table`
+SKIPS without writing (§32's HOLES). Those bytes carry no structure, the
+converter byte-swapped them as u16s wholesale, and word 5's offset lands inside
+them. Within genuine L records — the only place `cg_next_ix` and `cg_status`
+exist — the pair does not cross.
+
+**And §30.2's worked example is one of the phantoms.** GILL `atca[15]` is
+shape-mismatched: arcade cells 26, 27 and 28 are C-cells where the PS2's are
+L-cells, and the arcade's L-cell is 29. `0xDB` is 219 and appears in the PS2's
+cell 28 and the arcade's cell 29 — one cell apart. It is a grid phantom of
+exactly the kind §30 exists to name.
+
+**The fix is derived and deliberately NOT applied, and here is what it costs.**
+`GRID_GEN[5]` in `cg_audit.py` encodes the claim as the permutation `(1,0,3,2)`;
+an L record's word 5 transforms as `(1,0,2,3)`. One permutation cannot serve
+both — `GRID_GEN` assigns a role to a 4-byte BLOCK, and at word 5's offset that
+block is an L record's `cg_add_xy | cg_next_ix | cg_status` in one cell and a
+C cell's unwritten tail in the next. Changing it was tried and reverted:
+
+```
+                          GRID_GEN[5] = (1,0,3,2)   (1,0,2,3)
+grid-phase scripts with a switch        143            184
+cells aligned                        165738         164844
+cells phantom                          2192           2111
+cells unmodelled                        591           1566
+OOB-index rows explained as phantom      120            113
+OOB-index rows NOT explained              16             23
+cells audited / TOTAL row            unchanged      unchanged
+```
+
+The L-record permutation is the stricter one, and it moves the run in the
+fail-toward-the-finding direction: 975 cells stop being explained and **7 more
+OOB-index rows lose their phantom excuse** (ALEX `saca[56]`/`[57]`/`[58]`/`[59]`
+c11, DUDLEY `nmca[32]` c10, NECRO `nmca[49]` c24, TWELVE `nmca[46]` c30 — two of
+them on cells `k7_entry_walk` calls **live**). Per §29.5 each of those seven then
+has to stand on its own, which is an adjudication this pass did not do and will
+not hand-wave. And the right fix is probably not a different constant but a
+role that is aware of the record kind, which is a change to `_grid_roles`, not
+to a table. **Recorded here as an open item with its cost priced, not silently
+left benign** — and the measurements above are the evidence any later pass
+needs. It is *not* a `cg_number` question and moves neither `cells audited:
+133901` nor the TOTAL row.
+
+### 36.9 Corrections to earlier sections (recorded, not silently edited)
+
+- **§22.7's `cg_hit_ix` / `cg_att_ix` figures of 9 / 12 are WITHDRAWN.** The
+  correct whole-span counts are **13 and 22**. The class assignment §22.7 made
+  — arcade-vs-PS2 frame-data balance, §15's territory, namespaces the
+  raw-installed HIIT/ATTA-ATIT — is *confirmed* by the 10 additional cells
+  (§36.5), so no worklist item is created or moved. The bullet is struck
+  through in place.
+- **§22.7's `cg_cancel` figure of 114 is WITHDRAWN.** 115 whole-span; the extra
+  cell is ORO `saca[49]` c4 and it belongs to the same class.
+- **§22.7's `cg_rival` figure of 3,023 is WITHDRAWN.** 3,235 whole-span, and
+  **100% still satisfy the 24-vs-20 stride law with zero anomalies** — the
+  verdict §22.7 drew is better supported than it was.
+- **§22.5's "242 live" / "206 live" are WITHDRAWN as liveness statements.**
+  They are pre-first-terminator counts. The totals 245 and 207 are correct and
+  are the whole-span counts; §22.5's namespace conclusion is untouched.
+- **§22's use of the word "live" is withdrawn generally.** Where §22 says
+  "live cells" it means "cells before the script's first terminator". A
+  reachability model (`k7_entry_walk`) arrived four days later and disagrees on
+  28 cells, all in the direction of more findings.
+- **§22.4's `cg_zoom` verdict and §22.7's `cg_extdat` / `cg_status` /
+  `cg_next_ix` / `cg_olc_ix` lines are CONFIRMED unchanged**, re-measured at
+  both scopes. `cg_zoom`'s 927/924/3 is identical under both, so the cut never
+  touched it.
+- **§35.8.2's sweep table mixes two predicates across its columns.** Its `cells`
+  column is value divergences only; its `scripts` column counts the
+  field-absence cells as well — which is why it reads `hit 13 cells, 15
+  scripts`, more scripts than cells. The cell counts are right; the script
+  counts for `att`/`hit`/`canc`/`eff`/`eftype` are each 2 too high. Corrected in
+  place in §35.8.2, with the original values struck through.
+- **§35.8's headline numbers are CONFIRMED**: 14,334 scripts, 13,856 shape-OK
+  with an oracle, 124,953 live cell-aligned L pairs, 249 scripts with ≥1
+  verbatim divergence, and every per-field *cell* count in its table.
+- **§30.2's word 5 claim that "the u8 pair swaps too" is WITHDRAWN as a
+  statement about the FIELDS** (§36.8). In an L record the pair does not swap
+  (254 identical, 0 crossed, 1 real divergence); the crossing §30.2 measured is
+  in the 16 bytes a cgd-6 C cell carries and `read_char_table` skips, and its
+  worked example is a shape-mismatched cell pair. §30.2's word-5 table row is
+  *arithmetically* correct and simply never discriminated: 7,445 of its 8,413
+  `u16sw` votes come from blocks whose two u8 bytes are equal. The
+  `GRID_GEN[5]` entry is left in place with its cost measured, because
+  correcting it un-excuses 7 OOB-index rows that need their own adjudication.
+
+### 36.10 What this analysis does not establish
+
+- **It does not re-open any verdict §22 or §35.8 drew.** Both were about which
+  namespace a field indexes and whether a remap can be wrong about it. The 28
+  recovered cells are all in classes those sections had already named
+  (arcade-vs-PS2 balance, cancel windows, effect events), and none of them is a
+  `cg_number` question. `cells audited: 133901` and the TOTAL row do not move.
+- **It does not establish what §22's harness did**, only what its numbers are
+  counts of. The harness is gone (docs-only commit `db7d2b00`); the
+  pre-first-terminator identity is measured on five fields at once, which is
+  what the correction rests on. The "`live` was a terminator proxy" reading is
+  the most economical account of that identity plus §22's uncut denominators,
+  not a reading of code.
+- **It does not adjudicate the seven OOB-index rows §36.8's fix would
+  un-excuse.** Their status under the current `GRID_GEN[5]` is "explained by the
+  grid"; under the measured permutation it is "not explained". Which they
+  actually are is open, and §36.8 prices the work rather than doing it.
+- **It does not settle whether HUGO `caca[5..7]`'s re-timing or DUDLEY
+  `saca[57..60]`'s `att`/`hit` change is deliberate balance or a conversion
+  artifact.** It establishes that the cells are real, aligned and live, and that
+  a cast-wide count of the field must include them. Which release is "right" is
+  the same question §15 leaves open for every other frame-data divergence, and
+  under arcade fidelity the arcade value is the one we ship either way.
+- **No C changed and no build was run.** Nothing in this pass touches `src/`;
+  the change is `tools/arcade-audit/cg_audit.py` and this document.

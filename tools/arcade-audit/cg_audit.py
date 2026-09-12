@@ -2753,11 +2753,25 @@ def manu_delta_gate(ci):
 #                                                     i.e. all four bytes reversed  GEN[2] = (3,2,1,0)
 #   word 3  cg_extdat|cg_cancel|cg_effect|cg_eftype (four u8) -> bytes unchanged  GEN[3] = (0,1,2,3)
 #   word 4  cg_zoom (u16), cg_rival (u16)          -> per-u16 byte swap
-#   word 5  cg_add_xy (u16), cg_next_ix|cg_status  -> per-u16 byte swap -- MEASURED, and unlike
-#                                                     word 3 the u8 pair swaps too: the arcade
-#                                                     carries next_ix in the low byte of a BE u16
-#                                                     (Gill atca[15] c28, arcade `.. 00 DB`, PS2
-#                                                     `.. DB 00`, next_ix 0xDB on both)
+#   word 5  cg_add_xy (u16), cg_next_ix|cg_status  -> per-u16 byte swap; the u8 PAIR ~~swaps too~~
+#                                                     DOES NOT SWAP in an L record (doc §36.8: 254
+#                                                     identical, 0 crossed, 1 real divergence over
+#                                                     every shape-ok cgd-6 pair whose two bytes
+#                                                     differ; `cg_add_xy` in the same word crosses
+#                                                     27/0 as the control).  The crossing this note
+#                                                     used to claim is in the 16 bytes a cgd-6 C
+#                                                     CELL carries and `read_char_table` SKIPS (the
+#                                                     HOLES above) -- 896 crossed / 8 identical
+#                                                     there against 273/9 in L records -- and the
+#                                                     Gill atca[15] c28 example is arcade-C vs
+#                                                     PS2-L, a grid phantom.  `GRID_GEN[5]` below
+#                                                     still carries (1,0,3,2), which is right for
+#                                                     the C-cell tail and wrong for the field pair;
+#                                                     one block role cannot be both.  §36.8 prices
+#                                                     the correction (975 cells move to
+#                                                     `unmodelled`, 7 OOB rows lose their phantom
+#                                                     excuse) and leaves it OPEN rather than
+#                                                     landing a reclassification nobody adjudicated.
 #
 # So "arcade BE u32 == PS2 LE u32, bit-identical" -- the signature §21.6's re-derivation used -- is
 # GEN[2].  It is the NORMAL relation for the att/hit word of every genuinely converted cell in the
@@ -2925,6 +2939,145 @@ def sa_labels(ci):
                 lab.setdefault(int(nums[1]), []).append("9900_%s[%d]" % (tag, n))
     return lab
 
+# ---------------------------------------------------------------- the per-field divergence census (doc §36)
+#
+# WHAT THIS SETTLES.  Two sweeps measured the same thing -- "on how many cell-aligned cells does
+# field F differ between the two releases" -- and disagreed.  Doc §22.7 reported `cg_att_ix` 12 and
+# `cg_hit_ix` 9; doc §35.8 re-measured and got 22 and 13, while reproducing §22.7's `cg_olc_ix`
+# figure to the cell (296 over 107 scripts).  Neither sweep survives -- both were ad-hoc and
+# docs-only -- so the disagreement is re-derived here rather than arbitrated from the write-ups.
+#
+# THE CAUSE, MEASURED.  The narrow numbers are the counts taken over each script's cells BEFORE its
+# first terminator C-cell; the wide ones are the counts over the whole decoded span.  The cut is not
+# a parse-time one: forcing `arc_parse`/`ps2_parse` to break on a terminator in EVERY script -- not
+# only the last, which is what `if last and code in TERMINATORS` does -- moves the shape-ok script
+# count 13856 -> 14001, the shape-mismatched count 316 -> 171 and `cg_olc_ix` 296 -> 432, and §22.3
+# records reproducing 13856/316 exactly.  It is a cut applied while COUNTING, and it reproduces the
+# earlier write-up on five independent fields at once:
+#
+#   field    whole span   before the first terminator   what §22 published
+#   att            22                 12                12                      (§22.7)
+#   hit            13                  9                 9                      (§22.7)
+#   canc          115                114               114                      (§22.7)
+#   eff           223                220               220 + 22 absent = 242     (§22.5)
+#   eftype        185                184               184 + 22 absent = 206     (§22.5)
+#
+# `cg_olc_ix` agrees under both scopes because not one of its 296 divergent cells sits past a
+# terminator -- which is exactly why the reproduction looked selective and puzzling.
+#
+# WHAT §22 CALLED IT.  "live".  §22 ran 2026-09-02, four days before `k7_entry_walk` existed, so it
+# had no reachability model and used the first terminator as a proxy for one.  Its DENOMINATORS give
+# it away: §22.4's 29,887 cgd-6 pairs and §22.5's 93,947 cgd>=4 pairs both reproduce exactly here as
+# every L cell of a shape-ok script over the WHOLE span, dead cells included -- so §22 was dividing a
+# cut numerator by an uncut denominator.  §22.5's own "245 (242 live)" is the two scopes side by
+# side: 223 whole-span value divergences + 22 field-absence = 245, and 220 + 22 = 242.
+#
+# WHICH SCOPE IS RIGHT: the whole span.  Three reasons, in increasing order of force.  (i) A
+# terminator is not a liveness model.  `k7_entry_walk` is, and it marks NONE of the 28 hidden cells
+# dead, so the cut discards divergences on cells the reachability model says are reached -- and
+# `arc_parse` decodes past a terminator deliberately for every script but the last, because a
+# script's span is bounded by the next entry, not by its first exit.  (ii) `audit()` pairs cell i
+# with cell i over the whole decoded span and adjudicates `cg_number` on exactly these cells; a
+# field census that stopped earlier would measure a different population from the audit it is
+# reported beside.  (iii) doc §21.4's first-pass raw `cg_se` count of 37, the number every later
+# sweep validated itself against, is the whole-span count -- the cut gives 34.
+#
+# WHY IT FAILED TOWARD BENIGN, which is the part that matters.  A terminator cut can only ever
+# REMOVE divergences, so the narrower instrument always looks cleaner, and "no finding" is the
+# answer nobody re-checks.  Both scopes are therefore computed on every run in two places -- here,
+# and in `audit()`'s own cell loop -- and `_assert_verbatim_census` asserts they agree field by
+# field.  The cells the cut would hide are emitted as ROWS, not as a count, so a future narrowing
+# has to delete evidence rather than quietly lose a number.
+def _first_terminator(cells):
+    """Index of a script's first terminator C-cell, or None.
+
+    Not a script end: `arc_parse` stops at one only in the LAST script of a table, and everything
+    past it in every other script is decoded data that `audit()` adjudicates like any other cell."""
+    for i, c in enumerate(cells):
+        if c[0] == 'C' and c[1] in TERMINATORS: return i
+    return None
+
+
+def verbatim_field_census():
+    """Per-field arcade-vs-PS2 divergence counts over the live, cell-aligned L-cell domain.
+
+    An independent walk of the data `audit()` walks -- same parsers, its own scope -- so the two
+    can be asserted equal.  Per field: `full` over the whole decoded span, `preterm` over the cells
+    before the script's first terminator, and `absent` for the field being present on one side only
+    (a `cgd_type` difference, doc §22.6, not a value divergence).  `hidden` is the difference
+    full - preterm, enumerated."""
+    full, pre, absent = collections.Counter(), collections.Counter(), collections.Counter()
+    scripts, scripts_pre = collections.defaultdict(set), collections.defaultdict(set)
+    hidden, hidden_dead = [], 0
+    pairs = pairs_pre = 0
+    for ci in range(20):
+        arc_tabs = {sec: arc_offsets(*LOC[ci][sec]) for sec in KOC2SEC.values()}
+        blob, bsd = ps2_tail(ci)
+        offs, sp = ps2_spans(blob)
+        walk = k7_entry_walk(ci)
+        for koc, sec in KOC2SEC.items():
+            b, z = sp[SECTIONS.index(sec)]
+            pents = ps2_offsets(blob, b)
+            for si in range(len(arc_tabs[sec])):
+                acgd, acells = arc_parse(ci, sec, si, arc_tabs)
+                if si >= len(pents): continue
+                pcgd, pcells = ps2_parse(blob, b, z, pents, si)
+                if pcells is None or len(pcells) != len(acells): continue
+                if not all(a[0] == p[0] for a, p in zip(acells, pcells)): continue
+                term = _first_terminator(acells)
+                dead = walk[(sec, si)]
+                for cidx, c in enumerate(acells):
+                    if c[0] != 'L': continue
+                    ar, pr = c[1], pcells[cidx][1]
+                    d = cidx in dead
+                    past = term is not None and cidx > term
+                    if not d:
+                        pairs += 1
+                        if not past: pairs_pre += 1
+                    for f in _VERBATIM_L:
+                        if (f in ar) != (f in pr):
+                            if not d: absent[f] += 1
+                        elif f in ar and ar[f] != pr[f]:
+                            if d:
+                                if past: hidden_dead += 1
+                                continue
+                            full[f] += 1
+                            scripts[f].add((ci, sec, si))
+                            if past:
+                                hidden.append((NAMES[ci], sec, si, cidx, f, ar[f], pr[f]))
+                            else:
+                                pre[f] += 1
+                                scripts_pre[f].add((ci, sec, si))
+    return dict(pairs=pairs, pairs_preterm=pairs_pre, hidden=hidden, hidden_dead=hidden_dead,
+                full={f: full[f] for f in _VERBATIM_L}, preterm={f: pre[f] for f in _VERBATIM_L},
+                absent={f: absent[f] for f in _VERBATIM_L},
+                scripts={f: len(scripts[f]) for f in _VERBATIM_L},
+                scripts_preterm={f: len(scripts_pre[f]) for f in _VERBATIM_L})
+
+
+def _assert_verbatim_census(cen, T):
+    """The cross-check: this file's two counts of the same census must agree field by field.
+
+    `cen` is `verbatim_field_census()`'s own walk; `T` carries the counters `audit()` accumulated
+    in its cell loop.  A scope change in either -- a terminator cut, a dead-cell filter, a
+    different shape test -- moves one and not the other, and the run stops instead of publishing
+    the smaller number.  Every hidden cell is additionally asserted LIVE: a hidden DEAD cell would
+    be a case where the narrow scope is defensible, and that is a different finding needing its own
+    adjudication rather than a silent pass."""
+    assert cen['pairs'] == T['vb_pairs'], (cen['pairs'], T['vb_pairs'])
+    assert cen['pairs_preterm'] == T['vb_pairs_preterm'], (cen['pairs_preterm'], T['vb_pairs_preterm'])
+    for f in _VERBATIM_L:
+        assert cen['full'][f] == T['vb_' + f], (f, cen['full'][f], T['vb_' + f])
+        assert cen['preterm'][f] == T['vb_pre_' + f], (f, cen['preterm'][f], T['vb_pre_' + f])
+        assert cen['absent'][f] == T['vb_absent_' + f], (f, cen['absent'][f], T['vb_absent_' + f])
+        assert cen['preterm'][f] <= cen['full'][f], (f, cen['preterm'][f], cen['full'][f])
+    assert len(cen['hidden']) == T['vb_hidden'], (len(cen['hidden']), T['vb_hidden'])
+    assert len(cen['hidden']) == sum(cen['full'][f] - cen['preterm'][f] for f in _VERBATIM_L)
+    # Fail toward the finding: a divergence the cut would hide on a cell no entry point reaches is
+    # NOT covered by the argument above and may not ride along on it.
+    assert cen['hidden_dead'] == 0, cen['hidden_dead']
+
+
 # ---------------------------------------------------------------- audit
 def audit(cgmap_override=None, quiet=False):
     global CGMAP
@@ -2954,12 +3107,20 @@ def audit(cgmap_override=None, quiet=False):
                    se_oob=0, eff_oob=0, tama_oob=0, sasign_oob=0, code_oob=0, koc_oob=0, idx_oob=0,
                    se_oob_dead=0, eff_oob_dead=0, tama_oob_dead=0, sasign_oob_dead=0,
                    code_oob_dead=0, koc_oob_dead=0, idx_oob_dead=0,
-                   oob_phantom=0, oob_not_phantom=0)
+                   oob_phantom=0, oob_not_phantom=0,
+                   # doc §36: the per-field verbatim census, accumulated in this loop as the second
+                   # of the two instruments `_assert_verbatim_census` holds against each other.
+                   vb_pairs=0, vb_pairs_preterm=0, vb_hidden=0, vb_hidden_dead=0,
+                   **{'vb_' + f: 0 for f in _VERBATIM_L},
+                   **{'vb_pre_' + f: 0 for f in _VERBATIM_L},
+                   **{'vb_absent_' + f: 0 for f in _VERBATIM_L})
+        vb_hides = []
         for koc, sec in KOC2SEC.items():
             an, pn = len(arc_tabs[sec]), len(ps2_tabs[sec][2])
             for si in range(an):
                 acgd, acells = arc_parse(ci, sec, si, arc_tabs)
                 dead = k7_entry_walk(ci)[(sec, si)]   # cells no entry point reaches (cached per character)
+                term = _first_terminator(acells)      # doc §36; NOT the script's end, see the function
                 pcells = None
                 if si < pn:
                     pcgd, pcells = ps2_parse(blob, ps2_tabs[sec][0], ps2_tabs[sec][1], ps2_tabs[sec][2], si)
@@ -3043,6 +3204,30 @@ def audit(cgmap_override=None, quiet=False):
                         continue
                     r = c[1]; cells_seen += 1
                     pr = pcell[1] if (pcell is not None and pcell[0] == 'L') else None
+                    # doc §36: the per-field verbatim census, both scopes.  Counted here AND,
+                    # independently, in `verbatim_field_census()`; the two are asserted equal, so a
+                    # scope change in either one stops the run rather than shrinking a number.
+                    if pr is not None:
+                        _d = cidx in dead
+                        _past = term is not None and cidx > term
+                        if not _d:
+                            cls['vb_pairs'] += 1
+                            if not _past: cls['vb_pairs_preterm'] += 1
+                        for _f in _VERBATIM_L:
+                            if (_f in r) != (_f in pr):
+                                if not _d: cls['vb_absent_' + _f] += 1
+                            elif _f in r and r[_f] != pr[_f]:
+                                if _d:
+                                    if _past: cls['vb_hidden_dead'] += 1
+                                    continue
+                                cls['vb_' + _f] += 1
+                                if _past:
+                                    cls['vb_hidden'] += 1
+                                    vb_hides.append(dict(table=sec, script=si, cell=cidx, field=_f,
+                                                         arcade=r[_f], ps2=pr[_f], terminator=term,
+                                                         dead=False))
+                                else:
+                                    cls['vb_pre_' + _f] += 1
                     se = r['se'] >> 4
                     # cg_se >>= 4 then bit 0x800 selects the per-character random-SE
                     # table (charset.c:2721-2727); only the non-random path indexes
@@ -3215,6 +3400,10 @@ def audit(cgmap_override=None, quiet=False):
                                  xcopy=dict(unmodelled=_rs(sx['unmodelled']), donor_notes=_rs(sx['donor_notes']),
                                             stale_consumers={k: len(v) for k, v in sx['stale'].items()}),
                                  caua_hosa=chf)
+        # doc §36: the divergences a count taken only up to each script's first terminator would
+        # drop.  Emitted as rows rather than as a number: a count can be quietly re-derived smaller,
+        # a named cell cannot.  Loop order is (section, script, cell, field), so the JSON is stable.
+        rec['verbatim'] = dict(terminator_cut_hides=vb_hides)
         span_why = list(sb['unmodelled'] or []) + list(sb['throw_notes'] or [])
         span_why_x = list(sx['unmodelled'] or []) + list(sx['throw_notes'] or []) + list(sx['donor_notes'] or [])
         rec['stats'] = dict(cells=cells_seen, ovct_arcade=a_ovct, ovct_ps2=p_ovct,
@@ -3419,6 +3608,23 @@ if __name__ == "__main__":
           % (T['a_oob'], T['b_gap'], T['c_wrong_group'], T['c_same_group'], T['needs_manual'], T['extra_script'],
              oob_cols(T)))
     print("cells audited:", T['cells'])
+    # doc §36: the per-field divergence census, both scopes, cross-checked against the counters
+    # `audit()` accumulated in its own cell loop.  The two numbers are printed side by side on
+    # purpose -- the bug this replaces was one sweep publishing the narrow number and another the
+    # wide one, with nothing in the tree that held them against each other.
+    _cen = verbatim_field_census()
+    _assert_verbatim_census(_cen, T)
+    print("verbatim field census: %d live cell-aligned L pair(s) in shape-ok scripts (%d before a "
+          "first terminator); divergences whole-span/pre-terminator, absent = a cgd_type difference:"
+          % (_cen['pairs'], _cen['pairs_preterm']))
+    print("  " + "  ".join("%s %d/%d%s" % (f, _cen['full'][f], _cen['preterm'][f],
+                                           ("+%da" % _cen['absent'][f]) if _cen['absent'][f] else "")
+                           for f in _VERBATIM_L))
+    print("  a count cut at the first terminator would hide %d divergence(s) over %d script(s), "
+          "every one on a cell `k7_entry_walk` reaches (asserted; %d on a dead cell):"
+          % (len(_cen['hidden']), len(set(h[:3] for h in _cen['hidden'])), _cen['hidden_dead']))
+    for _h in _cen['hidden']:
+        print("    %-7s %s[%d] c%-3d %-7s arcade %6d -> ps2 %6d" % _h)
     # doc §29: the 316 shape-mismatched scripts, adjudicated per raw cg_number.  The five script
     # classes sum to `manu`; the cell classes sum to every live L-cell in those scripts.
     print("shape-mismatched (manu) scripts: %d = %d direct + %d bracketed + %d no-live-cells + %d unresolved "

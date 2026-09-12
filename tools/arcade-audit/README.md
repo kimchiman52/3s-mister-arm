@@ -70,7 +70,23 @@ outruns the PS2 one and the PS2 has no bytes there), `no_oracle`. The run
 prints the census, the shape-mismatch split, and by name every OOB row the
 grid does **not** explain; it exits non-zero if the u32 byte signature ever
 fires on a cell the walk calls `aligned`. This replaces §21.6's "PS2 converter
-artifact" class, which does not exist.
+artifact" class, which does not exist. *(Word 5's entry in that transform list
+is right for a C cell's skipped tail and wrong for an L record's
+`cg_next_ix`|`cg_status` pair, which does not swap — measured and priced in
+doc §36.8, deliberately not applied.)*
+
+The run also prints the **per-field divergence census**
+(`verbatim_field_census()`, doc §36) — how many cell-aligned live L cells each
+byte-passed field differs on between the two releases — at **two** scopes at
+once: over the whole decoded span, and over each script's cells before its
+first terminator. `_assert_verbatim_census()` holds that walk against the same
+counters `audit()` accumulates in its own cell loop and fails the run if they
+disagree on any field at either scope. This exists because two sweeps once
+published 12/9 and 22/13 for the same two fields with nothing in the tree to
+catch it: the narrow one had used the first terminator as a stand-in for a
+reachability model, which it is not. The cells the narrow scope drops are
+printed as rows, and a dropped cell on a `dead` cell is asserted impossible —
+that case would be a different finding, not a free pass.
 
 `data_audit.py` covers **the other 13 sections** — STXY MVXY SERND
 RICT HIIT BODA HANA CATA CAUA ATTA HOSA ATIT PROT — where hitboxes, throw
