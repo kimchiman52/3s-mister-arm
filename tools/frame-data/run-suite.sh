@@ -58,6 +58,9 @@ BUILD_DIR="${REPO_ROOT}/build/host"
 BIN_PATH="${BUILD_DIR}/3S-ARM.app/Contents/MacOS/3S-ARM"
 GOLDEN_DIR="${SCRIPT_DIR}/golden"
 
+# shellcheck source=../require-debug-host-build.sh
+. "${REPO_ROOT}/tools/require-debug-host-build.sh"
+
 # ---------------------------------------------------------------------
 # Arg parsing
 # ---------------------------------------------------------------------
@@ -263,6 +266,8 @@ fi
 # ---------------------------------------------------------------------
 
 SECONDS=0
+
+require_debug_host_build "$BUILD_DIR" "run-suite.sh" || exit 1
 
 if [ ! -d "$BUILD_DIR" ]; then
     echo "[run-suite.sh] build/host missing, configuring..." >&2

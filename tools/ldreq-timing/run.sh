@@ -25,6 +25,9 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 BUILD_DIR="${REPO_ROOT}/build/host"
 BIN_PATH="${BUILD_DIR}/3S-ARM.app/Contents/MacOS/3S-ARM"
 
+# shellcheck source=../require-debug-host-build.sh
+. "${REPO_ROOT}/tools/require-debug-host-build.sh"
+
 # Source-level gate, run before the build so it fails in seconds rather than
 # after a full compile. gd3rd.h derives LDREQ_BARRIER_BUDGET_MS from
 # GekkoNet's NetStats::DISCONNECT_TIMEOUT, but net.h is C++ and every
@@ -36,6 +39,10 @@ BIN_PATH="${BUILD_DIR}/3S-ARM.app/Contents/MacOS/3S-ARM"
 # disconnect timeout -- the failure that would otherwise turn a slow disk
 # into a dropped match with the comment still asserting it cannot happen.
 python3 "${SCRIPT_DIR}/check_barrier_budget.py" --repo-root "${REPO_ROOT}"
+
+# Checked OUTSIDE the LDT_SKIP_BUILD gate on purpose: a Release build/host
+# breaks the run whether or not this invocation is the one that builds it.
+require_debug_host_build "$BUILD_DIR" "ldreq-timing/run.sh" || exit 2
 
 if [ -z "${LDT_SKIP_BUILD:-}" ]; then
     if [ ! -d "$BUILD_DIR" ]; then

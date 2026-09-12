@@ -17,6 +17,9 @@ CORPUS_PATH="${1:-${REPO_ROOT}/tools/frame-data/corpus-q.yaml}"
 BUILD_DIR="${REPO_ROOT}/build/host"
 BIN_PATH="${BUILD_DIR}/3S-ARM.app/Contents/MacOS/3S-ARM"
 
+# shellcheck source=../require-debug-host-build.sh
+. "${REPO_ROOT}/tools/require-debug-host-build.sh"
+
 if [ ! -f "$CORPUS_PATH" ]; then
     echo "error: corpus file not found: $CORPUS_PATH" >&2
     exit 1
@@ -67,6 +70,11 @@ run_with_timeout() {
         ' "$seconds" "$@"
     fi
 }
+
+# Deliberately OUTSIDE the FDH_SKIP_BUILD gate below: a Release build/host
+# breaks the run whether or not this invocation is the one that builds it, and
+# the suite fans out with FDH_SKIP_BUILD set.
+require_debug_host_build "$BUILD_DIR" "run.sh" || exit 1
 
 # FDH_SKIP_BUILD (opt-in, unset by default): run-suite.sh builds build/host
 # once up front and sets this for every fanned-out per-corpus call, so all

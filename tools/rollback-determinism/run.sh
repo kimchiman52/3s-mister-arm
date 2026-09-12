@@ -76,6 +76,13 @@ shift || true
 BUILD_DIR="${REPO_ROOT}/build/host"
 BIN_PATH="${BUILD_DIR}/3S-ARM.app/Contents/MacOS/3S-ARM"
 
+# shellcheck source=../require-debug-host-build.sh
+. "${REPO_ROOT}/tools/require-debug-host-build.sh"
+
+# Checked OUTSIDE the RBD_SKIP_BUILD gate on purpose: a Release build/host
+# breaks the run whether or not this invocation is the one that builds it.
+require_debug_host_build "$BUILD_DIR" "rbd/run.sh" || exit 2
+
 if [ -z "${RBD_SKIP_BUILD:-}" ]; then
     if [ ! -d "$BUILD_DIR" ]; then
         echo "[rbd/run.sh] build/host missing, configuring..." >&2
