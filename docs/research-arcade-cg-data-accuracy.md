@@ -232,7 +232,7 @@ command and its observed output, or a named primary source. Things that were
 | Elena OVCT unpatched tail | **CLOSED 2026-09-06 — unreachable, defended by the audit** (§24). **Unchanged 2026-09-07 (§31.7), but the model that produced it was short a walk:** §24.3(3)'s dropped Gill `+1` is now modelled and Gill's own walk runs off the end of his 392-entry table (new row below). Elena is character 8, the shift is not hers, and her reach is still 1-16. Parts 17-90 are indexed by no writer: the OVIX is the identity and no cell emits `olc >> 4` above 16, and the `eff01.c` timer walk is stationary (`parts_nix[i] == i` for all 91). No code change; `cg_audit.py` -> `ovct_reachability()` and `residual_audit.py` R2b `part_reachable` enforce it. Corrects §18's "undefended" |
 | Dudley dangling OVCT next-index (arcade entry 177 → 178) | **RE-OPENED 2026-09-07 — §25's bound rested on an incomplete enumeration of `att_hit_ok = 1` (§31.9): five sites, and `hitplef.c` -> `player_at_vs_effect_dm` re-arms an attacking PLAYER's on contact with a `work_id == 2` effect, with a fresh positive `hit_stop`, no renewal cell and no damage state. The audit fails open; row `walk>end[178](arcade-only)`. Attainability of the contact chain is unproven in both directions.** ~~CLOSED 2026-09-06 — unreachable, defended by the audit~~ (§25). The walk needs 297 (seed 130) / 594 (seed 82) consecutive frames of one `olc`; the master can hold those for ≤ 179 / 148 — the run's script frames plus one positive `hit_stop` per renewal cell, bounded at 23 by the largest value any writer hands an attacker. No code change; `cg_audit.py` -> `ovct_dangling_hold()` re-derives the bound; row `walk>end-unreached[178:hold<=179/297]` |
 | 1,694 wrong-sprite cells (measured against the audit's oracle reach — §11.2 notes 162 more scripts, 2,441 cells, with no oracle at all) | **MOSTLY LANDED** items D, E, N (§8.D, §8.E, §8.N) — class (c) 1688 (post-§8.K baseline) → 89; item F (Chun-Li, 72 of the 89) investigated, deliberately left as-is (§8.F); remaining 17 enumerated with reasons (§8.D's Urien 0x52D9 ambiguity, and 7 of Necro/Hugo/Yun/Akuma's 9 smaller own-group cells — the same per-raw-value ambiguity; Akuma's other 2, `0x546B`, are a no-oracle block on a unanimous delta, not an ambiguity — §8.P) |
-| Shape-divergent scripts (316) | **CLOSED 2026-09-06 — adjudicated, defended by the audit, and one real divergence found** (§29). A shape mismatch only means `audit()` skipped class (c) there; the question is decidable without the cell pairing, because `remap()` is a pure function of the raw `cg_number`, so a raw appearing in any shape-ok script is pinned by that script's PS2 counterpart. All 316: **225 direct + 60 bracketed + 20 no-live-cells + 4 unresolved + 7 DIVERGENT**; their 3,320 live L-cells: 2,710 + 465 + 94 bracket-disagree + 0 unbracketed + 51 divergent. Of the 51, **44 were new — Twelve `dmca[3]/[90]/[91]`, a hole in `twelve_cg_ranges`**; those are now **FIXED 2026-09-06** (§8.S) by replacing that table's 17 point rows with one row over the band's measured hull `0x1E01`-`0x2095`, taking the census to **225 direct + 63 bracketed + 20 no-live-cells + 4 unresolved + 4 DIVERGENT** and its cells to **2,710 + 509 + 94 + 0 + 7**. The remaining 7 are §8.N's and §8.P's already-enumerated cells, independently rediscovered and still scoped out. The 4 unresolved are named with exactly what is unread (§29.5) — **9 after §31.10's fail-open, then 6 after §32.4 read the sub-cutoff band, taking the census to 221 direct + 65 bracketed + 20 no-live-cells + 6 unresolved + 4 DIVERGENT and its cells to 2,928 + 552 + 35 sub-cutoff + 102 bracket-disagree + 0 unbracketed + 7**. Then **§33's cross-character owner oracle read the last three (2026-09-07)** and the fixes **LANDED the same day** (§33.9): four new `CgRemapRange` rows over 25 cells take the census to **221 direct + 66 bracketed + 20 no-live-cells + 3 unresolved + 2 xchar + 0 XCHAR-DIVERGENT + 4 DIVERGENT**, its cells to **2,928 + 552 + 35 + 77 + 0 + 25 xchar + 0 + 7**, and the unresolved residue to **URIEN `yuca[37]`/`[39]`/`[65]` and nothing else**. Digest `e96e88beec2ac2b5` -> `de50fb902a7f934d`. Then **§33.9.2's held-back fourth candidate LANDED 2026-09-12** — three more `CgRemapRange` rows (REMY `0x0636`, `0x0679`-`0x067A`, `0x0685`, all `+0x20`) clearing the last 5 cells of §8.N's caution table, taking the census to **221 direct + 68 bracketed + 20 no-live-cells + 3 unresolved + 2 xchar + 0 XCHAR-DIVERGENT + 2 DIVERGENT** and its cells to **2,928 + 557 + 35 + 77 + 0 + 25 + 0 + 2**; the residual 2 DIVERGENT are AKUMA `nmca[27]`/`[28]` (§8.P) and stay scoped out. Digest `de50fb902a7f934d` -> `7cdc8fdf7fc62593`. §29 itself made no code change; the ones that followed are §8.S's single `CgRemapRange` row and §33.9's four. `cg_audit.py` -> `manu_delta_gate()` re-derives the whole census every run, so the verdict moved without an edit to §29. §11.4's hardware oracle was assessed and **could not** answer this predicate — CPS3 RAM reports arcade numbering, not the PS2-side index the remap targets (§29.6) |
+| Shape-divergent scripts (316) | **CLOSED 2026-09-06 — adjudicated, defended by the audit, and one real divergence found** (§29). A shape mismatch only means `audit()` skipped class (c) there; the question is decidable without the cell pairing, because `remap()` is a pure function of the raw `cg_number`, so a raw appearing in any shape-ok script is pinned by that script's PS2 counterpart. All 316: **225 direct + 60 bracketed + 20 no-live-cells + 4 unresolved + 7 DIVERGENT**; their 3,320 live L-cells: 2,710 + 465 + 94 bracket-disagree + 0 unbracketed + 51 divergent. Of the 51, **44 were new — Twelve `dmca[3]/[90]/[91]`, a hole in `twelve_cg_ranges`**; those are now **FIXED 2026-09-06** (§8.S) by replacing that table's 17 point rows with one row over the band's measured hull `0x1E01`-`0x2095`, taking the census to **225 direct + 63 bracketed + 20 no-live-cells + 4 unresolved + 4 DIVERGENT** and its cells to **2,710 + 509 + 94 + 0 + 7**. The remaining 7 are §8.N's and §8.P's already-enumerated cells, independently rediscovered and still scoped out. The 4 unresolved are named with exactly what is unread (§29.5) — **9 after §31.10's fail-open, then 6 after §32.4 read the sub-cutoff band, taking the census to 221 direct + 65 bracketed + 20 no-live-cells + 6 unresolved + 4 DIVERGENT and its cells to 2,928 + 552 + 35 sub-cutoff + 102 bracket-disagree + 0 unbracketed + 7**. Then **§33's cross-character owner oracle read the last three (2026-09-07)** and the fixes **LANDED the same day** (§33.9): four new `CgRemapRange` rows over 25 cells take the census to **221 direct + 66 bracketed + 20 no-live-cells + 3 unresolved + 2 xchar + 0 XCHAR-DIVERGENT + 4 DIVERGENT**, its cells to **2,928 + 552 + 35 + 77 + 0 + 25 xchar + 0 + 7**, and the unresolved residue to **URIEN `yuca[37]`/`[39]`/`[65]` and nothing else**. Digest `e96e88beec2ac2b5` -> `de50fb902a7f934d`. Then **§33.9.2's held-back fourth candidate LANDED 2026-09-12** — three more `CgRemapRange` rows (REMY `0x0636`, `0x0679`-`0x067A`, `0x0685`, all `+0x20`) clearing the last 5 cells of §8.N's caution table, taking the census to **221 direct + 68 bracketed + 20 no-live-cells + 3 unresolved + 2 xchar + 0 XCHAR-DIVERGENT + 2 DIVERGENT** and its cells to **2,928 + 557 + 35 + 77 + 0 + 25 + 0 + 2**; the residual 2 DIVERGENT are AKUMA `nmca[27]`/`[28]` (§8.P) and stay scoped out. Digest `de50fb902a7f934d` -> `7cdc8fdf7fc62593`. Then **§34 read the last undetermined group, the 77 `bracket_disagree` cells, 2026-09-12 — with NO code change**: all 77 are URIEN `yuca[37]`/`[39]`/`[65]` (75) and AKUMA `nmca[27]`/`[28]` (2), every one **confirmed benign** by the **PS2 counterpart script's own cell record** (a third oracle, neither per-raw nor cross-character), taking the census to **221 direct + 68 bracketed + 20 no-live-cells + 0 unresolved + 2 xchar + 3 counterpart + 0 XCHAR-DIVERGENT + 0 CP-DIVERGENT + 2 DIVERGENT** and its cells to **2,928 + 557 + 35 + 0 bracket-disagree + 0 + 25 + 77 counterpart + 0 + 0 + 2**. **The unresolved residue is now EMPTY.** The class had one root cause: for **77 of 77** the disagreeing lower bracket witness is a **collapse witness** — an arcade frame the PS2 merged onto another frame's sprite — which pins a sprite, not a band, and bounds no range (§34.7, which withdraws §8.D's "staircase" description: its ten values `0x52E3`..`0x52EC` all land on PS2 index 18036). Our delta is each character's own `default_delta` and sits **interior to that band's measured hull** (URIEN `0x4E00`-`0x533E`, 660 observations; AKUMA `0x5401`-`0x583F`, 679), so **no `CgRemapRange` row is warranted and the digest does not move**. §29 itself made no code change; the ones that followed are §8.S's single `CgRemapRange` row and §33.9's four. `cg_audit.py` -> `manu_delta_gate()` re-derives the whole census every run, so the verdict moved without an edit to §29. §11.4's hardware oracle was assessed and **could not** answer this predicate — CPS3 RAM reports arcade numbering, not the PS2-side index the remap targets (§29.6) |
 | **The "converter artifact" class** (§21.6) | **CLOSED 2026-09-06 — the class does not exist** (§30). The u32 byte relation it was identified by is the `cg_hit_ix`/`cg_att_ix` word's own cross-release relation (the two releases store the pair in opposite order), so every one of the 1,402 hits is that word read at a cell boundary the data does not have. The verdict §21.6 reached is unchanged and now stands on `grid_phase()` + `k7_entry_walk`; its stated mechanism is withdrawn |
 | **Gill's OVCT walk leaves the table** (arcade index 392, past a 392-entry table) | **OPEN, arcade-only, new 2026-09-07** (§31.7). `eff01.c` -> `get_new_parts_data` applies the `player_number == CHAR_GILL && rl_flag` `+1` on every walk step and to the pointer `parts_nix` is read through, turning his `parts_nix[i] == i` fixed points into a `+1` march. All 40 selected slot-0 seeds exit at index 392 (cheapest 6,417 effect frames); all 42 PS2 seeds stay inside the 396-entry PS2 table, so §6.1 does not excuse it. The bytes at 392 are Gill's `rict` (coalesced into the same allocation) and decode to `parts_char 1` — in `obj_group_table`, so a wrong sprite rather than a fault — with `nix 513`, which continues the walk. No code change; row `walk>end[392](arcade-only)` |
 | **`k7_entry_walk` fails open on unresolvable jump landings** | **CHANGED 2026-09-07** (§31.10). It was silently dropping a `koc` outside `char_table[0..9]` and a script index past the target pointer table — fail-CLOSED, against its own docstring. Ten characters have one, so their `dead` sets are void: §28.1's `0+31 / 0+53 / 0+52` become `5+26 / 30+23 / 9+43`, and §29.5's unresolved residue grows 4 → 9 scripts. **RESOLVED-AS-FAR-AS-THE-DATA-GOES 2026-09-07** (§32.1/§32.2): `read_char_table`'s relocation is re-derived and checked against all 200 script pointer tables, and all 214 landings now compute — **0 script-start**, 45 in-buffer, 137 out-of-buffer, 22 read-past-buffer, 10 koc-out-of-range. None is an entry the walk could seed and every one leaves the executor on a byte that is not a cell boundary, so the ten voids **stand**, now measured rather than assumed; `script_start == 0` is asserted on every run. §29.5's residue is separately re-read down to **6** scripts (§32.4) |
@@ -7879,7 +7879,13 @@ refuted the same way (§33.4), without widening §8.S's row.
 Nothing else in the 316 is unread — the residue is URIEN `yuca[37]`/`[39]`/`[65]`
 (75 cells, §8.D's staircase) plus AKUMA `nmca[27]`/`[28]`'s 2 cells inside
 already-`divergent` scripts, and §33.7 says exactly why both new instruments are
-silent on them.
+silent on them. ~~**Unread:** whether the staircase continues across the gap.~~
+**READ 2026-09-12 (§34), and the residue is now EMPTY.** Both instruments are
+silent because both are per-raw-value oracles; the **PS2 counterpart script's own
+cell record** is neither, and it confirms all 77 cells directly. There is also no
+staircase to continue: `0x52E3`..`0x52EC` all land on PS2 index 18036, so those
+ten observations pin one sprite rather than bounding a band (§34.7). **No code
+change** — the confirmed delta is the `default_delta` the table already applies.
 
 ### 29.6 §11.4's hardware oracle was NOT used, and could not be
 
@@ -9809,14 +9815,20 @@ overrun is arcade-only.**
   `0x0C02`..`0x7140`, re-verified here — is still true and still unfixable by a
   Remy-side oracle. What is read is the owner's delta and the refutation of ours;
   a same-character confirmation does not exist and none was manufactured.
-- **URIEN `yuca[37]`, `yuca[39]`, `yuca[65]` — 75 cells, still unread, and now
-  for a sharper reason.** Raws `0x5315`..`0x532D`. **Measured: not one of those
+- **URIEN `yuca[37]`, `yuca[39]`, `yuca[65]` — ~~75 cells, still unread, and now
+  for a sharper reason~~ READ 2026-09-12 (§34): all 75 confirmed by the PS2
+  counterpart script's own cell record, which is not a per-raw-value oracle at
+  all. Everything below is re-verified and still true; what was wrong was
+  treating the two raw-value oracles as exhausting the evidence.** Raws `0x5315`..`0x532D`. **Measured: not one of those
   raws is owned by any character other than URIEN**, so the owner oracle is silent
   by construction, and ours lands them in group 14 — URIEN's own — so the group
   gate is silent too. §8.D's per-value staircase across
   `0x52EC`(`-3192`)..`0x5334`(`-3168`) is exactly as unread as it was; both new
   instruments degenerate to the per-character one here, as they must.
-- **AKUMA `nmca[27]`, `nmca[28]` — 2 cells, still unread.** Raw `0x546C`,
+- **AKUMA `nmca[27]`, `nmca[28]` — ~~2 cells, still unread~~ READ 2026-09-12
+  (§34): both confirmed by the counterpart script's L-number multiset, in which
+  18,380 appears exactly once and `0x546C` is the only raw that reaches it.**
+  Raw `0x546C`,
   **measured: not in the owner map at all** (observed by nobody), ours landing in
   group 15, Akuma's own. Both scripts are already `divergent` on a *different*
   cell — raw `0x546B`, ours `-3232` vs the oracle's `-3266`, both in group 15 —
@@ -10068,3 +10080,376 @@ re-swept clean afterwards — 447/447 eligible pass, 0 differences across 463
 records — but that is **not** confirmation of the fix. `statcheck_compare.c`
 does not assert on `wu.cg_number`, so the corpus cannot see a CG remap at all;
 a green sweep here proves only that nothing *else* broke.
+
+## 34. The 77 `bracket_disagree` cells: CLOSED — all 77 enumerated and read, no range change warranted, and the class had one root cause all along (nineteenth pass, 2026-09-12)
+
+**Citation style for this section.** As in §21-§33: this document is not in
+`tools/doc-citations/baselines.txt`, so everything below cites a **symbol**
+(`file` -> `function`/`table`) or the exact text of a line, never a line number.
+Code was read at `new-stuff` @ `a73a6edc`. Every number marked **measured** is
+emitted by `tools/arcade-audit/cg_audit.py` on this tree against the same
+`rom.bin` (md5 `909f5abec4b6b21bf7d2a452a03fdfcc`), on runs made for this
+section; where a figure here differs from an earlier one, the derivation is given.
+
+**Headline.** The 77 `bracket_disagree` cells were the largest undetermined group
+left in the `manu` census and had never had a dedicated pass. They are
+enumerated here — **measured: all 77 are URIEN `yuca[37]`/`[39]`/`[65]` (25 cells
+each) and AKUMA `nmca[27]`/`[28]` (1 cell each), over 26 distinct raws, and
+nothing else** — and every one of them is **read, and benign**. Two new
+instruments do it, both reading the **PS2 counterpart script's own cell record**
+rather than any per-raw-value oracle, and a third observation explains why the
+class existed at all: **for 77 of 77, the disagreeing lower bracket witness is a
+COLLAPSE WITNESS** — an arcade frame the PS2 release merged onto another frame's
+sprite — whose "delta" is that merge's arithmetic and bounds no band. **No code
+change is warranted and none is proposed**: the delta the audit confirms is the
+one `arcade_char_data.c` already produces, from each character's own
+`default_delta`, so the digest does not move and netplay pairing is untouched.
+`cg_audit.py` gains the gate, two asserted controls and the root-cause count, so
+the verdict is re-derived every run rather than recorded here.
+
+### 34.1 The 77, enumerated
+
+`manu_delta_gate` assigns `bracket_disagree` when the nearest observed raw
+**below** and the nearest **above** resolve to different deltas, so the per-raw
+oracle cannot interpolate across the gap. That is a statement about the oracle,
+not about the cell. Measured, the whole set:
+
+| char | script | cells | raws | ours | nearest below | nearest above |
+|---|---|---|---|---|---|---|
+| URIEN | `yuca[37]` | 25 | `0x5315`..`0x532D` | `-3168` (`-0xC60`) | `0x52EC` (`-3192`) | `0x5334` (`-3168`) |
+| URIEN | `yuca[39]` | 25 | `0x5315`..`0x532D` | `-3168` | `0x52EC` (`-3192`) | `0x5334` (`-3168`) |
+| URIEN | `yuca[65]` | 25 | `0x5315`..`0x532D` | `-3168` | `0x52EC` (`-3192`) | `0x5334` (`-3168`) |
+| AKUMA | `nmca[27]` | 1 | `0x546C` | `-3232` (`-0xCA0`) | `0x546B` (`-3266`) | `0x5470` (`-3232`) |
+| AKUMA | `nmca[28]` | 1 | `0x546C` | `-3232` | `0x546B` (`-3266`) | `0x5470` (`-3232`) |
+| | | **77** | **26 distinct** | | | |
+
+The three URIEN scripts carry the identical 25-raw sequence, one cell per raw;
+the two AKUMA scripts carry `0x546C` once each. So the 77 cells are **26 distinct
+raw values**, and the whole question is what delta those 26 should take.
+
+**Our value is the character's `default_delta` in both cases, not a range row.**
+Measured against `arcade_char_data.c`: `cg_maps[CHAR_URIEN].default_delta` is
+`-0x0C60` and no row of `urien_cg_ranges` covers `0x5315`..`0x532D` (its rows are
+`0x70FF`-`0x7109`, `0x0CB4`, `0x52DA`-`0x52E2` and the ten point rows
+`0x52E3`..`0x52EC`); `cg_maps[CHAR_AKUMA].default_delta` is `-0x0CA0` and
+`akuma_cg_ranges` holds only `0x710A`-`0x7114` and `0x0CB4`.
+
+### 34.2 The instruments already in the tree, each tried, and what each said
+
+The brief's six were worked in order of strength. Four are silent here **by
+construction**, and saying exactly why is the point:
+
+1. **Reachability (`k7_entry_walk`).** Checked first, as the cheap answer.
+   **Measured: it disposes of nothing.** `k7_entry_walk(URIEN)[('yuca', 37)]` is
+   **empty**; `[('yuca', 39)]` and `[('yuca', 65)]` hold only cell **53**, and the
+   25 cells in question are cells 13-51. `k7_entry_walk(AKUMA)[('nmca', 27)]` and
+   `[('nmca', 28)]` hold only cell **11**; the cell in question is cell **2**. All
+   77 are live. This is not NECRO's `0x0000` case or TWELVE's `nmca[46]`.
+2. **The cross-character owner oracle (§33).** **Measured: silent by
+   construction.** Not one of the 26 raws is in the owner map — `0x5315`..`0x532D`
+   are owned by nobody, and `0x546C` is observed by nobody at all. The nearest
+   *owned* raws either side are the same character's own (`0x52EC`/`0x5334` for
+   URIEN, `0x546B`/`0x5470` for AKUMA) with different deltas, so `owner_verdict`
+   returns `None` at both of its two doors. §33.7 already said this; it is
+   re-verified, unchanged.
+3. **Group landing (`group_unobserved_gate`).** **Measured: silent.** Ours sends
+   URIEN's 25 to 18,101..18,125 — **group 14, URIEN's own** — and AKUMA's to
+   **18,380, group 15, AKUMA's own**. **Measured: URIEN's observed landing set is
+   `{3, 14}` and AKUMA's is `{15}`**, so both landings are inside it. (URIEN's set
+   is `{3, 14}`, not `{14}`: he is measured to borrow from RYU's bank via his
+   `0x0CB4` row.)
+4. **§30's decoder-grid model.** Considered and **not used**, for the same reason
+   §33.3 set it aside: it compares bytes at a cell's word 0 and adjudicates
+   *decode alignment*. It has nothing to say about which PS2 index a correctly
+   decoded `cg_number` should map to. Its silence here is not a failure to answer;
+   it is a different question.
+5. **The PS2 side / §6.1.** **Measured: does not apply.** §6.1 scopes out a value
+   identical on both sides. Every one of the 26 is not: URIEN's `0x5315` (21,269)
+   against 18,101, AKUMA's `0x546C` (21,612) against 18,380. There is no pair of
+   equal values anywhere in the 77.
+6. **Sub-cutoff.** **Measured: does not apply.** `CG_REMAP_CUTOFF` is `0x400`;
+   the smallest of the 26 raws is `0x5315`. All are far above it, so
+   `remap_cg_number`'s early return is never taken. This is not NECRO's case.
+
+So every existing instrument is legitimately silent, and none of them was ever
+going to close this. That is what made a new one necessary.
+
+### 34.3 The new instrument: the PS2 counterpart script's own cell record
+
+The observation the previous passes did not make is that **a shape-mismatched
+script has a PS2 counterpart.** That is the definition of the `manu` set:
+`audit()` skipped class (c) there not because the counterpart is missing but
+because the two **cell sequences have different shapes**, so cell *i* could not be
+paired with cell *i*. The counterpart's own L-cell record is therefore untouched
+evidence, and it answers the class-(c) question directly — *does our remap send
+this cell's raw to the index the PS2 uses for this sprite* — with **no per-raw
+oracle at all**. Two instruments read it, in `cg_audit.py` ->
+`counterpart_model()` / `counterpart_verdict()`:
+
+**A. Pinned L-pairing.** Drop the C cells from both sides. If the two L
+subsequences have the **same length**, the order-preserving L-to-L correspondence
+is the identity on L-index — forced, with no parameter to choose. The assumption
+that can fail is that the PS2 dropped one L cell and added a different one,
+leaving the count equal but the correspondence shifted, and the fields the port
+passes through **verbatim** test exactly that: `cg_type`, `cg_ctr`, `cg_olc_ix`,
+`cg_att_ix`/`cg_hit_ix`, `cg_extdat`, `cg_cancel`, `cg_effect`, `cg_eftype`, plus
+`cg_se` through `remap_se` (a different table, pinned independently by §21). The
+pairing is **admitted only when the identity shift matches all of them on every
+paired L cell AND no other shift does**. `cg_number` is then read off the pairing
+and is never used to establish it, so the test is not circular. **Measured, of
+the 316 shape-mismatched scripts: 256 unequal L count, 33 identity-shift
+mismatch, 1 ambiguous (YUN `atca[263]`, where a -13 shift also matches), and 26
+uniquely pinned.**
+
+**B. Multiset containment.** Order-free, and so immune to any alignment question:
+the cell is confirmed when the PS2 counterpart carries **at least as many copies
+of the index our remap produces** as our remap of the whole live script produces.
+Non-coverage is **silence, not contradiction** — the PS2 decimated long
+animations (§29.3), so an arcade frame simply not being in the PS2 script says
+nothing about its remap.
+
+**The discipline is §33.2's, unchanged.** The gate speaks **only** where
+`manu_delta_gate`'s own oracle and the owner oracle have **both** already
+declined, so no confirmed cell is reclassified and no cell's verdict is weakened.
+That is not cosmetic here — see §34.6.
+
+**Two controls, both asserted every run rather than described here:**
+
+> **SOUNDNESS.** Over every live L-cell of every shape-mismatched script where
+> `manu_delta_gate`'s own oracle *does* have a verdict, does the multiset test
+> ever cover a cell the oracle **contradicts**? **Measured cast-wide: it covers
+> 2,698 of the cells the oracle confirms and 0 of the cells it contradicts.**
+> `assert mset_conf_bad == 0` in `manu_delta_gate`. One false positive there would
+> make the instrument unusable and the run stops instead of reporting.
+
+> **UNIQUENESS.** For every cell the gate confirms, the candidate delta is swept
+> over the whole set of deltas that character's own oracle measures anywhere, plus
+> ours. **Ours must be the UNIQUE delta the multiset test accepts.** Asserted per
+> cell in `_mset_accepts`. **Measured: unique for all 77.**
+
+### 34.4 URIEN's 75: read, three times over
+
+`yuca[37]` decodes **54 arcade cells against 55 PS2 cells** — the shape mismatch
+that stopped `audit()`. But both sides carry **38 L cells**, the pairing is
+uniquely pinned, and **measured: all 38 pair with every field equal, `cg_number`
+included.** The arcade L sequence under our remap is
+
+`18132, 18133, … 18140, 18142, 18140, 18142, 18141, 18101, 18102, … 18125`
+
+and the PS2's L sequence is the **same 38 values in the same order**. The
+mismatch is a single **C** cell the PS2 inserted at index 12. `yuca[39]` and
+`yuca[65]` are identical in this respect. So the 25 raws are not interpolated at
+all — the PS2's own `yuca[37]` says what each of them is, and it says `-3168`,
+independently in three scripts.
+
+**The counterfactual is decisive.** Measured, sweeping the band's delta and
+re-running the multiset test: over the **13 distinct deltas URIEN's oracle
+measures anywhere**, `-3168` is the **only** survivor. Taken further by hand for
+this section, an **exhaustive sweep of all 8,000 deltas in `[-6000, +2000)` leaves
+`-3168` the only survivor too**, for each of the three scripts. In particular
+`-3192`, the lower witness, is refuted outright: it would send the 25 raws to
+18,077..18,101, and **measured, 24 of those 25 values appear nowhere in the PS2's
+`yuca[37]` at all**.
+
+**And the simplest argument of the five was there the whole time.** Measured:
+**660 of URIEN's 691 oracle raws measure `-3168`, and that band's measured hull is
+`0x4E00`..`0x533E` — which contains `0x5315`..`0x532D` outright.** Our value is
+not an extrapolation past a pin; it is the interior of a 660-observation band.
+The only reason the per-raw oracle balked is which single observation happened to
+be *nearest below*, and that one is a collapse witness (§34.7).
+
+### 34.5 AKUMA's 2: read by the order-free instrument, and the pairing is declined for a named reason
+
+`nmca[27]` decodes **12 arcade cells against 13 PS2 cells**, both with **10 L
+cells**, the PS2 having prepended one **C**. **Measured: 9 of the 10 pair with
+every field equal.** The tenth, L0, differs in **`cg_type` alone — arcade 131,
+PS2 132** — which is a genuine one-field content difference, so the strict
+admissibility rule in §34.3(A) **rejects the pairing for this script**, and it is
+left rejected. Tolerating "one field of one cell" would be a threshold, and a
+fitted one.
+
+The **order-free** instrument needs no pairing and settles it anyway. Measured,
+the two L-number multisets:
+
+```
+ours (remapped)   18376, 18377, 18380, 18377, 18342, 18343, 18344, 18345, 18346, 18379
+PS2               18376, 18377, 18380, 18377, 18342, 18343, 18344, 18345, 18346, 18345
+```
+
+**18,380 appears exactly once on each side, and `0x546C` is the only raw in the
+script our remap sends there.** So the PS2's own `nmca[27]` carries the index our
+`-3232` produces, and nothing else in the script can account for it. (The single
+difference — ours 18,379 where the PS2 has a second 18,345 — is §8.P's already
+known, already reported `0x546B` divergence at cell 9, untouched here.)
+
+**The counterfactual, measured:** over the **4 distinct deltas AKUMA's oracle
+measures anywhere**, `-3232` is the **unique** survivor. The exhaustive sweep of
+all 8,000 deltas in `[-6000, +2000)` leaves exactly **two**, `-3232` and `-3267`;
+`-3267` is a delta AKUMA's oracle measures **nowhere**, and it survives only
+because the PS2 script happens to hold a second copy of 18,345 — which is the
+`0x546B` collapse, not a band. It loses on every swept form of the test.
+
+**And the hull argument again.** Measured: **679 of AKUMA's 692 oracle raws
+measure `-3232`, hull `0x5401`..`0x583F`, which contains `0x546C`.**
+
+### 34.6 Why the gate may not clear a confirmed cell — YUN and YANG `caca[4]`
+
+The tier discipline inherited from §33.2 is load-bearing here, and this pass
+measured the case that proves it. **The pinned pairing DISAGREES with the per-raw
+oracle on 6 cells: YUN `caca[4]` and YANG `caca[4]`, the last three L cells
+each.** Measured, YUN's:
+
+| | c22 | c23 | c24 |
+|---|---|---|---|
+| arcade raw | `0x14B1` | `0x14B3` | `0x14B3` |
+| ours (oracle-confirmed `direct`, `-1056`) | 4241 | 4243 | 4243 |
+| PS2 `caca[4]`'s own cell | 3695 | 3696 | 3696 |
+
+Measured, the two releases' `caca[4]` agree on **every field of all 24 paired L
+cells** — every verbatim field on all 24, and `cg_number` too on the first 21 —
+the only structural difference being one **C** cell the PS2 inserts at index 22.
+Both sets of numbers land in **group 4, YUN's own**. The PS2's three are **not a uniform shift** of the
+arcade's — the arcade steps `0x14B1 -> 0x14B3` (+2) where the PS2 steps
+`3695 -> 3696` (+1) — so this is a **content revision**: the PS2 release draws
+different sprites in the last three frames of that move. YANG `caca[4]` is the
+same script with the same revision.
+
+That is **not an adaptation defect**, and the oracle is right where they conflict.
+`remap` is a per-raw-value function and cannot express "except in `caca[4]`"; the
+raw `0x14B1` is directly observed at `-1056` elsewhere in YUN's shape-ok scripts,
+and `-1056` is what the table must carry. Under arcade balance we *want* the
+arcade content. But under the house rule a measured contradiction between two
+instruments may not be swallowed, so all six are emitted as
+**`manu_ps2_content_diff`** rows carrying both numbers and both groups. They are
+the only six cast-wide.
+
+This is also the empirical reason the gate is **one-sided in the direction it
+can be**: the pairing may contradict (it names the PS2 cell), the multiset test
+may only confirm, and neither may touch a cell either raw-value oracle has
+already decided.
+
+### 34.7 The root cause of the class: a collapse witness is not a bracket bound
+
+The 77 have one explanation, and it is simpler than any instrument above.
+
+> **COLLAPSE WITNESS.** An observed raw whose PS2 index **some other observed raw
+> of the same character also reaches**. The PS2 release merged two arcade frames
+> onto one sprite; the "delta" such an observation measures is that merge's
+> arithmetic, not a property of any band, so it can bound no range.
+
+> **Measured: for 77 of the 77, the LOWER bracket witness is a collapse witness,
+> the upper is not, and our delta equals the upper one.** Asserted-adjacent — the
+> count is re-derived and printed every run as
+> `bracket-disagree root cause: 77 of 77 …`. Cast-wide there are **32 collapse
+> raws** over all twenty characters.
+
+URIEN has exactly **10**: `0x52E3`..`0x52EC`, and **measured, all ten land on PS2
+index 18036**. AKUMA has **4**: `0x5449`, `0x546B`, `0x54B4`, `0x0CB4`, and
+**measured, `0x546B` and `0x5449` both land on 18,345**.
+
+**This corrects two long-standing descriptions.** §8.D's "per-value delta
+*staircase* (`-3183, -3184, … -3192`)" across `0x52E3`..`0x52EC` is **not a
+staircase**: it is ten arcade frames pointing at **one** PS2 sprite, and the
+deltas descend by one only because the raws ascend by one while the target stands
+still. `urien_cg_ranges` encodes it correctly as ten point rows — the *data* was
+always right; the *description* implied a gradient that does not exist and that
+invited the question "does the staircase continue across the gap". **It does not,
+and it never could**: there is nothing to continue. Measured, URIEN observes **no
+raw at all** in `0x52ED`..`0x5333`, and the band resumes at `0x5334` with the same
+`-3168` it had at `0x52D5`/`0x52D6`, below. §8.P's `0x546B` is the same phenomenon
+with one frame instead of ten.
+
+So §29.5's **"Unread: whether the staircase continues across the gap"** is now
+**READ, and the answer is that the premise was wrong.**
+
+### 34.8 The recommendation: no row, and why that is the finding
+
+**No `CgRemapRange` row is warranted, for either character.** Deriving the bounds
+here as §33.9 requires, and stating them so the next pass does not have to
+re-derive them:
+
+| band | measured hull of the band | observations | what our table already does |
+|---|---|---|---|
+| URIEN `-0x0C60` | `0x4E00`..`0x533E` | 660 of 691 oracle raws | `default_delta`, no row needed — `0x5315`..`0x532D` is **interior** to the hull |
+| AKUMA `-0x0CA0` | `0x5401`..`0x583F` | 679 of 692 oracle raws | `default_delta`, no row needed — `0x546C` is **interior** to the hull |
+
+A row over `0x5315`-`0x532D` at `-0xC60` would be a **no-op**: the default already
+produces exactly that value, so the emitted data would be byte-identical and
+`ArcadeCharData_ComputeDigest` would not move. A row that changed anything would
+have to adopt a delta the counterfactual sweep has just refuted. **So
+`ArcadeCharData_ComputeDigest` cannot move and netplay pairing is untouched** —
+this pass proposes no C change of any kind and `src/` was not touched, so the
+digest was neither re-measured nor needs to be.
+
+Per §8.S's rule a row is only ever its measured hull and per §8.N's never a swept
+gap; both rules are satisfied vacuously by changing nothing.
+
+### 34.9 What this does not establish
+
+- **That the 77 cells render correctly on screen.** Only that each one's
+  `cg_number` is remapped to the index the PS2's own counterpart script uses for
+  that cell. `cg_se`, `cg_zoom`, `cg_effect`, `ctr` and cell *ordering* are
+  separate questions, answered for these scripts by §21 and §22, not here.
+- **That YUN/YANG `caca[4]`'s six revised cells look right in play.** What is
+  measured is that the two releases differ there and that the oracle's delta is the
+  one a per-raw function must carry. Nothing was observed on device.
+- **Anything about the 33 identity-shift-mismatch or 256 unequal-L-count
+  scripts.** The pinned pairing declines them and the multiset test is only ever
+  consulted where both raw-value oracles are silent, which in those scripts they
+  are not. They are confirmed by §29's oracle as before, not by this one.
+- **YUN `atca[263]`'s ambiguity.** Measured only as "a -13 shift also matches the
+  verbatim fields"; why a 14-L-cell script should be self-similar under a 13-cell
+  shift was not investigated, and no cell of it needed the counterpart oracle.
+- **That 32 is the number of collapse raws that *matter*.** It is the number that
+  exist. Which of them are also bracket witnesses for some unobserved raw is
+  measured only over the 77.
+- **Reachability in play.** The gate adjudicates every cell `k7_entry_walk`
+  leaves live, which for these characters includes §31.10's fail-open. No timing
+  or play-reachability model exists and none was built.
+- **Anything from the reference tree at `/Users/sb/Developer/cps3-sf3iii`.**
+  Checked cheaply, as §33-era passes do. It has **no `remap_cg`, no
+  `obj_group_table` and no PS2-side index namespace at all**, so it cannot speak to
+  a question whose entire content is the PS2 target index. The one relevant thing
+  it does carry is corroboration of an **address**: its
+  `reloc_data/DAT_0618b146.s` holds `SYM_PTR _DAT_0636e14a, 0x170a /* 0x0636f854 */`,
+  and `0x0636F854` is exactly where our `location_data[]` puts URIEN's `yuca`
+  table (`LOC[13]['yuca']` offset `0x36F854` + `BASE_OFFSET` `0x6000000`). Its own
+  `plNN_yuca_table_*.s` files cover 7 of the 20 characters and URIEN is not among
+  them.
+
+### 34.10 Corrections to earlier sections (recorded, not silently edited)
+
+- **§8.D's "per-value delta staircase" is a MIS-DESCRIPTION** (§34.7). The ten
+  values `0x52E3`..`0x52EC` all map to PS2 index **18036**; there is no gradient.
+  The ten point rows in `urien_cg_ranges` are correct and unchanged — only the
+  prose describing them is withdrawn.
+- **§29.5's "URIEN `yuca[37]`/`[39]`/`[65]` … **Unread:** whether the staircase
+  continues across the gap" is CLOSED** (§34.4, §34.7): there is no staircase to
+  continue, no observation exists in `0x52ED`..`0x5333`, and the PS2's own
+  counterpart scripts pin all 25 raws at `-3168` directly.
+- **§33.7's "URIEN `yuca[37]`, `yuca[39]`, `yuca[65]` — 75 cells, still unread"
+  and "AKUMA `nmca[27]`, `nmca[28]` — 2 cells, still unread" are both CLOSED.**
+  §33.7's reasons — no other character owns those raws, and ours lands in the
+  character's own group — are re-verified and unchanged; what was wrong was
+  treating the two **raw-value** oracles as exhausting the evidence. The PS2
+  counterpart script is a third source and neither pass had read it.
+- **§29.3's cell census moves to 2,928 direct + 557 bracketed + 35 sub-cutoff +
+  0 bracket-disagree + 0 unbracketed + 25 xchar + 77 counterpart + 0
+  XCHAR-DIVERGENT + 0 CP-DIVERGENT + 2 DIVERGENT** (3,624), and its script census
+  to **221 direct + 68 bracketed + 20 no-live-cells + 0 unresolved + 2 xchar +
+  3 counterpart + 0 XCHAR-DIVERGENT + 0 CP-DIVERGENT + 2 DIVERGENT** (316).
+  **`cells audited` stays 133,901 and the TOTAL violation row is byte-for-byte
+  unchanged.** The only stats that move are `manu_cells_bracket_disagree`
+  75 -> 0 (URIEN) and 2 -> 0 (AKUMA) and `manu_unresolved` 3 -> 0 (URIEN).
+- **§29.5's unresolved residue is now EMPTY.** URIEN `yuca[37]`/`[39]`/`[65]`
+  were the last three and are `counterpart`; AKUMA `nmca[27]`/`[28]` were never in
+  the *script* count, being `divergent` on `0x546B` (§8.P), and stay `divergent` on
+  exactly that cell and no other.
+- **§29.2's verdict table gains two rows**, `counterpart` and
+  `counterpart_divergent`, and §29.7's "five script classes sum to `manu`" is now
+  **nine**. The sum-to-`manu` invariant is unchanged and still by construction.
+- **§33.2's "`xchar` fires on 0 cells on this tree, so the asymmetry costs
+  nothing today" is superseded by fact, not by argument.** `xchar` fires on 25
+  cells since §33.9 landed, and the analogous asymmetry for the counterpart gate is
+  now measurably load-bearing: six cells where the stronger-looking instrument is
+  the wrong one (§34.6).

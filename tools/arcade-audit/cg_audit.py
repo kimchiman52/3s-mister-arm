@@ -2407,6 +2407,162 @@ def group_unobserved_gate(ci, skip):
                                  owner_delta=(ov[1] if ov else None), dead=False))
     return dict(rows=rows, live_cells=cells, observed_groups=sorted(lg))
 
+# ---------------------------------------------------------------- the PS2-COUNTERPART oracle (doc §34)
+#
+# WHAT THIS SETTLES.  The 77 `bracket_disagree` cells were the largest undetermined group left in the
+# `manu` census, and every instrument aimed at them so far has been a statement about a RAW VALUE:
+# `manu_delta_gate`'s own oracle interpolates one character's shape-ok observations, and §33's owner
+# oracle borrows another character's.  Both go silent on the same 77 -- URIEN `yuca[37]`/`[39]`/`[65]`
+# (75 cells, §8.D's neighbourhood) and AKUMA `nmca[27]`/`[28]` (2 cells, §8.P's) -- because the raw
+# values sit in a gap no same-character observation brackets and no other character owns.
+#
+# But a shape-mismatched script HAS a PS2 counterpart.  That is the whole point of the `manu` set:
+# `audit()` skipped it not because the counterpart is missing but because the two CELL SEQUENCES have
+# different shapes, so cell i could not be paired with cell i.  The counterpart's own L-cell record is
+# therefore untouched evidence, and it answers the class-(c) question directly -- "does our remap send
+# this cell's raw to the index the PS2 uses for this sprite" -- without any per-raw-value oracle at
+# all.  Two instruments read it, one order-sensitive and one order-free:
+#
+#   A. PINNED L-PAIRING.  Drop the C cells from both sides.  If the two L subsequences have the SAME
+#      LENGTH, the order-preserving L-to-L correspondence is the identity on L-index -- forced, with
+#      no parameter to choose.  The assumption that can fail is that the PS2 dropped one L cell and
+#      added a different one, leaving the count equal but the correspondence shifted; the fields the
+#      port passes through VERBATIM test exactly that.  The pairing is ADMITTED only when the identity
+#      shift matches every one of them on every paired L cell AND no other shift does -- i.e. the
+#      alignment is uniquely pinned by evidence `remap` never touches.  `cg_number` is then read off
+#      the pairing; it is never used to establish it, so the test is not circular.
+#      MEASURED: of the 316 shape-mismatched scripts, 256 have unequal L counts, 33 fail the identity
+#      shift, 1 (YUN `atca[263]`) is ambiguous because a -13 shift also matches, and 26 are pinned.
+#
+#   B. MULTISET CONTAINMENT.  Order-free, and so immune to any alignment question at all: the cell is
+#      confirmed when the PS2 counterpart carries AT LEAST AS MANY copies of the index our remap
+#      produces as our remap of the whole live script produces.  Non-coverage is SILENCE, not a
+#      contradiction -- the PS2 release decimated long animations (doc §29.3), so an arcade frame
+#      simply not being in the PS2 script says nothing about its remap.
+#
+# WHY IT IS BELIEVED -- two controls, both asserted every run rather than described here:
+#
+#   SOUNDNESS.  Over every live L-cell of every shape-mismatched script where `manu_delta_gate`'s own
+#   oracle DOES have a verdict, the multiset test covers the cells it confirms and NONE of the cells
+#   it contradicts.  Measured cast-wide: 2,698 confirmed cells covered, 0 of the 2 contradicted ones.
+#   A single false positive there would make the instrument unusable and the run says so.
+#
+#   UNIQUENESS.  For every cell this gate confirms, the candidate delta is swept over the whole set of
+#   deltas that character's own oracle measures anywhere, plus ours.  Ours must be the UNIQUE delta
+#   the multiset test accepts.  Measured: unique for all 77.  Taken further by hand for the report, an
+#   exhaustive sweep of all 8,000 deltas in [-6000, +2000) leaves `-3168` the ONLY survivor for each of
+#   URIEN's 25 raws, and leaves AKUMA's `0x546C` with exactly two, `-3232` (ours) and `-3267` -- and
+#   `-3267` is not a delta Akuma's oracle measures anywhere, so it loses the swept form.
+#
+# WHAT IT MAY NOT DO.  Like §33's owner gate, it speaks ONLY where `manu_delta_gate`'s own oracle and
+# the owner oracle have BOTH already declined, so no confirmed cell is reclassified and no cell's
+# verdict is weakened.  That discipline is not cosmetic here: the pinned pairing DISAGREES with the
+# per-raw oracle on 6 cells (YUN `caca[4]` and YANG `caca[4]`, last three L cells each), and the
+# oracle is right there.  Those six are a CONTENT REVISION, not an adaptation defect -- the two
+# releases' `caca[4]` are otherwise identical field for field, and the PS2 simply draws different
+# sprites in the last three frames (YUN arcade 0x14B1/0x14B3/0x14B3 -> 4241/4243/4243, PS2
+# 3695/3696/3696, all in group 4, and the PS2 numbers are not a uniform shift of the arcade ones).
+# `remap` is a per-raw-value function and cannot express "except in caca[4]", so the oracle's answer is
+# the one the table must carry.  They are emitted as `manu_ps2_content_diff` rather than swallowed,
+# per the house rule that nothing unmodelled may land on benign.
+#
+# AND THE ROOT CAUSE OF THE WHOLE CLASS, which is simpler than any of the above and independent of
+# it.  A `bracket_disagree` verdict means the nearest observation BELOW and the nearest ABOVE measure
+# different deltas.  MEASURED: for all 77 such cells, the LOWER witness is a COLLAPSE WITNESS -- an
+# observed raw whose PS2 index some OTHER observed raw also reaches, because the PS2 release merged
+# two arcade frames onto one sprite -- the upper witness is not, and our delta equals the upper one.
+# A collapse witness's "delta" is the arithmetic of that merge, not a property of any band, so it
+# cannot bound a range and should never have been read as a bracket.  URIEN has exactly 10 collapse
+# raws (`0x52E3`..`0x52EC`, ALL TEN landing on PS2 index 18036) and AKUMA 4 (`0x5449`, `0x546B`,
+# `0x54B4`, `0x0CB4`); those are precisely §8.D's "per-value delta staircase" and §8.P's `0x546B`.
+# Neither is a staircase and neither is a second band -- each is one PS2 sprite with several arcade
+# frames pointing at it.  `bracket_disagree_collapse_lower` below counts this on every run.
+_VERBATIM_L = ('type', 'ctr', 'olc', 'att', 'hit', 'ext', 'canc', 'eff', 'eftype')
+
+_COLLAPSE_CACHE = {}
+def collapse_witnesses(ci):
+    """Observed raws whose PS2 index is also reached by some OTHER observed raw of this character.
+
+    The PS2 release merged arcade frames (doc §29.3's decimation, seen from the other side): where it
+    did, two or more arcade raws share one PS2 index and their measured deltas differ by construction.
+    Such an observation pins a SPRITE, not a band, and using it as a bracket bound is exactly what
+    produces the `bracket_disagree` verdict."""
+    if ci in _COLLAPSE_CACHE: return _COLLAPSE_CACHE[ci]
+    obs = char_oracle(ci)[1]
+    land = collections.Counter(r + d for r, d in obs.items())
+    out = {r for r, d in obs.items() if land[r + d] > 1}
+    _COLLAPSE_CACHE[ci] = out
+    return out
+
+def _vmatch(ci, ar, pr):
+    """Do the two L records agree on every field the port passes through untouched?
+
+    `cg_number` is excluded -- it is the field under test.  `cg_se` is included but compared through
+    `remap_se`, which is a different table from `remap` and is pinned independently (doc §21).
+    `att`/`hit` are exchanged between the releases; `arc_parse`/`ps2_parse` already undo that, so the
+    dict keys are comparable as they stand.  A field absent on one side and present on the other
+    (different `cgd_type`) is a mismatch, not a skip."""
+    for f in _VERBATIM_L:
+        if (f in ar) != (f in pr): return False
+        if f in ar and ar[f] != pr[f]: return False
+    return remap_se(ar['se'], ci) == pr['se']
+
+def _pin_lpair(ci, a, p):
+    """`(pairs, why)` -- the uniquely-pinned L-to-L correspondence, or `(None, reason)`.
+
+    `pairs` is [(arcade cell index, arcade record, PS2 record)].  See instrument A above: equal L
+    counts force the correspondence, the verbatim fields corroborate it, and the shift sweep is what
+    makes "forced" a measured statement rather than an assumption."""
+    al = [(i, x[1]) for i, x in enumerate(a) if x[0] == 'L']
+    pl = [x[1] for x in p if x[0] == 'L']
+    n = len(al)
+    if n == 0 or n != len(pl): return None, 'unequal_L_count'
+    if not all(_vmatch(ci, ar, pr) for (_, ar), pr in zip(al, pl)): return None, 'identity_shift_mismatch'
+    for s in range(-(n - 1), n):
+        if s == 0: continue
+        ov = [(al[i][1], pl[i + s]) for i in range(n) if 0 <= i + s < n]
+        if ov and all(_vmatch(ci, ar, pr) for ar, pr in ov):
+            return None, 'shift_%+d_also_matches' % s
+    return [(i, ar, pr) for (i, ar), pr in zip(al, pl)], 'pinned'
+
+def counterpart_model(ci, a, p, dead):
+    """What the PS2 counterpart script says about this arcade script's live L cells.
+
+    Returns `(P, live_raws, pair, why)`: the PS2 L-number multiset, the live arcade raws, the pinned
+    pairing as {arcade cell index: PS2 cg_number} or None, and why the pairing was or was not pinned."""
+    P = collections.Counter(x[1]['num'] for x in p if x[0] == 'L')
+    live_raws = [c[1]['num'] for i, c in enumerate(a) if c[0] == 'L' and i not in dead]
+    lp, why = _pin_lpair(ci, a, p)
+    pair = None if lp is None else {i: pr['num'] for i, _, pr in lp}
+    return P, live_raws, pair, why
+
+def _mset_covers(ci, raw, delta, live_raws, P):
+    """Does the PS2 counterpart carry at least as many copies of `raw + delta` as our remap of this
+    script's live L cells would produce?  Instrument B, evaluated for one candidate `delta`."""
+    v = raw + delta
+    n = sum(1 for r in live_raws if r == raw)
+    n += sum(1 for r in live_raws if r != raw and remap(r, ci) == v)
+    return n <= P[v]
+
+def _mset_accepts(ci, raw, ours, live_raws, P):
+    """The UNIQUENESS control: every delta this character's oracle measures anywhere (plus ours) that
+    the multiset test would accept for `raw` in this script.  Asserted to be exactly `[ours]` for
+    every cell the gate confirms."""
+    cands = sorted(set(char_oracle(ci)[1].values()) | {ours})
+    return [d for d in cands if _mset_covers(ci, raw, d, live_raws, P)]
+
+def counterpart_verdict(ci, raw, ours, live_raws, P, pair, cell):
+    """What the PS2 counterpart says about this cell, or None if it is silent.
+
+    Returns `(verdict, want, source)`.  The pairing may CONTRADICT (it names the PS2 cell, so a
+    mismatch is a positive statement); the multiset test may only CONFIRM."""
+    if pair is not None and cell in pair:
+        want = pair[cell] - raw
+        if want != ours: return ('counterpart_divergent', want, 'lpair')
+        return ('counterpart', want, 'lpair+mset' if _mset_covers(ci, raw, ours, live_raws, P) else 'lpair')
+    if _mset_covers(ci, raw, ours, live_raws, P): return ('counterpart', ours, 'mset')
+    return None
+
 _MANU_CACHE = {}
 def manu_delta_gate(ci):
     """Adjudicate `cg_number` for every shape-mismatched script -- the `manu` column.
@@ -2463,10 +2619,19 @@ def manu_delta_gate(ci):
     dead_all = k7_entry_walk(ci)
     scripts, rows = {}, []
     cellcls = dict(direct=0, bracketed=0, bracket_disagree=0, unbracketed=0, sub_cutoff=0,
-                   xchar=0, xchar_divergent=0, divergent=0)
+                   xchar=0, xchar_divergent=0, counterpart=0, counterpart_divergent=0, divergent=0)
+    # doc §34's two controls, accumulated over every cell and asserted once the walk is done.
+    mset_conf_ok = mset_conf_bad = 0
+    bd_cells = bd_collapse_lower = 0
+    coll = collapse_witnesses(ci)
+    pin_scripts = collections.Counter()
     for sec, si, a, p, ok in parsed:
         if p is None or ok or not a: continue        # exactly audit()'s `needs_manual_diff` set
         dead = dead_all[(sec, si)]
+        # doc §34: the PS2 counterpart's own L-cell record, read two ways.  Built per script here so
+        # the gate re-parses nothing -- `a` and `p` are already in hand from `char_oracle`.
+        P_ms, live_raws, pair, pin_why = counterpart_model(ci, a, p, dead)
+        pin_scripts[pin_why] += 1
         vs = []
         for i, c in enumerate(a):
             if c[0] != 'L' or i in dead: continue
@@ -2486,32 +2651,88 @@ def manu_delta_gate(ci):
                 if v in ('unbracketed', 'bracket_disagree') and raw < CG_REMAP_CUTOFF:
                     assert ours == 0, (NAMES[ci], raw, ours)   # remap_cg_number's early return
                     want, v = 0, 'sub_cutoff'                  # settled, and NOT by the oracle
-            oc = None
+            # doc §34's SOUNDNESS control, taken BEFORE the counterpart gate can change `v`: where
+            # this character's own oracle has a verdict, does the multiset test ever cover a cell the
+            # oracle CONTRADICTS?  Asserted 0 below -- one would make the instrument unusable.
+            if v in ('direct', 'bracketed', 'divergent'):
+                if _mset_covers(ci, raw, ours, live_raws, P_ms):
+                    if v == 'divergent': mset_conf_bad += 1
+                    else:                mset_conf_ok += 1
+                # doc §34: the pinned pairing names the PS2 cell, so where it disagrees with a verdict
+                # the oracle already reached, the two releases differ in CONTENT at that cell.  The
+                # oracle wins -- `remap` is a per-raw-value function and cannot say "except here" --
+                # but the disagreement is recorded rather than swallowed.
+                if pair is not None and i in pair and pair[i] - raw != ours:
+                    rows.append(dict(cls='manu_ps2_content_diff', table=sec, script=si, cell=i,
+                                     raw=raw, remapped=rm, group=(OGT[rm] if rm < OGT_N else None),
+                                     delta=ours, oracle_delta=want, oracle_verdict=v,
+                                     ps2_cg_number=pair[i], ps2_delta=pair[i] - raw,
+                                     ps2_group=(OGT[pair[i]] if 0 <= pair[i] < OGT_N else None),
+                                     dead=False))
+            oc = None; src_ = None
             if v in ('unbracketed', 'bracket_disagree'):
                 # doc §33: this character's own oracle has declined.  Ask the owning character's.
+                bd_lo, bd_hi = lo, hi                  # §33 overwrites these with owner witnesses
                 xv = owner_verdict(raw, ci, ours)
                 if xv is not None: v, want, lo, hi, oc = xv
+                if v == 'bracket_disagree':
+                    # doc §34's root-cause count, over exactly the cells BOTH raw-value oracles
+                    # leave open: is the disagreement explained by a COLLAPSE WITNESS below and a
+                    # real band bound above, with ours equal to the real one?  Measured 77 of 77.
+                    bd_cells += 1
+                    if bd_lo in coll and bd_hi not in coll and obs[bd_hi] == ours:
+                        bd_collapse_lower += 1
+            if v in ('unbracketed', 'bracket_disagree'):
+                # doc §34: both raw-value oracles have declined.  Ask the PS2 COUNTERPART SCRIPT.
+                cv = counterpart_verdict(ci, raw, ours, live_raws, P_ms, pair, i)
+                if cv is not None:
+                    v, want, src_ = cv
+                    if v == 'counterpart':
+                        # UNIQUENESS control: ours must be the only delta this character's oracle
+                        # measures anywhere that the multiset test would accept for this cell.
+                        acc = _mset_accepts(ci, raw, ours, live_raws, P_ms)
+                        assert acc == [ours], (NAMES[ci], sec, si, i, hex(raw), ours, acc)
             vs.append(v); cellcls[v] += 1
-            if v in ('divergent', 'xchar_divergent'):
-                rows.append(dict(cls=('manu_cg_delta_divergent' if v == 'divergent'
-                                      else 'manu_cg_delta_xchar_divergent'),
+            if v in ('divergent', 'xchar_divergent', 'counterpart_divergent'):
+                rows.append(dict(cls={'divergent': 'manu_cg_delta_divergent',
+                                      'xchar_divergent': 'manu_cg_delta_xchar_divergent',
+                                      'counterpart_divergent': 'manu_cg_delta_counterpart_divergent'}[v],
                                  table=sec, script=si, cell=i,
                                  raw=raw, remapped=rm, group=(OGT[rm] if rm < OGT_N else None),
                                  delta=ours, oracle_delta=want, oracle_remapped=raw + want,
                                  oracle_group=(OGT[raw + want] if 0 <= raw + want < OGT_N else None),
                                  witness_lo=lo, witness_hi=hi, owner=(NAMES[oc] if oc is not None else None),
-                                 dead=False))
+                                 # `source` names WHICH counterpart instrument spoke, and is omitted
+                                 # where none did -- so a row the two raw-value oracles produce stays
+                                 # byte-identical to the one they produced before §34 existed.
+                                 **({'source': src_} if src_ is not None else {}), dead=False))
         if not vs:                                                    k = 'no_live_cells'
         elif 'divergent' in vs:                                       k = 'divergent'
+        elif 'counterpart_divergent' in vs:                           k = 'counterpart_divergent'
         elif 'xchar_divergent' in vs:                                 k = 'xchar_divergent'
         elif 'unbracketed' in vs or 'bracket_disagree' in vs:         k = 'unresolved'
+        # `counterpart` outranks `bracketed` deliberately.  A cell only reaches it where BOTH
+        # raw-value oracles declined, so a script carrying one is materially unlike a script whose
+        # cells are all direct or bracketed, and the census should say which instrument settled it
+        # rather than hiding it under the stronger class some OTHER cell of the same script earned.
+        # (`xchar` is left below `bracketed`, where §33 put it: the two scripts it classes carry no
+        # bracketed cell, so its position changes no number -- measured, not assumed.)
+        elif 'counterpart' in vs:                                     k = 'counterpart'
         elif 'bracketed' in vs:                                       k = 'bracketed'
         elif 'xchar' in vs:                                           k = 'xchar'
         else:                                                         k = 'direct'
         scripts[(sec, si)] = k
+    # doc §34's SOUNDNESS law, asserted rather than described: the multiset test must never cover a
+    # cell this character's own oracle CONTRADICTS.  If it ever does, the instrument is unsound and
+    # every `counterpart` verdict above has to be thrown out -- which is why the run stops here.
+    assert mset_conf_bad == 0, (NAMES[ci], mset_conf_bad)
     out = dict(scripts=scripts, rows=rows, cells=cellcls,
                oracle_raws=len(obs), oracle_conflicts=len(conflict),
                sub_cutoff_obs=subcut_obs,
+               mset_control_ok=mset_conf_ok, mset_control_bad=mset_conf_bad,
+               bracket_disagree_cells=bd_cells, bracket_disagree_collapse_lower=bd_collapse_lower,
+               collapse_raws=len(coll),
+               pin={k2: v2 for k2, v2 in sorted(pin_scripts.items())},
                script_cls=collections.Counter(scripts.values()))
     _MANU_CACHE[ci] = out
     return out
@@ -3062,6 +3283,21 @@ def audit(cgmap_override=None, quiet=False):
                             # group-landing gate.  `manu_xchar` is recorded, never used to clear.
                             manu_xchar=mg['script_cls'].get('xchar', 0),
                             manu_xchar_divergent=mg['script_cls'].get('xchar_divergent', 0),
+                            # doc §34: the PS2-counterpart oracle.  `manu_counterpart` counts scripts
+                            # every one of whose otherwise-unconfirmed live cells the counterpart
+                            # script's own L-cell record confirms; `manu_pin_*` is how the pinned
+                            # L-pairing fared, and `manu_mset_control_*` is the soundness control
+                            # (`bad` is ASSERTED 0 in `manu_delta_gate`).
+                            manu_counterpart=mg['script_cls'].get('counterpart', 0),
+                            manu_counterpart_divergent=mg['script_cls'].get('counterpart_divergent', 0),
+                            manu_mset_control_ok=mg['mset_control_ok'],
+                            manu_mset_control_bad=mg['mset_control_bad'],
+                            manu_bracket_disagree_cells=mg['bracket_disagree_cells'],
+                            manu_bracket_disagree_collapse_lower=mg['bracket_disagree_collapse_lower'],
+                            manu_collapse_raws=mg['collapse_raws'],
+                            manu_ps2_content_diff=len([r for r in mg['rows']
+                                                       if r['cls'] == 'manu_ps2_content_diff']),
+                            **{'manu_pin_' + k: v for k, v in sorted(mg['pin'].items())},
                             group_unobserved=len(gg['rows']),
                             group_gate_live_cells=gg['live_cells'],
                             manu_oracle_raws=mg['oracle_raws'],
@@ -3162,6 +3398,11 @@ if __name__ == "__main__":
         if s['manu_xchar_divergent']:
             t += " XCHAR-DIVERGENT(%d scripts,%d cells)!" % (s['manu_xchar_divergent'],
                                                              s['manu_cells_xchar_divergent'])
+        # doc §34: the PS2 counterpart script's own L-cell record contradicts the remap where both
+        # raw-value oracles were silent.  It names the PS2 cell, so it is the strongest of the three.
+        if s['manu_counterpart_divergent']:
+            t += " CP-DIVERGENT(%d scripts,%d cells)!" % (s['manu_counterpart_divergent'],
+                                                          s['manu_cells_counterpart_divergent'])
         if s['group_unobserved']: t += " grp!%d" % s['group_unobserved']
         return t
     for n in NAMES:
@@ -3181,16 +3422,38 @@ if __name__ == "__main__":
     # doc §29: the 316 shape-mismatched scripts, adjudicated per raw cg_number.  The five script
     # classes sum to `manu`; the cell classes sum to every live L-cell in those scripts.
     print("shape-mismatched (manu) scripts: %d = %d direct + %d bracketed + %d no-live-cells + %d unresolved "
-          "+ %d xchar + %d XCHAR-DIVERGENT + %d DIVERGENT"
+          "+ %d xchar + %d counterpart + %d XCHAR-DIVERGENT + %d CP-DIVERGENT + %d DIVERGENT"
           % (T['needs_manual'], T['manu_direct'], T['manu_bracketed'], T['manu_no_live_cells'],
-             T['manu_unresolved'], T['manu_xchar'], T['manu_xchar_divergent'], T['manu_divergent']))
+             T['manu_unresolved'], T['manu_xchar'], T['manu_counterpart'],
+             T['manu_xchar_divergent'], T['manu_counterpart_divergent'], T['manu_divergent']))
     print("  their live L-cells: %d = %d direct + %d bracketed + %d sub-cutoff + %d bracket-disagree + %d unbracketed "
-          "+ %d xchar + %d XCHAR-DIVERGENT + %d DIVERGENT"
+          "+ %d xchar + %d counterpart + %d XCHAR-DIVERGENT + %d CP-DIVERGENT + %d DIVERGENT"
           % (sum(T['manu_cells_' + k] for k in ('direct', 'bracketed', 'sub_cutoff', 'bracket_disagree',
-                                                'unbracketed', 'xchar', 'xchar_divergent', 'divergent')),
+                                                'unbracketed', 'xchar', 'counterpart',
+                                                'xchar_divergent', 'counterpart_divergent', 'divergent')),
              T['manu_cells_direct'], T['manu_cells_bracketed'], T['manu_cells_sub_cutoff'],
              T['manu_cells_bracket_disagree'], T['manu_cells_unbracketed'],
-             T['manu_cells_xchar'], T['manu_cells_xchar_divergent'], T['manu_cells_divergent']))
+             T['manu_cells_xchar'], T['manu_cells_counterpart'],
+             T['manu_cells_xchar_divergent'], T['manu_cells_counterpart_divergent'],
+             T['manu_cells_divergent']))
+    # doc §34: the PS2-counterpart oracle, and the two controls it is believed on.  Both figures on
+    # the second line are ASSERTED in `manu_delta_gate` (`bad` == 0) and in the per-cell uniqueness
+    # check, so this is a print of a check that has already had to pass.
+    print("PS2-counterpart oracle: %d of %d shape-mismatched scripts have a uniquely pinned L-pairing "
+          "(%d unequal L count, %d identity-shift mismatch, %d ambiguous)"
+          % (T.get('manu_pin_pinned', 0), T['needs_manual'], T.get('manu_pin_unequal_L_count', 0),
+             T.get('manu_pin_identity_shift_mismatch', 0),
+             sum(v for k, v in T.items() if k.startswith('manu_pin_shift_'))))
+    print("  soundness control: multiset containment covers %d cell(s) this character's own oracle "
+          "CONFIRMS and %d it CONTRADICTS (asserted 0); %d cell(s) where the pinned pairing and the "
+          "oracle disagree -> manu_ps2_content_diff"
+          % (T['manu_mset_control_ok'], T['manu_mset_control_bad'], T['manu_ps2_content_diff']))
+    # doc §34: why the bracket_disagree class exists at all.  A collapse witness pins one PS2 sprite
+    # that several arcade frames share; its delta is that merge's arithmetic and bounds no band.
+    print("  bracket-disagree root cause: %d of %d such cell(s) have a COLLAPSE witness below, a real "
+          "band bound above, and our delta equal to the real one (%d collapse raw(s) cast-wide)"
+          % (T['manu_bracket_disagree_collapse_lower'], T['manu_bracket_disagree_cells'],
+             T['manu_collapse_raws']))
     print("  sub-cutoff band (raw < 0x%X, remap_cg_number's early return): %d shape-ok observations "
           "cast-wide, every one delta +0 (asserted)" % (CG_REMAP_CUTOFF, T['manu_sub_cutoff_obs']))
     # doc §33: the cross-character (owner) oracle, and the borrow law it rests on.  Both figures on
