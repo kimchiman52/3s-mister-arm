@@ -58,8 +58,12 @@
 #include "platform/video/software/software_renderer.h"
 #include "rendering/game_renderer.h"
 #include "sf33rd/Source/Common/PPGWork.h"
+#include "sf33rd/Source/Game/engine/workuser.h"
+#include "sf33rd/Source/Game/menu/menu.h"
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "sf33rd/Source/Game/system/ramcnt.h"
+#include "sf33rd/Source/Game/system/work_sys.h"
+#include "structs.h"
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
@@ -98,7 +102,7 @@ static int checks_run = 0;
  * computes, so commenting a call out of the dispatch is a FAILURE and
  * not a smaller green run. The assertion floor catches the other shape:
  * a test that runs but whose body was short-circuited. */
-#define EXPECTED_TESTS 19
+#define EXPECTED_TESTS 20
 
 /* The real figure is 1100 and is printed in the summary. This sits below
  * it and above what a short-circuited run would produce. Not an exact
@@ -2339,6 +2343,92 @@ static int unit_bg_repair_requires_source(void) {
     return (fail_count == fails_before) ? 0 : 1;
 }
 
+static int unit_rematch_match_start_state(void) {
+    tests_run++;
+    fprintf(stderr, "[test_netplay_units] rematch_match_start_state: the confirm wait stops at 0 "
+                    "and the rematch resets what a fresh match resets\n");
+    const int fails_before = fail_count;
+
+    /* The confirmation wait: timer = N waits N-1 calls, proceeds on the
+     * Nth, and then never re-arms however long the loads keep the rematch
+     * on this stage. 40 000 calls is past the 32 768 at which the previous
+     * unconditional --timer wrapped an s16 and re-armed the wait. */
+    struct _TASK task;
+    memset(&task, 0, sizeof(task));
+    task.timer = 3;
+    EXPECT_TRUE("rematch-confirm-frame1", VS_Result_Rematch_ConfirmationPending(&task));
+    EXPECT_TRUE("rematch-confirm-frame2", VS_Result_Rematch_ConfirmationPending(&task));
+    EXPECT_FALSE("rematch-confirm-frame3", VS_Result_Rematch_ConfirmationPending(&task));
+    EXPECT_TRUE("rematch-confirm-reaches-zero", task.timer == 0);
+    bool rearmed = false;
+    for (int i = 0; i < 40000; i++) {
+        if (VS_Result_Rematch_ConfirmationPending(&task)) {
+            rearmed = true;
+            break;
+        }
+    }
+    EXPECT_FALSE("rematch-confirm-never-rearms", rearmed);
+    EXPECT_TRUE("rematch-confirm-stays-zero", task.timer == 0);
+    /* Offline the select stage arms 0: no wait at all. */
+    task.timer = 0;
+    EXPECT_FALSE("rematch-confirm-offline-immediate", VS_Result_Rematch_ConfirmationPending(&task));
+
+    /* The fresh-match reset. Dirty everything it owns, then assert each
+     * store individually so a removed call names itself. */
+    const s16 saved_ix16 = Random_ix16;
+    const s16 saved_ix32 = Random_ix32;
+    const s16 saved_ix16_ex = Random_ix16_ex;
+    const s16 saved_ix32_ex = Random_ix32_ex;
+    const u32 saved_system_timer = system_timer;
+    const u16 saved_game_timer = Game_timer;
+    const u16 saved_players_timer = players_timer;
+    const s8 saved_break_into = Break_Into;
+    const s8 saved_stop_combo = Stop_Combo;
+    const u8 saved_play_type = Play_Type;
+    const s16 saved_bonus = Bonus_Game_Flag;
+
+    Random_ix16 = 0x1234;
+    Random_ix32 = 0x2345;
+    Random_ix16_ex = 0x3456;
+    Random_ix32_ex = 0x4567;
+    system_timer = 99;
+    Game_timer = 88;
+    players_timer = 77;
+    Break_Into = 1;
+    Stop_Combo = 1;
+    Play_Type = 0;
+    Bonus_Game_Flag = 1;
+
+    VS_Result_Rematch_Reset_Match_State();
+
+    EXPECT_TRUE("rematch-reset-random-ix16", Random_ix16 == 0);
+    EXPECT_TRUE("rematch-reset-random-ix32", Random_ix32 == 0);
+    EXPECT_TRUE("rematch-reset-random-ix16-ex", Random_ix16_ex == 0);
+    EXPECT_TRUE("rematch-reset-random-ix32-ex", Random_ix32_ex == 0);
+    EXPECT_TRUE("rematch-reset-system-timer", system_timer == 0);
+    EXPECT_TRUE("rematch-reset-game-timer", Game_timer == 0);
+    EXPECT_TRUE("rematch-reset-players-timer", players_timer == 0);
+    EXPECT_TRUE("rematch-reset-break-into", Break_Into == 0);
+    EXPECT_TRUE("rematch-reset-stop-combo", Stop_Combo == 0);
+    EXPECT_TRUE("rematch-reset-play-type-two-humans", Play_Type == 1);
+    EXPECT_TRUE("rematch-reset-bonus-flag", Bonus_Game_Flag == 0);
+
+    Random_ix16 = saved_ix16;
+    Random_ix32 = saved_ix32;
+    Random_ix16_ex = saved_ix16_ex;
+    Random_ix32_ex = saved_ix32_ex;
+    system_timer = saved_system_timer;
+    Game_timer = saved_game_timer;
+    players_timer = saved_players_timer;
+    Break_Into = saved_break_into;
+    Stop_Combo = saved_stop_combo;
+    Play_Type = saved_play_type;
+    Bonus_Game_Flag = saved_bonus;
+
+    fprintf(stderr, "[test_netplay_units] rematch_match_start_state OK\n");
+    return (fail_count == fails_before) ? 0 : 1;
+}
+
 /* ================================================================== */
 
 int Netplay_Test_NetplayUnits(void) {
@@ -2366,6 +2456,7 @@ int Netplay_Test_NetplayUnits(void) {
     rc |= unit_post_match_resolution();
     rc |= unit_no_draw_frame_hold();
     rc |= unit_bg_repair_requires_source();
+    rc |= unit_rematch_match_start_state();
 
     fprintf(stderr, "[test_netplay_units] summary: %d test(s), %d assertion(s), "
                     "%d failure(s)\n", tests_run, checks_run, fail_count);

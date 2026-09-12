@@ -124,7 +124,10 @@ static void (*const Game00_Jmp_Tbl[3])() = { Game0_0, Game0_1, Game0_2 };
 static void (*const Game12_Jmp_Tbl[3])() = { Game12_0, Game12_1, Game12_2 };
 static void (*const Game02_Jmp_Tbl[8])() = { Game2_0, Game2_1, Game2_2, Game2_3, Game2_4, Game2_5, Game2_6, Game2_7 };
 
-static void Set_Appear_Type_For_Mode() {
+/* Public: the replay start and the rematch (menu.c -> Match_Start_Sub)
+ * enter Game02 without passing through Game01 and must pick the same
+ * appear type a fresh match would. */
+void Set_Appear_Type_For_Mode() {
     appear_type = Is_Training_Mode(Mode_Type) ? APPEAR_TYPE_NON_ANIMATED : APPEAR_TYPE_ANIMATED;
 }
 

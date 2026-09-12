@@ -47,6 +47,7 @@
 #include "sf33rd/Source/Game/engine/hitcheck.h"
 #include "sf33rd/Source/Game/engine/plcnt.h"
 #include "sf33rd/Source/Game/engine/pls02.h"
+#include "sf33rd/Source/Game/engine/slowf.h"
 #include "sf33rd/Source/Game/engine/stun.h"
 #include "sf33rd/Source/Game/engine/vital.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
@@ -165,6 +166,7 @@ s32 VS_Result_Move_Sub(struct _TASK* task_ptr, s16 PL_id);
 static bool VS_Result_UsesRematchMenu(void);
 static void VS_Result_Rematch_Select(struct _TASK* task_ptr);
 static void VS_Result_Rematch(struct _TASK* task_ptr);
+static void Match_Start_Sub(struct _TASK* task_ptr);
 static void VS_Result_DrawRematchLabels(void);
 void Training_Init(struct _TASK* task_ptr);
 void Menu_Select(struct _TASK* task_ptr);
@@ -473,9 +475,10 @@ void Mode_Select(struct _TASK* task_ptr) {
     }
 }
 
-void Setup_VS_Mode(struct _TASK* task_ptr) {
-    task_ptr->r_no[0] = 5;
-    cpExitTask(TASK_SAVER);
+/* The player-side half of Setup_VS_Mode, without parking the menu task on
+ * Suspend_Menu (r_no[0] = 5). The rematch needs this while its own menu
+ * routine must keep running for several more frames. */
+void Setup_VS_Players(void) {
     plw[0].wu.operator = 1;
     plw[1].wu.operator = 1;
     Operator_Status[0] = 1;
@@ -485,6 +488,12 @@ void Setup_VS_Mode(struct _TASK* task_ptr) {
     grade_check_work_1st_init(1, 0);
     grade_check_work_1st_init(1, 1);
     Setup_Training_Difficulty();
+}
+
+void Setup_VS_Mode(struct _TASK* task_ptr) {
+    task_ptr->r_no[0] = 5;
+    cpExitTask(TASK_SAVER);
+    Setup_VS_Players();
 }
 
 void Menu_in_Sub(struct _TASK* task_ptr) {
@@ -1545,7 +1554,42 @@ void Load_Replay_Sub(struct _TASK* task_ptr) {
         Order_Dir[0x2A] = 5;
         break;
 
-    case 3:
+    case MATCH_START_LOAD:
+    case MATCH_START_FADE_IN:
+    case MATCH_START_WAIT:
+    case MATCH_START_ENTER:
+        Match_Start_Sub(task_ptr);
+        break;
+
+    default:
+        break;
+    }
+}
+
+/* adx_now_playend() reads ADX_GetState() -- the live BGM stream, not
+ * simulated state -- so it must never gate a transition that both netplay
+ * peers have to take on the same frame. The normal match start
+ * (sel_pl.c -> Exit_6th) does not consult it either; only the replay start
+ * does, and there it stays. sndCheckVTransStatus is the check every
+ * match-start path shares. */
+static s32 Match_Start_Audio_Ready(void) {
+    if (Mode_Type == MODE_REPLAY && adx_now_playend() == 0) {
+        return 0;
+    }
+
+    return sndCheckVTransStatus(0) != 0;
+}
+
+/* The match start that follows a completed selection: requeue the retained
+ * characters and stage, fade in, wait for the loads and the audio
+ * transition, wipe, and enter Game02. Shared by the replay start
+ * (Load_Replay_Sub) and the rematch (VS_Result_Rematch) so the two cannot
+ * drift; the stage lives in task_ptr->r_no[3] (rollback-saved), and the
+ * caller has already called FadeOut(0, 0xFF, 8) once and set timer to the
+ * fade-out frame count. */
+static void Match_Start_Sub(struct _TASK* task_ptr) {
+    switch (task_ptr->r_no[3]) {
+    case MATCH_START_LOAD:
         FadeOut(0, 0xFF, 8);
 
         if (--task_ptr->timer <= 0) {
@@ -1560,16 +1604,19 @@ void Load_Replay_Sub(struct _TASK* task_ptr) {
 
         break;
 
-    case 4:
+    case MATCH_START_FADE_IN:
         if (FadeIn(0, 4, 8) != 0) {
             task_ptr->r_no[3] += 1;
         }
 
         break;
 
-    case 5:
-        if ((Check_PL_Load() != 0) && (Check_LDREQ_Queue_BG((u16)bg_w.stage) != 0) && (adx_now_playend() != 0) &&
-            (sndCheckVTransStatus(0) != 0)) {
+    case MATCH_START_WAIT:
+        /* Game2_0's first frame fatal_errors unless Check_LDREQ_Clear()
+         * holds, so wait for the queue itself as well as for the two
+         * completion bits. */
+        if ((Check_PL_Load() != 0) && (Check_LDREQ_Queue_BG((u16)bg_w.stage) != 0) &&
+            (Check_LDREQ_Clear() != 0) && Match_Start_Audio_Ready()) {
             task_ptr->r_no[3] += 1;
             Switch_Screen_Init(0);
             init_omop();
@@ -1577,11 +1624,11 @@ void Load_Replay_Sub(struct _TASK* task_ptr) {
 
         break;
 
-    case 6:
+    case MATCH_START_ENTER:
         if (Switch_Screen(0) != 0) {
             Game01_Sub();
             Cover_Timer = 5;
-            appear_type = APPEAR_TYPE_ANIMATED;
+            Set_Appear_Type_For_Mode();
             set_hitmark_color();
             Purge_texcash_of_list(3);
             Make_texcash_of_list(3);
@@ -1593,7 +1640,7 @@ void Load_Replay_Sub(struct _TASK* task_ptr) {
             E_No[2] = 0;
             E_No[3] = 0;
 
-            if (plw->wu.operator != 0) {
+            if (plw[0].wu.operator != 0) {
                 Sel_Arts_Complete[0] = -1;
             }
 
@@ -3456,59 +3503,82 @@ static void VS_Result_Rematch_Select(struct _TASK* task_ptr) {
  * groups, then use the normal gameplay transition once those groups are
  * complete.  The request and wait state lives in task_ptr so rollback sees
  * the same transition on both peers. */
+/* Netplay must not mutate engine state until the mutual-confirm frame
+ * cannot be rolled back. The timer is saved in task[] and is exactly
+ * GekkoNet's maximum predicted-input distance plus one; offline it is 0.
+ * It stops at 0: the previous `--task_ptr->timer > 0` kept decrementing an
+ * s16 on every frame the loads were still pending, and after 32768 such
+ * frames it would have wrapped to 32767 and re-armed the wait for another
+ * nine minutes. Public for the unit test. */
+bool VS_Result_Rematch_ConfirmationPending(struct _TASK* task_ptr) {
+    if (task_ptr->timer > 0) {
+        task_ptr->timer -= 1;
+        return task_ptr->timer > 0;
+    }
+
+    return false;
+}
+
+/* What a fresh match resets and a rematch must reset too, minus the select
+ * screen: the Play_Type / Bonus_Game_Flag a completed selection leaves
+ * behind, Game01 case 0's Break_Into / Stop_Combo, and the RNG indices and
+ * timers (Setup_Net_Random_ix and All_Clear_Random_ix are the same four
+ * zero stores). Game2_0 zeroes the indices and timers again on entry for
+ * MODE_VERSUS / MODE_NETWORK; doing it here as well makes the rematch's
+ * saved state identical to a fresh match's from this frame on. Every store
+ * is to GS_SAVE'd state at a point both peers reach on the same simulated
+ * frame, so it is rollback-safe. Public for the unit test. */
+void VS_Result_Rematch_Reset_Match_State(void) {
+    Play_Type = 1;
+    Bonus_Game_Flag = 0;
+    Break_Into = 0;
+    Stop_Combo = 0;
+    All_Clear_Random_ix();
+    All_Clear_Timer();
+}
+
+/* A rematch is a fresh match with the character and super-art selection
+ * skipped. The select screen (Game01 -> Select_Player) cannot be entered
+ * with its selection stage bypassed -- the loads, the VS splash and the
+ * exit chain are interleaved with the selection state machine in sel_pl.c
+ * -- so the rematch runs the same no-selection start the replay uses,
+ * Match_Start_Sub, after performing here what Game01 case 0 and the mode
+ * select would have performed before it. Not run, on purpose: the select
+ * screen's own BGM (66), SsBgmHalfVolume, and the VS splash effects
+ * (Exit_4th / Load_Replay_Sub case 2), which draw from texture groups
+ * whose residency at VS_Result is not established. */
 static void VS_Result_Rematch(struct _TASK* task_ptr) {
-    /* Netplay must not mutate engine state until the mutual-confirm frame
-     * cannot be rolled back.  This timer is saved in task[] and is exactly
-     * GekkoNet's maximum predicted-input distance. */
-    if (Mode_Type == MODE_NETWORK && --task_ptr->timer > 0) {
+    if (VS_Result_Rematch_ConfirmationPending(task_ptr)) {
         return;
     }
 
     if (task_ptr->r_no[3] == 0) {
         /* VS_Result is reached only after the original select/load path
-         * completed.  The result teardown has since purged the backing
-         * groups, so repopulate exactly the assets that character select
-         * would have requested for these retained selections. */
+         * completed and the result teardown purged the backing groups;
+         * Match_Start_Sub requeues exactly what character select would
+         * have requested for these retained selections. */
         if (!Check_LDREQ_Clear()) {
             return;
         }
 
-        Purge_memory_of_kind_of_key(0xC);
-        Push_LDREQ_Queue_Player(0, My_char[0]);
-        Push_LDREQ_Queue_Player(1, My_char[1]);
-        Push_LDREQ_Queue_BG(bg_w.stage);
-        task_ptr->r_no[3] = 1;
+        FadeInit();
+        FadeOut(0, 0xFF, 8);
+        VS_Result_Rematch_Reset_Match_State();
+        /* Setup_VS_Mode minus its r_no[0] = 5: this routine must keep
+         * running until Match_Start_Sub exits the task itself. */
+        cpExitTask(TASK_SAVER);
+        Setup_VS_Players();
+        /* Game01 case 0, in its order. */
+        init_slow_flag();
+        System_all_clear_Level_B();
+        pulpul_stop();
+        init_pulpul_work();
+        task_ptr->timer = 0xA;
+        task_ptr->r_no[3] = MATCH_START_LOAD;
         return;
     }
 
-    /* Do not enter Game2_0 until both character groups and the selected stage
-     * have published their completion bits.  Game2_0's first frame asserts
-     * the same queue invariant and TATE00 then consumes the resident sources. */
-    if (!Check_PL_Load() || !Check_LDREQ_Queue_BG(bg_w.stage) || !Check_LDREQ_Clear()) {
-        return;
-    }
-
-    Play_Type = 1;
-    Bonus_Game_Flag = 0;
-    Setup_VS_Mode(task_ptr);
-    init_omop();
-    Game01_Sub();
-    Cover_Timer = 5;
-    appear_type = APPEAR_TYPE_ANIMATED;
-    set_hitmark_color();
-    Purge_texcash_of_list(3);
-    Make_texcash_of_list(3);
-    G_No[1] = 2;
-    G_No[2] = 0;
-    G_No[3] = 0;
-    E_No[0] = 4;
-    E_No[1] = 0;
-    E_No[2] = 0;
-    E_No[3] = 0;
-    Sel_Arts_Complete[0] = -1;
-    Sel_Arts_Complete[1] = -1;
-    task_ptr->r_no[2] = 0;
-    cpExitTask(TASK_MENU);
+    Match_Start_Sub(task_ptr);
 }
 
 static void VS_Result_DrawRematchLabels(void) {

@@ -1512,7 +1512,7 @@ lines with the per-test banners attributes every one of them:
 | **25** | **1** | one real DELIVER-armed leg against the echo peer; confirms |
 | **26** | **1** | one real leg against the echo peer; confirms |
 | 27 | **0** | arms exactly one real leg and punches it, but the target is a **bound, silent sink** — `sink_sock` at `test_bilateral_punch.c:5205` — with `seed_port = 0` at `test_bilateral_punch.c:5239` — nothing ever answers, the race ends EXHAUSTED, and `27-no-punch-from-a-silent-sink` asserts precisely that |
-| 28 | **0** | **runs no race at all**: it calls `DirectP2P_TestHook_RaceBudgetExpired` as a pure function and compares `STUN_PUNCH_CONFIRM_MS` against the literal 600. No socket, no thread, no stepper — which is why task #132 P3 MOVED it out of this harness entirely: it now runs as `unit_race_budget_wrap_safety` in `test_netplay_units.c:1035`, in microseconds |
+| 28 | **0** | **runs no race at all**: it calls `DirectP2P_TestHook_RaceBudgetExpired` as a pure function and compares `STUN_PUNCH_CONFIRM_MS` against the literal 600. No socket, no thread, no stepper — which is why task #132 P3 MOVED it out of this harness entirely: it now runs as `unit_race_budget_wrap_safety` in `test_netplay_units.c:1039`, in microseconds |
 | 29 **(REMOVED — relay-only test, deleted with S5, §7)** | **0** | **relay-only**: it set `seed_port = 0` ("no punch leg at all") and `signal_leg = false`, so no candidate was ever armed and the only leg is the relay |
 
 So the sentence that matters is narrower than "23-29": **tests 23, 24,

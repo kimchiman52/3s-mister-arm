@@ -10,6 +10,7 @@ void Game02();
 void Before_Select_Sub();
 void Game_Task(struct _TASK* task_ptr);
 void Game01_Sub();
+void Set_Appear_Type_For_Mode();
 void Next_Title_Sub();
 
 uint64_t Game_GetPerfGameLogicNs(void);
