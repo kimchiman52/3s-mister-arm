@@ -1063,6 +1063,41 @@ run (any build config) and exits non-zero if it ever finds one. The `#if
 DEBUG` assert stays, as a developer convenience only, with its comment
 corrected to say so.
 
+> #### Status 2026-09-12: the check now runs in the gates — as a unit test, still not at runtime
+>
+> The 2026-08-31 decision not to promote the runtime assert **stands** and is
+> not revisited. What changed is the table: seven rows landed in six days
+> (§33.9's four, §33.9.2's three), `remy_cg_ranges` is now 17 rows, and several
+> of them sit one value apart — `0x0678` / `0x0679`-`0x067A` / `0x067C`-`0x067D`,
+> and `0x0683`-`0x0684` / `0x0685` / `0x0690`-`0x0692`. An off-by-one in the next
+> row is now a realistic authoring mistake, and `check_range_overlaps()` only
+> catches it if somebody runs a ~24 s Python job whose module import wants
+> `rom.bin` (gitignored) and a 642 MB `SF33RD.AFS`.
+>
+> So the same check is now also `src/test/test_cg_ranges.c`, run by
+> `--test-cg-ranges`, which `tools/gates/run-gates.sh` **discovers** from
+> `args.c` — it joins the gate by existing. It LOOPS the tables, so a new row is
+> covered by code that is already there. Four sub-tests: the live tables, an
+> overlap control (shadowed / one-value seam / duplicated row), an inversion
+> control, and a false-positive control proving `last + 1 == first` adjacency is
+> clean — without which the discrete-rows shape §8.N requires would be
+> unexpressible.
+>
+> **Negative result, recorded so it is not re-derived.** A *compile-time* form
+> is possible: clang and gcc fold `t[0].last < t[1].first` on a `static const`
+> table and `_Static_assert` accepts it. Measured — a deliberately overlapping
+> pair does fail the build, and `-pedantic-errors` rejects the construct as
+> `-Wgnu-folding-constant`, so it is an extension, not C11. It was still not
+> chosen, because the check is O(n²) in rows and cannot be written as a loop in
+> a constant expression: it would be one hand-written assertion per PAIR, 136 of
+> them for `remy_cg_ranges` alone, and a hand-maintained list is precisely what
+> a hand-authored table edit forgets to extend. A guard you have to remember to
+> arm does not guard the case it exists for.
+>
+> `validate_cg_ranges()` is gone as a separate body; its logic is now
+> `ArcadeCharData_CgTableDefects()`, compiled under `DEBUG || ENABLE_NETPLAY_TESTS`
+> and called by both the unchanged `#if DEBUG` boot assert and the harness. A
+> shipping Release build compiles none of it, exactly as before.
 
 ### D. The off-by-N deltas — Ibuki (408) and Urien (256)
 

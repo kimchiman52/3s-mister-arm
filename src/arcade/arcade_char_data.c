@@ -55,11 +55,15 @@ _Static_assert(
     sizeof(LocationData) == CHAR_DATA_SECTION_COUNT * sizeof(Location), "LocationData must follow CharDataSection order"
 );
 
+#if !defined(DEBUG) && !defined(ENABLE_NETPLAY_TESTS)
+/* Outside DEBUG / test builds the header does not declare this, because the
+ * only reason it is public is the test harness's negative controls. */
 typedef struct CgRemapRange {
     Uint16 first;
     Uint16 last;
     Sint32 delta;
 } CgRemapRange;
+#endif
 
 typedef struct CharacterCgMap {
     Sint32 default_delta;
@@ -92,8 +96,8 @@ static const CharacterCgMap cg_maps[NUM_CHARS];
 static const CharacterCgSeMap cg_se_maps[NUM_CHARS];
 static const LocationData location_data[NUM_CHARS];
 static const size_t section_element_sizes[CHAR_DATA_SECTION_COUNT];
-#if defined(DEBUG)
-static void validate_cg_ranges(void);
+#if defined(DEBUG) || defined(ENABLE_NETPLAY_TESTS)
+int ArcadeCharData_CgTableDefects(void);
 #endif
 
 static int SDLCALL compare_u32(const void* lhs, const void* rhs) {
@@ -652,8 +656,10 @@ void ArcadeCharData_Init() {
 #if defined(DEBUG)
     /* Merged from fix/arcade-cg-mapping: the CG-range overlap check runs
      * at the top of Init, before the ROM is located, so it also covers
-     * PS2-balance Debug launches. Compiled out of every shipped build. */
-    validate_cg_ranges();
+     * PS2-balance Debug launches. Compiled out of every shipped build --
+     * which is why the check that actually enforces the invariant is
+     * `--test-cg-ranges` (src/test/test_cg_ranges.c), not this call. */
+    SDL_assert(ArcadeCharData_CgTableDefects() == 0);
 #endif
 
     /* CPS3 ROM search path.
@@ -1547,38 +1553,89 @@ uint16_t ArcadeCharData_TestRemapCgSe(uint16_t value, Character character) {
 }
 #endif
 
-#if defined(DEBUG)
+#if defined(DEBUG) || defined(ENABLE_NETPLAY_TESTS)
 // doc §8.C (range-overlap guard): remap_cg_number takes the first matching
-// row and stops (see above), so a future row that shadows an earlier one in
-// the same character's table would silently remap to the wrong delta with
-// no diagnostic. Tables are hand-authored and unsorted, so nothing else
-// catches that.
+// row and stops (see above), so a row that shadows an earlier one in the
+// same character's table does not fail -- it silently applies whichever
+// delta sits earlier in the array. The tables are hand-authored and
+// deliberately unsorted (remy_cg_ranges opens on 0x7141), so row ORDER would
+// become part of the shipped mapping, and therefore part of
+// ArcadeCharData_ComputeDigest() -- the netplay compatibility token. Two
+// builds differing only in the order of two overlapping rows would refuse to
+// pair, with nothing anywhere saying why.
 //
-// DEVELOPER CONVENIENCE ONLY -- this is compiled out entirely in every
-// shipped build. `DEBUG` is defined only for CMAKE_BUILD_TYPE=Debug
-// (CMakeLists.txt's target_compile_definitions), and every shipping
-// pipeline (tools/mister/build-game.sh) configures Release, so this
-// SDL_assert never runs where a user could hit it. It also runs
-// unconditionally at the top of ArcadeCharData_Init(), before the ROM is
-// even located, so it is not "arcade-only": it runs on PS2-balance Debug
-// launches too (ROM missing, or full-cast adaptation failing) -- it is
-// gated on build config, not on arcade balance being enabled. The check
-// that actually runs in every build, release included, is
-// tools/arcade-audit/cg_audit.py's check_range_overlaps().
-static void validate_cg_ranges(void) {
-    for (int character = 0; character < NUM_CHARS; character++) {
-        const CharacterCgMap* map = &cg_maps[character];
+// WHY THIS IS NOT THE CHECK THAT ENFORCES THE INVARIANT. The SDL_assert
+// caller in ArcadeCharData_Init() is `#if defined(DEBUG)`, and DEBUG is set
+// only for CMAKE_BUILD_TYPE=Debug; every shipping pipeline
+// (tools/mister/build-game.sh) configures Release, and THREESX_STATCHECK is
+// a hard error with Debug (CMakeLists.txt), so no gated or shipped binary
+// has ever run it. tools/arcade-audit/cg_audit.py's check_range_overlaps()
+// does run it for real, but it is a hand-invoked 24 s job that reads rom.bin
+// (gitignored) and a 642 MB SF33RD.AFS at import, so a change that only
+// touches these tables can plausibly never meet it.
+//
+// The check that enforces it is src/test/test_cg_ranges.c, run by
+// `--test-cg-ranges`, which tools/gates/run-gates.sh DISCOVERS from args.c.
+// It loops the tables, so a new row is covered by existing code rather than
+// by somebody remembering to extend a list.
+//
+// NEGATIVE RESULT, recorded so it is not re-derived: a compile-time form IS
+// possible -- clang and gcc fold `t[0].last < t[1].first` on a `static const`
+// table and `_Static_assert` accepts it (measured; it is the GNU
+// folding-constant extension, -pedantic-errors rejects it, and a deliberately
+// overlapping pair does fail the build). It was still not chosen: the check
+// is O(n^2) in rows and cannot be written as a loop, so it would be one
+// hand-written assertion per PAIR -- 136 of them for remy_cg_ranges' 17 rows
+// alone -- and a hand-maintained list is exactly the thing a hand-authored
+// table edit forgets to extend. A guard that only fires when you remember to
+// arm it does not guard the case it exists for.
+int ArcadeCharData_CgRangeDefects(const CgRemapRange* ranges, size_t count, const char* label) {
+    int defects = 0;
 
-        for (size_t i = 0; i < map->range_count; i++) {
-            const CgRemapRange* a = &map->ranges[i];
-            SDL_assert(a->first <= a->last);
+    for (size_t i = 0; i < count; i++) {
+        const CgRemapRange* a = &ranges[i];
 
-            for (size_t j = i + 1; j < map->range_count; j++) {
-                const CgRemapRange* b = &map->ranges[j];
-                const bool overlap = a->first <= b->last && b->first <= a->last;
-                SDL_assert(!overlap);
+        if (a->first > a->last) {
+            defects++;
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "%s row %zu is inverted: first 0x%04X > last 0x%04X",
+                         label,
+                         i,
+                         a->first,
+                         a->last);
+        }
+
+        for (size_t j = i + 1; j < count; j++) {
+            const CgRemapRange* b = &ranges[j];
+
+            if (a->first <= b->last && b->first <= a->last) {
+                defects++;
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                             "%s rows %zu (0x%04X..0x%04X delta %+d) and %zu (0x%04X..0x%04X delta %+d) overlap; "
+                             "remap_cg_number would silently take row %zu's delta",
+                             label,
+                             i,
+                             a->first,
+                             a->last,
+                             (int)a->delta,
+                             j,
+                             b->first,
+                             b->last,
+                             (int)b->delta,
+                             i);
             }
         }
+    }
+
+    return defects;
+}
+
+int ArcadeCharData_CgTableDefects(void) {
+    int defects = 0;
+
+    for (int character = 0; character < NUM_CHARS; character++) {
+        defects += ArcadeCharData_CgRangeDefects(cg_maps[character].ranges, cg_maps[character].range_count,
+                                                 "cg_maps");
     }
 
     /* Same guard for the cg_se pair tables: remap_cg_se takes the first
@@ -1591,14 +1648,40 @@ static void validate_cg_ranges(void) {
 
         for (size_t i = 0; i < map->pair_count; i++) {
             const CgSeRemapPair* a = &map->pairs[i];
-            SDL_assert(a->from < 0x1000 && a->to < 0x1000);
-            SDL_assert(a->from != a->to);
+
+            if (a->from >= 0x1000 || a->to >= 0x1000) {
+                defects++;
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                             "cg_se_maps[%d] pair %zu is not a 12-bit code: 0x%04X -> 0x%04X",
+                             character,
+                             i,
+                             a->from,
+                             a->to);
+            }
+
+            if (a->from == a->to) {
+                defects++;
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "cg_se_maps[%d] pair %zu is a no-op: 0x%04X", character, i,
+                             a->from);
+            }
 
             for (size_t j = i + 1; j < map->pair_count; j++) {
-                SDL_assert(map->pairs[j].from != a->from);
+                if (map->pairs[j].from == a->from) {
+                    defects++;
+                    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                                 "cg_se_maps[%d] pairs %zu and %zu share source code 0x%04X; remap_cg_se would "
+                                 "silently take pair %zu",
+                                 character,
+                                 i,
+                                 j,
+                                 a->from,
+                                 i);
+                }
             }
         }
     }
+
+    return defects;
 }
 #endif
 

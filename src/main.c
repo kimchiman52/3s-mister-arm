@@ -1631,6 +1631,13 @@ int Texcash_Test_Bounds(void);
  * TU is always compiled and gates its own body on ENABLE_NETPLAY_TESTS. */
 int CgSe_Test_Remap(void);
 
+/* Doc §8.C (range-overlap guard): forward-decl of the CG-remap table
+ * invariant harness (src/test/test_cg_ranges.c). Outside the ENABLE_NETPLAY
+ * block on purpose -- it exercises src/arcade/arcade_char_data.c, not
+ * netplay, so the TU is always compiled and gates its own body on
+ * ENABLE_NETPLAY_TESTS. */
+int CgRanges_Test_Tables(void);
+
 /* "First light" scaffolding (docs/research-arcade-cg-data-accuracy.md,
  * 3sx-rom-only-research.md §5S 4.2): forward-decl of the ported CPS-3
  * char-DMA decoder unit harness (src/test/test_cps3_chardma.c). Outside
@@ -1876,6 +1883,10 @@ int main(int argc, const char* argv[]) {
 
     if (configuration.test_cg_se_remap) {
         return CgSe_Test_Remap();
+    }
+
+    if (configuration.test_cg_ranges) {
+        return CgRanges_Test_Tables();
     }
 
     if (configuration.test_cps3_chardma) {

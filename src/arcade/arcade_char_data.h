@@ -68,4 +68,33 @@ uint64_t ArcadeCharData_ComputeDigest();
 uint16_t ArcadeCharData_TestRemapCgSe(uint16_t value, Character character);
 #endif
 
+#if defined(DEBUG) || defined(ENABLE_NETPLAY_TESTS)
+/// One row of a character's CG-number remap table: raw CPS3 cg_numbers in
+/// `[first, last]` are shifted by `delta` into the PS2 numbering
+/// (doc §4.4). Visible here only so src/test/test_cg_ranges.c can hand
+/// `ArcadeCharData_CgRangeDefects` synthetic tables as negative controls;
+/// the twenty real tables stay private to arcade_char_data.c.
+typedef struct CgRemapRange {
+    uint16_t first;
+    uint16_t last;
+    int32_t delta;
+} CgRemapRange;
+
+/// Count (and SDL_LogError) the rows of ONE table that break the table
+/// invariant: no row inverted (`first > last`), no two rows overlapping.
+/// `remap_cg_number` takes the FIRST matching row and stops, so an overlap
+/// does not fail — it silently applies whichever delta happens to be earlier
+/// in the array, which makes the shipped mapping (and the netplay balance
+/// digest that covers it) a function of source ORDER. `label` names the table
+/// in the diagnostics. Returns 0 when the table is well formed.
+int ArcadeCharData_CgRangeDefects(const CgRemapRange* ranges, size_t count, const char* label);
+
+/// The same check over all twenty live `cg_maps[]` tables plus the five
+/// `cg_se_maps[]` pair lists (duplicate `from`, which `remap_cg_se` would
+/// also resolve by position). Returns the total defect count; 0 is the only
+/// acceptable answer. Called from `ArcadeCharData_Init` under DEBUG and by
+/// `--test-cg-ranges` in a test build.
+int ArcadeCharData_CgTableDefects(void);
+#endif
+
 #endif

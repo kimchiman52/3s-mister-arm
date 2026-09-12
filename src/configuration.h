@@ -442,6 +442,14 @@ typedef struct Configuration {
      * not need ENABLE_NETPLAY. Pure in-process: no ROM, no session, no SDL
      * window. */
     bool test_cg_se_remap;
+    /* Doc §8.C (the range-overlap guard): when true, main() runs the
+     * CG-remap table invariant harness (src/test/test_cg_ranges.c) and
+     * exits. Honors --test-cg-ranges. Parsed unconditionally; the real body
+     * is gated on ENABLE_NETPLAY_TESTS only -- it touches no netplay code,
+     * so it does not need ENABLE_NETPLAY. Pure in-process: no ROM, no
+     * session, no SDL window -- it reads the static tables and three
+     * synthetic ones. */
+    bool test_cg_ranges;
     /* "First light" scaffolding (docs/research-arcade-cg-data-accuracy.md,
      * 3sx-rom-only-research.md §5S 4.2): when true, main() runs the ported
      * CPS-3 char-DMA decoder unit harness (src/test/test_cps3_chardma.c)
