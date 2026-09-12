@@ -232,7 +232,7 @@ command and its observed output, or a named primary source. Things that were
 | Elena OVCT unpatched tail | **CLOSED 2026-09-06 — unreachable, defended by the audit** (§24). **Unchanged 2026-09-07 (§31.7), but the model that produced it was short a walk:** §24.3(3)'s dropped Gill `+1` is now modelled and Gill's own walk runs off the end of his 392-entry table (new row below). Elena is character 8, the shift is not hers, and her reach is still 1-16. Parts 17-90 are indexed by no writer: the OVIX is the identity and no cell emits `olc >> 4` above 16, and the `eff01.c` timer walk is stationary (`parts_nix[i] == i` for all 91). No code change; `cg_audit.py` -> `ovct_reachability()` and `residual_audit.py` R2b `part_reachable` enforce it. Corrects §18's "undefended" |
 | Dudley dangling OVCT next-index (arcade entry 177 → 178) | **RE-OPENED 2026-09-07 — §25's bound rested on an incomplete enumeration of `att_hit_ok = 1` (§31.9): five sites, and `hitplef.c` -> `player_at_vs_effect_dm` re-arms an attacking PLAYER's on contact with a `work_id == 2` effect, with a fresh positive `hit_stop`, no renewal cell and no damage state. The audit fails open; row `walk>end[178](arcade-only)`. Attainability of the contact chain is unproven in both directions.** ~~CLOSED 2026-09-06 — unreachable, defended by the audit~~ (§25). The walk needs 297 (seed 130) / 594 (seed 82) consecutive frames of one `olc`; the master can hold those for ≤ 179 / 148 — the run's script frames plus one positive `hit_stop` per renewal cell, bounded at 23 by the largest value any writer hands an attacker. No code change; `cg_audit.py` -> `ovct_dangling_hold()` re-derives the bound; row `walk>end-unreached[178:hold<=179/297]` |
 | 1,694 wrong-sprite cells (measured against the audit's oracle reach — §11.2 notes 162 more scripts, 2,441 cells, with no oracle at all) | **MOSTLY LANDED** items D, E, N (§8.D, §8.E, §8.N) — class (c) 1688 (post-§8.K baseline) → 89; item F (Chun-Li, 72 of the 89) investigated, deliberately left as-is (§8.F); remaining 17 enumerated with reasons (§8.D's Urien 0x52D9 ambiguity, and 7 of Necro/Hugo/Yun/Akuma's 9 smaller own-group cells — the same per-raw-value ambiguity; Akuma's other 2, `0x546B`, are a no-oracle block on a unanimous delta, not an ambiguity — §8.P) |
-| Shape-divergent scripts (316) | **CLOSED 2026-09-06 — adjudicated, defended by the audit, and one real divergence found** (§29). A shape mismatch only means `audit()` skipped class (c) there; the question is decidable without the cell pairing, because `remap()` is a pure function of the raw `cg_number`, so a raw appearing in any shape-ok script is pinned by that script's PS2 counterpart. All 316: **225 direct + 60 bracketed + 20 no-live-cells + 4 unresolved + 7 DIVERGENT**; their 3,320 live L-cells: 2,710 + 465 + 94 bracket-disagree + 0 unbracketed + 51 divergent. Of the 51, **44 were new — Twelve `dmca[3]/[90]/[91]`, a hole in `twelve_cg_ranges`**; those are now **FIXED 2026-09-06** (§8.S) by replacing that table's 17 point rows with one row over the band's measured hull `0x1E01`-`0x2095`, taking the census to **225 direct + 63 bracketed + 20 no-live-cells + 4 unresolved + 4 DIVERGENT** and its cells to **2,710 + 509 + 94 + 0 + 7**. The remaining 7 are §8.N's and §8.P's already-enumerated cells, independently rediscovered and still scoped out. The 4 unresolved are named with exactly what is unread (§29.5) — **9 after §31.10's fail-open, then 6 after §32.4 read the sub-cutoff band, taking the census to 221 direct + 65 bracketed + 20 no-live-cells + 6 unresolved + 4 DIVERGENT and its cells to 2,928 + 552 + 35 sub-cutoff + 102 bracket-disagree + 0 unbracketed + 7**. Then **§33's cross-character owner oracle read the last three (2026-09-07)** and the fixes **LANDED the same day** (§33.9): four new `CgRemapRange` rows over 25 cells take the census to **221 direct + 66 bracketed + 20 no-live-cells + 3 unresolved + 2 xchar + 0 XCHAR-DIVERGENT + 4 DIVERGENT**, its cells to **2,928 + 552 + 35 + 77 + 0 + 25 xchar + 0 + 7**, and the unresolved residue to **URIEN `yuca[37]`/`[39]`/`[65]` and nothing else**. Digest `e96e88beec2ac2b5` -> `de50fb902a7f934d`. §29 itself made no code change; the ones that followed are §8.S's single `CgRemapRange` row and §33.9's four. `cg_audit.py` -> `manu_delta_gate()` re-derives the whole census every run, so the verdict moved without an edit to §29. §11.4's hardware oracle was assessed and **could not** answer this predicate — CPS3 RAM reports arcade numbering, not the PS2-side index the remap targets (§29.6) |
+| Shape-divergent scripts (316) | **CLOSED 2026-09-06 — adjudicated, defended by the audit, and one real divergence found** (§29). A shape mismatch only means `audit()` skipped class (c) there; the question is decidable without the cell pairing, because `remap()` is a pure function of the raw `cg_number`, so a raw appearing in any shape-ok script is pinned by that script's PS2 counterpart. All 316: **225 direct + 60 bracketed + 20 no-live-cells + 4 unresolved + 7 DIVERGENT**; their 3,320 live L-cells: 2,710 + 465 + 94 bracket-disagree + 0 unbracketed + 51 divergent. Of the 51, **44 were new — Twelve `dmca[3]/[90]/[91]`, a hole in `twelve_cg_ranges`**; those are now **FIXED 2026-09-06** (§8.S) by replacing that table's 17 point rows with one row over the band's measured hull `0x1E01`-`0x2095`, taking the census to **225 direct + 63 bracketed + 20 no-live-cells + 4 unresolved + 4 DIVERGENT** and its cells to **2,710 + 509 + 94 + 0 + 7**. The remaining 7 are §8.N's and §8.P's already-enumerated cells, independently rediscovered and still scoped out. The 4 unresolved are named with exactly what is unread (§29.5) — **9 after §31.10's fail-open, then 6 after §32.4 read the sub-cutoff band, taking the census to 221 direct + 65 bracketed + 20 no-live-cells + 6 unresolved + 4 DIVERGENT and its cells to 2,928 + 552 + 35 sub-cutoff + 102 bracket-disagree + 0 unbracketed + 7**. Then **§33's cross-character owner oracle read the last three (2026-09-07)** and the fixes **LANDED the same day** (§33.9): four new `CgRemapRange` rows over 25 cells take the census to **221 direct + 66 bracketed + 20 no-live-cells + 3 unresolved + 2 xchar + 0 XCHAR-DIVERGENT + 4 DIVERGENT**, its cells to **2,928 + 552 + 35 + 77 + 0 + 25 xchar + 0 + 7**, and the unresolved residue to **URIEN `yuca[37]`/`[39]`/`[65]` and nothing else**. Digest `e96e88beec2ac2b5` -> `de50fb902a7f934d`. Then **§33.9.2's held-back fourth candidate LANDED 2026-09-12** — three more `CgRemapRange` rows (REMY `0x0636`, `0x0679`-`0x067A`, `0x0685`, all `+0x20`) clearing the last 5 cells of §8.N's caution table, taking the census to **221 direct + 68 bracketed + 20 no-live-cells + 3 unresolved + 2 xchar + 0 XCHAR-DIVERGENT + 2 DIVERGENT** and its cells to **2,928 + 557 + 35 + 77 + 0 + 25 + 0 + 2**; the residual 2 DIVERGENT are AKUMA `nmca[27]`/`[28]` (§8.P) and stay scoped out. Digest `de50fb902a7f934d` -> `7cdc8fdf7fc62593`. §29 itself made no code change; the ones that followed are §8.S's single `CgRemapRange` row and §33.9's four. `cg_audit.py` -> `manu_delta_gate()` re-derives the whole census every run, so the verdict moved without an edit to §29. §11.4's hardware oracle was assessed and **could not** answer this predicate — CPS3 RAM reports arcade numbering, not the PS2-side index the remap targets (§29.6) |
 | **The "converter artifact" class** (§21.6) | **CLOSED 2026-09-06 — the class does not exist** (§30). The u32 byte relation it was identified by is the `cg_hit_ix`/`cg_att_ix` word's own cross-release relation (the two releases store the pair in opposite order), so every one of the 1,402 hits is that word read at a cell boundary the data does not have. The verdict §21.6 reached is unchanged and now stands on `grid_phase()` + `k7_entry_walk`; its stated mechanism is withdrawn |
 | **Gill's OVCT walk leaves the table** (arcade index 392, past a 392-entry table) | **OPEN, arcade-only, new 2026-09-07** (§31.7). `eff01.c` -> `get_new_parts_data` applies the `player_number == CHAR_GILL && rl_flag` `+1` on every walk step and to the pointer `parts_nix` is read through, turning his `parts_nix[i] == i` fixed points into a `+1` march. All 40 selected slot-0 seeds exit at index 392 (cheapest 6,417 effect frames); all 42 PS2 seeds stay inside the 396-entry PS2 table, so §6.1 does not excuse it. The bytes at 392 are Gill's `rict` (coalesced into the same allocation) and decode to `parts_char 1` — in `obj_group_table`, so a wrong sprite rather than a fault — with `nix 513`, which continues the walk. No code change; row `walk>end[392](arcade-only)` |
 | **`k7_entry_walk` fails open on unresolvable jump landings** | **CHANGED 2026-09-07** (§31.10). It was silently dropping a `koc` outside `char_table[0..9]` and a script index past the target pointer table — fail-CLOSED, against its own docstring. Ten characters have one, so their `dead` sets are void: §28.1's `0+31 / 0+53 / 0+52` become `5+26 / 30+23 / 9+43`, and §29.5's unresolved residue grows 4 → 9 scripts. **RESOLVED-AS-FAR-AS-THE-DATA-GOES 2026-09-07** (§32.1/§32.2): `read_char_table`'s relocation is re-derived and checked against all 200 script pointer tables, and all 214 landings now compute — **0 script-start**, 45 in-buffer, 137 out-of-buffer, 22 read-past-buffer, 10 koc-out-of-range. None is an entry the walk could seed and every one leaves the executor on a byte that is not a cell boundary, so the ten voids **stand**, now measured rather than assumed; `script_start == 0` is asserted on every run. §29.5's residue is separately re-read down to **6** scripts (§32.4) |
@@ -1063,6 +1063,7 @@ run (any build config) and exits non-zero if it ever finds one. The `#if
 DEBUG` assert stays, as a developer convenience only, with its comment
 corrected to say so.
 
+
 ### D. The off-by-N deltas — Ibuki (408) and Urien (256)
 
 Mechanical: the PS2 counterparts give the exact per-script deltas. Ibuki needs
@@ -1453,11 +1454,26 @@ would silently remap those six unmeasured values too.
 > between them is **not** swept, so this section's "not a bare `{first, last}`
 > spanning the unmeasured values" instruction is followed, not overridden.
 >
-> **Still untouched, and still this section's:** `0x0636` (`dmca[91]` cell 9)
+> ~~**Still untouched, and still this section's:** `0x0636` (`dmca[91]` cell 9)
 > and `0x0679`/`0x067A`/`0x0685` (`dmca[3]`). Those four have an even stronger
 > witness — **Remy's own** oracle measures `+0x20` — but they are a different
 > audit class (`manu_cg_delta_divergent`, §8.P's residue) and were deliberately
-> left for their own change rather than folded into this one (§33.9.2).
+> left for their own change rather than folded into this one (§33.9.2).~~
+>
+> #### Status 2026-09-12: this caution table is now EMPTY — all 20 raws landed
+>
+> The last four (`0x0636`, `0x0679`, `0x067A`, `0x0685` — **5 cells**, not 4;
+> `dmca[3]` cells 7 and 8 share `0x067A`) landed as three discrete rows on
+> `remy_cg_ranges` (§33.9.2). Their witness is Remy's own oracle, but as a
+> **bracket**, not a direct observation — this section's "no cell-aligned PS2
+> counterpart to measure a delta from" was literally true of all four and still
+> is. What changed is that a bracket whose two ends agree is a reading
+> `manu_delta_gate` accepts, and all three brackets read `+0x20` on both sides.
+>
+> The discrete-rows instruction was followed, and `0x0636` is the case that
+> shows why it exists: its bracket is `0x0601`..`0x0655`, so taking the row to
+> the bracket would have swept 82 unmeasured raws. The row is one value wide.
+> Digest `de50fb902a7f934d` -> `7cdc8fdf7fc62593`.
 
 ### O. Items A, K, D, E and N's fixes change the netplay balance digest — release-note this (Q joined 2026-09-02, S joined 2026-09-06)
 
@@ -1520,6 +1536,18 @@ that covers A/K/D/E/N/Q/S covers this too. `e96e88beec2ac2b5` now joins
 document's history (§3's status table, §8.Q, §16.1, §17.x, §29.x); those are
 records of what was true at the time and are left standing, exactly as
 `eab701778c8b20ad` was.
+
+**§33.9.2's three rows join this set (landed 2026-09-12):** REMY `0x0636`,
+`0x0679`-`0x067A` and `0x0685`, all at `+0x20` — the last four raws of §8.N's
+caution table, over 5 cells in `dmca[3]`/`dmca[91]`, which the digest hashes.
+**Observed `de50fb902a7f934d` -> `7cdc8fdf7fc62593`**, both measured on one
+`build/statcheck-verify` tree against one archive, the before value from the
+binary built at the parent commit — a measurement here, not a quotation of
+§33.9's. Same lockstep consequence and same clean handshake refusal as items Q,
+S and §33.9; the release note that covers A/K/D/E/N/Q/S covers this too.
+`de50fb902a7f934d` now joins `e96e88beec2ac2b5` and `eab701778c8b20ad` as a
+stale narrative value in this document's history, left standing for the same
+reason.
 
 ### P. Necro/Hugo/Yun/Akuma's remaining 9 own-group cells — 7 are the same ambiguity as Urien's `0x52D9`; Akuma's other 2 are not
 
@@ -9916,7 +9944,7 @@ Remy-side evidence does not confirm group 6 and never will — and a future pass
 that wants to change the gate should change it on its own merits, not as part of
 a commit whose result it would flatter.
 
-#### 33.9.2 A fourth candidate, deliberately NOT applied
+#### 33.9.2 A fourth candidate, ~~deliberately NOT applied~~ **LANDED 2026-09-12**
 
 Re-deriving row 2 surfaced one more Remy cell with the *same* defect and a
 **stronger** witness: **`dmca[91]` cell 9, raw `0x0636`** — ours `+0` (the same
@@ -9924,9 +9952,84 @@ Re-deriving row 2 surfaced one more Remy cell with the *same* defect and a
 `+0x20`. It is one of the four raws §8.N's caution table lists alongside
 `dmca[3]`'s `0x0679`/`0x067A`/`0x0685`, which carry the same reading.
 
-It is **not** applied here, for two reasons, neither of them evidential: it is
+~~It is **not** applied here, for two reasons, neither of them evidential: it is
 outside §33.9's three items, and those four cells are `manu_cg_delta_divergent`
 — a different, older class (§8.N / §8.P residue) whose script-level count §33.8
 predicts stays at **4 DIVERGENT**, which it does. Applying it would have moved a
-census this pass committed to leaving still. It is a real work item with its
-evidence already on record, and it is named here so it is not lost a third time.
+census this pass committed to leaving still.~~ **Applied 2026-09-12**, as
+**three** `CgRemapRange` rows on `remy_cg_ranges`. Both reasons for holding it
+back were bookkeeping, as this section said; the evidence had not changed.
+
+**Two more corrections from re-deriving it against the data, in the same
+spirit as §33.9's two.** The write-up's bounds were wrong a third and a fourth
+time, so the standing instruction — derive, do not quote — held:
+
+- **"those four cells" is four distinct RAWS over FIVE CELLS.** Measured from
+  `manu_delta_gate`'s own rows: `dmca[3]` cell 4 (`0x0685`), cells 6/7/8
+  (`0x0679`, `0x067A`, `0x067A`) and `dmca[91]` cell 9 (`0x0636`).
+  `dmca[3]` cells 7 and 8 both carry `0x067A`, which is how four raws make five
+  cells — the same cells-vs-raws slip §33.9's first correction records, in the
+  other direction. §8.N's caution table was right all along: it writes
+  "`0x0679`, `0x067A` — `dmca[3]` cells 6-8".
+- **"REMY'S OWN oracle measures `+0x20`" is a BRACKET, not a direct
+  observation.** None of the four raws appears in Remy's observation set at all
+  — which is exactly why they are bracketed rather than direct, and why §8.N
+  could write "no cell-aligned PS2 counterpart" about them. Re-derived from
+  `char_oracle(REMY)`: `0x0636` sits inside `0x0601`..`0x0655`, `0x0679`/`0x067A`
+  inside `0x0678`..`0x067C`, `0x0685` inside `0x0684`..`0x0690`, and both ends of
+  all three brackets measure `+0x20`. The claim that this witness is *stronger*
+  than §33.9's still holds, but only in `manu_delta_gate`'s own ranking, where
+  `bracketed` is counted as a confirmation and the cross-character `xchar` is
+  deliberately not. Stated plainly so nobody reads "own oracle" as "observed".
+
+**Three rows, not one, and not four.** The three contiguous runs of the
+evidence-carrying raws are `0x0636`, `0x0679`..`0x067A`, and `0x0685`. §8.N's
+discrete-rows rule and §8.S's measured-hull rule both apply, and the sharpest
+case is `0x0636`: its bracket spans `0x0601`..`0x0655`, so a row taken to the
+bracket would sweep **82** raws no cell measures. The row is the single value.
+The two rows that abut existing ones (`0x0678`, `0x0683`-`0x0684`) were kept
+separate rather than merged, because those rows' evidence is §8.N's direct
+per-character measurement and these rows' is a bracket; merging would erase that
+distinction for no functional gain (`remap_cg_number` is indifferent to
+adjacency).
+
+**What they touch, measured cast-wide.** Exactly the 5 cells above, all live
+(0 dead), both scripts shape-mismatched. No shape-ok Remy script carries any of
+the four raws — necessarily, since that is what "not in the observation set"
+means — so no confirmed cell moves. `remy_cg_ranges` is the only table touched,
+and `remap_cg_number` is per-character, so no other character changes.
+
+The whole census line before and after:
+
+```
+before  316 = 221 direct + 66 bracketed + 20 no-live-cells + 3 unresolved + 2 xchar + 0 XCHAR-DIVERGENT + 4 DIVERGENT
+after   316 = 221 direct + 68 bracketed + 20 no-live-cells + 3 unresolved + 2 xchar + 0 XCHAR-DIVERGENT + 2 DIVERGENT
+cells   before  3624 = 2928 direct + 552 bracketed + 35 sub-cutoff + 77 bracket-disagree + 0 unbracketed + 25 xchar + 0 XCHAR-DIVERGENT + 7 DIVERGENT
+        after   3624 = 2928 direct + 557 bracketed + 35 sub-cutoff + 77 bracket-disagree + 0 unbracketed + 25 xchar + 0 XCHAR-DIVERGENT + 2 DIVERGENT
+```
+
+The remaining **2 DIVERGENT** scripts / **2 DIVERGENT** cells are AKUMA
+`nmca[27]`/`[28]` (§8.P), untouched and still scoped out. REMY's per-character
+line goes `manu:9/13(d6+b3+z0) DIVERGENT(2 scripts,5 cells)!` ->
+`manu:11/13(d6+b5+z0)`; `grp!5` is unchanged, because all four raws land in
+group 2 either way and group 2 is already in Remy's observed landing set
+`{2, 3, 20}` — so §33.9.1's gate does not move.
+
+`cells audited` stays **133,901**, `range-overlap check` stays **`0 overlaps, 0
+inversions (20/20 characters)`**, the TOTAL row is unchanged, and the four other
+audit JSONs (`residual_audit`, `cg_se_audit`, `data_audit`, `cg_counterfactual`)
+are **byte-identical** — only `cg_audit.json` moves, by exactly the **5 rows
+removed** and the two REMY census counters. Two consecutive `cg_audit.py` runs
+are byte-identical on stdout.
+
+**The digest moved, as §8.O requires it to: `de50fb902a7f934d` ->
+`7cdc8fdf7fc62593`.** Both measured on the same `build/statcheck-verify` tree
+against the same archive, the before value taken from the binary built at the
+parent commit rather than quoted from §33.9. This is a netplay compatibility
+break: peers on either side of it will not match.
+
+**What the corpus sweep does and does not say about this.** All three corpora
+re-swept clean afterwards — 447/447 eligible pass, 0 differences across 463
+records — but that is **not** confirmation of the fix. `statcheck_compare.c`
+does not assert on `wu.cg_number`, so the corpus cannot see a CG remap at all;
+a green sweep here proves only that nothing *else* broke.

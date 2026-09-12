@@ -1346,6 +1346,37 @@ static const CgRemapRange remy_cg_ranges[] = {
        cells -- Alex's own delta, +0x20. See
        docs/research-arcade-cg-data-accuracy.md §8.K. */
     { .first = 0x0601, .last = 0x0601, .delta = 0x20 },
+    /* dmca[91] cell 9 (raw 0x0636) and dmca[3] cells 4/6/7/8 (raws 0x0685 and
+       0x0679-0x067A) -- 5 live cells over 4 distinct raws, the last of §8.N's
+       caution table and the §33.9.2 item it named so it would not be lost a
+       third time (doc §33.9.2, §8.N's 2026-09-07 status block).
+
+       Same defect as the 0x0601 row above and the 0x0827/0x08D6 rows below:
+       Remy's -0x0D00 default underflows every one of these (0x0636 - 0x0D00 <
+       0), so remap_cg_number's `adjusted < 0` clamp (§7.4) returns the raw
+       UNCHANGED. Right group -- all four land in ALEX's group 2 either way --
+       wrong sprite, by exactly 32.
+
+       The witness is REMY'S OWN oracle, which is why these are three rows and
+       not one. None of the four raws is DIRECTLY observed; each is BRACKETED,
+       and the brackets were re-derived from the data rather than taken from
+       the write-up: 0x0636 sits inside 0x0601..0x0655, 0x0679/0x067A inside
+       0x0678..0x067C, 0x0685 inside 0x0684..0x0690 -- and both ends of all
+       three brackets measure +0x20 against Remy's PS2 counterparts. In
+       manu_delta_gate's own hierarchy that is a confirmation (`bracketed` is
+       counted; the cross-character `xchar` the 0x0827/0x08D6/0x20CB rows rest
+       on is not), which is the sense in which this witness is the stronger
+       one.
+
+       Discrete rows, per §8.N: each row is the hull of the raws that carry
+       evidence and nothing else. 0x0636's row is ONE value -- its bracket
+       spans 0x0601..0x0655, and widening the row to that bracket would sweep
+       82 raws no cell measures. Measured cast-wide: these three rows move
+       exactly 5 cells, all live, all in dmca[3]/dmca[91], and no shape-ok
+       Remy script carries any of the four raws (they are absent from the
+       oracle's observation set by construction, which is why they were
+       bracketed rather than direct). */
+    { .first = 0x0636, .last = 0x0636, .delta = 0x20 },
     // A further 19 raw CGs (38 cells), all in ordinary nmca/cuca animations,
     // measure the same Alex-bank +0x20 (doc §8.N). Discrete rows only: the
     // gaps between them held dmca[3]/[90]/[91] cells whose scripts decode a
@@ -1358,8 +1389,15 @@ static const CgRemapRange remy_cg_ranges[] = {
     { .first = 0x0669, .last = 0x0669, .delta = 0x20 },
     { .first = 0x0676, .last = 0x0676, .delta = 0x20 },
     { .first = 0x0678, .last = 0x0678, .delta = 0x20 },
+    // dmca[3] cells 6/7/8, bracketed by 0x0678 and 0x067C -- see the 0x0636
+    // row above. Kept separate from the 0x0678 row it abuts: that row's
+    // evidence is a direct §8.N measurement, this one's is a bracket.
+    { .first = 0x0679, .last = 0x067A, .delta = 0x20 },
     { .first = 0x067C, .last = 0x067D, .delta = 0x20 },
     { .first = 0x0683, .last = 0x0684, .delta = 0x20 },
+    // dmca[3] cell 4, bracketed by 0x0684 and 0x0690 -- see the 0x0636 row.
+    // 0x0686..0x068F is NOT swept: no Remy cell carries a raw in it.
+    { .first = 0x0685, .last = 0x0685, .delta = 0x20 },
     { .first = 0x0690, .last = 0x0692, .delta = 0x20 },
     { .first = 0x0744, .last = 0x0744, .delta = 0x20 },
     /* dmca[90]/[91]'s 17 live cells over 16 distinct raws, the gap §8.N
