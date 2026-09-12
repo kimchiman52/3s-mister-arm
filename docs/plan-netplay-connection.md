@@ -1402,7 +1402,7 @@ for the joiner's two attempts. Verified headroom against the callers:
 
 - `CONNECT_TIMEOUT_CONNECTING_MS` (15 000 ms, `connect_fail.h:394`) does
   **not** bound the race: it is armed on entry to
-  `NETPLAY_SESSION_CONNECTING` (`netplay.c:2919-2923`), i.e. *after* the
+  `NETPLAY_SESSION_CONNECTING` (`netplay.c:3122-3126`), i.e. *after* the
   handoff, and bounds GekkoNet's sync, not establishment.
 - The bound that does apply is nav's NAV_WAIT_ORCHESTRATOR deadline
   (`nav_orch_timeout_frames` at `netplay_nav.c:169`, enforced at

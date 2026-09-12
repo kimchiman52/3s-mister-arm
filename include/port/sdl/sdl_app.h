@@ -24,6 +24,11 @@ int SDLApp_PreInit();
 int SDLApp_FullInit();
 void SDLApp_Quit();
 void SDLApp_ToggleFPSOverlay(void);
+/* One frame-diagnostic line. In a live netplay session it goes to the
+ * non-blocking deferred sink (netplay.c); otherwise to backend.log via
+ * backend_logf. Never write a gameplay-time diagnostic to stderr or a file
+ * directly -- route it here. */
+void SDLApp_GameplayDiagnosticf(const char* fmt, ...);
 int SDLApp_GetArmClock(void);
 void SDLApp_CycleArmClock(void);
 void SDLApp_CycleGameMode(void);

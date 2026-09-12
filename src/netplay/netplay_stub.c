@@ -53,12 +53,14 @@ void Netplay_LogConnectEventMT(const char* line) {
     (void)line;
 }
 
-void Netplay_LogGameplayDiagnostic(const char* line) {
+bool Netplay_LogGameplayDiagnostic(const char* line) {
     (void)line;
+    return false;
 }
 
-void Netplay_LogGameplayDiagnosticf(const char* fmt, ...) {
+bool Netplay_LogGameplayDiagnosticf(const char* fmt, ...) {
     (void)fmt;
+    return false;
 }
 
 #ifdef NETPLAY_TEST_HOOKS
@@ -85,6 +87,24 @@ void Netplay_TestHook_HeartbeatEnqueue(const char* line) {
 }
 
 void Netplay_TestHook_HeartbeatDrain(void) {
+}
+
+int Netplay_TestHook_HeartbeatEnqueueBurst(const char* const* lines, int count) {
+    (void)lines;
+    (void)count;
+    return 0;
+}
+
+void Netplay_TestHook_HeartbeatCountDrops(int n) {
+    (void)n;
+}
+
+int Netplay_TestHook_HeartbeatDroppedTotal(void) {
+    return 0;
+}
+
+int Netplay_TestHook_HeartbeatQueueCap(void) {
+    return 0;
 }
 #endif
 

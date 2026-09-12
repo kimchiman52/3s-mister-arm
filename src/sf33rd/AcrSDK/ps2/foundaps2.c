@@ -1,5 +1,6 @@
 #include "sf33rd/AcrSDK/ps2/foundaps2.h"
 #include "common.h"
+#include "netplay/netplay.h"
 #include "port/utils.h"
 #include "sf33rd/AcrSDK/MiddleWare/PS2/CapSndEng/cse.h"
 #include "sf33rd/AcrSDK/common/fbms.h"
@@ -86,28 +87,42 @@ static void flPS2InitRenderBuff() {
     flPs2State.ZBuffMax = (f32)65535;
 }
 
+/* Engine diagnostics. Every caller is on the game thread INSIDE the
+ * simulation (ramcnt.c, texgroup.c, PPGFile.c, mtrans.c, bg.c, gd3rd.c ...),
+ * which under netplay is replayed on every rollback. So while a session sink
+ * is live the line is handed to the non-blocking deferred sink
+ * (Netplay_LogGameplayDiagnostic: queued for the logger thread, or refused
+ * and counted -- never silently lost, never a write on this thread). With no
+ * session sink the behaviour is the original one: the formatted text plus
+ * "\r\n" written to stderr, byte for byte.
+ *
+ * Removed: the PS2-era flFileWrite/flFileAppend("../acrout.txt") pair. On
+ * this port they built "cdrom0:\THIRD\..\ACROUT.TXT;1" and issued an open(2)
+ * that failed with ENOENT on every single call -- one wasted syscall per
+ * line, on the game thread, for a file that could never exist. */
 s32 flLogOut(s8* format, ...) {
     s8 str[2048];
-    s8* lp;
-    static s32 bflLogOutFirst = 1;
+    size_t len;
 
     va_list args;
     va_start(args, format);
-
-    vsnprintf(str, sizeof(str), format, args);
-    lp = strlen(str) + str;
-    *(lp++) = '\r';
-    *(lp++) = '\n';
-    *lp = '\0';
-
-    if (bflLogOutFirst != 0) {
-        flFileWrite("../acrout.txt", "Debug Message Output for PS2\r\n", strlen("Debug Message Output for PS2\r\n"));
-        bflLogOutFirst = 0;
-    }
-
-    flFileAppend("../acrout.txt", str, strlen(str));
+    /* Leave room for "\r\n" below; the original wrote them past the buffer
+     * when the message filled it. */
+    vsnprintf(str, sizeof(str) - 3, format, args);
     va_end(args);
 
+    len = strlen(str);
+    while (len > 0 && (str[len - 1] == '\n' || str[len - 1] == '\r')) {
+        str[--len] = '\0';
+    }
+
+    if (Netplay_LogGameplayDiagnostic(str)) {
+        return 1;
+    }
+
+    str[len++] = '\r';
+    str[len++] = '\n';
+    str[len] = '\0';
     fprintf(stderr, "%s", str);
     return 1;
 }

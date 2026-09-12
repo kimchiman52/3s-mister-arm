@@ -732,7 +732,23 @@ static void backend_logf(const char* fmt, ...) {
 
 /* Keep ordinary local perf collection in backend.log. During a live netplay
  * session, however, a frame diagnostic must never synchronously touch either
- * the console or storage. */
+ * the console or storage: the deferred sink takes it, and reports the line
+ * itself or a counted drop. Only when no session sink is live does the line
+ * go to backend.log, so an offline [step0] / [ldreq-barrier] / FRAME OUTLIER
+ * is never lost. Public so main.c and gd3rd.c share the one fallback. */
+void SDLApp_GameplayDiagnosticf(const char* fmt, ...) {
+    va_list args;
+    char line[512];
+
+    va_start(args, fmt);
+    SDL_vsnprintf(line, sizeof(line), fmt, args);
+    va_end(args);
+    if (Netplay_LogGameplayDiagnostic(line)) {
+        return;
+    }
+    backend_logf("%s", line);
+}
+
 static void gameplay_diagnosticf(const char* fmt, ...) {
     va_list args;
     char line[512];
@@ -740,14 +756,7 @@ static void gameplay_diagnosticf(const char* fmt, ...) {
     va_start(args, fmt);
     SDL_vsnprintf(line, sizeof(line), fmt, args);
     va_end(args);
-#if defined(ENABLE_NETPLAY)
-    if (Netplay_GetSessionState() == NETPLAY_SESSION_RUNNING ||
-        Netplay_GetSessionState() == NETPLAY_SESSION_CONNECTING) {
-        Netplay_LogGameplayDiagnostic(line);
-        return;
-    }
-#endif
-    backend_logf("%s", line);
+    SDLApp_GameplayDiagnosticf("%s", line);
 }
 
 #if ENABLE_PERF_TELEMETRY

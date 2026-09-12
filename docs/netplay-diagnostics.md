@@ -12,8 +12,16 @@ to two locations under the user's pref path (typically
 
 - **`logs/netplay-<utc_ms>.log`** — buffered text log of all
   `[netplay sess=...]` events and per-second heartbeats. Opened once at
-  session start, fflush'd at 1 Hz from the heartbeat, closed on session
-  end. Survives wrapper-SIGTERM via the `Netplay_FlushDiagnostics` hook.
+  session start, closed on session end. Survives wrapper-SIGTERM via the
+  `Netplay_FlushDiagnostics` hook. Every row that goes through the
+  deferred sink (heartbeats, the watchdog record, `[step0]`,
+  `[ldreq-barrier]`, `FRAME OUTLIER`, and every engine `flLogOut` line
+  while a session is live) is written and flushed by the logger thread,
+  one row at a time, off the game thread; the game thread never waits for
+  it. The sink is bounded, and a refused row is never silent: look for
+  `[netplay-log] N diagnostic line(s) dropped ...` — it is written just
+  before the next accepted row, or at session end. A gap in the log with
+  no such row means nothing was dropped.
 - **`states/netplay_packet_ring_<utc_ms>_<role>.txt`** — dump of the
   last 512 packet events (send + receive, with timestamp, type, length,
   and peer endpoint) at the moment of disconnect, desync, or SIGTERM.
@@ -143,8 +151,10 @@ All hot-path additions are O(1):
 No malloc on the hot path. No syscalls on the hot path (timestamps come
 from `clock_gettime` via vDSO; address parsing is cached on peer-change).
 String formatting only happens at the heartbeat (1 Hz) and at dump
-time (one-shot per disconnect). Disk I/O steady-state is one
-`fflush` per second.
+time (one-shot per disconnect). Steady-state disk I/O is one row per
+second, written by the logger thread — which runs at normal (SCHED_OTHER)
+priority on purpose, so an SD-card flush can never hold the CPU against
+the async-I/O thread the LDREQ barrier waits on.
 
 ## Disabling
 
@@ -157,7 +167,10 @@ diagnostic value vastly outweighs their cost.
 ## Texture-load skip/trace markers
 
 Two log markers in `last-run.log` (or `backend.log`) come from
-`src/sf33rd/Source/Game/rendering/texgroup.c`:
+`src/sf33rd/Source/Game/rendering/texgroup.c`. Like every `flLogOut`
+line, they reach stderr (`last-run.log`) directly when no netplay session
+is live, and through the deferred sink — stderr plus the session log,
+written by the logger thread — while one is:
 
 - `[texgroup-skip] ...` — emitted when a texture-load state-machine
   invariant is violated (originally a `while(1){}` arcade-source

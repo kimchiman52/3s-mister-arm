@@ -943,8 +943,10 @@ static void step0_phase_report(void) {
 
     /* This is emitted only for an already-slow frame. Keep it out of stderr
      * and the filesystem on that same frame by using the lossy diagnostics
-     * mailbox shared with the frame outlier record. */
-    Netplay_LogGameplayDiagnosticf(
+     * mailbox shared with the frame outlier record -- and, offline, the same
+     * backend.log fallback that record uses, so a slow frame outside a
+     * session is not silently lost (the sink is inactive with no session). */
+    SDLApp_GameplayDiagnosticf(
             "[step0] total=%.1fms afs=%.1f input=%.1f nav=%.1f engine=%.1f seqs=%.1f netplay=%.1f probes=%.1f "
             "trace=%.1f effect=%.1f flip=%.1f | syncread=%.1fms n=%u bytes=%llu | G_No=%d/%d/%d/%d "
             "E_No=%d/%d/%d/%d menu_cond=%d menu_r_no=%d/%d/%d/%d Play_Mode=%d Mode_Type=%d",

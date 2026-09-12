@@ -94,8 +94,15 @@ void Netplay_LogConnectEventMT(const char* line);
 /* Best-effort game-thread diagnostics. These use the bounded asynchronous
  * mailbox, so they never perform console or filesystem I/O on simulation or
  * loading frames. */
-void Netplay_LogGameplayDiagnostic(const char* line);
-void Netplay_LogGameplayDiagnosticf(const char* fmt, ...);
+/* Offer one diagnostic line to the deferred, non-blocking session sink.
+ * Returns true when a live session sink HANDLED it -- queued for the logger
+ * thread, or refused-and-counted (the count is reported in the log as a
+ * "[netplay-log] N diagnostic line(s) dropped" row). Returns false only when
+ * there is no live sink, in which case the caller must use its own fallback
+ * (e.g. sdl_app.c -> SDLApp_GameplayDiagnosticf writes backend.log). Never
+ * blocks on the calling thread. */
+bool Netplay_LogGameplayDiagnostic(const char* line);
+bool Netplay_LogGameplayDiagnosticf(const char* fmt, ...);
 #ifdef NETPLAY_TEST_HOOKS
 #include "netplay/connect_fail.h" /* ConnectFailCode, for SessionFailCodeForEvent */
 #include "gekkonet.h"             /* GekkoSessionEventType, for SessionFailCodeForEvent */
@@ -119,6 +126,13 @@ bool Netplay_TestHook_SessionLogPath(char* out, size_t cap);
 /* Exercise the asynchronous heartbeat mailbox without a live Gekko session. */
 void Netplay_TestHook_HeartbeatEnqueue(const char* line);
 void Netplay_TestHook_HeartbeatDrain(void);
+/* Offer `count` lines back-to-back without letting the logger drain between
+ * them; returns how many the queue accepted. With the drop-total seam this
+ * pins that a refused line is counted, not silently lost. */
+int Netplay_TestHook_HeartbeatEnqueueBurst(const char* const* lines, int count);
+void Netplay_TestHook_HeartbeatCountDrops(int n);
+int Netplay_TestHook_HeartbeatDroppedTotal(void);
+int Netplay_TestHook_HeartbeatQueueCap(void);
 /* Task #144 review Item A: exposes process_session()'s pure event->code
  * mapping (session_fail_code_for_event, netplay.c) for the two RUNNING-
  * phase failure taxonomy codes. process_session() itself has no test seam

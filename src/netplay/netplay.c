@@ -43,7 +43,15 @@
 #include <SDL3_net/SDL_net.h>
 
 #include <dirent.h>
+#include <errno.h>
 #include <stdarg.h>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
+#if defined(__linux__)
+#include <pthread.h>
+#include <sched.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -270,14 +278,29 @@ static char s_netplay_log_path[640] = { 0 };
 // pre-existing main-thread behaviour is unchanged even if Init never ran.
 static SDL_Mutex* s_netplay_log_mu = NULL;
 
-// Heartbeats are useful one-second health evidence, but a filesystem flush
-// can block on the MiSTer's SD card. The game thread therefore hands each
-// completed heartbeat to this one-slot, coalescing mailbox and never touches
-// stderr or the session FILE for it. The logger thread owns that I/O. A
-// heartbeat is diagnostic, so replacing an older pending row is preferable
-// to letting gameplay wait for storage.
+// The deferred diagnostics sink. Heartbeats are useful one-second health
+// evidence, but a filesystem flush can block on the MiSTer's SD card, and
+// stderr is a synchronous write too. While a session is live the game thread
+// therefore hands every diagnostic line -- heartbeats, the watchdog record,
+// [step0]/[ldreq-barrier]/FRAME OUTLIER, and every flLogOut() the engine
+// emits from inside the simulation -- to this bounded queue and never
+// touches stderr or the session FILE for it. The logger thread owns that
+// I/O.
+//
+// The queue is bounded, so a line CAN be refused. A refusal is never
+// silent: it is counted, and the count rides along with the next accepted
+// line as a "[netplay-log] N diagnostic line(s) dropped" row written just
+// before it (or in the drain notice at session end). A gap in the log on
+// exactly the frame under investigation is the failure mode this exists to
+// make visible.
+//
+// Capacity: 32 rows x 512 B = 16 KB static. 4 was enough for one heartbeat
+// per second; it is not enough for the engine's load-time bursts
+// (texgroup.c emits one [texgroup-trace] per case per load), and each
+// refused burst line would otherwise be a counted drop on precisely the
+// frames a stall investigation wants.
 #define NETPLAY_HEARTBEAT_LINE_MAX 512
-#define NETPLAY_HEARTBEAT_QUEUE_CAP 4
+#define NETPLAY_HEARTBEAT_QUEUE_CAP 32
 static SDL_Mutex* s_heartbeat_mu = NULL;
 static SDL_Condition* s_heartbeat_cv = NULL;
 static SDL_Thread* s_heartbeat_thread = NULL;
@@ -288,6 +311,18 @@ static unsigned s_heartbeat_count = 0;
 static bool s_heartbeat_inflight = false;
 static bool s_heartbeat_stopping = false;
 static char s_heartbeat_lines[NETPLAY_HEARTBEAT_QUEUE_CAP][NETPLAY_HEARTBEAT_LINE_MAX] = {{ 0 }};
+// Per-slot: how many lines were refused between the previous accepted line
+// and this one. Written under s_heartbeat_mu by the producer, read under it
+// by the logger thread.
+static unsigned s_heartbeat_dropped_before[NETPLAY_HEARTBEAT_QUEUE_CAP] = { 0 };
+// Refusals not yet attributed to a slot. Producer-side only: incremented on
+// a refusal (which may happen WITHOUT the mutex, when SDL_TryLockMutex
+// loses to the logger's dequeue), transferred to a slot under the mutex on
+// the next accept. Atomic so a refusal from a second producer thread can
+// never tear it; every known producer is the game thread.
+static SDL_AtomicInt s_heartbeat_dropped_pending;
+// Lifetime total, for the test seam and the drain notice.
+static SDL_AtomicInt s_heartbeat_dropped_total;
 
 // Bound ONE session file. A cascade that retries for minutes can emit a
 // lot of lines and /media/fat is a shared SD card; past the budget the
@@ -338,41 +373,127 @@ static void netplay_log_unlock(void) {
 
 static void netplay_log_file_line(const char* line);
 static void netplay_log_line(const char* line);
-static bool heartbeat_enqueue(const char* line);
+
+// Outcome of offering a line to the deferred sink.
+typedef enum HeartbeatEnqueueResult {
+    HEARTBEAT_ENQUEUE_INACTIVE = 0, // no live session sink: caller uses its own fallback
+    HEARTBEAT_ENQUEUE_ACCEPTED,     // queued; the logger thread will write it
+    HEARTBEAT_ENQUEUE_DROPPED       // sink live but refused; counted, reported later
+} HeartbeatEnqueueResult;
+
+static HeartbeatEnqueueResult heartbeat_enqueue(const char* line);
 
 /* Optional frame-time diagnostics must never perform console or filesystem
  * I/O on the game thread.  The connection and session-end paths continue to
  * use netplay_log_lock() so their records remain lossless; frame diagnostics
- * are observational and may be dropped when the bounded logger queue fills. */
+ * are observational and may be dropped when the bounded logger queue fills
+ * -- counted, never silently. True only when the line was actually queued. */
 static bool netplay_log_line_try(const char* line) {
     if (line == NULL || line[0] == '\0') {
         return false;
     }
-    return heartbeat_enqueue(line);
+    return heartbeat_enqueue(line) == HEARTBEAT_ENQUEUE_ACCEPTED;
 }
 
-void Netplay_LogGameplayDiagnostic(const char* line) {
-    (void)netplay_log_line_try(line);
+bool Netplay_LogGameplayDiagnostic(const char* line) {
+    if (line == NULL || line[0] == '\0') {
+        return false;
+    }
+    return heartbeat_enqueue(line) != HEARTBEAT_ENQUEUE_INACTIVE;
 }
 
-void Netplay_LogGameplayDiagnosticf(const char* fmt, ...) {
+bool Netplay_LogGameplayDiagnosticf(const char* fmt, ...) {
     char line[512];
     va_list args;
 
     if (fmt == NULL) {
-        return;
+        return false;
     }
     va_start(args, fmt);
     SDL_vsnprintf(line, sizeof(line), fmt, args);
     va_end(args);
-    Netplay_LogGameplayDiagnostic(line);
+    return Netplay_LogGameplayDiagnostic(line);
+}
+
+/* The logger thread's stderr write. One write(2) of the assembled row,
+ * bypassing the stdio FILE lock: the previous fputs/fputc/fflush(stderr)
+ * triple took that lock three times per row, and every remaining
+ * game-thread stderr writer (SDL_Log, netplay_nav's fprintf) would block
+ * behind it for the duration of an SD-card write. stderr is unbuffered, so
+ * a raw write and a stdio write interleave at line granularity either way.
+ * MinGW keeps the stdio path. */
+static void logger_thread_write_stderr(const char* line) {
+#if defined(_WIN32)
+    fputs(line, stderr);
+    fputc('\n', stderr);
+    fflush(stderr);
+#else
+    char row[NETPLAY_HEARTBEAT_LINE_MAX + 1];
+    size_t len = SDL_strlcpy(row, line, sizeof(row) - 1);
+    if (len > sizeof(row) - 2) {
+        len = sizeof(row) - 2;
+    }
+    row[len++] = '\n';
+    size_t off = 0;
+    while (off < len) {
+        const ssize_t n = write(STDERR_FILENO, row + off, len - off);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return;
+        }
+        off += (size_t)n;
+    }
+#endif
+}
+
+/* A full sink-side write of one row: stderr, then the budgeted session
+ * file, flushed so the row is on disk before the next one is dequeued. */
+static void logger_thread_emit(const char* line) {
+    logger_thread_write_stderr(line);
+
+    netplay_log_lock();
+    netplay_log_file_line(line);
+    if (s_netplay_log != NULL) {
+        fflush(s_netplay_log);
+    }
+    netplay_log_unlock();
+}
+
+static void format_drop_notice(char* out, size_t cap, unsigned dropped) {
+    SDL_snprintf(out, cap,
+                 "[netplay-log] %u diagnostic line(s) dropped before this line "
+                 "(queue cap %d)",
+                 dropped, NETPLAY_HEARTBEAT_QUEUE_CAP);
 }
 
 static int heartbeat_writer_thread(void* unused) {
     (void)unused;
 
+#if defined(__linux__)
+    /* Netplay_LogSinkInit runs from the session-start path, i.e. on the game
+     * thread AFTER sdl_app.c -> setup_realtime_scheduling has put that thread
+     * on SCHED_FIFO 49 (PORT_MISTER). glibc's pthread_create defaults to
+     * PTHREAD_INHERIT_SCHED (pthread_attr_setinheritsched(3): "The default
+     * setting ... is PTHREAD_INHERIT_SCHED"), and SDL_CreateThread exposes
+     * no policy, so this thread would start at FIFO 49 too -- and a FIFO-49
+     * thread blocked on an SD write cannot be preempted by the SCHED_OTHER
+     * SDL async-I/O thread that services AFS_Read, which is exactly what the
+     * LDREQ barrier waits on. Drop to SCHED_OTHER, nice 0, before the first
+     * dequeue. pthread_setschedparam is used because SDL has no API that
+     * changes the POLICY of the current thread. Failure is ignored: the
+     * fallback is the inherited policy, i.e. the status quo. */
+    {
+        struct sched_param sp;
+        sp.sched_priority = 0;
+        (void)pthread_setschedparam(pthread_self(), SCHED_OTHER, &sp);
+    }
+#endif
+
     for (;;) {
         char line[NETPLAY_HEARTBEAT_LINE_MAX];
+        unsigned dropped_before = 0;
 
         SDL_LockMutex(s_heartbeat_mu);
         while (s_heartbeat_count == 0 && !s_heartbeat_stopping) {
@@ -384,24 +505,22 @@ static int heartbeat_writer_thread(void* unused) {
         }
 
         SDL_strlcpy(line, s_heartbeat_lines[s_heartbeat_head], sizeof(line));
+        dropped_before = s_heartbeat_dropped_before[s_heartbeat_head];
+        s_heartbeat_dropped_before[s_heartbeat_head] = 0;
         s_heartbeat_head = (s_heartbeat_head + 1) % NETPLAY_HEARTBEAT_QUEUE_CAP;
         s_heartbeat_count--;
         s_heartbeat_inflight = true;
         SDL_UnlockMutex(s_heartbeat_mu);
 
         // This is deliberately the only live-session path that flushes a
-        // heartbeat. It may wait on SD or a redirected stderr sink, but it
-        // never runs on the game thread.
-        fputs(line, stderr);
-        fputc('\n', stderr);
-        fflush(stderr);
-
-        netplay_log_lock();
-        netplay_log_file_line(line);
-        if (s_netplay_log != NULL) {
-            fflush(s_netplay_log);
+        // diagnostic row. It may wait on SD or a redirected stderr sink, but
+        // it never runs on the game thread.
+        if (dropped_before != 0) {
+            char notice[160];
+            format_drop_notice(notice, sizeof(notice), dropped_before);
+            logger_thread_emit(notice);
         }
-        netplay_log_unlock();
+        logger_thread_emit(line);
 
         SDL_LockMutex(s_heartbeat_mu);
         s_heartbeat_inflight = false;
@@ -425,6 +544,21 @@ static void heartbeat_disable_and_drain(void) {
         SDL_WaitCondition(s_heartbeat_cv, s_heartbeat_mu);
     }
     SDL_UnlockMutex(s_heartbeat_mu);
+
+    // Refusals after the last accepted line have no slot to ride on. This
+    // runs on the main thread outside realtime gameplay, so write the
+    // notice directly rather than lose the count.
+    const int pending = SDL_SetAtomicInt(&s_heartbeat_dropped_pending, 0);
+    if (pending > 0) {
+        char notice[160];
+        SDL_snprintf(notice, sizeof(notice),
+                     "[netplay-log] %d diagnostic line(s) dropped after the last "
+                     "accepted line (queue cap %d)",
+                     pending, NETPLAY_HEARTBEAT_QUEUE_CAP);
+        netplay_log_lock();
+        netplay_log_line(notice);
+        netplay_log_unlock();
+    }
 }
 
 // Main thread only, after netplay_log_open() has installed the session FILE.
@@ -437,30 +571,56 @@ static void heartbeat_enable(void) {
     s_heartbeat_head = 0;
     s_heartbeat_tail = 0;
     s_heartbeat_count = 0;
+    SDL_memset(s_heartbeat_dropped_before, 0, sizeof(s_heartbeat_dropped_before));
+    // s_heartbeat_dropped_pending is deliberately NOT reset here: the drain
+    // that precedes every enable already reported and zeroed it, and a
+    // refusal counted between the two would otherwise vanish.
     s_heartbeat_accepting = true;
     SDL_UnlockMutex(s_heartbeat_mu);
 }
 
-// Nonblocking game-thread producer. If the mailbox is briefly held while
-// the logger copies a row, skip this diagnostic sample rather than wait.
-static bool heartbeat_enqueue(const char* line) {
-    if (line == NULL || line[0] == '\0' || s_heartbeat_mu == NULL ||
-        s_heartbeat_thread == NULL || !SDL_TryLockMutex(s_heartbeat_mu)) {
-        return false;
-    }
+static void heartbeat_count_drop(void) {
+    SDL_AddAtomicInt(&s_heartbeat_dropped_pending, 1);
+    SDL_AddAtomicInt(&s_heartbeat_dropped_total, 1);
+}
 
-    bool accepted = false;
-    if (s_heartbeat_accepting && !s_heartbeat_stopping &&
-        s_heartbeat_count < NETPLAY_HEARTBEAT_QUEUE_CAP) {
-        SDL_strlcpy(s_heartbeat_lines[s_heartbeat_tail], line,
-                    sizeof(s_heartbeat_lines[s_heartbeat_tail]));
-        s_heartbeat_tail = (s_heartbeat_tail + 1) % NETPLAY_HEARTBEAT_QUEUE_CAP;
-        s_heartbeat_count++;
-        SDL_SignalCondition(s_heartbeat_cv);
-        accepted = true;
+// Nonblocking game-thread producer. Never waits: a mutex held by the
+// logger's dequeue, or a full queue, refuses the line -- and a refusal
+// while the sink is live is COUNTED (heartbeat_count_drop), never silent.
+// A lost SDL_TryLockMutex is reported as DROPPED rather than INACTIVE: the
+// logger only holds the mutex while dequeuing, and it only dequeues rows
+// that were accepted, so contention implies a live sink.
+// CALLER HOLDS s_heartbeat_mu.
+static HeartbeatEnqueueResult heartbeat_enqueue_locked(const char* line) {
+    if (!s_heartbeat_accepting || s_heartbeat_stopping) {
+        return HEARTBEAT_ENQUEUE_INACTIVE;
     }
+    if (s_heartbeat_count >= NETPLAY_HEARTBEAT_QUEUE_CAP) {
+        heartbeat_count_drop();
+        return HEARTBEAT_ENQUEUE_DROPPED;
+    }
+    SDL_strlcpy(s_heartbeat_lines[s_heartbeat_tail], line,
+                sizeof(s_heartbeat_lines[s_heartbeat_tail]));
+    s_heartbeat_dropped_before[s_heartbeat_tail] =
+        (unsigned)SDL_SetAtomicInt(&s_heartbeat_dropped_pending, 0);
+    s_heartbeat_tail = (s_heartbeat_tail + 1) % NETPLAY_HEARTBEAT_QUEUE_CAP;
+    s_heartbeat_count++;
+    SDL_SignalCondition(s_heartbeat_cv);
+    return HEARTBEAT_ENQUEUE_ACCEPTED;
+}
+
+static HeartbeatEnqueueResult heartbeat_enqueue(const char* line) {
+    if (line == NULL || line[0] == '\0' || s_heartbeat_mu == NULL ||
+        s_heartbeat_thread == NULL) {
+        return HEARTBEAT_ENQUEUE_INACTIVE;
+    }
+    if (!SDL_TryLockMutex(s_heartbeat_mu)) {
+        heartbeat_count_drop();
+        return HEARTBEAT_ENQUEUE_DROPPED;
+    }
+    const HeartbeatEnqueueResult result = heartbeat_enqueue_locked(line);
     SDL_UnlockMutex(s_heartbeat_mu);
-    return accepted;
+    return result;
 }
 
 void Netplay_LogSinkInit(void) {
@@ -475,6 +635,7 @@ void Netplay_LogSinkInit(void) {
     }
     if (s_heartbeat_thread == NULL && s_heartbeat_mu != NULL && s_heartbeat_cv != NULL) {
         s_heartbeat_stopping = false;
+        SDL_SetAtomicInt(&s_heartbeat_dropped_pending, 0);
         s_heartbeat_thread = SDL_CreateThread(heartbeat_writer_thread,
                                               "NetplayHeartbeatLog", NULL);
         if (s_heartbeat_thread == NULL) {
@@ -513,6 +674,43 @@ void Netplay_TestHook_HeartbeatEnqueue(const char* line) {
 
 void Netplay_TestHook_HeartbeatDrain(void) {
     heartbeat_disable_and_drain();
+}
+
+// The burst is offered with the mutex HELD for its whole length, so the
+// logger thread cannot dequeue between two lines: exactly CAP are accepted
+// and the rest are refused, deterministically. Blocking on the lock is fine
+// here -- this is a test seam, not the game thread.
+int Netplay_TestHook_HeartbeatEnqueueBurst(const char* const* lines, int count) {
+    Netplay_LogSinkInit();
+    heartbeat_enable();
+    if (s_heartbeat_mu == NULL) {
+        return 0;
+    }
+    int accepted = 0;
+    SDL_LockMutex(s_heartbeat_mu);
+    for (int i = 0; i < count; i++) {
+        if (heartbeat_enqueue_locked(lines[i]) == HEARTBEAT_ENQUEUE_ACCEPTED) {
+            accepted++;
+        }
+    }
+    SDL_UnlockMutex(s_heartbeat_mu);
+    return accepted;
+}
+
+// Count `n` refusals through the production counter, so the next accepted
+// line must carry them as a "dropped before this line" notice.
+void Netplay_TestHook_HeartbeatCountDrops(int n) {
+    for (int i = 0; i < n; i++) {
+        heartbeat_count_drop();
+    }
+}
+
+int Netplay_TestHook_HeartbeatDroppedTotal(void) {
+    return SDL_GetAtomicInt(&s_heartbeat_dropped_total);
+}
+
+int Netplay_TestHook_HeartbeatQueueCap(void) {
+    return NETPLAY_HEARTBEAT_QUEUE_CAP;
 }
 #endif
 
@@ -2219,8 +2417,12 @@ static void process_session() {
                          s_last_advance_frame,
                          (double)frames_behind,
                          (int)network_stats.rollback);
-            (void)netplay_log_line_try(line);
-            s_watchdog_latched = true;
+            // One-shot per stall episode -- but only once the record is
+            // actually queued. Latching on a refused line would make the
+            // watchdog record vanish for the rest of the episode.
+            if (netplay_log_line_try(line)) {
+                s_watchdog_latched = true;
+            }
         }
     }
 
@@ -2587,8 +2789,9 @@ static void update_network_stats() {
             // The one-second row retains its stderr and session-log surfaces,
             // but heartbeat_enqueue never waits for either sink. The logger
             // thread applies the same file budget and flushes after gameplay
-            // has handed off the row.
-            heartbeat_enqueue(line);
+            // has handed off the row. A refusal is counted inside
+            // heartbeat_enqueue and surfaces as a drop notice in the log.
+            (void)heartbeat_enqueue(line);
         }
 
         frame_max_rollback = 0;

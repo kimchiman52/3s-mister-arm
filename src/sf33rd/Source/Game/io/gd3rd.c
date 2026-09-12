@@ -19,6 +19,7 @@
 #include "structs.h"
 
 #include "port/io/afs.h"
+#include "port/sdl/sdl_app.h"
 #include "netplay/netplay.h"
 
 #include <SDL3/SDL.h>
@@ -906,12 +907,14 @@ void Check_LDREQ_Queue() {
              * loop keeps polling the network and rendering. The session
              * is now exposed to the original divergence, which is why
              * this is logged unconditionally rather than behind the
-             * telemetry gate. */
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                         "[ldreq-barrier] budget exceeded after %d steps / %llu ms — head be=%d type=%d rno=%d",
-                         steps,
-                         (unsigned long long)((SDL_GetTicksNS() - start_ns) / SDL_NS_PER_MS),
-                         (int)q_ldreq->be, (int)q_ldreq->type, (int)q_ldreq->rno);
+             * telemetry gate -- through the deferred sink, not SDL_LogError:
+             * a synchronous stderr write here lands on the game thread,
+             * inside the barrier that exists to bound game-thread stalls. */
+            SDLApp_GameplayDiagnosticf(
+                "[ldreq-barrier] budget exceeded after %d steps / %llu ms — head be=%d type=%d rno=%d",
+                steps,
+                (unsigned long long)((SDL_GetTicksNS() - start_ns) / SDL_NS_PER_MS),
+                (int)q_ldreq->be, (int)q_ldreq->type, (int)q_ldreq->rno);
             break;
         }
 
@@ -952,13 +955,13 @@ void Check_LDREQ_Queue() {
      * measurement instead of an extrapolation. */
     if (steps > 0) {
         const Uint64 elapsed_ms = (SDL_GetTicksNS() - start_ns) / SDL_NS_PER_MS;
-        char line[192];
-        SDL_snprintf(line, sizeof(line),
-                     "[ldreq-barrier] drained in %d steps / %u ms / %u bytes / io-wait=%u ms (%d steps)",
-                     steps, (unsigned)elapsed_ms,
-                     (unsigned)(AFS_GetTotalBytesRequested() - start_bytes),
-                     (unsigned)(io_wait_ns / SDL_NS_PER_MS), io_wait_steps);
-        Netplay_LogGameplayDiagnostic(line);
+        /* Deferred sink in a session; backend.log when the barrier was
+         * forced offline (--ldreq-barrier-force) -- never silently lost. */
+        SDLApp_GameplayDiagnosticf(
+            "[ldreq-barrier] drained in %d steps / %u ms / %u bytes / io-wait=%u ms (%d steps)",
+            steps, (unsigned)elapsed_ms,
+            (unsigned)(AFS_GetTotalBytesRequested() - start_bytes),
+            (unsigned)(io_wait_ns / SDL_NS_PER_MS), io_wait_steps);
     }
 #endif
 }

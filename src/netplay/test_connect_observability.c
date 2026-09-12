@@ -960,6 +960,35 @@ static void test4_mt_sink(unsigned long long before_ts) {
     Netplay_TestHook_HeartbeatEnqueue("[netplay-heartbeat-test] f=1");
     Netplay_TestHook_HeartbeatDrain();
 
+    /* A refused diagnostic line is COUNTED, never silently dropped. Offer
+     * cap+3 lines with the mailbox held (the logger cannot drain between
+     * them): exactly `cap` are accepted, the 3 refusals raise the lifetime
+     * total by 3, and -- because nothing was accepted after them -- the
+     * drain writes them as an "after the last accepted line" notice. */
+    const int cap = Netplay_TestHook_HeartbeatQueueCap();
+    const int dropped_before_burst = Netplay_TestHook_HeartbeatDroppedTotal();
+    enum { BURST_EXTRA = 3, BURST_MAX = 64 };
+    char burst_storage[BURST_MAX][48];
+    const char* burst[BURST_MAX];
+    const int burst_count = cap + BURST_EXTRA;
+    EXPECT_TRUE(tag, cap > 0 && burst_count <= BURST_MAX);
+    for (int i = 0; i < burst_count && i < BURST_MAX; i++) {
+        SDL_snprintf(burst_storage[i], sizeof(burst_storage[i]),
+                     "[netplay-burst-test] i=%02d", i);
+        burst[i] = burst_storage[i];
+    }
+    const int accepted = Netplay_TestHook_HeartbeatEnqueueBurst(burst, burst_count);
+    EXPECT_TRUE(tag, accepted == cap);
+    EXPECT_TRUE(tag, Netplay_TestHook_HeartbeatDroppedTotal() - dropped_before_burst ==
+                         BURST_EXTRA);
+    Netplay_TestHook_HeartbeatDrain();
+
+    /* Refusals that precede an accepted line ride on THAT line: the logger
+     * writes the notice immediately before it. */
+    Netplay_TestHook_HeartbeatCountDrops(2);
+    Netplay_TestHook_HeartbeatEnqueue("[netplay-heartbeat-test] f=2");
+    Netplay_TestHook_HeartbeatDrain();
+
     char path[768];
     if (!obs_find_new_log(before_ts, path, sizeof(path))) {
         fail(tag, "no new netplay-*.log was created by the MT sink");
@@ -974,6 +1003,26 @@ static void test4_mt_sink(unsigned long long before_ts) {
 
     EXPECT_TRUE(tag,
                 strstr(body, "[netplay-heartbeat-test] f=1\n") != NULL);
+    {
+        /* Every accepted burst line landed; the first refused index did not. */
+        char needle[96];
+        SDL_snprintf(needle, sizeof(needle), "[netplay-burst-test] i=%02d\n", cap - 1);
+        EXPECT_TRUE(tag, strstr(body, needle) != NULL);
+        SDL_snprintf(needle, sizeof(needle), "[netplay-burst-test] i=%02d\n", cap);
+        EXPECT_TRUE(tag, strstr(body, needle) == NULL);
+
+        SDL_snprintf(needle, sizeof(needle),
+                     "[netplay-log] %d diagnostic line(s) dropped after the last "
+                     "accepted line (queue cap %d)\n",
+                     BURST_EXTRA, cap);
+        EXPECT_TRUE(tag, strstr(body, needle) != NULL);
+
+        SDL_snprintf(needle, sizeof(needle),
+                     "[netplay-log] 2 diagnostic line(s) dropped before this line "
+                     "(queue cap %d)\n[netplay-heartbeat-test] f=2\n",
+                     cap);
+        EXPECT_TRUE(tag, strstr(body, needle) != NULL);
+    }
 
     /* Every line must be present EXACTLY as written. Searching for the
      * whole line bounded by newlines is what catches a torn write: an
