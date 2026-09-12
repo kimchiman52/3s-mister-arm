@@ -163,6 +163,10 @@ assertions and anything that looks decorative over a broad sweep.
 - Load [docs/mister-wrapper.md](docs/mister-wrapper.md) when working on the `3S-ARM.rbf` + `MiSTer_3S-ARM` wrapper-core path, wrapper packaging, or wrapper deploy/smoke commands.
 - Load [docs/config.md](docs/config.md) when changing config keys, defaults, or user-facing scale/software-frame behavior.
 - Load [docs/training-select-reset.md](docs/training-select-reset.md) when touching the training-mode SELECT reset (the centre / swap / corner presets), or any in-round teardown that calls `erase_extra_plef_work` / `setup_any_data` / the `Suicide[0]` pulse. It records the defects that path hits and eight corrections to the external design doc.
+- Load [docs/reference-cps3-decomp.md](docs/reference-cps3-decomp.md) before citing the external
+  `cps3-sf3iii` tree for anything. It is a second reader, never an oracle: its build does not
+  reproduce the stock ROM, its names and structure share our PS2 lineage (so only addresses and
+  table values are independent evidence), and its per-character `DIVERGENT` annotations are wrong.
 - Load [docs/arcade-accuracy-method.md](docs/arcade-accuracy-method.md) before claiming this fork's
   arcade-accuracy approach differs from upstream's, or before treating a clean corpus run as
   evidence. It records that the gate, Statcheck and the whole replay pipeline are upstream's,
