@@ -1228,6 +1228,24 @@ static const CgRemapRange akuma_cg_ranges[] = {
     { .first = 0x710A, .last = 0x7114, .delta = -0x2526 },
     // Akuma's own resolved delta for the yuca[68..75] slot -- not Ryu's.
     { .first = 0x0CB4, .last = 0x0CB4, .delta = 0x3B60 },
+    /* 0x546B, and ONLY 0x546B (doc §8.P, §35). The default -0xCA0 sends it to
+       18379, an index the PS2 release uses NOWHERE in Akuma's data. The PS2's
+       own cell says 18345, twice, in two different shape-ok scripts:
+       nmca[21] c16 and nmca[46] c8. Both witnesses agree, every verbatim field
+       of both cells is equal, and nmca[46] is a uniquely-PINNED L-pairing whose
+       only cg_number mismatch in the whole script is that one cell. So the
+       measured hull of this observation is the single point 0x546B and the row
+       is that point -- per §8.S a row is only ever its measured hull.
+
+       DO NOT widen it down to 0x546A. That raw is genuinely ambiguous: its two
+       observations (nmca[21] c3 and c6) land on 18336 and 18337, which are
+       0x5440's and 0x5441's own sprites, and both sit inside a run where the
+       PS2 re-timed the animation (cg_ctr 1->2 and 1->3). The PS2 has no sprite
+       for 0x546A at all, so no delta is right for it and a row would be a guess
+       (§35.3). 0x546C above it is likewise not covered: it is confirmed at the
+       default by the counterpart oracle (§34.5). Widening across either would
+       sweep a gap, which §8.N forbids. */
+    { .first = 0x546B, .last = 0x546B, .delta = -0xCC2 },
 };
 
 static const CgRemapRange chunli_cg_ranges[] = {
