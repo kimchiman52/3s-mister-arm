@@ -10864,11 +10864,22 @@ none added, none cleared. Run at the default job count.
   that is visibly wrong on screen is unmeasured. It is the strongest remaining
   candidate for a future context-aware remap and is named here so the next pass
   starts there.
-- **That the five re-authored scripts are wrong anywhere else.** Only their
+- ~~**That the five re-authored scripts are wrong anywhere else.** Only their
   `cg_number` column was adjudicated. The `cg_ctr` / `cg_type` / `cg_olc_ix` /
   attack-box differences in §35.2's listing are **reported, not audited**: under
   arcade balance we want the arcade's values and that is what the port passes
-  through, but no separate pass has confirmed each of those fields is right.
+  through, but no separate pass has confirmed each of those fields is right.~~
+  **REPLACED 2026-09-12 by §35.8**, which is precise where this was not. The
+  bullet said three imprecise things: there are not five re-authored scripts
+  (there are **seven** divergent scripts, of which exactly **one** is
+  re-authored — §35.2's listing had neither the right count, the right set, nor
+  the right mechanism); "reported, not audited" conflated two different
+  statuses —
+  `cg_olc_ix` and the attack-box pair **are** audited cast-wide (§22.7),
+  `cg_ctr` and `cg_type` never had been and now are (§35.8.2); and it left open
+  a coverage question the frame-data golden suite was assumed to bear on, which
+  §35.8.4 measures and closes. The old text is kept struck through rather than
+  deleted, per this document's convention.
 - **Anything about the 33 identity-shift-mismatch or 256 unequal-L-count
   scripts**, unchanged from §34.9.
 - **That `0x546B` is the last such cell.** It is the last one *this document has
@@ -10911,3 +10922,466 @@ none added, none cleared. Run at the default job count.
   `0x546B` remains a collapse witness (it and `0x5449` both land on 18,345) and
   remains disqualified as a bracket bound for any other raw. §35.1 reads it only
   as an observation of itself, which §34.7 never forbade.
+
+---
+
+## 35.8 The "re-authored" scripts' other fields: `cg_ctr`/`cg_type` swept cast-wide for the first time, one of the seven is a PS2 script CLONE, and the frame-data goldens cannot reach any of them (twenty-first pass, 2026-09-12)
+
+**Why this exists.** §35.6 said the `cg_ctr` / `cg_type` / `cg_olc_ix` /
+attack-box differences in §35.2's listing were "reported, not audited". That
+phrasing is wrong in a way worth fixing rather than softening: *audited* and
+*undefined* are different statuses, and the bullet merged them. Where a
+cell-aligned comparison exists, those fields **are** compared — three of the
+four cast-wide. Where it does not exist, the instrument has no purchase; nothing
+was skipped. This section says which is which per field, corrects §35.2's script
+list, and answers the one question the old bullet left dangling: **`cg_ctr` is a
+frame duration, so a divergence there is frame data — do the frame-data goldens
+measure any of these animations?**
+
+**Nothing in this section changes code, data or the digest. It is a measurement
+pass over the same `rom.bin` (md5 `909f5abec4b6b21bf7d2a452a03fdfcc`) and the
+same AFS, with a short reader built on `cg_audit.py`'s own `arc_parse`,
+`ps2_parse`, `_pin_lpair` and `_VERBATIM_L`. `cg_audit.py` itself was not re-run
+and `cg_audit.json` is untouched.** Citation style is §35's: symbol anchors, not
+line numbers.
+
+### 35.8.1 §35.2's script list was wrong in both directions — seven scripts, and they are three different phenomena
+
+"Five re-authored scripts" (§35.6) is a miscount: it is §35's own **"five of the
+six raws"** with the word *raws* replaced by *scripts*. The two counts are not
+the same number and never were. Measured, comparing each arcade script's L cells
+against its PS2 counterpart on every `_VERBATIM_L` field
+(`type`, `ctr`, `olc`, `att`, `hit`, `ext`, `canc`, `eff`, `eftype`, plus `se`
+through `remap_se`), with `cg_number` excluded:
+
+| script | L cells | verbatim-mismatched | `_pin_lpair` | fields that diverge |
+|---|---|---|---|---|
+| AKUMA `nmca[21]` | 16 | **4** | `identity_shift_mismatch` | `ctr` (c1, c2, c3, c6) |
+| NECRO `nmca[28]` | 5 | **5** | `identity_shift_mismatch` | `type` (c1), `ctr` (c2-c5), `att`+`hit` (c5) |
+| HUGO `btca[15]` | 4 | **3** | `identity_shift_mismatch` | `olc` (c2, c3, c4) |
+| HUGO `dmca[82]` | 4 | **3** | `identity_shift_mismatch` | `olc` (c1, c2, c3) |
+| HUGO `dmca[83]` | 4 | **3** | `identity_shift_mismatch` | `olc` (c1, c2, c3) |
+| HUGO `dmca[86]` | 4 | **3** | `identity_shift_mismatch` | `olc` (c1, c2, c3) |
+| HUGO `dmca[87]` | 4 | **3** | `identity_shift_mismatch` | `olc` (c1, c2, c3) |
+| YUN `nmca[26]` | 7 | **0** | **`pinned`** | none — verbatim equal |
+
+Two corrections fall out, in opposite directions:
+
+- **§35.2's listing was too short.** It showed only the four scripts hosting a
+  *minority* observation. HUGO's four **majority**-observation scripts —
+  `dmca[82]`, `[83]`, `[86]`, `[87]`, which §35.2's own table names in the
+  observation column — carry the **identical** `cg_olc_ix` divergence
+  (`0 -> 992` then `0 -> 1008` twice) on 3 of their 4 L cells. HUGO's is a
+  **five-script family**, not one script, and `btca[15]` c3 is simply the member
+  that also moved a sprite.
+- **§35.2's listing was also too long.** YUN `nmca[26]` is **verbatim equal on
+  every field** and `_pin_lpair` returns **`pinned`** for it. It is not
+  re-authored at all; §35.2 already classed it correctly as sub-class (ii),
+  PURE CONTENT SUBSTITUTION, and it should never have been counted in a
+  re-authored total.
+
+**So: seven scripts carry verbatim divergence** — AKUMA `nmca[21]`, NECRO
+`nmca[28]`, and HUGO's `btca[15]` + `dmca[82]`/`[83]`/`[86]`/`[87]`.
+
+**But they are not one phenomenon, and calling all seven "re-authored" is the
+last imprecision left in §35.2.** Measured, the seven split three ways:
+
+> **(a) GENUINELY RE-TIMED — AKUMA `nmca[21]`, one script.** The PS2 changed
+> frame durations on a script that is otherwise its own. Measured: its PS2
+> counterpart is **not** a duplicate of any other PS2 script in AKUMA's ten
+> tables, and the arcade version is not a duplicate of any other arcade script
+> either. This is the case §35.2's "(i) RE-AUTHORED ANIMATION" describes, and
+> for this script it describes it exactly.
+>
+> **(b) OVERLAY SELECTION ONLY — HUGO's five.** Every one of their 15 divergent
+> cells is `cg_olc_ix` and nothing else: `0 -> 992`, then `0 -> 1008` twice. No
+> duration moved, no cell type moved, no box moved. The PS2 attaches an overlay
+> part where the arcade attaches none. That is §22.7's already-adjudicated
+> `cg_olc_ix` class, not a re-authoring.
+>
+> **(c) A SCRIPT CLONE — NECRO `nmca[28]`, and this one is new.** The PS2 did
+> not re-time this script; it **replaced** it. Measured: the PS2's `nmca[28]` is
+> an **exact duplicate of the PS2's own `nmca[27]`** — every cell, every field,
+> `cg_number` included — while the arcade's `nmca[28]` is a duplicate of
+> nothing. The arcade's two scripts are distinct; the PS2's two are the same
+> script twice.
+
+**What (c) does to NECRO `0x1E5F`, and it settles it harder than §35.2 did.**
+§35.2 recorded the PS2 cell at `nmca[28]` c5 as `6239 -> 6215` and explained it
+as a frame-correspondence failure. The stronger statement, measured: **6215 is
+exactly `remap_cg_number(0x1E47)`** — the sprite arcade `nmca[27]` c4 owns —
+and it is *not* any remap of `0x1E5F` (which is 6239, what we ship). The PS2 cell
+is not a re-drawn `0x1E5F`; it is `nmca[27]`'s cell, carried in wholesale by the
+clone. So the "minority observation" that made `0x1E5F` look ambiguous **is not
+an observation of `0x1E5F` at all**, and the `-1560` row §35.4 derived for it is
+an artifact of aligning a script against a copy of a different script. §35.4's
+refusal stands and its reason is now stronger than "would break 2 to fix 1": the
+1 was never evidence.
+
+Here too, §35's substantive claim is untouched — cell *i* of the two releases is
+still not the same animation frame in any of the seven, and the adjudication of
+the six raws in §35.2-§35.4 stands as written. What is corrected is the count,
+the membership, and now the mechanism.
+
+### 35.8.2 Per field: audited, or undefined, and which
+
+| field | status | where |
+|---|---|---|
+| `cg_olc_ix` | **AUDITED cast-wide** | §22.7: *"296 divergences — genuine overlap-selection data differences; the namespace is the character's own raw-installed OVIX, so no cross-universe indexing exists to be wrong."* Re-measured here and **reproduced exactly: 296 cells, over 107 scripts.** |
+| `cg_att_ix` / `cg_hit_ix` | **AUDITED cast-wide** | §22.7, which routes them to §15's arcade-vs-PS2 balance territory; namespaces are the raw-installed HIIT/ATTA-ATIT. (One residual, §35.8.5.) |
+| `cg_ctr` | **NOT previously audited — swept here** | not on §4.4's byte-pass list at all |
+| `cg_type` | **NOT previously audited — swept here** | not on §4.4's byte-pass list at all |
+
+**Why `cg_ctr` and `cg_type` were never in §22's scope, and it was not an
+oversight.** §22 swept *"the rest of §4.4's byte-pass list"*, and §4.4's list is
+`cg_se`, `cg_olc_ix`, `cg_hit_ix`, `cg_att_ix`, `cg_extdat..cg_eftype`,
+`cg_zoom`, `cg_next_ix`, `cg_status`. `cg_ctr` and `cg_type` are **not
+byte-passed at all** — they are the two halves of the cell's packed code word,
+unpacked and re-emitted by the loader (`arcade_char_data.c` ->
+`read_char_table`, `const Uint8 cg_ctr = code >> 8;`, which §32's RE-EMISSION
+note records as *"`cg_type`/`cg_ctr` are un-packed into two bytes"*). No remap
+can be wrong about them, so the byte-pass audit had no reason to include them —
+which is also why nothing had ever counted their divergences.
+
+**The sweep, measured.** Every arcade script with a shape-OK PS2 counterpart —
+identical cell count and identical C/L shape, the same domain `audit()` uses for
+its `cg_number` classes, which is where the cell-*i*-to-cell-*i* comparison is
+defined — over all 20 characters and all ten script tables:
+
+```
+scripts total                       14334
+scripts shape-OK with an oracle     13856
+L cells compared                   124953   (live cells; running the same sweep
+                                             with the dead-cell filter off
+                                             changes no count below by one)
+scripts with >=1 verbatim divergence  249
+
+field    cells  scripts
+type        17       10
+ctr         11        3
+olc        296      107        <- reproduces §22.7 exactly
+att         22       20
+hit         13       15
+canc       115       47
+eff        223       98
+eftype     185       79
+```
+
+**`cg_ctr` diverges in exactly three scripts cast-wide, 11 cells:**
+
+| script | cells | divergence |
+|---|---|---|
+| AKUMA `nmca[21]` | c1, c2, c3, c6 | `2 -> 1`, `2 -> 1`, `1 -> 2`, `1 -> 3` |
+| NECRO `nmca[28]` | c2, c3, c4, c5 | `3 -> 2`, `17 -> 2`, `2 -> 250`, `4 -> 3` |
+| CHUNLI `nmca[16]` | c24, c25, c26 | `2 -> 3`, `2 -> 3`, `2 -> 3` |
+
+**`cg_type` diverges in exactly ten scripts, 17 cells:** GILL `yuca[8..11]`,
+ALEX `caca[19]`, NECRO `nmca[28]`, HUGO `caca[5]`/`[6]`/`[7]`, Q `btca[15]`.
+
+**The new one is CHUNLI `nmca[16]`, and the reason no earlier pass saw it is
+structural.** It carries **zero** `cg_number` divergence — every one of its 26 L
+cells remaps to the index the PS2's own cell names. §8.P and §35 reached their
+script lists *through* wrong-sprite cells, so a script that re-times without
+re-drawing is invisible to that route. It is visible to this one. Measured, it
+is a 26-cell sequential sprite run (`0x5AC8`..`0x5ACF`, looping, then
+`0x5AA8`..`0x5AB3`) whose last three cells each hold one frame longer on PS2.
+
+### 35.8.3 What each of the eight scripts is
+
+A script index names nothing to a reader. Derived from the engine, not from the
+three-letter table name. The dispatch is
+`plmain.c` -> `plmain_lv_02[5] = { Player_normal, Player_damage, Player_catch,
+Player_caught, Player_attack }`, indexed by `routine_no[1]`.
+
+**The `nmca` index map is engine-universal** — the indices are hardcoded in
+`plpnm.c`, identical for every character. `nmca[14]`/`[15]`/`[16]` are the
+**normal** jump forward/vertical/backward and `nmca[20]`/`[21]`/`[22]` the
+**high** jump forward/vertical/backward, both through `plpnm.c` ->
+`Normal_18000`, `set_char_move_init(&wk->wu, 0, jpdat_tbl[routine_no[2] - 18][0])`;
+`pls00.c` -> `nm_16000` and `nm_17000` pick the direction off `wk->jpdir` and
+differ only in which prep state they follow. That distinction matters below and
+is easy to get wrong.
+
+| script | what it is | anchor |
+|---|---|---|
+| AKUMA `nmca[21]` | **HIGH jump, vertical** | `jpdat_tbl[7] == { 21, 13 }` for r2 25, set by `pls00.c` -> `nm_17000` `default:` (the neutral arm of its `jpdir` switch). `nm_17000` is entered only from `nmca[13]`/`Normal_17000`, the **high-jump prep**, which `pls01.c` -> `check_jump_ready` selects only when `!(spmv_ng_flag & DIP_HIGH_JUMP_DISABLED) && wk->cp->waza_flag[2] != 0` (also `check_hijump_only`) |
+| AKUMA `nmca[15]` (majority host) | **NORMAL jump, vertical** | `jpdat_tbl[4] == { 15, 10 }` for r2 22, set by `pls00.c` -> `nm_16000` `default:`; also entered by `comm_jpss` from `nmca[17]`/`[18]`/`[19]` c1 and by `comm_jmp` from `saca[0]`/`saca[6]` c13 |
+| CHUNLI `nmca[16]` | **NORMAL jump, backward** | `pls00.c` -> `nm_16000`, `case JUMP_DIR_BACKWARD: routine_no[2] = 23`, `jpdat_tbl[5] == { 16, 11 }`; also entered by `comm_jmp` from her own `dmca[3]` c10 |
+| NECRO `nmca[28]` | **a DEAD SLOT holding the air-parry animation** — see below | — |
+| NECRO `nmca[16]` (majority host) | **NORMAL jump, backward** | `jpdat_tbl[5] == { 16, 11 }`, r2 23 |
+| NECRO `nmca[22]` (majority host) | **HIGH jump, backward** | `jpdat_tbl[8] == { 22, 14 }` for r2 26, set by `pls00.c` -> `nm_17000` `case JUMP_DIR_BACKWARD` |
+| HUGO `dmca[82]`, `[83]` | **electric-attribute hit reaction, standing**, levels 0 and 1 | `plpdm.c` -> `dm_reaction_table[43] == { r_no 12, char_ix 82, 0 }`; `plpdm_lv_00[12] == Damage_12000`, which does `wk->dm_ix = wk->as->char_ix + wk->wu.dm_attlv`. Reaction 43 is produced **only** by `hitcheck.c` -> `change_damage_attribute` `case 2:` -> `attr_thunder_tbl` (measured: base ids 32-44 all map to 43) |
+| HUGO `dmca[86]`, `[87]` | **electric-attribute hit reaction, the `pat_status >= 32` variant**, levels 0 and 1 | `dm_reaction_table[68] == { 13, 86, 0 }`; `plpdm_lv_00[13] == Damage_12000`. Reaction 68 is `hitcheck.c` -> `get_kagami_damage` applied to 43 (measured: `kagami_damage_tbl[43-32] == 68`), then `attr_thunder_tbl` over the same band. *kagami* (屈み) is **crouching** — §20.4's "in/after a knockdown" gloss is Elena-specific (her only `pat_status >= 32` sources are two `comm_sps` cells in knocked-down `btca` scripts) and must **not** be carried over to HUGO |
+| HUGO `btca[15]` | **electric-attribute hit reaction, AIRBORNE (buttobi)** | `dm_reaction_table[104] == { 18, 15, 0 }`; `plpdm_lv_00[18] == Damage_18000`, which installs **koc 6**. Reaction 104 is `attr_thunder_tbl` over the buttobi band, and `sky_nm_damage_tbl`/`sky_sp_damage_tbl` also map 43 -> 104 |
+| YUN `nmca[26]` | **LOW (crouching) parry — not re-authored, listed for completeness** | `plpnm.c` -> `Normal_31000`, `set_char_move_init(&wk->wu, 0, routine_no[2] - 7)` with r2 33; 33 is set by `hitcheck.c` -> `defense_ground_cps3`/`defense_ground_ps2` in the `att.guard & 1` (low-attack) branch, gated on `waza_flag[4]`, the down-parry flag. `Normal_31000`'s body is `add_sp_arts_gauge_paring` + `pp_pulpara_blocking` |
+| YUN `nmca[30]` (majority host) | **guard stance, the `check_attbox_dir != 0` variant** | `pls01.c` -> `check_defense_lever`, `else if (check_attbox_dir(wk)) wk->wu.routine_no[2] = 28;` -> `plpnm.c` -> `Normal_27000`, `set_char_move_init(&wk->wu, 0, routine_no[2] + 2)`; also `pls01.c` -> `check_defense_kind`, `set_char_move_init(&wk->wu, 0, rnum + 28)` with `rnum == 2` |
+
+**HUGO's five are the same family as Elena's #363 crash class**, reached by the
+identical selection chain §20.4 derived for her — and §20.4 already graded that
+chain **"CONDITIONAL, routine in any Ryu/Necro/Urien match"** for the `dmca`
+door and **"ROUTINE"** for `btca[15]`. That HUGO's divergence is `cg_olc_ix` and
+nothing else fits: the PS2 attaches an overlay part (`0 -> 992`, `0 -> 1008`)
+where the arcade attaches none, which is §22.7's already-adjudicated class.
+One correction to carry forward from §20.4 and one addition: its
+`pat_status >= 32` door is **crouching** in general (`get_kagami_damage`,
+*kagami* = 屈み) and only *happens* to be knockdown-only for Elena; and the
+electric attackers are not only the three §20.4 names. Measured over the
+`level` byte of all **2,080** arcade `atit` records (`structs.h` -> `UNK_7`,
+16 bytes, `level` at +1; `charset.c`: `wk->at_attribute = (wk->att.level >> 4)
+& 3`), `at_attribute == 2` appears **14 times, in exactly three characters:
+NECRO 8, TWELVE 4, URIEN 2** — and **TWELVE is not in §20.4's list**. (The
+`_ef13` projectile records that carry the Denjin door are counted separately
+and were not re-censused here; §20.4 already names them.)
+
+**NECRO `nmca[28]`: no writer exists — a dead slot, and its content says what
+the slot was for.**
+
+*No writer, established both ways.* No C site installs `nmca[28]` on a player:
+every literal and computed `set_char_move_init*(&wk->wu, 0, …)` argument in the
+tree was enumerated — constants 0-14, 18, 23, 27, 44, 46-50; `jpdat_tbl` giving
+14-22; `routine_no[2] + 2` giving 29-32; `routine_no[2] - 7` giving 24-26;
+`rnum + 28` with `rnum` in 1..3 giving 29-31; `nmPB_data` giving 38-42;
+`nmCE_data` giving 43 and 45 — and **none of them yields 28**. The only two
+`set_char_move_init(&ewk->wu, 0, 28)` calls are `eff85.c` (*"Bird on Chun-Li's
+stage"*, whose table comes from `eff85_char_index_tbl`, a stage-prop index) and
+`effm2.c`, both on a `WORK_Other`, not a `PLW`. And no transfer opcode
+(`comm_jmp`/`comm_jpss`/`comm_jsr`) in any of NECRO's ten tables names
+`(koc 0, ix 28)`; the one hit a deliberately broad operand scan produces is
+`caca[5]` c0 under `comm_ngda`, whose operands are **not** an `nmca`
+selection — `charset.c` -> `comm_ngda` stores them in `wk->cmyd`, which
+`plpcu.c` consumes as `set_char_move_init(&wk->wu, 3, emwk->wu.cmyd.ix)`, i.e. a
+**`cuca`** index for the *caught* player, with `cmyd.koc` used as
+`ukemi_ok_timer`.
+
+*What the slot was for, from its content.* Measured, the arcade's `nmca[28]` is
+the **air-parry animation**: sprites `0x1E78`..`0x1E7B` (7800-7803) carrying
+`att 1 / hit 0`, which is cell-for-cell the same sprite run and the same box
+word as `nmca[27]`, the air parry proper. The two differ only in the exit —
+`nmca[27]` ends `comm_jpss koc=0 ix=15` into the **vertical** normal jump,
+`nmca[28]` ends `comm_jmp koc=0 ix=16` into the **backward** normal jump. That
+is exactly the pair the engine's own `-7` rule would want: `hitcheck.c` ->
+`defense_sky_cps3` sets **two** air-parry routines (`0x22` under
+`DIP_AIR_PARRY_DISABLED`/`waza_flag[5]`, `0x23` under
+`DIP_ANTI_AIR_PARRY_DISABLED`/`waza_flag[6]`), which under `routine_no[2] - 7`
+would be `nmca[27]` and `nmca[28]` — but `plpnm.c` -> `Normal_35000` serves
+**both** routines (`plpnm_lv_00[34] == plpnm_lv_00[35] == Normal_35000`) and
+**hardcodes 27**. The slot is the second air parry, and the engine never asks
+for it.
+
+*And the PS2 agrees it is dead.* §35.8.1(c): the PS2's `nmca[28]` is a verbatim
+clone of the PS2's own `nmca[27]`. Both releases treat the slot as spare; the
+arcade left its own content in it, the PS2 overwrote it with a copy of the live
+sibling. **This is why NECRO `nmca[28]`'s `cg_ctr` divergence is not a defect in
+either direction** — nothing plays the script.
+
+*The residual.* `k7_entry_walk` reports **0 dead cells** in it, but that
+instrument fails toward live for anything it cannot follow (§26.10.2) and is not
+evidence of a writer. The one thing not checked is whether the **arcade's own**
+dispatch tables differ from this port's `plpnm_lv_00_cps3[]` — that needs the
+CPS3 disassembly, was not done here, and is the only route by which the slot
+could be live on hardware. Recorded as the open edge of an otherwise closed
+argument.
+
+### 35.8.4 The frame-data golden verdict: NONE of the seven is reachable by the suite, and not because nobody authored an entry
+
+**`cg_ctr` is a frame duration.** `charset.c` -> `char_move`:
+`if (--wk->cg_ctr == 0) { check_cm_extended_code(wk); }` — the cell's own
+per-frame countdown, and the frame-data overlay's active-frame accumulator reads
+it directly (`frame_data_overlay.c`, `s16 ctr = wk->cg_ctr;` feeding
+`fd_engine_active_count`). So on an **attack** script a `cg_ctr` divergence would
+be an active-frames divergence and the golden suite would see it. The question is
+only whether these scripts are attack scripts.
+
+**They are not, and the exclusion is in the instrument, not the corpus.**
+`frame_data_overlay.c`'s move-start scan opens a measurement window on exactly
+one edge, and says why in its own comment:
+
+```c
+/* If no move is active, look for a starting edge on either player.
+ * Filter to attacker-initiated transitions (r1 ∈ {2,3,4}): r1=4 is
+ * attacking, r1=2/3 are throw motions. r1=1 is exclusively defender
+ * reaction (blockstun/hitstun) and would otherwise spam spurious
+ * MOVE_STARTs every time the dummy gets hit. */
+if (!g_cur.active) {
+    for (int i = 0; i < 2; i++) {
+        if (g_prev[i].r1 == 0 &&
+            (now[i].r1 == 4 || now[i].r1 == 2 || now[i].r1 == 3)) {
+```
+
+Against `plmain_lv_02`, and measured over every `set_char_move_init` site in the
+two state handlers:
+
+- **`nmca` is exactly `routine_no[1] == 0`.** `plpnm.c` -> `Player_normal` and
+  its `Normal_*` sub-states install koc **0 at all 40 of their sites and no
+  other koc** (measured). r1 = 0 is the state the scan *waits in*, and
+  `attacker_idle` is **defined** as the attacker's r1 returning to 0 — so the
+  measured window ends precisely when an `nmca` script resumes. No `nmca` cell's
+  duration can ever fall inside a window.
+- **`dmca` and `btca` are exactly `routine_no[1] == 1`.** `plpdm.c` ->
+  `Player_damage` installs koc **1 at 12 sites and koc 6 at 15 sites, and no
+  other koc** (measured). r1 = 1 is the value the filter names and rejects.
+
+**The `adv` door is closed separately.** Most of the suite's 1,491 entries
+assert `adv`, and `adv` is the one number taken from the defender at all. It is
+computed as `defender_idle - attacker_idle` — and `defender_idle` is a *state*
+transition, not a cell. The defender leaves `Player_damage` when
+`wk->wu.cmwk[14]` runs out (`plpdm.c`,
+`if (wk->wu.cmwk[14] <= 0) { wk->wu.routine_no[1] = 0; … }`), and `cmwk[14]` is
+loaded from `_damage_pause_table[…][wk->wu.dm_attlv]` /
+`_guard_pause_table[…][wk->wu.dm_attlv]` — **never from the reaction script's own
+`cg_ctr`**. So even the one number the suite takes from the defender does not
+measure a `dmca`/`btca` cell duration.
+
+**The corpus side agrees, independently.** Verified by reading all 100
+`tools/frame-data/corpus-*.yaml` (1,491 entries), `CORPUS-AUTHORING.md`,
+`compile_corpus.py` -> `validate_entry_shape()`/`compile_entry()` and
+`check_frame_data.py` -> `evaluate_entry()`:
+
+- **No corpus field references an animation script table or index anywhere.**
+  The complete entry key set is `label`, `setup`, `input`, `outcome`, `qjson`,
+  `expect` — a free-text label, an input macro, and an arcade-oracle row name —
+  and `setup` itself carries only `dist` and `dummy`.
+  A grep for `nmca|dmca|atca|btca|saca` over the corpora and the two tools
+  returns nothing. Coverage of a *script index* therefore cannot be read off a
+  corpus at all; it has to be decided from the instrument's domain, which is
+  what the r1 filter above does.
+- **No entry exercises a non-attack state.** Across all 100 files: no idle or
+  stance entry, no walk, no crouch *transition*, no taunt (except
+  `corpus-q.yaml` -> `q-taunt`, the only non-attack move measured anywhere in
+  the suite), no dizzy, no wake-up, no win/lose pose, no damage reaction and no
+  guard animation. The measured outcome census is `BLOCK` 573, `HIT` 460,
+  `WHIFF` 433, `NONE` 25 — and every `BLOCK` and `HIT` entry is an **attacker**
+  measurement taken while the dummy guards or is hit; `setup.dummy` only sets
+  the training guard/stance slot (`input_script.c` ->
+  `input_script_apply_guard_mode`), it does not make the dummy a subject. The 24
+  `<char>-jump-none` entries assert `outcome: NONE` with no `expect:` — **zero**
+  FINAL lines, so even the attacker's own jump is unmeasured.
+- **There is no PARRY outcome.** `compile_corpus.py` -> `OUTCOMES = ("HIT",
+  "BLOCK", "WHIFF", "NONE")`. "Parry" occurs 50 times across the corpora and
+  **no occurrence is an entry**: 49 are prose comments about the arcade
+  oracle's own `Parry` High/Low booleans, and the fiftieth is inside one
+  `xfail:` reason string. No `label:` and no `input:` names a parry. So YUN
+  `nmca[26]`'s state — and NECRO `nmca[28]`'s band — have no entry either.
+- Round-end is doubly blocked: `frame_data_overlay.c` and `frame_trace.c` both
+  early-return unless `Is_Training_Mode(Mode_Type)`, and `input_script.c` ->
+  `input_script_restore_vitality()` (`plw[0].wu.vital_new = 160; plw[1].wu.vital_new = 160;`)
+  runs on `INPUT_SCRIPT_DIRECTIVE_LABEL` — every entry's `L` directive — so no
+  player can reach zero health in a run.
+
+**Per-script verdict:**
+
+| script | animation | covered by a golden? |
+|---|---|---|
+| AKUMA `nmca[21]` | **high jump, vertical** | **NO** — `nmca` is r1 = 0, outside the move-start filter. `akuma-jump-none` exists and asserts nothing. |
+| NECRO `nmca[28]` | **dead slot** holding the air-parry animation | **NO**, and stronger than the rest: no writer exists (§35.8.3), so **nothing plays it** — not a golden, not a device test, not a player. |
+| HUGO `btca[15]` | electric hit reaction, airborne victim / electric KO | **NO** — `btca` is r1 = 1, the value the filter names and rejects. |
+| HUGO `dmca[82]` | electric hit reaction, standing, `dm_attlv` 0 | **NO** — same. |
+| HUGO `dmca[83]` | electric hit reaction, standing, `dm_attlv` 1 | **NO** — same. |
+| HUGO `dmca[86]` | electric hit reaction, `pat_status >= 32`, `dm_attlv` 0 | **NO** — same. |
+| HUGO `dmca[87]` | electric hit reaction, `pat_status >= 32`, `dm_attlv` 1 | **NO** — same. |
+| *(CHUNLI `nmca[16]`)* | **normal jump, backward** | **NO** — `nmca`, r1 = 0. Listed because §35.8.2 found it; it is not one of §8.P's scripts. |
+| *(YUN `nmca[26]`)* | low (crouching) parry — **not re-authored** | n/a — nothing to cover. |
+
+A second, independent reason the HUGO five are out of reach even if the filter
+were widened: reaching them at all needs an attacker whose `at_attribute == 2`,
+which is **NECRO, TWELVE or URIEN** and nobody else (§35.8.3). No corpus entry
+pits two characters against each other for the defender's sake — `setup.dummy`
+selects a guard mode, not an opponent moveset.
+
+**All eight are uncovered, and no corpus entry could change that.** This is not
+"nobody wrote the entry": the suite measures P1-as-attacker attack windows, and
+these are a jump state, a defensive state and a damage-reaction family. Writing
+a golden for them would require a different instrument, not a different corpus.
+§35.8.5 names what the gap actually is, and it is small.
+
+**No corpus was run to establish any of this**, and none needed to be: the r1
+filter, `plmain_lv_02`, the two handlers' koc censuses and the `cmwk[14]` chain
+are all static facts about the instrument's domain. Running the suite could only
+confirm that entries which cannot exist do not exist.
+
+### 35.8.5 What this leaves, and what it does not establish
+
+**The residual gap, stated exactly.** After this pass the unaudited surface in
+these scripts is: **11 `cg_ctr` cells in 3 scripts and 17 `cg_type` cells in 10
+scripts, cast-wide, enumerated by name in §35.8.2, none of them measured by any
+instrument in the tree.** That is the whole of it. It is not a class, it is a
+list. Under arcade balance the port passes the arcade's values through
+unchanged, which is what we want; what is unconfirmed is only that the arcade's
+values are what the arcade *renders*, and no oracle in this tree can say.
+
+- **This does not establish that the seven re-authored scripts render correctly
+  on device.** Nothing was observed on screen and no screenshot was taken — the
+  same limit §35.6 records for the four cells §35.1 fixed.
+- **NECRO `nmca[28]` is dead on a source-level argument, not a hardware one.**
+  §35.8.3 enumerates every writer the port's C and the character data could
+  supply and finds none, and the PS2 clone corroborates it — but the arcade's
+  own dispatch tables were not disassembled. That is the single route by which
+  the slot could be live on CPS3, and it is left open.
+- **One measurement disagreement is flagged, not resolved.** This sweep counts
+  `cg_att_ix` **22** and `cg_hit_ix` **13** value divergences where §22.7
+  reports **12** and **9**. The methods differ (this sweep is every shape-OK
+  script's L cells with `cg_number` excluded; §22.7's is "cell-aligned live
+  cells" and may apply a §30 grid filter this one does not). `cg_olc_ix`
+  reproduces §22.7 exactly at 296, so the two instruments agree where they are
+  plainly comparable. The att/hit difference is **not adjudicated here** and is
+  recorded as an open item for whoever next touches §22.
+- **The 249-script verbatim-divergence total is not a defect count.** Most of it
+  is `eff`/`eftype`/`canc`/`olc`, each already adjudicated as arcade-faithful
+  balance or namespace data (§22.5, §22.7). It is quoted only to size the
+  denominator the `ctr`/`type` numbers sit in.
+- **Nothing here reopens §35.2-§35.4.** The six raws' adjudication, the
+  majority-reading verdicts and the "no row is warranted" table are all
+  unchanged; only §35.2's *script list* is corrected, in §35.8.1.
+
+### 35.8.6 Corrections to earlier sections (recorded, not silently edited)
+
+- **§35.6's "the five re-authored scripts" is WITHDRAWN — there are seven
+  divergent scripts, and only one of them is re-authored.** The number was
+  §35's own "five of the six **raws**" with the wrong noun. The seven are AKUMA
+  `nmca[21]`, NECRO `nmca[28]`, HUGO `btca[15]` and HUGO
+  `dmca[82]`/`[83]`/`[86]`/`[87]`; they are three different phenomena and
+  §35.8.1 separates them. The struck-through bullet is left in place in §35.6.
+- **§35.6's "reported, not audited" is WITHDRAWN as a single status.** Two of
+  the four fields it named — `cg_olc_ix` and the `cg_att_ix`/`cg_hit_ix` pair —
+  were already audited cast-wide by §22.7 when §35 was written. The other two,
+  `cg_ctr` and `cg_type`, were never in §22's scope because they are not on
+  §4.4's byte-pass list, and are swept for the first time in §35.8.2.
+- **§35.2's re-authored listing was incomplete.** It showed AKUMA `nmca[21]`,
+  HUGO `btca[15]`, NECRO `nmca[28]` and YUN `nmca[26]`. HUGO `dmca[82]`,
+  `[83]`, `[86]` and `[87]` — scripts §35.2's own observation column names —
+  carry the identical `cg_olc_ix` divergence and were not shown. The listing's
+  per-cell values, and everything §35.2 concluded from them, are re-measured
+  here and confirmed unchanged.
+- **§35.2's sub-class (ii) is confirmed and sharpened.** YUN `nmca[26]` is
+  measured **verbatim equal on every field** and `_pin_lpair` returns
+  **`pinned`** for it. §35.2 classed it correctly; §35.6 then wrongly swept it
+  into a "re-authored" count.
+- **§35.2's sub-class (i) does not cover all of what it was applied to.** It
+  reads one mechanism — the PS2 re-drew and re-timed the animation — onto every
+  script it listed. Measured, only **AKUMA `nmca[21]`** is that. HUGO's five
+  move `cg_olc_ix` and nothing else (overlay selection, §22.7's class), and
+  **NECRO `nmca[28]` is a script CLONE**: its PS2 counterpart is a verbatim
+  duplicate of the PS2's own `nmca[27]` (§35.8.1(c)). Sub-class (i)'s *verdict*
+  — the cell-`i` disagreement is not evidence about the raw — holds for all
+  three; its *explanation* holds for one.
+- **§35.2's and §35.4's account of NECRO `0x1E5F` is superseded by a stronger
+  one.** They treated the PS2's 6215 as a re-drawn frame at an unreliable
+  alignment. Measured, **6215 is exactly `remap_cg_number(0x1E47)`** — the
+  sprite arcade `nmca[27]` c4 owns — carried into `nmca[28]` by the clone. The
+  minority observation is not an observation of `0x1E5F`, so §35.4's `-1560`
+  row is refused for a better reason than the 2-vs-1 trade it cites.
+- **§20.4's `pat_status >= 32` gloss must not be generalised.**
+  `get_kagami_damage` is the **crouching** door (*kagami*, 屈み); that it is
+  reachable for Elena only from knocked-down `btca` scripts is a fact about
+  Elena's `comm_sps` cells, not about the door. HUGO's `dmca[86]`/`[87]` are
+  read here as the crouching variant, not a post-knockdown one.
+- **§20.4's electric-attacker list is short by one.** Measured over all 2,080
+  arcade `atit` records, `at_attribute == 2` appears in **NECRO (8), TWELVE
+  (4), URIEN (2)** — §20.4 names Ryu (via the `_ef13` Denjin projectile), Necro
+  and Urien, and does not name **TWELVE**. Nothing in §20.4's Elena verdicts
+  changes; the reachability is if anything slightly broader than stated.
+- **§4.4's byte-pass list is complete as written and is NOT extended here.**
+  `cg_ctr`/`cg_type` are genuinely not byte-passed — the loader unpacks and
+  re-emits them (§32's RE-EMISSION). The correction is to §22's *scope
+  sentence*, not to §4.4: "the rest of §4.4's byte-pass list" is not the same
+  set as "every field of a cell", and §35.6 read it as though it were.
