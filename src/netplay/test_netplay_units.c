@@ -49,6 +49,8 @@
 #error "test_netplay_units.c needs BOTH -DENABLE_NETPLAY_TESTS and -DNETPLAY_TEST_HOOKS. Half of these blocks reach production decisions through DirectP2P_TestHook_* / Natpmp_TestHook_* trampolines; without the hooks this TU would compile to a harness that silently tests less than it claims."
 #endif
 
+#include "hud/hud_strip.h"    /* HUD_STRIP_LABEL_MAX_W, for the label width pin */
+#include "hud/versus_score.h" /* the pairing win tally's pure core + engine predicate */
 #include "netplay/connect_fail.h"
 #include "netplay/direct_p2p.h"
 #include "netplay/natpmp.h"
@@ -63,6 +65,7 @@
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "sf33rd/Source/Game/system/ramcnt.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
+#include "sf33rd/Source/Game/ui/sc_sub.h" /* SSGetDrawSizePro: the metric the strip draws with */
 #include "structs.h"
 
 #include <SDL3/SDL.h>
@@ -102,7 +105,7 @@ static int checks_run = 0;
  * computes, so commenting a call out of the dispatch is a FAILURE and
  * not a smaller green run. The assertion floor catches the other shape:
  * a test that runs but whose body was short-circuited. */
-#define EXPECTED_TESTS 20
+#define EXPECTED_TESTS 21
 
 /* The real figure is 1100 and is printed in the summary. This sits below
  * it and above what a short-circuited run would produce. Not an exact
@@ -2484,6 +2487,263 @@ static int unit_rematch_match_start_state(void) {
 
 /* ================================================================== */
 
+/* The pairing win tally (src/hud/versus_score.c). Pure core first --
+ * Observe/OnLoad/Confirm driven with literal frames, the way advance_game,
+ * the GekkoLoadEvent handler and run_netplay drive them -- then the engine
+ * predicate over the real globals, then the lifetime rules the design says
+ * are most likely to regress: the tally SURVIVES a char-select trip and a
+ * rematch's match-start reset, and RESETS at the session boundary.
+ *
+ * What this cannot honestly pin: that Netplay_Run's EXITING branch and
+ * Netplay_BeginDirectP2P actually call VersusScore_Reset(), and that the
+ * main-menu VERSUS case does. Driving those needs a live Gekko session /
+ * the menu task; deleting any of the three calls leaves this test green.
+ * The engine predicate and the core ARE pinned, so what is left unproven
+ * is placement, not logic. */
+static int unit_versus_score_lifetime(void) {
+    tests_run++;
+    fprintf(stderr, "[test_netplay_units] versus_score_lifetime: rollback-safe increment, "
+                    "survives char select + rematch, resets only at the session boundary\n");
+    const int fails_before = fail_count;
+    const int W = 8; /* the default prediction window, netplay.c configure_gekko */
+
+    /* --- 1. A clean pairing is 0-0 with nothing pending. --- */
+    VersusScore_Reset();
+    EXPECT_TRUE("vs-reset-p1", VersusScore_Get(0) == 0);
+    EXPECT_TRUE("vs-reset-p2", VersusScore_Get(1) == 0);
+    EXPECT_TRUE("vs-reset-pending", VersusScore_PendingFrame() == -1);
+    EXPECT_TRUE("vs-get-oob", VersusScore_Get(2) == 0 && VersusScore_Get(-1) == 0);
+
+    /* --- 2. One match end, confirmed exactly once at head - R >= W. ---
+     * Frames 1..99 fighting, 100 is the first winner-scene frame. */
+    for (int f = 1; f <= 99; f++) {
+        VersusScore_Observe(false, 0, f);
+    }
+    EXPECT_TRUE("vs-no-edge-yet", VersusScore_PendingFrame() == -1);
+    VersusScore_Observe(true, 1, 100);
+    EXPECT_TRUE("vs-edge-latched-100", VersusScore_PendingFrame() == 100);
+    EXPECT_TRUE("vs-not-applied-on-edge", VersusScore_Get(1) == 0);
+    /* The winner scene stays up; every later frame is concluded too, and
+     * none of them is a second edge. */
+    for (int f = 101; f <= 107; f++) {
+        VersusScore_Observe(true, 1, f);
+        EXPECT_FALSE("vs-confirm-inside-window", VersusScore_Confirm(f, W));
+    }
+    EXPECT_TRUE("vs-still-pending-107", VersusScore_PendingFrame() == 100);
+    EXPECT_TRUE("vs-still-zero-107", VersusScore_Get(1) == 0);
+    VersusScore_Observe(true, 1, 108);
+    EXPECT_TRUE("vs-confirm-at-108", VersusScore_Confirm(108, W));
+    EXPECT_TRUE("vs-p2-one", VersusScore_Get(1) == 1);
+    EXPECT_TRUE("vs-p1-zero", VersusScore_Get(0) == 0);
+    EXPECT_TRUE("vs-pending-cleared", VersusScore_PendingFrame() == -1);
+    /* Confirm again, and keep observing the winner scene: no double count. */
+    EXPECT_FALSE("vs-confirm-idempotent", VersusScore_Confirm(200, W));
+    for (int f = 109; f <= 300; f++) {
+        VersusScore_Observe(true, 1, f);
+        (void)VersusScore_Confirm(f, W);
+    }
+    EXPECT_TRUE("vs-no-double-count", VersusScore_Get(1) == 1);
+
+    /* --- 3. The sharp edge: rollback re-simulates the end frame. ---
+     * Back in a fight (char select, then a new match). The edge lands at
+     * 400 with P1 winning; before it confirms, a load to 397 (< 400) erases
+     * it and the corrected timeline ends the match on the SAME frame. The
+     * increment must land once. */
+    for (int f = 301; f <= 399; f++) {
+        VersusScore_Observe(false, 0, f);
+    }
+    VersusScore_Observe(true, 0, 400);
+    VersusScore_Observe(true, 0, 401);
+    VersusScore_Observe(true, 0, 402);
+    EXPECT_TRUE("vs-rb-latched-400", VersusScore_PendingFrame() == 400);
+    VersusScore_OnLoad(397, false); /* state AT 397 restored: not concluded */
+    EXPECT_TRUE("vs-rb-load-erases", VersusScore_PendingFrame() == -1);
+    VersusScore_Observe(false, 0, 398);
+    VersusScore_Observe(false, 0, 399);
+    VersusScore_Observe(true, 0, 400); /* the corrected timeline re-observes it */
+    EXPECT_TRUE("vs-rb-relatched-400", VersusScore_PendingFrame() == 400);
+    for (int f = 401; f <= 407; f++) {
+        VersusScore_Observe(true, 0, f);
+        EXPECT_FALSE("vs-rb-inside-window", VersusScore_Confirm(f, W));
+    }
+    VersusScore_Observe(true, 0, 408);
+    EXPECT_TRUE("vs-rb-confirm-408", VersusScore_Confirm(408, W));
+    EXPECT_TRUE("vs-rb-once-p1", VersusScore_Get(0) == 1);
+    EXPECT_TRUE("vs-rb-once-p2", VersusScore_Get(1) == 1);
+
+    /* --- 4. Rollback where the corrected timeline ends the match LATER
+     * (the speculative KO was a misprediction). Edge at 500, load to 496,
+     * corrected timeline fights on to 504. One increment, stamped 504, so
+     * it confirms at 512 and not at 508. --- */
+    for (int f = 409; f <= 499; f++) {
+        VersusScore_Observe(false, 0, f);
+    }
+    VersusScore_Observe(true, 1, 500);
+    VersusScore_OnLoad(496, false);
+    EXPECT_TRUE("vs-late-erased", VersusScore_PendingFrame() == -1);
+    for (int f = 497; f <= 503; f++) {
+        VersusScore_Observe(false, 0, f);
+    }
+    VersusScore_Observe(true, 1, 504);
+    EXPECT_TRUE("vs-late-relatched-504", VersusScore_PendingFrame() == 504);
+    for (int f = 505; f <= 511; f++) {
+        VersusScore_Observe(true, 1, f);
+        EXPECT_FALSE("vs-late-not-at-508", VersusScore_Confirm(f, W));
+    }
+    VersusScore_Observe(true, 1, 512);
+    EXPECT_TRUE("vs-late-confirm-512", VersusScore_Confirm(512, W));
+    EXPECT_TRUE("vs-late-p2-two", VersusScore_Get(1) == 2);
+
+    /* --- 5. A load that does NOT reach the edge frame (L >= R) keeps the
+     * latch: R's own simulation is not re-run, and the restored state is
+     * already concluded, so the re-seeded detector sees no new edge. --- */
+    for (int f = 513; f <= 599; f++) {
+        VersusScore_Observe(false, 0, f);
+    }
+    VersusScore_Observe(true, 0, 600);
+    VersusScore_Observe(true, 0, 601);
+    VersusScore_OnLoad(600, true); /* L == R: post-R state restored */
+    EXPECT_TRUE("vs-load-at-R-keeps", VersusScore_PendingFrame() == 600);
+    VersusScore_Observe(true, 0, 601);
+    VersusScore_Observe(true, 0, 602);
+    EXPECT_TRUE("vs-load-at-R-no-second-edge", VersusScore_PendingFrame() == 600);
+    VersusScore_OnLoad(601, true); /* L > R likewise */
+    EXPECT_TRUE("vs-load-past-R-keeps", VersusScore_PendingFrame() == 600);
+    for (int f = 602; f <= 608; f++) {
+        VersusScore_Observe(true, 0, f);
+        (void)VersusScore_Confirm(f, W);
+    }
+    EXPECT_TRUE("vs-load-past-R-once", VersusScore_Get(0) == 2);
+
+    /* --- 6. Offline (window 0): the edge applies on the frame it is seen. --- */
+    VersusScore_Observe(false, 0, 700);
+    VersusScore_Observe(true, 1, 701);
+    EXPECT_TRUE("vs-offline-immediate", VersusScore_Confirm(701, 0));
+    EXPECT_TRUE("vs-offline-p2-three", VersusScore_Get(1) == 3);
+
+    /* --- 7. The engine predicate over the real globals. --- */
+    const u8 saved_g_no[4] = { G_No[0], G_No[1], G_No[2], G_No[3] };
+    const s8 saved_winner = Winner_id;
+    const s8 saved_demo = Demo_Flag;
+    const ModeType saved_mode = Mode_Type;
+    const u8 saved_pl_wins[2] = { PL_Wins[0], PL_Wins[1] };
+
+    G_No[0] = 2; /* Main_Jmp_Tbl[2] = Game */
+    G_No[1] = 2; /* Game02: fighting */
+    Demo_Flag = 1;
+    Mode_Type = MODE_VERSUS;
+    EXPECT_FALSE("vs-pred-fighting", VersusScore_EngineMatchConcluded());
+    G_No[1] = 3; /* Game03: winner scene */
+    EXPECT_TRUE("vs-pred-winner-scene-versus", VersusScore_EngineMatchConcluded());
+    Mode_Type = MODE_NETWORK;
+    EXPECT_TRUE("vs-pred-winner-scene-network", VersusScore_EngineMatchConcluded());
+    Mode_Type = MODE_ARCADE;
+    EXPECT_FALSE("vs-pred-arcade-excluded", VersusScore_EngineMatchConcluded());
+    Mode_Type = MODE_REPLAY;
+    EXPECT_FALSE("vs-pred-replay-excluded", VersusScore_EngineMatchConcluded());
+    Mode_Type = MODE_VERSUS;
+    Demo_Flag = 0; /* attract loop: Next_Demo_Loop leaves Mode_Type alone */
+    EXPECT_FALSE("vs-pred-attract-excluded", VersusScore_EngineMatchConcluded());
+    Demo_Flag = 1;
+    G_No[0] = 1; /* Loop_Demo */
+    EXPECT_FALSE("vs-pred-loop-demo-excluded", VersusScore_EngineMatchConcluded());
+    G_No[0] = 2;
+    G_No[1] = 12; /* Game12: character select */
+    EXPECT_FALSE("vs-pred-char-select", VersusScore_EngineMatchConcluded());
+
+    /* --- 8. Lifetime over the engine-bound path: a full set. ---
+     * Fresh pairing. Match 1 (P2 wins) -> char select -> match 2 (P1 wins),
+     * with the rematch's match-start reset and the engine's own PL_Wins
+     * zeroing in between, exactly as the real flow does them. */
+    VersusScore_Reset();
+    G_No[1] = 2;
+    Winner_id = 1;
+    VersusScore_TickLocal();
+    VersusScore_TickLocal();
+    EXPECT_TRUE("vs-life-fighting-0-0", VersusScore_Get(0) == 0 && VersusScore_Get(1) == 0);
+    G_No[1] = 3;
+    VersusScore_TickLocal();
+    EXPECT_TRUE("vs-life-match1-p2", VersusScore_Get(1) == 1);
+    VersusScore_TickLocal();
+    VersusScore_TickLocal();
+    EXPECT_TRUE("vs-life-match1-held", VersusScore_Get(1) == 1);
+
+    /* Trip through character select (VS_Result case 6 -> Game12 -> Game01
+     * -> Game02) with a different Winner_id staged and PL_Wins reset the
+     * way Game01_Sub does. */
+    G_No[1] = 12;
+    VersusScore_TickLocal();
+    G_No[1] = 1;
+    PL_Wins[0] = 0;
+    PL_Wins[1] = 0;
+    VersusScore_TickLocal();
+    G_No[1] = 2;
+    VersusScore_TickLocal();
+    EXPECT_TRUE("vs-life-survives-char-select", VersusScore_Get(0) == 0 && VersusScore_Get(1) == 1);
+
+    /* Match 2, P1 wins. */
+    Winner_id = 0;
+    G_No[1] = 3;
+    VersusScore_TickLocal();
+    EXPECT_TRUE("vs-life-match2-p1", VersusScore_Get(0) == 1 && VersusScore_Get(1) == 1);
+
+    /* Rematch: the full match-start reset sequence runs (menu.c ->
+     * VS_Result_Rematch_Reset_Match_State, then Game2_0's own zeroing),
+     * then match 3 is fought and P1 wins again. */
+    VS_Result_Rematch_Reset_Match_State();
+    PL_Wins[0] = 0;
+    PL_Wins[1] = 0;
+    EXPECT_TRUE("vs-life-survives-rematch-reset", VersusScore_Get(0) == 1 && VersusScore_Get(1) == 1);
+    G_No[1] = 2;
+    VersusScore_TickLocal();
+    G_No[1] = 3;
+    VersusScore_TickLocal();
+    EXPECT_TRUE("vs-life-match3-p1", VersusScore_Get(0) == 2 && VersusScore_Get(1) == 1);
+
+    /* Session end: the pairing's boundary is the only reset. */
+    VersusScore_Reset();
+    EXPECT_TRUE("vs-life-session-end", VersusScore_Get(0) == 0 && VersusScore_Get(1) == 0);
+    EXPECT_TRUE("vs-life-session-end-pending", VersusScore_PendingFrame() == -1);
+
+    /* --- 9. The label: a name slot plus the score, measured by the metric
+     * the strip draws with. Empty name (today) is the bare number; a name
+     * composes around it, P1 name-first, P2 score-first, and the widest
+     * plausible label still fits the per-label cap or is fitted by it. --- */
+    char label[VERSUS_SCORE_NAME_MAX + 16];
+    VersusScore_ComposeLabel("", 3, 0, label, sizeof(label));
+    EXPECT_TRUE("vs-label-bare", strcmp(label, "3") == 0);
+    VersusScore_ComposeLabel(NULL, 12, 1, label, sizeof(label));
+    EXPECT_TRUE("vs-label-bare-null", strcmp(label, "12") == 0);
+    EXPECT_TRUE("vs-label-bare-width", SSGetDrawSizePro((const s8*)label) > 0 &&
+                                           SSGetDrawSizePro((const s8*)label) <= HUD_STRIP_LABEL_MAX_W);
+    VersusScore_ComposeLabel("ALICE", 2, 0, label, sizeof(label));
+    EXPECT_TRUE("vs-label-p1-name-first", strcmp(label, "ALICE 2") == 0);
+    VersusScore_ComposeLabel("BOB", 7, 1, label, sizeof(label));
+    EXPECT_TRUE("vs-label-p2-score-first", strcmp(label, "7 BOB") == 0);
+    EXPECT_TRUE("vs-label-named-width", SSGetDrawSizePro((const s8*)label) <= HUD_STRIP_LABEL_MAX_W);
+    /* The name slot is real storage, cleared with the pairing. */
+    VersusScore_SetName(0, "CARL");
+    EXPECT_TRUE("vs-name-set", strcmp(VersusScore_GetName(0), "CARL") == 0);
+    EXPECT_TRUE("vs-name-other-empty", VersusScore_GetName(1)[0] == '\0');
+    VersusScore_Reset();
+    EXPECT_TRUE("vs-name-cleared-on-reset", VersusScore_GetName(0)[0] == '\0');
+
+    G_No[0] = saved_g_no[0];
+    G_No[1] = saved_g_no[1];
+    G_No[2] = saved_g_no[2];
+    G_No[3] = saved_g_no[3];
+    Winner_id = saved_winner;
+    Demo_Flag = saved_demo;
+    Mode_Type = saved_mode;
+    PL_Wins[0] = saved_pl_wins[0];
+    PL_Wins[1] = saved_pl_wins[1];
+
+    fprintf(stderr, "[test_netplay_units] versus_score_lifetime OK\n");
+    return (fail_count == fails_before) ? 0 : 1;
+}
+
+/* ================================================================== */
+
 int Netplay_Test_NetplayUnits(void) {
     fail_count = 0;
     tests_run = 0;
@@ -2510,6 +2770,7 @@ int Netplay_Test_NetplayUnits(void) {
     rc |= unit_no_draw_frame_hold();
     rc |= unit_bg_repair_requires_source();
     rc |= unit_rematch_match_start_state();
+    rc |= unit_versus_score_lifetime();
 
     fprintf(stderr, "[test_netplay_units] summary: %d test(s), %d assertion(s), "
                     "%d failure(s)\n", tests_run, checks_run, fail_count);

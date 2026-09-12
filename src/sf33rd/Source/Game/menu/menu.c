@@ -6,6 +6,7 @@
 #include "sf33rd/Source/Game/menu/menu.h"
 #include "common.h"
 #include "main.h"
+#include "hud/versus_score.h"
 #include "netplay/netplay.h"
 #include "port/config/bgm_type.h"
 #include "port/config/language.h"
@@ -418,6 +419,10 @@ void Mode_Select(struct _TASK* task_ptr) {
                 G_No[1] = 12;
                 G_No[2] = 1;
                 Mode_Type = MODE_VERSUS;
+                /* A new local pairing starts here and only here: this is the
+                 * sole writer of MODE_VERSUS. VS_Result's char-select and
+                 * rematch branches stay inside the set and do not reset. */
+                VersusScore_Reset();
                 cpExitTask(TASK_MENU);
                 break;
 

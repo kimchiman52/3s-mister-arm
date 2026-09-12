@@ -6,6 +6,7 @@
 #include "netplay/direct_p2p.h"
 #include "netplay/room_code.h"
 #include "netplay/direct_p2p_handoff.h"
+#include "hud/versus_score.h"
 #include "netplay/netplay.h"
 #include "netplay/netplay_nav.h"
 #include "port/sdl/sdl_app.h"
@@ -1158,6 +1159,10 @@ static void game_step_0() {
         step0_phase_end(STEP0_PHASE_NETPLAY);
     } else {
         njUserMain();
+        /* Offline win tally: observe the post-tick engine state and apply a
+         * match-end edge immediately (no rollback here; the netplay branch
+         * above observes from advance_game and confirms in Netplay_Run). */
+        VersusScore_TickLocal();
         step0_phase_end(STEP0_PHASE_ENGINE);
         seqsBeforeProcess();
         /* Step C2 (docs/plan-fcade-replay-browser.md): draw the .3sr replay
@@ -1167,6 +1172,11 @@ static void game_step_0() {
          * the exit hint is inert under --watch-replays too (there START is
          * hold-to-SKIP and the shuffle viewer draws the only hint). */
         ReplayOverlay_Draw();
+        /* Local-versus win tally on the HUD strip. Self-gated off while the
+         * replay viewer owns that strip. In a netplay session this branch is
+         * not taken; sdl_app.c draws it in the overlay pass instead so a
+         * held frame still carries it. */
+        VersusScore_Draw();
         /* Shuffle-viewer chrome (the HOLD START TO SKIP hint). Inert without
          * --watch-replays. */
         ReplayShuffle_Draw();

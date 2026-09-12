@@ -14,6 +14,7 @@
 
 #include "replay/replay_player.h"
 
+#include "hud/hud_strip.h"
 #include "sf33rd/Source/Common/PPGWork.h"
 #include "sf33rd/Source/Game/ui/sc_sub.h"
 
@@ -46,66 +47,28 @@
 /* --- S4: in-battle P1/P2 name labels under the health bars ---------------
  *
  * Primary placement (Fightcade-style): each player's name sits just below the
- * top-HUD cluster, next to their health bar. The HUD strip occupancy (all on
- * the 384x224 game canvas, verified against sc_sub.c) is:
- *   y16..24  health/vitality bar        (vital_put, sc_sub.c:1087-1088)
- *   y24..32  stun bar                   (stun_put,  sc_sub.c:1221-1222)
- *   y24..48  face portraits + char-name plate (player_face/player_name,
- *            scfont_sqput_face/scfont_sqput, sc_sub.c:1481-1499,1691-1729)
- * y=48 is the first fully clear row directly under that cluster (8px-tall
- * glyphs occupy y48..56), so the label reads as belonging to the bar above it
- * without overwriting any HUD element. A jumping sprite / super-flash near the
- * top of the play-field can transiently overlap y=48 — that is a TV-only
- * judgment; if it proves distracting, compile RPL_OVL_HUD_NAMES to 0 (there is
- * no bottom-line fallback any more — see the label note in ReplayOverlay_Draw).
+ * top-HUD cluster, next to their health bar, on the shared HUD strip
+ * (src/hud/hud_strip.h holds the row geometry, the per-label width cap, the
+ * palette/priority and the reasons for each). If the row proves distracting
+ * on a TV, compile RPL_OVL_HUD_NAMES to 0 (there is no bottom-line fallback
+ * any more — see the label note in ReplayOverlay_Draw).
  *
  * Color: the engine's own char-name plate (player_name) draws through
  * scfont_sqput on palette bank 5 in a different (small) font. We draw through
  * SSPutStrProP (the ASCII-pro font) — already a distinct glyph set — and, to
  * avoid the white-on-busy-background blend the plain 0xFFFFFFFF status line can
- * suffer, tint it a bright arcade yellow via the vertex color. atr stays 9
- * because bank 9 is the only palette proven to hold the ASCII-pro font CLUT
- * (every text caller uses it, e.g. frame_data_overlay.c:65); distinctness/
- * legibility come from the non-white vtxcol, which modulates that CLUT (the
- * frame-data overlay tints the same bank green/red/orange the same way). */
+ * suffer, tint it the strip's bright arcade yellow via the vertex color. */
 #define RPL_OVL_HUD_NAMES 1
-#define RPL_OVL_NAME_Y 48
-#define RPL_OVL_NAME_X_LEFT 8
-#define RPL_OVL_NAME_X_RIGHT 376
-/* Per-label width cap. The two labels share one 368 px row (LEFT..RIGHT);
- * half each minus an 8 px gap between them. Handles come from an external
- * sidecar and can be 63 glyphs (meta_p1_name[64] in replay_player.c) --
- * up to ~500 px -- so a label is cut to this with "..." (SSFitStrPro).
- * Truncation, not wrapping, because the row sits directly above the
- * play-field: there is no second line to wrap into. */
-#define RPL_OVL_NAME_MAX_W 176
-#define RPL_OVL_NAME_ATR 9
-#define RPL_OVL_NAME_COL 0xFFF0E040u /* bright yellow (ARGB): distinct from the white HUD name plates */
-
-/* Battle-state gate (read-only). The top-HUD health/stun/portrait/name cluster
- * is drawn only when `Disp_Cockpit && Game_pause != GAME_PAUSE_TRAINING`, so
- * Disp_Cockpit alone already excludes menus, char-select, KO and the attract
- * demo — everywhere the health bars are not on screen.
- *
- * We deliberately do NOT also require `Allow_a_battle_f`. That flag is 1 only
- * while a round is actively being fought: it goes true after the round-start
- * banner and is what gates the timer (count.c) and gameplay (game.c). Gating
- * on it held the names back through the entire "FIGHT!" intro, which is exactly
- * when a viewer wants to know who is playing. Names now appear with the health
- * bars. A plain global (workuser.h); we only READ it. */
-extern u8 Disp_Cockpit;
-
-/* sc_sub.c exports SSGetDrawSizePro (glyph-accurate string width in the
- * ASCII-pro font) but sc_sub.h only declares SSPutStrProP; forward-declare it
- * here to right-anchor the P2 label without editing the game header. */
-extern s32 SSGetDrawSizePro(const s8* str);
+#define RPL_OVL_NAME_Y HUD_STRIP_Y
+#define RPL_OVL_NAME_COL HUD_STRIP_COL_YELLOW
 
 #if RPL_OVL_HUD_NAMES
 /* S4: draw the two player names at y=48, under their respective health bars —
- * P1 left-anchored, P2 right-anchored (width measured with SSGetDrawSizePro,
- * never flag=1 auto-center). Self-gates so it only fires while a round is being
- * shown (see the RPL_OVL_HUD_NAMES comment block): status must be PLAYING and
- * the HUD must be up (Disp_Cockpit).
+ * P1 left-anchored, P2 right-anchored (width measured, never flag=1
+ * auto-center; HudStrip_DrawLabel). Self-gates so it only fires while a round
+ * is being shown: status must be PLAYING and the HUD must be up
+ * (HudStrip_Visible, the engine's own Disp_Cockpit gate — see hud_strip.c for
+ * why it is NOT also gated on Allow_a_battle_f).
  * Read-only over both player and engine state. A replay whose meta has no
  * players[] (both getters NULL) draws nothing here, and there is no bottom-line
  * fallback any more — a no-names replay simply shows no label. */
@@ -125,15 +88,7 @@ static void compose_name_label(const char* name, int rank, char* out, size_t out
 }
 
 static void draw_name_labels(void) {
-    /* Gate on the HUD being up, NOT on the round being live. Disp_Cockpit is
-     * set with the health bars (manage.c), while Allow_a_battle_f only goes
-     * true once the round-start banner finishes and the timer starts running
-     * (it also gates the timer in count.c and gameplay in game.c). Gating on
-     * both used to hold the names back through the whole "FIGHT!" intro, which
-     * is precisely when a viewer is looking for who is playing. Names now
-     * appear the moment the health bars do. Still excludes menus,
-     * char-select, KO and the attract demo, because Disp_Cockpit is 0 there. */
-    if (ReplayPlayer_GetStatus() != REPLAY_PLAYER_PLAYING || Disp_Cockpit == 0) {
+    if (ReplayPlayer_GetStatus() != REPLAY_PLAYER_PLAYING || !HudStrip_Visible()) {
         return;
     }
 
@@ -150,22 +105,12 @@ static void draw_name_labels(void) {
 
     if (p1 != NULL) {
         compose_name_label(p1, ReplayPlayer_GetP1Rank(), label1, sizeof(label1));
-        (void)SSFitStrPro(label1, RPL_OVL_NAME_MAX_W);
-        SSPutStrProP(0, RPL_OVL_NAME_X_LEFT, RPL_OVL_NAME_Y, RPL_OVL_NAME_ATR, RPL_OVL_NAME_COL, label1,
-                     RPL_OVL_PRIO);
+        (void)HudStrip_DrawLabel(0, label1, RPL_OVL_NAME_COL);
     }
 
     if (p2 != NULL) {
         compose_name_label(p2, ReplayPlayer_GetP2Rank(), label2, sizeof(label2));
-        /* Right-anchor: fit to the cap (returns the real glyph width) and
-         * subtract from the right edge. The clamp cannot fire now that the
-         * width is capped, but it costs nothing and keeps the u16 x safe. */
-        const s32 w = SSFitStrPro(label2, RPL_OVL_NAME_MAX_W);
-        s32 x = RPL_OVL_NAME_X_RIGHT - w;
-        if (x < 0) {
-            x = 0;
-        }
-        SSPutStrProP(0, (u16)x, RPL_OVL_NAME_Y, RPL_OVL_NAME_ATR, RPL_OVL_NAME_COL, label2, RPL_OVL_PRIO);
+        (void)HudStrip_DrawLabel(1, label2, RPL_OVL_NAME_COL);
     }
 
     /* Headless/SSH-verifiable evidence: the display is occlusion-throttled, so

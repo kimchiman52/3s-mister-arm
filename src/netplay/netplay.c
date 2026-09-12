@@ -1,4 +1,5 @@
 #include "netplay/netplay.h"
+#include "hud/versus_score.h"
 #include "arcade/arcade_balance.h"
 #include "main.h"
 #include "port/config/config.h"
@@ -2318,6 +2319,11 @@ static void advance_game(GekkoGameEvent* event, bool render) {
     note_input(inputs[1], 1, frame);
 
     step_game(render);
+
+    // Win tally edge detector, every simulated frame (replay legs too) so
+    // a corrected timeline re-observes a match end the load erased. The
+    // increment itself waits for run_netplay's confirm.
+    VersusScore_ObserveEngine(frame);
 }
 
 static void handle_disconnection() {
@@ -2613,6 +2619,9 @@ static void process_events(bool drawing_allowed, NetplayRunTrace* trace) {
                 s_menu_exit_request_frame = -1;
             }
             load_state_from_event(event);
+            // Same erased-iff-L<R rule for the pending win-tally edge, and
+            // re-seed its detector from the state just restored.
+            VersusScore_OnLoadEngine(event->data.load.frame);
 #if ENABLE_PERF_TELEMETRY
             trace->load_ns += SDL_GetTicksNS() - load_start_ns;
 #endif
@@ -2818,6 +2827,11 @@ static void run_netplay() {
         s_hb_catchups++;
     }
 
+    // Apply a pending win-tally edge only once its frame is past this
+    // session's prediction window -- the #145 bound, same head (s_sim_frame)
+    // and same window (s_pred_window) as the deferred menu exit.
+    (void)VersusScore_Confirm(s_sim_frame, s_pred_window);
+
     s_hold_last_frame = should_hold_last_frame(session_state, trace.drawable_advances);
     if (s_hold_last_frame) {
         s_hb_no_draw_holds++;
@@ -2944,6 +2958,9 @@ void Netplay_TickDirectP2P() {
 
     direct_p2p_pending = false;
     setup_vs_mode();
+    // A new pairing: the sole entry into TRANSITIONING, so the sole start
+    // boundary of the win tally. Char select and rematch do not pass here.
+    VersusScore_Reset();
 
     SDL_zeroa(input_history);
     frames_behind = 0;
@@ -3377,6 +3394,10 @@ void Netplay_Run() {
         // (The old ForceDisable latch was never cleared — a menu-initiated
         // netplay session left the suppression on until relaunch.)
         DrawPlayersAboveHud_SetNetplaySuppressed(false);
+
+        // The opponent is gone (exit, disconnect, desync all land here):
+        // the pairing ends and so does its tally.
+        VersusScore_Reset();
 
         session_state = NETPLAY_SESSION_IDLE;
         break;

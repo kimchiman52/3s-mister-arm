@@ -8,6 +8,7 @@
 #include "port/paths.h"
 #include "port/sdl/netplay_screen.h"
 #include "port/sdl/netstats_renderer.h"
+#include "hud/versus_score.h"
 #include "netplay/netplay.h"
 #if defined(ENABLE_NETPLAY)
 #include "netplay/game_state.h"
@@ -3565,6 +3566,7 @@ void SDLApp_EndFrame() {
             SoftwareRenderer_HoldLastFrame();
             NetplayScreen_Render();
             NetstatsRenderer_Render();
+            VersusScore_Draw();
             SoftwareRenderer_RenderOverlay();
         } else if (netplay_session_live) {
             /* Game pass, then remember it as the base a later held frame
@@ -3574,6 +3576,10 @@ void SDLApp_EndFrame() {
             SoftwareRenderer_SnapshotHeldBase();
             NetplayScreen_Render();
             NetstatsRenderer_Render();
+            /* The win tally rides the overlay pass so a held frame keeps
+             * it; text draws go straight to the renderer's quad list
+             * (njDrawSprite -> ppgWriteQuadWithST_B2), no njdp2d flush. */
+            VersusScore_Draw();
             SoftwareRenderer_RenderOverlay();
         } else
 #endif
