@@ -2230,13 +2230,18 @@ static int unit_post_match_resolution(void) {
 
 static int unit_no_draw_frame_hold(void) {
     tests_run++;
-    fprintf(stderr, "[test_netplay_units] no_draw_frame_hold: prediction stalls retain the completed canvas\n");
+    fprintf(stderr, "[test_netplay_units] no_draw_frame_hold: prediction stalls retain the completed canvas "
+                    "and still composite the current overlay\n");
     const int fails_before = fail_count;
 
     EXPECT_TRUE("no-draw-running-empty",
                 Netplay_TestHook_ShouldHoldLastFrame(NETPLAY_SESSION_RUNNING, 0));
     EXPECT_FALSE("no-draw-running-drawable",
                  Netplay_TestHook_ShouldHoldLastFrame(NETPLAY_SESSION_RUNNING, 1));
+    /* CONNECTING holds the canvas (the game does not advance there), but
+     * the hold no longer suppresses the overlay: SDLApp_EndFrame composites
+     * NetplayScreen_Render over the held base, pinned by the
+     * hold-composites-* assertions below. */
     EXPECT_TRUE("no-draw-connecting",
                 Netplay_TestHook_ShouldHoldLastFrame(NETPLAY_SESSION_CONNECTING, 0));
     EXPECT_FALSE("no-draw-idle",
@@ -2265,6 +2270,54 @@ static int unit_no_draw_frame_hold(void) {
             Renderer_DrawUIBitmap(20.0f, 20.0f, 1.0f, &red, 1, 1, 0xFFFFFFFFu);
             EXPECT_TRUE("renderer-discard-count", SoftwareRenderer_HoldLastFrame() == 1);
             EXPECT_TRUE("renderer-held-canvas", memcmp(completed, canvas, bytes) == 0);
+
+            /* The session path: game pass, snapshot the base, overlay pass.
+             * The overlay must land on the canvas, and a held frame must
+             * present the BASE plus the NEW overlay -- the previous overlay
+             * must not survive underneath it. Pixel (30,30) is the first
+             * overlay, (40,40) the second; the base has neither. */
+            const size_t px_bytes = (size_t)pitch / (size_t)w;
+            const size_t off30 = (size_t)30 * (size_t)pitch + (size_t)30 * px_bytes;
+            const size_t off40 = (size_t)40 * (size_t)pitch + (size_t)40 * px_bytes;
+            unsigned char* base = malloc(bytes);
+            EXPECT_TRUE("hold-composites-base-alloc", base != NULL);
+            if (base != NULL) {
+                Renderer_DrawUIBitmap(10.0f, 10.0f, 1.0f, &white, 1, 1, 0xFFFFFFFFu);
+                SoftwareRenderer_RenderFrame();
+                SoftwareRenderer_SnapshotHeldBase();
+                memcpy(base, canvas, bytes);
+
+                const uint32_t green = 0xFF00FF00u;
+                Renderer_DrawUIBitmap(30.0f, 30.0f, 1.0f, &green, 1, 1, 0xFFFFFFFFu);
+                SoftwareRenderer_RenderOverlay();
+                EXPECT_TRUE("hold-composites-overlay-drawn",
+                            memcmp(base + off30, (const unsigned char*)canvas + off30, px_bytes) != 0);
+                EXPECT_TRUE("hold-composites-base-untouched-elsewhere",
+                            memcmp(base, canvas, off30) == 0);
+
+                /* A held frame: stale game geometry is discarded, the base
+                 * comes back (first overlay gone), the new overlay is drawn. */
+                Renderer_DrawUIBitmap(50.0f, 50.0f, 1.0f, &red, 1, 1, 0xFFFFFFFFu);
+                EXPECT_TRUE("hold-composites-discards-stale-geometry", SoftwareRenderer_HoldLastFrame() == 1);
+                EXPECT_TRUE("hold-composites-restores-base", memcmp(base, canvas, bytes) == 0);
+                const uint32_t blue = 0xFF0000FFu;
+                Renderer_DrawUIBitmap(40.0f, 40.0f, 1.0f, &blue, 1, 1, 0xFFFFFFFFu);
+                SoftwareRenderer_RenderOverlay();
+                EXPECT_TRUE("hold-composites-new-overlay-drawn",
+                            memcmp(base + off40, (const unsigned char*)canvas + off40, px_bytes) != 0);
+                EXPECT_TRUE("hold-composites-old-overlay-gone",
+                            memcmp(base + off30, (const unsigned char*)canvas + off30, px_bytes) == 0);
+
+                /* A fresh RenderFrame invalidates the base: a hold after it
+                 * keeps that frame rather than restoring a stale base. */
+                Renderer_DrawUIBitmap(10.0f, 10.0f, 1.0f, &white, 1, 1, 0xFFFFFFFFu);
+                Renderer_DrawUIBitmap(60.0f, 60.0f, 1.0f, &green, 1, 1, 0xFFFFFFFFu);
+                SoftwareRenderer_RenderFrame();
+                memcpy(completed, canvas, bytes);
+                EXPECT_TRUE("hold-composites-no-stale-base", SoftwareRenderer_HoldLastFrame() == 0);
+                EXPECT_TRUE("hold-composites-keeps-unsnapshotted-frame", memcmp(completed, canvas, bytes) == 0);
+            }
+            free(base);
         }
         free(initial);
         free(completed);

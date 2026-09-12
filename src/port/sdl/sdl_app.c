@@ -3538,7 +3538,14 @@ void SDLApp_EndFrame() {
     // because NetstatsRenderer uses the existing SFIII rendering pipeline.
 #if defined(ENABLE_NETPLAY)
     const bool hold_netplay_frame = Netplay_ShouldHoldLastFrame();
-    if (!hold_netplay_frame) {
+    /* While a session exists the overlays are rasterized in a second pass
+     * over the game canvas (below), so that a HELD frame can still carry
+     * this frame's overlay: the CONNECTING countdown ("Syncing with
+     * opponent (Ns)... START quits") changes every second while every
+     * frame of that phase is held. Outside a session the overlays are
+     * queued with the game geometry exactly as before. */
+    const bool netplay_session_live = Netplay_GetSessionState() != NETPLAY_SESSION_IDLE;
+    if (!hold_netplay_frame && !netplay_session_live) {
         NetplayScreen_Render();
         NetstatsRenderer_Render();
     }
@@ -3548,11 +3555,26 @@ void SDLApp_EndFrame() {
         const Uint64 gib_render_start_ns = SDL_GetTicksNS();
 #if defined(ENABLE_NETPLAY)
         if (hold_netplay_frame) {
-            /* An exhausted prediction window can produce no drawable game
-             * advance. Rendering that tick would clear the canvas to black.
-             * Do not advance overlay state above; drain any rollback geometry
-             * and present the last complete canvas with its matching overlays. */
+            /* An exhausted prediction window (or the CONNECTING phase,
+             * where the game does not advance at all) produces no drawable
+             * game advance. Rendering that tick would clear the canvas to
+             * black. Drain any rollback geometry, put the last complete GAME
+             * canvas back, and composite this frame's overlays over it --
+             * the held picture and the live status text are not mutually
+             * exclusive. */
             SoftwareRenderer_HoldLastFrame();
+            NetplayScreen_Render();
+            NetstatsRenderer_Render();
+            SoftwareRenderer_RenderOverlay();
+        } else if (netplay_session_live) {
+            /* Game pass, then remember it as the base a later held frame
+             * restores, then the overlays on top. One canvas memcpy per
+             * drawn frame (384x224 pixels), session frames only. */
+            SoftwareRenderer_RenderFrame();
+            SoftwareRenderer_SnapshotHeldBase();
+            NetplayScreen_Render();
+            NetstatsRenderer_Render();
+            SoftwareRenderer_RenderOverlay();
         } else
 #endif
         {

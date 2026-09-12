@@ -19,8 +19,16 @@
 bool SoftwareRenderer_Init(bool nearest_filter, int scale);
 void SoftwareRenderer_Quit();
 void SoftwareRenderer_RenderFrame();
-/* Drain queued geometry without changing the completed canvas. */
+/* Drain queued geometry without changing the completed canvas -- or, when a
+ * base was snapshotted after the last RenderFrame, restore that base so the
+ * caller can composite this frame's overlays over it. Returns the number of
+ * quads discarded. */
 int SoftwareRenderer_HoldLastFrame();
+/* Capture the canvas as the held base (call after a game pass, before the
+ * overlay pass). Invalidated by the next RenderFrame. */
+void SoftwareRenderer_SnapshotHeldBase();
+/* Rasterize the queued geometry over the canvas as it stands (no clear). */
+void SoftwareRenderer_RenderOverlay();
 int SoftwareRenderer_GetPerfPeakQuads(void);
 
 // Canvas accessor for the host app driver to present (SDL streaming texture, DRM dumb buffer, etc.).

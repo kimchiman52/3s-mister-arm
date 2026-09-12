@@ -122,6 +122,14 @@ typedef struct RBCtx {
 } RBCtx;
 
 static SWCanvasPixel* canvas = NULL;
+/* The last complete GAME canvas, without overlays, captured by
+ * SoftwareRenderer_SnapshotHeldBase after a game pass. A held frame is
+ * presented as this base with the current overlays composited on top, so
+ * the overlay text can change every frame without the previous frame's
+ * text accumulating under it. Invalidated by every SoftwareRenderer_RenderFrame
+ * (a new frame with no snapshot after it must hold as it always did). */
+static SWCanvasPixel* held_base = NULL;
+static bool held_base_valid = false;
 static SWQuad* quads = NULL;
 
 static SWTexture textures[FL_TEXTURE_MAX] = { 0 };
@@ -1382,9 +1390,13 @@ static void clear_band(RBCtx* ctx) {
     }
 }
 
-static void render_band(RBCtx* ctx) {
-    // Clear first so partial redraws do not leave stale rows behind.
-    clear_band(ctx);
+static void render_band_ex(RBCtx* ctx, bool clear) {
+    // Clear first so partial redraws do not leave stale rows behind. The
+    // overlay pass (SoftwareRenderer_RenderOverlay) composites over the
+    // canvas as it stands and skips the clear.
+    if (clear) {
+        clear_band(ctx);
+    }
 
     const int n = (int)arrlen(quads);
 
@@ -1402,6 +1414,10 @@ static void render_band(RBCtx* ctx) {
             rasterize_textured(q, ctx);
         }
     }
+}
+
+static void render_band(RBCtx* ctx) {
+    render_band_ex(ctx, true);
 }
 
 #if ENABLE_PERF_TELEMETRY
@@ -1834,6 +1850,12 @@ bool SoftwareRenderer_Init(bool nearest_filter, int scale) {
         return false;
     }
 
+    /* Plain heap, not MMA: nothing presents this buffer, the canvas is
+     * memcpy'd from it. NULL degrades to the pre-compositing hold (the
+     * canvas is kept as-is), which is why Init does not fail on it. */
+    held_base = malloc(canvas_bytes);
+    held_base_valid = false;
+
     // Clear to opaque black.
     const SWCanvasPixel clear_px = sw_argb_to_canvas(0xFF000000u);
     for (size_t i = 0; i < (size_t)CANVAS_PITCH * CANVAS_H; i++) {
@@ -1861,6 +1883,9 @@ void SoftwareRenderer_Quit() {
     free(canvas);
 #endif
     canvas = NULL;
+    free(held_base);
+    held_base = NULL;
+    held_base_valid = false;
 }
 
 #if ENABLE_PERF_TELEMETRY
@@ -1885,6 +1910,26 @@ void SoftwareRenderer_RenderFrame() {
     render_band(&main_ctx);
 
     arrsetlen(quads, 0);
+    held_base_valid = false;
+}
+
+void SoftwareRenderer_SnapshotHeldBase() {
+    if (canvas == NULL || held_base == NULL) {
+        return;
+    }
+    memcpy(held_base, canvas, sizeof(SWCanvasPixel) * (size_t)CANVAS_PITCH * CANVAS_H);
+    held_base_valid = true;
+}
+
+void SoftwareRenderer_RenderOverlay() {
+    sort_quads_fast();
+
+    RBCtx main_ctx;
+    main_ctx.band_y0 = 0;
+    main_ctx.band_y1 = CANVAS_H;
+    render_band_ex(&main_ctx, false);
+
+    arrsetlen(quads, 0);
 }
 
 int SoftwareRenderer_HoldLastFrame() {
@@ -1893,6 +1938,12 @@ int SoftwareRenderer_HoldLastFrame() {
     sw_perf_peak_quads = discarded;
 #endif
     arrsetlen(quads, 0);
+    /* Put the last complete game canvas back so the caller can composite
+     * this frame's overlays over it. Without a snapshot (no session, or a
+     * RenderFrame since) the canvas is left exactly as it was. */
+    if (held_base_valid && canvas != NULL && held_base != NULL) {
+        memcpy(canvas, held_base, sizeof(SWCanvasPixel) * (size_t)CANVAS_PITCH * CANVAS_H);
+    }
     return discarded;
 }
 
