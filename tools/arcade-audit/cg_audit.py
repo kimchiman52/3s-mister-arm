@@ -122,6 +122,10 @@ N_CHCMD   = count_fnptr_table("src/sf33rd/Source/Game/engine/charset.c", "s32 (*
 N_SE      = count_fnptr_table("src/sf33rd/Source/Game/sound/se_data.c", "const se_request sound_effect_request[1024] = {")
 N_TAMA    = int(re.search(r'const TAMA tama_data\[(\d+)\]', src("src/sf33rd/Source/Game/effect/eff13.c")).group(1))
 N_SASIGN  = int(re.search(r'const s16 sa_sign_data\[(\d+)\]\[5\]', src("src/sf33rd/Source/Game/effect/eff41.c")).group(1))
+# The bound a C cell's `koc` is checked against: `comm_jmp`/`comm_jpss`/`comm_jsr` select a script
+# TABLE with it, and `char_table` is the array they index.  Parsed for the same reason
+# CG_REMAP_CUTOFF is: the audit must move with the struct, not with a literal typed here.
+N_KOC     = int(re.search(r'u32\*\s*char_table\[(\d+)\]', src("include/structs.h")).group(1))
 OGT_N     = len(OGT)
 # Parsed, not hardcoded (doc §8, item 7 of the 2026-08-31 cleanup pass): a
 # hardcoded 0x400 here would silently desync from the compiler if
@@ -2753,25 +2757,20 @@ def manu_delta_gate(ci):
 #                                                     i.e. all four bytes reversed  GEN[2] = (3,2,1,0)
 #   word 3  cg_extdat|cg_cancel|cg_effect|cg_eftype (four u8) -> bytes unchanged  GEN[3] = (0,1,2,3)
 #   word 4  cg_zoom (u16), cg_rival (u16)          -> per-u16 byte swap
-#   word 5  cg_add_xy (u16), cg_next_ix|cg_status  -> per-u16 byte swap; the u8 PAIR ~~swaps too~~
-#                                                     DOES NOT SWAP in an L record (doc §36.8: 254
-#                                                     identical, 0 crossed, 1 real divergence over
-#                                                     every shape-ok cgd-6 pair whose two bytes
-#                                                     differ; `cg_add_xy` in the same word crosses
-#                                                     27/0 as the control).  The crossing this note
-#                                                     used to claim is in the 16 bytes a cgd-6 C
-#                                                     CELL carries and `read_char_table` SKIPS (the
-#                                                     HOLES above) -- 896 crossed / 8 identical
-#                                                     there against 273/9 in L records -- and the
-#                                                     Gill atca[15] c28 example is arcade-C vs
-#                                                     PS2-L, a grid phantom.  `GRID_GEN[5]` below
-#                                                     still carries (1,0,3,2), which is right for
-#                                                     the C-cell tail and wrong for the field pair;
-#                                                     one block role cannot be both.  §36.8 prices
-#                                                     the correction (975 cells move to
-#                                                     `unmodelled`, 7 OOB rows lose their phantom
-#                                                     excuse) and leaves it OPEN rather than
-#                                                     landing a reclassification nobody adjudicated.
+#   word 5  cg_add_xy (u16), cg_next_ix|cg_status  -> the u16 swaps and the u8 PAIR DOES NOT
+#                                                     GEN[5] = (1,0,2,3), doc §37.  §30.2 read this
+#                                                     row as a full per-u16 swap and GEN[5] carried
+#                                                     (1,0,3,2) until 2026-09-12; that permutation is
+#                                                     right for the 16 bytes a cgd-6 C CELL carries
+#                                                     and `read_char_table` SKIPS (the HOLES above),
+#                                                     and wrong for the field pair.  One block role
+#                                                     cannot be both, and the L record is the only
+#                                                     place `cg_next_ix` and `cg_status` exist, so
+#                                                     the L reading is the one a role called
+#                                                     `cg_add_xy | cg_next_ix | cg_status` has to
+#                                                     carry.  `word5_lc_gate` below measures both
+#                                                     populations on every run and DERIVES this
+#                                                     constant from the L one.
 #
 # So "arcade BE u32 == PS2 LE u32, bit-identical" -- the signature §21.6's re-derivation used -- is
 # GEN[2].  It is the NORMAL relation for the att/hit word of every genuinely converted cell in the
@@ -2795,11 +2794,12 @@ def manu_delta_gate(ci):
 # that is not its own.  No PS2 counterpart, a counterpart of a different length or cgd_type, a block
 # the walk could not place -- all of those come back `unmodelled` or `no_oracle`, never `phantom`.
 GRID_PERIODS = (2, 4, 6)
-GRID_GEN = {0: (1,0,3,2), 1: (1,0,3,2), 2: (3,2,1,0), 3: (0,1,2,3), 4: (1,0,3,2), 5: (1,0,3,2)}
+GRID_GEN = {0: (1,0,3,2), 1: (1,0,3,2), 2: (3,2,1,0), 3: (0,1,2,3), 4: (1,0,3,2), 5: (1,0,2,3)}
 GRID_MIN_RECORDS = 4        # a phase switch must explain this many whole records.  Not a fitted
-                            # constant (doc §29.3 sweeps it): the aligned/phantom/unmodelled counts
-                            # are bit-identical for 4, 5 and 6, and the verdict on every violation
-                            # row -- and the assertion below -- is identical for every value 2..12.
+                            # constant (doc §30.3 swept it, §37.3 re-swept it under the corrected
+                            # GEN[5]): the aligned/phantom/unmodelled counts are bit-identical for
+                            # 3 through 8, and the verdict on every violation row -- and the
+                            # assertion below -- is identical for every value 2..12.
 
 def _grid_perm(a, pm): return (a[pm[0]], a[pm[1]], a[pm[2]], a[pm[3]])
 
@@ -2815,12 +2815,18 @@ def _grid_roles(a, p, ci):
     return out
 
 def _grid_script_bytes(ci):
-    """(sec, si, cgd, arcade bytes, ps2 bytes) for every script whose two releases can be compared
-    byte for byte: present on both sides with the same cgd_type.  The spans are the ones
-    `arc_parse` / `ps2_parse` decode (entry offset - 8, i.e. the 8-byte header included); both start
-    at the header, so they are aligned over their COMMON PREFIX even when the two declared lengths
-    differ -- and they often do, because the last script of an over-declared table runs to
-    `location.size` (doc §27).  Only the prefix is returned; a cell past it has no oracle."""
+    """(sec, si, cgd, arcade bytes, ps2 bytes, arcade cells, ps2 cells) for every script whose two
+    releases can be compared byte for byte: present on both sides with the same cgd_type.  The spans
+    are the ones `arc_parse` / `ps2_parse` decode (entry offset - 8, i.e. the 8-byte header
+    included); both start at the header, so they are aligned over their COMMON PREFIX even when the
+    two declared lengths differ -- and they often do, because the last script of an over-declared
+    table runs to `location.size` (doc §27).  Only the prefix is returned; a cell past it has no
+    oracle.
+
+    The two cell lists are each decoder's own reading of the same bytes.  `grid_phase` does not use
+    them -- the grid walk is deliberately byte-only -- but `word5_lc_gate` does, because the
+    question it asks is what the DECODERS call the record at an offset, and the answer has to come
+    from them rather than from the walk whose generator is under test."""
     arc_tabs = {sec: arc_offsets(*LOC[ci][sec]) for sec in KOC2SEC.values()}
     blob, bsd = ps2_tail(ci)
     offs, sp = ps2_spans(blob)
@@ -2843,7 +2849,10 @@ def _grid_script_bytes(ci):
             acgd = struct.unpack_from('>h', ROM, aoff + astart)[0]
             pcgd = struct.unpack_from('<h', blob, b + pstart)[0]
             if acgd != pcgd or acgd not in (1, 2, 4, 6): continue
-            yield sec, si, acgd, ROM[aoff + astart:aoff + astart + L], blob[b + pstart:b + pstart + L]
+            _, acells = arc_parse(ci, sec, si, arc_tabs)
+            _, pcells = ps2_parse(blob, b, z, pents, si)
+            yield (sec, si, acgd, ROM[aoff + astart:aoff + astart + L],
+                   blob[b + pstart:b + pstart + L], acells, pcells)
 
 _GRID_CACHE = {}
 def grid_phase(ci):
@@ -2856,7 +2865,7 @@ def grid_phase(ci):
     read a cell's verdict through `grid_cell_verdict`, which handles both that and `past_prefix`."""
     if ci in _GRID_CACHE: return _GRID_CACHE[ci]
     out = {}
-    for sec, si, cgd, ab, pb in _grid_script_bytes(ci):
+    for sec, si, cgd, ab, pb, _ac, _pc in _grid_script_bytes(ci):
         nb = (len(ab) - 8) // 4
         S = [_grid_roles(tuple(ab[8+4*j:12+4*j]), tuple(pb[8+4*j:12+4*j]), ci) for j in range(nb)]
         role = [None] * nb
@@ -2909,6 +2918,153 @@ def grid_cell_verdict(g, cell):
     if g is None: return 'no_oracle'
     if cell >= g['prefix_cells']: return 'past_prefix'
     return g['verdict'].get(cell, 'unmodelled')
+
+# ---------------------------------------------------------------- word 5: an L record is not a C tail (doc §37)
+#
+# WHAT THIS SETTLES, AND WHY IT IS AN ASSERTION RATHER THAN A PARAGRAPH.  `GRID_GEN` gives a role to
+# a 4-byte BLOCK, but at one offset in a cgd-6 record the cross-release transform depends on WHAT
+# THE RECORD IS, and for six days the table carried the wrong one of the two.  Doc §30.2 read word
+# 5's `cg_next_ix`|`cg_status` pair as swapping across the releases and wrote `(1,0,3,2)` here.  It
+# does not swap.  What swaps at that offset is the 16-byte tail a cgd-6 C CELL carries and
+# `read_char_table` SKIPS (the HOLES above) -- unstructured bytes the converter byte-swapped as u16s
+# wholesale.  §30.2's own word-5 row never told the two apart (7,445 of its 8,413 votes are blocks
+# whose two u8 bytes are equal, so they vote on `cg_add_xy` alone), and its worked example was an
+# arcade C cell against a PS2 L cell -- a grid phantom of exactly the kind §30 exists to name.
+#
+# The distinction is invisible to every instrument that does not ask what the record IS, so it is
+# measured here on every run, over the population where the two hypotheses differ at all:
+#
+#   (a) In a cell BOTH releases decode as an L record, the u8 pair does not cross.  One crossing
+#       would mean the two fields exchange offsets between releases and GRID_GEN[5] is wrong.
+#   (b) In a cell both releases decode as a C cell, the same offset DOES cross -- the fact the wrong
+#       constant was fitted to.  Keeping it measured is what stops (a) from looking like an accident.
+#   (c) CONTROL: `cg_add_xy`, the u16 in the same word, over the same cells.  A u16 crosses and is
+#       never identical, so (a) is a property of the fields and not of reading the wrong four bytes.
+#   (d) GRID_GEN[5] is DERIVED from (a) rather than compared against a literal: whichever
+#       permutation the L records actually take is the one the table has to carry.
+#
+# AND WHAT IT COSTS, WHICH IS THE OTHER HALF.  Under the corrected generator the walk stops
+# explaining 975 cells (net) that the wrong one explained, and seven `a_koc_oob` rows lose the
+# `phantom` verdict that excused them.  `unmodelled` excuses nothing, so those seven need an
+# instrument of their own, and (e) is it.  A C cell's header word 0 is `code:u16 | koc:u16` and
+# converts with BOTH halves swapped -- that is GRID_GEN[0].  The half-swap `(1,0,2,3)` is the
+# `u16 | u8 | u8` shape of an L record's word 5 and of no other word in the record.  Split every
+# jump cell the two decoders agree is a C cell by which of the two its word 0 takes:
+#
+#   (e) not one cell that converts the way a C header converts has an out-of-range `koc`, and not
+#       one cell that takes the half-swap is in range.  The out-of-range `koc` population IS the
+#       population whose word 0 does not convert as a C header -- so the value the audit reads there
+#       is not a `koc` at all, it is the low half of some record's word 5 read by a decoder whose
+#       cell boundary is not the data's.  The rows are EMITTED, not counted: a future narrowing has
+#       to delete evidence rather than quietly lose a number.
+#
+# This says nothing about reachability, and is not meant to.  `k7_entry_walk` is the axis that makes
+# a cell safe or unsafe, and for two of the seven it is void (doc §31.10).  (e) establishes that the
+# datum is not authored; it does not establish that the engine cannot walk there.
+def word5_lc_gate():
+    """(a)-(e) above, in one pass over every byte-comparable script pair.
+
+    TWO readings of the record kind, because they answer different questions and one of them is a
+    trap.  `stride_*` reads the kind from the BYTES at the fixed 24-byte stride (a cgd-6 record is
+    24 bytes whether it is a C cell or an L cell) -- decoder-independent, and the reading that
+    reproduces §30.2's own population.  But a byte-stride "L" only says the code word at that
+    offset is >= 0x100; it does NOT say the cell boundary is the data's, so in an off-grid region
+    it is itself a phantom.  `l_*` therefore reads the kind from the two DECODERS, and only in a
+    script whose two cell-kind sequences agree end to end (`shape-ok`) -- the population in which a
+    cell called an L record really is one.  (a) is asserted on that one; the stride reading is kept
+    beside it, and its crossings are asserted to be cells the grid walk positively calls `phantom`,
+    which is §30.6's assertion in the other direction."""
+    w5, ctl, koc = collections.Counter(), collections.Counter(), collections.Counter()
+    rows, div_rows, stride_cross = [], [], []
+    for ci in range(20):
+        grid = grid_phase(ci)
+        for sec, si, cgd, ab, pb, ac, pc in _grid_script_bytes(ci):
+            L = len(ab)
+            if cgd == 6:
+                shape_ok = (pc is not None and ac and len(ac) == len(pc)
+                            and all(x[0] == y[0] for x, y in zip(ac, pc)))
+                g = grid.get((sec, si))
+                for j in range(5, (L - 8) // 4, 6):
+                    a = tuple(ab[8+4*j:12+4*j]); p = tuple(pb[8+4*j:12+4*j])
+                    if a[2] == a[3]: continue        # the two hypotheses agree here: no vote
+                    cell = j // 6
+                    rel = ('identical' if (p[2], p[3]) == (a[2], a[3]) else
+                           'crossed' if (p[2], p[3]) == (a[3], a[2]) else 'neither')
+                    o = 8 + 24 * cell
+                    ak = 'C' if struct.unpack_from('>H', ab, o)[0] < 0x100 else 'L'
+                    pk = 'C' if struct.unpack_from('<H', pb, o)[0] < 0x100 else 'L'
+                    k = 'l' if ak == pk == 'L' else 'c' if ak == pk == 'C' else 'x'
+                    w5['stride_' + k + '_' + rel] += 1
+                    if k == 'l' and rel == 'crossed':
+                        stride_cross.append(dict(character=NAMES[ci], table=sec, script=si, cell=cell,
+                                                 grid=grid_cell_verdict(g, cell),
+                                                 arcade=bytes(a).hex(' '), ps2=bytes(p).hex(' ')))
+                    # The asserted population: an L record both decoders agree is one, in a script
+                    # whose whole cell-kind sequence they agree on.
+                    # `cell < len(ac)`: the compared byte prefix can outrun both decoders, because
+                    # the last script of an over-declared table runs to `location.size` while
+                    # `arc_parse` stops at its first terminator (doc §27, §31.3).  Bytes neither
+                    # decoder turned into a cell are not an L record on anyone's reading.
+                    if shape_ok and cell < len(ac) and ac[cell][0] == 'L':
+                        w5['l_' + rel] += 1
+                        if rel == 'neither':
+                            div_rows.append(dict(character=NAMES[ci], table=sec, script=si, cell=cell,
+                                                 arcade_next_ix=a[2], arcade_status=a[3],
+                                                 ps2_next_ix=p[2], ps2_status=p[3]))
+                        if a[0] != a[1]:
+                            ctl['l_' + ('crossed' if (p[0], p[1]) == (a[1], a[0]) else
+                                        'identical' if (p[0], p[1]) == (a[0], a[1]) else 'neither')] += 1
+            if pc is None: continue
+            rec = 8 if cgd == 1 else 4 * cgd         # arc_parse: C -> 8 + max(cgd*4-8,0), L -> the same
+            for k in range(min(len(ac), len(pc))):
+                if ac[k][0] != 'C' or pc[k][0] != 'C' or ac[k][1] not in (3, 4, 5): continue
+                o = 8 + rec * k
+                if o + 4 > L: continue               # past the common prefix: the PS2 has no bytes
+                a = tuple(ab[o:o+4]); p = tuple(pb[o:o+4])
+                # A block whose second half is byte-palindromic satisfies both; count it as a header,
+                # which is the direction that makes (e) harder to pass, never easier.
+                kind = ('header' if p == _grid_perm(a, GRID_GEN[0]) else
+                        'halfswap' if p == _grid_perm(a, (1, 0, 2, 3)) else 'other')
+                kc = ac[k][2]
+                bad = kc < 0 or kc >= N_KOC
+                koc[kind + ('_oob' if bad else '_ok')] += 1
+                if bad:
+                    rows.append(dict(character=NAMES[ci], table=sec, script=si, cell=k, word0=kind,
+                                     code=ac[k][1], koc=kc, ps2_koc=pc[k][2],
+                                     arcade=ab[o:o+4].hex(' '), ps2=bytes(pb[o:o+4]).hex(' ')))
+    _k = lambda r: (r['character'], r['table'], r['script'], r['cell'])
+    rows.sort(key=_k); div_rows.sort(key=_k); stride_cross.sort(key=_k)
+    _s = lambda c: {k: c[k] for k in sorted(c)}          # sorted at emission, as everywhere here
+    return dict(word5=_s(w5), control=_s(ctl), koc=_s(koc), koc_rows=rows,
+                divergences=div_rows, stride_crossings=stride_cross)
+
+
+def _assert_word5_lc_gate(g):
+    """Fail toward the finding: every one of these would have passed silently under §30.2's reading."""
+    w5, ctl, koc = g['word5'], g['control'], g['koc']
+    # (a) An L record's u8 pair does not cross -- unanimously, and over a population that exists.
+    assert w5.get('l_crossed', 0) == 0, w5
+    assert w5.get('l_identical', 0) > 0, w5
+    # (a') The same test on the decoder-independent byte-stride reading DOES find crossings, and
+    #      every one of them is a cell the walk positively calls `phantom` -- §30.6's assertion run
+    #      the other way round.  A crossing on an `aligned` cell would mean a real L record crosses
+    #      and (a) is an artifact of the shape-ok filter.
+    assert all(r['grid'] == 'phantom' for r in g['stride_crossings']), g['stride_crossings']
+    # (b) The cgd-6 C cell's skipped tail at the same offset does cross.  If this ever stopped being
+    #     true the two populations would no longer be distinguishable and (a) would prove nothing.
+    assert w5.get('stride_c_crossed', 0) > w5.get('stride_c_identical', 0), w5
+    # (c) Control: a u16 in the same word crosses and is never identical, so (a) reads real fields
+    #     at real offsets rather than agreeing by reading four bytes that were never a word 5.
+    assert ctl.get('l_crossed', 0) > 0 and ctl.get('l_identical', 0) == 0, ctl
+    # (d) The generator is DERIVED from (a), not compared against the constant it is checking.
+    assert GRID_GEN[5] == ((1, 0, 2, 3) if w5['l_identical'] > w5.get('l_crossed', 0) else (1, 0, 3, 2)), GRID_GEN[5]
+    # (e) The out-of-range `koc` population is exactly the non-header population, in both directions.
+    assert koc.get('header_oob', 0) == 0, koc
+    assert koc.get('other_oob', 0) == 0, koc
+    assert koc.get('halfswap_ok', 0) == 0, koc
+    assert koc.get('halfswap_oob', 0) == len(g['koc_rows']), (koc, len(g['koc_rows']))
+    assert koc.get('halfswap_oob', 0) > 0, koc
+
 # ---------------------------------------------------------------- SA naming for saca scripts
 def sa_labels(ci):
     """map saca script index -> list of SA-table slots that select it (asstbl.c 9900_g/_a arcade rows)."""
@@ -3186,7 +3342,7 @@ def audit(cgmap_override=None, quiet=False):
                         if code >= N_CHCMD:
                             viol('code_oob', 'a_code_oob', code=code)
                         if code in (3, 4, 5):   # jmp/jpss/jsr
-                            if kc < 0 or kc >= 12:
+                            if kc < 0 or kc >= N_KOC:
                                 viol('koc_oob', 'a_koc_oob', koc=kc, ix=ix)
                             elif kc in KOC2SEC:
                                 nn = len(arc_tabs[KOC2SEC[kc]])
@@ -3726,6 +3882,41 @@ if __name__ == "__main__":
             if v.get('grid') != 'phantom' and v['cls'].startswith('a_'):
                 print("  %-7s %-5s %4d c%-3d %-16s grid=%-9s dead=%s"
                       % (n, v['table'], v['script'], v['cell'], v['cls'], v['grid'], v['dead']))
+    # doc §37: word 5's two populations, and the koc separation that adjudicates the `a_koc_oob`
+    # rows the grid declines -- printed right after those rows, because seven of them are its subject.
+    _w5 = word5_lc_gate()
+    _assert_word5_lc_gate(_w5)
+    _g = lambda k: _w5['word5'].get(k, 0)
+    print("word 5's u8 pair (cg_next_ix|cg_status), cells whose two bytes differ -- identical / crossed / neither:")
+    print("  L record, both decoders agreeing on the whole script's shape: %d / %d / %d   "
+          "control (cg_add_xy, the u16 in the same word, same cells): %d crossed / %d identical / %d neither"
+          % (_g('l_identical'), _g('l_crossed'), _g('l_neither'),
+             _w5['control'].get('l_crossed', 0), _w5['control'].get('l_identical', 0),
+             _w5['control'].get('l_neither', 0)))
+    print("  read from the bytes at the 24-byte stride instead (doc §30.2's own population): "
+          "L %d/%d/%d, cgd-6 C-cell skipped tail %d/%d/%d, mixed %d/%d/%d; "
+          "all %d stride-L crossing(s) are on a cell the walk calls phantom (asserted)"
+          % (_g('stride_l_identical'), _g('stride_l_crossed'), _g('stride_l_neither'),
+             _g('stride_c_identical'), _g('stride_c_crossed'), _g('stride_c_neither'),
+             _g('stride_x_identical'), _g('stride_x_crossed'), _g('stride_x_neither'),
+             len(_w5['stride_crossings'])))
+    print("  -> GRID_GEN[5] = %s, derived from the L row, not asserted against a literal" % (GRID_GEN[5],))
+    for r in _w5['divergences']:
+        print("  %-7s %-5s %4d c%-3d  cg_next_ix arcade %3d -> ps2 %3d, cg_status arcade %3d -> ps2 %3d"
+              % (r['character'], r['table'], r['script'], r['cell'], r['arcade_next_ix'],
+                 r['ps2_next_ix'], r['arcade_status'], r['ps2_status']))
+    _k = _w5['koc']
+    print("koc separation: %d jump cell(s) both decoders call a C cell -- %d convert as a C header "
+          "(`code:u16 | koc:u16`, %d out of range), %d take the word-5 half-swap (%d out of range), "
+          "%d neither (%d out of range).  An out-of-range koc is read ONLY where word 0 does not "
+          "convert as a header, so it is not a koc:"
+          % (sum(_k.values()), _k.get('header_ok', 0) + _k.get('header_oob', 0), _k.get('header_oob', 0),
+             _k.get('halfswap_ok', 0) + _k.get('halfswap_oob', 0), _k.get('halfswap_oob', 0),
+             _k.get('other_ok', 0) + _k.get('other_oob', 0), _k.get('other_oob', 0)))
+    for r in _w5['koc_rows']:
+        print("  %-7s %-5s %4d c%-3d code %d  arcade koc %6d / ps2 koc %6d   arc %s  ps2 %s  [word 0: %s]"
+              % (r['character'], r['table'], r['script'], r['cell'], r['code'], r['koc'],
+                 r['ps2_koc'], r['arcade'], r['ps2'], r['word0']))
     # doc §27: the over-declared spans, and what the digest hashes past the real data
     digest_in = sum(LOC[ci][sec][1] for ci in range(20) for sec in SECTIONS)
     junk = T['span_junk_bytes'] + sum(res[n]['stats']['caua_hosa_over_declared'] * 8 for n in NAMES)

@@ -103,6 +103,16 @@ command and its observed output, or a named primary source. Things that were
   store the pair in opposite order), so every hit is that word read at a cell
   boundary the data does not have. Every violation row now carries `"grid"`
   beside `"dead"`, and only `"phantom"` excuses anything.
+- **About to read an out-of-range `koc`, or to trust one of §30.2's word rows?**
+  §37 — `GRID_GEN[5]` carried the wrong permutation for six days because §30.2's
+  word-5 row counted 7,445 blocks that could not tell the two apart. In a cgd-6
+  record the cross-release transform at word 5 depends on **what the record is**:
+  an L record's `cg_next_ix`|`cg_status` pair does not swap (254 identical / 0
+  crossed), the 16-byte tail a **C** cell carries and `read_char_table` skips
+  does (896 / 8). The same distinction settles every out-of-range `koc` in the
+  game: all 7 sit on a word 0 that does **not** convert the way a C-cell header
+  converts, and none of the 7,589 that do is out of range. `word5_lc_gate()`
+  asserts both halves on every run.
 - **Reading an out-of-range-index count in the audit, or about to call a cell
   dead?** §28 — every `*_oob` column is split `live+dead` and the dead half is
   an entry-point closure over the six intra-script writers of `cg_ix`, not a
@@ -8112,17 +8122,32 @@ block votes):
 (word 1's "neither" is `remap_cg_number`; word 4's is the `cg_rival`/`cg_zoom`
 content the releases genuinely differ on, §22.4.)
 
-> **WORD 5's ROW NEVER DISCRIMINATED — CORRECTED BY §36.8 (2026-09-12).** The
-> 8,413 `u16sw` votes are 7,445 blocks whose two u8 bytes are **equal**, so they
-> vote on `cg_add_xy` alone and say nothing about the `cg_next_ix`|`cg_status`
-> pair. Split by what the record actually is, the blocks that *do* discriminate
-> say: **L records 273 identical / 9 crossed; a cgd-6 C cell's skipped 16-byte
-> tail 8 identical / 896 crossed.** So the field pair does **not** swap — only
-> the unwritten C-cell tail at the same offset does — and this section's
-> accompanying claim that "the u8 pair swaps too", together with its GILL
-> `atca[15]` c28 example (arcade-C against PS2-L, a phantom), is withdrawn in
-> §36.9. The arithmetic in the table above is right; the reading drawn from its
-> word-5 row is not.
+> **WORD 5's ROW NEVER DISCRIMINATED — CORRECTED BY §36.8 (2026-09-12), and the
+> correction LANDED in §37 the same day.** The 8,413 `u16sw` votes are 7,445
+> blocks whose two u8 bytes are **equal**, so they vote on `cg_add_xy` alone and
+> say nothing about the `cg_next_ix`|`cg_status` pair. Split by what the record
+> actually is, the blocks that *do* discriminate say: **L records 273 identical /
+> 9 crossed; a cgd-6 C cell's skipped 16-byte tail 8 identical / 896 crossed.**
+> So the field pair does **not** swap — only the unwritten C-cell tail at the
+> same offset does — and this section's accompanying claim that "the u8 pair
+> swaps too", together with its GILL `atca[15]` c28 example (arcade-C against
+> PS2-L, a phantom), is withdrawn in §36.9. The arithmetic in the table above is
+> right; the reading drawn from its word-5 row is not.
+>
+> **`GRID_GEN[5]` now carries `(1,0,2,3)`, the L-record permutation** (§37).
+> All nine of the crossings the stride reading finds in an "L" cell are cells the
+> grid walk positively calls `phantom`, so not one of them survives on a cell the
+> walk calls `aligned` — §30.6's assertion run the other way round, and now
+> asserted on every run by `word5_lc_gate`.
+>
+> **One other figure in the table above is re-measured and does not hold: word 0's
+> `u16sw` is ~~168,078~~ 168,975.** Every other cell of the table — all three
+> other word-0 figures included — reproduces to the vote on the current tree
+> (2026-09-12). The band fix `92d89d8d` cannot have moved it: `remap` enters the
+> vote only through role 1's special case, so word 0 does not depend on
+> `twelve_cg_ranges`. The reading §30.2 draws from word 0 is unaffected — `u16sw`
+> is still the word's overwhelming plurality, and `rev32`'s 1,402 is the number
+> §30.4 is about.
 
 Read that table with §21.6's headline sentence in hand and two things fall out.
 
@@ -11700,7 +11725,13 @@ nothing in the tree holding them against each other.
   listed underneath. The narrow number can still be quoted; it can no longer be
   quoted alone.
 
-### 36.8 Found on the way, and NOT applied: §30.2's word-5 u8 pair does not swap
+### 36.8 Found on the way, and NOT applied: §30.2's word-5 u8 pair does not swap — ~~OPEN~~ **VERIFIED AND APPLIED 2026-09-12 (§37)**
+
+> **Status.** Every figure below was independently re-derived in §37 and every
+> one of them holds, with two of its own scopes corrected (the `27/0` control
+> and the `249/250`). `GRID_GEN[5]` now carries `(1,0,2,3)`; the seven OOB rows
+> are adjudicated in §37.4. Read this section for the derivation, §37 for what
+> landed.
 
 Re-deriving §22.7's `cg_next_ix` line required decoding the cgd-6 tail, which
 `cg_audit.py` skips. §30.2's word table says:
@@ -11789,6 +11820,17 @@ left benign** — and the measurements above are the evidence any later pass
 needs. It is *not* a `cg_number` question and moves neither `cells audited:
 133901` nor the TOTAL row.
 
+> **Two scope slips in the paragraphs above, found by re-measuring them (§37.1).**
+> The control "cells where its two bytes differ: crossed 27, identical 0" is the
+> control over the **same 255 cells row A measures** (those whose u8 pair also
+> differs), not over every cell whose `cg_add_xy` bytes differ — that population
+> is **7,295 crossed / 0 identical / 0 neither**, the same verdict and a much
+> stronger one. And "249 `cg_next_ix` and 250 `cg_status`" is the **live** scope
+> (`k7_entry_walk`), while the `254 / 0 / 1` beside it is the **whole-span**
+> scope; the two numbers in one paragraph are two populations. Both readings
+> support the finding: 254/0 whole-span, 249/0 live. The 975 is likewise a **net**
+> — §37.3 has the gross.
+
 ### 36.9 Corrections to earlier sections (recorded, not silently edited)
 
 - **§22.7's `cg_hit_ix` / `cg_att_ix` figures of 9 / 12 are WITHDRAWN.** The
@@ -11829,8 +11871,10 @@ needs. It is *not* a `cg_number` question and moves neither `cells audited:
   worked example is a shape-mismatched cell pair. §30.2's word-5 table row is
   *arithmetically* correct and simply never discriminated: 7,445 of its 8,413
   `u16sw` votes come from blocks whose two u8 bytes are equal. The
-  `GRID_GEN[5]` entry is left in place with its cost measured, because
-  correcting it un-excuses 7 OOB-index rows that need their own adjudication.
+  ~~`GRID_GEN[5]` entry is left in place with its cost measured, because
+  correcting it un-excuses 7 OOB-index rows that need their own adjudication.~~
+  **Superseded 2026-09-12: the entry now carries `(1,0,2,3)` and all seven rows
+  are adjudicated (§37).**
 
 ### 36.10 What this analysis does not establish
 
@@ -11845,10 +11889,12 @@ needs. It is *not* a `cg_number` question and moves neither `cells audited:
   what the correction rests on. The "`live` was a terminator proxy" reading is
   the most economical account of that identity plus §22's uncut denominators,
   not a reading of code.
-- **It does not adjudicate the seven OOB-index rows §36.8's fix would
+- ~~**It does not adjudicate the seven OOB-index rows §36.8's fix would
   un-excuse.** Their status under the current `GRID_GEN[5]` is "explained by the
   grid"; under the measured permutation it is "not explained". Which they
-  actually are is open, and §36.8 prices the work rather than doing it.
+  actually are is open, and §36.8 prices the work rather than doing it.~~
+  **CLOSED 2026-09-12 (§37.4): all seven adjudicated, none a defect, and the
+  instrument that settles them runs on every audit.**
 - **It does not settle whether HUGO `caca[5..7]`'s re-timing or DUDLEY
   `saca[57..60]`'s `att`/`hit` change is deliberate balance or a conversion
   artifact.** It establishes that the cells are real, aligned and live, and that
@@ -11857,3 +11903,390 @@ needs. It is *not* a `cg_number` question and moves neither `cells audited:
   under arcade fidelity the arcade value is the one we ship either way.
 - **No C changed and no build was run.** Nothing in this pass touches `src/`;
   the change is `tools/arcade-audit/cg_audit.py` and this document.
+
+---
+
+## 37. §36.8 VERIFIED and LANDED: `GRID_GEN[5]` carries the L-record permutation, the "975 cells" is a net over 1,465 moves, and all seven un-excused OOB rows are adjudicated — none of them a defect (twenty-third pass, 2026-09-12)
+
+**Citation style for this section.** As in §21-§36: this document is not in
+`tools/doc-citations/baselines.txt`; everything below cites a **symbol** in a
+named file, or a number the audit emits, never a line number.
+
+§36.8 found a second instrument wrong, measured the fix, priced it, and left it
+unapplied because applying it un-excuses seven OOB-index rows nobody had
+adjudicated. This section re-derives every figure §36.8 states rather than
+inheriting it, applies the correction, accounts for what moves in **both**
+directions, adjudicates the seven, and folds the distinction that fooled §30.2
+into the audit as a standing assertion.
+
+**The finding holds.** Every number reproduces. Two of §36.8's own figures turn
+out to be stated over a different population from the one their sentence names,
+and one of §30.2's other figures does not reproduce at all; all three are
+corrected in §37.6. None of them touches the verdict.
+
+### 37.1 §36.8's figures, re-derived
+
+Measured on the current tree, `rom.bin` md5 `909f5abec4b6b21bf7d2a452a03fdfcc`.
+
+**(A) In an L record the `cg_next_ix`|`cg_status` pair does not swap.** Over
+every cgd-6 script pair present in both releases with the same `cgd_type` and
+the same cell-kind sequence end to end (`shape-ok`), at every cell both decoders
+call an L record, restricted to the cells where the two u8 bytes differ — the
+only cells at which the two hypotheses are distinguishable at all:
+
+```
+identical bytes (the pair does NOT swap) : 254
+crossed bytes  (the pair DOES swap)      :   0
+neither                                  :   1   <- ALEX caca[19] c8
+control: cg_add_xy, the u16 in the same word, over those same 255 cells
+                         crossed 27, identical 0, neither 0
+control over EVERY shape-ok cgd-6 L cell whose cg_add_xy bytes differ
+                         crossed 7295, identical 0, neither 0
+```
+
+§36.8's `254 / 0 / 1` and its `27 / 0` both reproduce exactly. The one
+divergence is ALEX `caca[19]` c8 — arcade word 5 `00 00 09 00` against PS2
+`00 00 00 00`, so `cg_next_ix` 9 → 0 and `cg_status` 0 → 0. That is §22.7's
+`cg_next_ix` line, and it is right **under this reading and only under it**:
+under §30.2's the same sweep reports 254 `cg_next_ix` and 255 `cg_status`
+divergences, nearly all of them the stereotyped `0 → N` / `N → 0` pair of one
+cell's two bytes read crosswise.
+
+**The live scope, which is where §36.8's `249 / 250` comes from.** Re-run with
+the same filter `verbatim_field_census()` uses — cells `k7_entry_walk` reaches —
+the population is 249 / 0 / 1, the control is 24 / 0, and §30.2's reading gives
+**249** `cg_next_ix` and **250** `cg_status`. So §36.8's paragraph quotes two
+scopes side by side. Both say the same thing.
+
+**(B) §30.2's own word-5 row never discriminated.** Re-measured over §30.2's
+population — all **14,087** byte-comparable script pairs, every 4-byte block
+voting at `block index mod cgd_type`, counting only blocks where exactly one of
+the three candidate permutations holds — the word-5 row reproduces to the vote:
+
+```
+id (0,1,2,3)   272     u16sw (1,0,3,2)  8413     rev32 (3,2,1,0)   0     neither  774
+   of the 8413 u16sw votes, 7445 are blocks whose two u8 bytes are EQUAL
+   of the  272 id votes,     269 DO discriminate the u8 pair
+```
+
+`neither` in that table counts blocks where **no** permutation holds; blocks
+where more than one holds are not counted at all (27,240 of them at word 5).
+Reading it any other way does not reproduce the published figures.
+
+**(C) The crossing §30.2 saw is the C-cell tail.** Splitting the 1,942
+discriminating word-5 blocks by what the record actually is — the code word read
+straight from the bytes at the fixed 24-byte stride, so that neither decoder's
+stop rule can bias the split:
+
+```
+both sides an L cell   : identical 273, crossed   9, neither 171
+both sides a C cell    : identical   8, crossed 896, neither 132
+one side C, one side L : identical  15, crossed  63, neither 375
+```
+
+All nine of §36.8's figures reproduce exactly under that kind reading. (Taking
+the kind from the two decoders' cell lists instead moves 110 of the 1,942 blocks
+into a fourth bucket — offsets past the end of **both** decoders' output, which
+the last script of an over-declared table has by construction, §27 — and leaves
+L at 273 / 9 / 115, C at 4 / 893 / 109 and mixed at 3 / 63 / 363. Same 1,942
+blocks, same verdict, and the byte reading is the one to publish because it does
+not depend on where a decoder stopped.)
+
+A cgd-6 C cell is 8 bytes of operands followed by 16 bytes `read_char_table`
+SKIPS without writing (`arc_parse` -> `q += 8 + max(cgd * 4 - 8, 0)`; §32's
+HOLES). Those bytes carry no structure, the converter byte-swapped them as u16s
+wholesale, and word 5's offset lands inside them.
+
+**(D) §30.2's worked example is one of the phantoms.** GILL `atca[15]`, cells 24
+to 30, arcade against PS2 at the 24-byte stride:
+
+| cell | arcade kind | PS2 kind | arcade word 5 | PS2 word 5 |
+|---|---|---|---|---|
+| 24-28 | **C** | **L** | `04 50 00 db` at c28 | `50 04 db 00` at c28 |
+| 29 | **L** | **C** | `04 60 00 dc` | `60 04 dc 00` |
+| 30 | L | L | `04 70 01 ae` | `70 04 ae 01` |
+
+§30.2 read c28 as evidence that the field pair swaps. The arcade's c28 is a **C
+cell** and the PS2's is an **L cell**, so the two sides are not the same record
+and `00 DB` against `DB 00` is a grid phantom. The cell's word 0 is arcade
+`00 04 40 00` against PS2 `00 40 04 00` — a full byte reversal, which is §30.4's
+byte signature firing on that very cell.
+
+### 37.2 The correction, and the alternative that was rejected
+
+`GRID_GEN[5]`, which encoded §30.2's reading as `(1,0,3,2)`, now carries
+**`(1,0,2,3)`** — the u16 swaps, the u8 pair does not, which is the layout
+`include/structs.h` declares (`u16 cg_add_xy; u8 cg_next_ix; u8 cg_status;`) and
+the only layout an L record can have.
+
+§36.8 guessed the right fix was "probably not a different constant but a role
+that is aware of the record kind, which is a change to `_grid_roles`". **It is
+not, and here is why it was rejected:**
+
+1. **It restores the excuse.** A role 5 that accepts either permutation is
+   satisfied by strictly more blocks than either alone, which makes `phantom`
+   *cheaper* to earn — and `phantom` is the one verdict that excuses a finding
+   (§30.3, §24.5, §25.6, §26.7, §27.6, §28). Widening the verdict that excuses
+   is the wrong direction for this class of tooling.
+2. **It is circular exactly where it matters.** The record kind is only knowable
+   on a grid, and the grid is the thing under test. At a seam — which is where
+   every one of the seven OOB rows sits — a cell straddles two grids and has no
+   single kind at all.
+3. **`unmodelled` is the honest verdict there.** `read_char_table` never writes a
+   cgd-6 C cell's 16-byte tail; those bytes hold no field, so the model has no
+   role to give them. Declining to place them is the model working, not failing.
+
+### 37.3 What moves — and "975 cells" is a **net**, not a population
+
+The census, both generators, on the current tree:
+
+| | `GRID_GEN[5] = (1,0,3,2)` | `(1,0,2,3)` |
+|---|---|---|
+| grid-phase scripts with a switch | 143 | **184** |
+| cells aligned | 165,738 | **164,844** |
+| cells phantom | 2,192 | **2,111** |
+| cells unmodelled | 591 | **1,566** |
+| byte signature: phantom / unmodelled / **aligned** | 1,365 / 37 / **0** | 1,367 / 35 / **0** |
+| OOB-index rows phantom / not | 120 / 16 | **113 / 23** |
+| shape-mismatch split (aligned / prefix / no_oracle / phantom) | 9 / 236 / 17 / 54 | 9 / 236 / 17 / 54 |
+| `cells audited` | 133,901 | 133,901 |
+| the violation TOTAL row | unchanged | unchanged |
+
+§36.8's priced column reproduces exactly. But the `+975` on the `unmodelled`
+row is a **net**. **1,465 cells change verdict**, in six directions, and the
+split is the whole point:
+
+| move | cells | what the cells are |
+|---|---|---|
+| `aligned` → `unmodelled` | 1,134 | **all `both C`** |
+| `phantom` → `unmodelled` | 58 | **all `both C`** |
+| `aligned` → `phantom` | 15 | **all `both C`** |
+| `phantom` → `aligned` | 41 | 26 `both C`, 15 `both L` |
+| `unmodelled` → `aligned` | 214 | **all `both L`**, and every one of them word-5 u8-**identical** |
+| `unmodelled` → `phantom` | 3 | 1 `both C`, 2 mixed; word 5 is `neither` on all three |
+
+Net: aligned −894, phantom −81, unmodelled +975 (1,192 in, 217 out).
+
+**The direction test, which is an independent confirmation of §37.1.** Not one
+cell that both releases decode as an L record loses standing. Every cell that
+becomes `unmodelled`, and every cell that becomes `phantom` out of `aligned`, is
+a C cell. Every `both L` cell that moves at all moves *toward* explained —
+229 of them, 214 to `aligned` from `unmodelled` and 15 to `aligned` from
+`phantom`. That is exactly what (A) predicts and nothing in the walk was told
+about it.
+
+**One script, both directions.** CHUNLI and MAKOTO `atca[108..143]` — 36 scripts
+each, 468 and 470 moved cells, the largest single block of the movement — are
+byte-identical to each other and show the whole change in 25 cells:
+
+- **cell 10** is an L record on both sides, word 5 `00 00 0b 00` → `00 00 0b 00`:
+  `cg_add_xy` zero, the u8 pair identical. The old generator demanded a crossing
+  and got none, so it declined the block — `unmodelled`. The corrected one
+  explains it — `aligned`.
+- **cells 13-24** are C cells on both sides, word 5 `00 30 00 01` → `30 00 01 00`
+  and the eleven like it: a wholesale u16 swap of bytes nothing writes. The old
+  generator called that role 5 and the cell `aligned`. The corrected one declines
+  — `unmodelled`.
+
+**Did any conclusion rest on the old classification?** No. The JSON diff's only
+per-violation change is the `grid` field of the seven rows §37.4 adjudicates, all
+`phantom` → `unmodelled`; no other violation row changes class, and **not one of
+the 18 newly-`phantom` cells carries a violation row**, so nothing gained an
+excuse. `grid_signature_not_phantom` still reads **0** for every character
+(§30.6's assertion). §30.5's shape-mismatch split is unmoved. §30.4's histogram
+over the 1,402 signature cells moves 1,365 / 37 to **1,367 / 35** placed /
+declined — still every placed one at role **2**, still none `aligned`.
+
+**§30.3's threshold sweep, re-run under the corrected generator** (the previous
+sweep stays in §30.3's own table):
+
+| `GRID_MIN_RECORDS` | aligned | phantom | unmodelled | switch scripts | signature: phantom / unmodelled / **aligned** |
+|---|---|---|---|---|---|
+| 2 | 164,839 | 2,128 | 1,554 | 186 | 1,367 / 35 / **0** |
+| 3 | 164,844 | 2,111 | 1,566 | 184 | 1,367 / 35 / **0** |
+| **4** | **164,844** | **2,111** | **1,566** | **184** | **1,367 / 35 / 0** |
+| 5 | 164,844 | 2,111 | 1,566 | 184 | 1,367 / 35 / **0** |
+| 6 | 164,844 | 2,111 | 1,566 | 184 | 1,367 / 35 / **0** |
+| 8 | 164,844 | 2,111 | 1,566 | 184 | 1,367 / 35 / **0** |
+| 12 | 164,845 | 2,099 | 1,577 | 184 | 1,367 / 35 / **0** |
+
+Both properties §30.3's table exists to show survive, and one improves: the
+plateau is now **3 through 8** bit-identical rather than 4 through 6, and the
+last column is still `0` at every threshold. 4 still sits inside it.
+
+### 37.4 The seven un-excused OOB rows, adjudicated
+
+All seven are `a_koc_oob` — a C cell whose code is 3, 4 or 5 (`comm_jmp` /
+`comm_jpss` / `comm_jsr`) and whose `koc` is outside `char_table`
+(`include/structs.h` -> `u32* char_table[12]`; the audit's bound is now parsed
+from that declaration as `N_KOC`, not typed as a literal).
+
+**The instrument: the converter's own transform at the block, which is a third
+reader of the data's record grid, independent of both the decoder and
+`k7_entry_walk`.** A C cell's header word 0 is `code:u16 | koc:u16` and converts
+across the releases with **both** halves swapped — that is `GRID_GEN[0]`, and it
+is what 168,975 word-0 blocks do. The half-swap `(1,0,2,3)` is the
+`u16 | u8 | u8` shape, which in the record layout is word 5 and **no other
+word**. Split every jump cell the two decoders agree is a C cell by which of the
+two its word 0 takes:
+
+```
+7596 jump cells both decoders call a C cell
+  7559 convert as a C header (GRID_GEN[0])   out-of-range koc:  0
+    30 convert as neither                    out-of-range koc:  0
+     7 take the word-5 half-swap             out-of-range koc:  7   <- all seven rows
+```
+
+**7 of 7 against 0 of 7,589, in both directions.** The out-of-range `koc`
+population *is* the population whose word 0 does not convert the way a C header
+converts. So the value the audit reads there is not a `koc`: it is the low half
+of some record's word 5, read by a decoder whose cell boundary is not the data's
+— §30's grid-phantom finding arriving at a different word, by a route that never
+consults the grid walk.
+
+| row | arcade / PS2 word 0 | arcade koc | PS2 koc | `dead` | `k7_entry_walk` for that character | verdict |
+|---|---|---|---|---|---|---|
+| ALEX `saca[56]` c11 | `00 04 00 30` / `04 00 00 30` | 48 | 12,288 | **true** | complete (`k7_dead_unmodelled` 0) | **not a defect**, two instruments |
+| ALEX `saca[57]` c11 | `00 04 00 30` / `04 00 00 30` | 48 | 12,288 | **true** | complete | **not a defect**, two instruments |
+| ALEX `saca[58]` c11 | `00 04 00 30` / `04 00 00 30` | 48 | 12,288 | **true** | complete | **not a defect**, two instruments |
+| ALEX `saca[59]` c11 | `00 04 00 30` / `04 00 00 30` | 48 | 12,288 | **true** | complete | **not a defect**, two instruments |
+| DUDLEY `nmca[32]` c10 | `00 04 18 00` / `04 00 18 00` | 6,144 | 24 | **true** | complete | **not a defect**, two instruments |
+| NECRO `nmca[49]` c24 | `00 04 18 00` / `04 00 18 00` | 6,144 | 24 | false | **void(4)** | **not a defect on the datum**; reachability unmodelled |
+| TWELVE `nmca[46]` c30 | `00 04 18 00` / `04 00 18 00` | 6,144 | 24 | false | **void(117)** | **not a defect on the datum**; reachability unmodelled |
+
+Three characters carry the *same four bytes* at the same cell shape —
+`00 04 18 00` against `04 00 18 00`, first u16 swapped, second half
+byte-identical — which is itself evidence that the relation is the converter's
+and not a per-character accident.
+
+**Corroborating, not decisive: the PS2 counterpart is out of range too, in all
+seven.** The shipped PS2 game holds an out-of-range `jpss` destination at the
+same cell of the same script and does not crash. That is not §6.1's letter — the
+*decoded* values differ, 48 against 12,288 and 6,144 against 24, because the two
+decoders read the same bytes at opposite endianness — but it is its substance:
+nothing the arcade adaptation did created this.
+
+**Reachability, stated exactly, because §36.8 stated it loosely.** §36.8 says
+"two of them on cells `k7_entry_walk` calls **live**". The model does not call
+them live; for NECRO and TWELVE it calls **nothing** dead. Both characters have
+jump landings the model cannot compute (4 and 117), so their `dead` set is void
+under §31.10 and `"dead": false` there is the *absence* of a liveness statement.
+TWELVE additionally has 7 landings whose own `koc` is out of range
+(`k7_landing_koc_out_of_range`). ALEX and DUDLEY are the opposite case:
+`k7_dead_unmodelled` is **0** for both, so their `"dead": true` is a real
+statement and those five rows stand on two independent instruments.
+
+**What that leaves.** For NECRO and TWELVE the *datum* is settled — it is not a
+`koc` — but the *reachability* is not, and no instrument in the tree can settle
+it while their landing models are void. `comm_jpss` indexes `char_table[koc]`
+with no bound, so an entry into that region would read a pointer past a 12-entry
+array. That is precisely the class §8.C and §8.L exist for, and it joins them the
+way §22.8's two indexes and §21.11's `se_random_table` door did — **recorded
+here, not given a worklist item of its own.**
+
+**No defect found, and therefore no row.** Nothing here warrants a
+`CgRemapRange` row or a table change, so `ArcadeCharData_ComputeDigest`
+(`de8d3cf2d2eac7ac`) does not move and §8.O's release-note list is untouched.
+
+### 37.5 The defence, in code
+
+`cg_audit.py`:
+
+- **`GRID_GEN[5] = (1,0,2,3)`**, with the word-table header comment rewritten to
+  say which permutation belongs to which population and why one role cannot
+  serve both.
+- **`N_KOC`** is parsed out of `include/structs.h` -> `u32* char_table[12]`, for
+  the same reason `CG_REMAP_CUTOFF` is parsed: the audit must move with the
+  struct. The `a_koc_oob` site uses it instead of a literal `12`.
+- **`_grid_script_bytes`** now yields each decoder's cell list beside the bytes.
+  `grid_phase` deliberately ignores them — the walk stays byte-only — but the
+  gate below needs to know what the audit *believes* it is reading.
+- **`word5_lc_gate()` / `_assert_word5_lc_gate()`**, the standing assertion, in
+  the shape of `ovct_reachability()`, `k7_swap_gate()`, `manu_delta_gate()`,
+  `counterpart_verdict()` and `_assert_verbatim_census()`:
+
+  - **(a)** in a cell both decoders call an L record, in a script whose shape
+    they agree on, the u8 pair **never** crosses — and the population is
+    non-empty, so the assertion cannot pass by being vacuous;
+  - **(a′)** the decoder-independent byte-stride reading *does* find crossings in
+    an "L" cell (9 of them), and **every one is on a cell the walk positively
+    calls `phantom`** — §30.6's assertion run the other way round. A crossing on
+    an `aligned` cell would mean a real L record crosses and (a) is an artifact
+    of the shape-ok filter;
+  - **(b)** the cgd-6 C cell's skipped tail at the same offset **does** cross
+    (896 against 8). Without this the two populations would be indistinguishable
+    and (a) would prove nothing;
+  - **(c)** control: `cg_add_xy`, the u16 in the same word, over the same cells,
+    crosses and is never identical — so (a) reads real fields at real offsets;
+  - **(d)** `GRID_GEN[5]` is **derived** from (a) rather than compared against a
+    literal: whichever permutation the L records vote for is the one the table
+    must carry, so reverting the constant fails the run;
+  - **(e)** the out-of-range `koc` population is exactly the non-header
+    population, asserted in both directions (`header_oob == 0`,
+    `other_oob == 0`, `halfswap_ok == 0`, `halfswap_oob > 0`).
+
+- The run prints both word-5 populations, the control, the derived generator, the
+  one real `cg_next_ix` divergence **as a row**, the koc separation, and all
+  seven rows by name with their bytes. Rows, not counts: a future narrowing has
+  to delete evidence rather than quietly lose a number.
+
+`cells audited: 133901` and the violation TOTAL row do not move. Nothing in
+`src/` changed and no build was run.
+
+### 37.6 Corrections to earlier sections (recorded, not silently edited)
+
+- **§30.2's word-5 reading is withdrawn and the correction is now applied**, not
+  merely recorded. The table's arithmetic stands; `GRID_GEN[5]` carries the
+  L-record permutation.
+- **§30.2's word-0 `u16sw` figure of 168,078 is WITHDRAWN — it is 168,975.**
+  Every other figure in that table, word 0's `id` / `rev32` / `neither`
+  included, reproduces to the vote. The band fix `92d89d8d` cannot account for
+  it: `remap` enters the vote only through role 1's special case, so word 0 does
+  not depend on `twelve_cg_ranges`. No reading in §30 rests on the exact value.
+- **§30.5's "the 136 OOB-index rows split 120 / 16" is superseded: 113 / 23.**
+  The 136 total is unchanged and the seven that moved are adjudicated in §37.4.
+- **§36.8's control population is mis-stated.** "The `cg_add_xy` u16 in the same
+  word, cells where its two bytes differ: crossed 27, identical 0" is the control
+  over the **same 255 cells** row A measures. Over every shape-ok cgd-6 L cell
+  whose `cg_add_xy` bytes differ it is **7,295 / 0 / 0** — the same verdict,
+  stronger.
+- **§36.8's "249 `cg_next_ix` and 250 `cg_status`" is the LIVE scope**, while the
+  `254 / 0 / 1` in the same paragraph is the whole-span scope. Both support the
+  finding; the paragraph reads as one population and is two.
+- **§36.8's "975 cells move to `unmodelled`" is a NET.** 1,465 cells change
+  verdict; 1,192 become `unmodelled` and 217 stop being it (§37.3).
+- **§36.8's GILL `atca[15]` detail is loose in two places.** Arcade cells **24
+  and 25** are C against PS2 L as well, not only 26-28; and `0xDB` appears in
+  **both** releases' cell 28 — arcade byte 23, PS2 byte 22 — not in the arcade's
+  cell 29. The substance is confirmed: the arcade's c28 is a C cell against the
+  PS2's L cell, and that cell's word 0 is a §30.4 byte-signature hit.
+- **§36.8's "two of them on cells `k7_entry_walk` calls live" is withdrawn.** The
+  model calls **nothing** dead for NECRO and TWELVE — both are `dead:void`
+  (§31.10) — so those two rows have no liveness statement in either direction.
+- **§30.3's threshold sweep is re-run** under the corrected generator (§37.3).
+  Both properties hold and the bit-identical plateau widens from 4-6 to 3-8.
+
+### 37.7 What this does not establish
+
+- **It does not establish that the seven cells are unreachable.** For five of
+  them `k7_entry_walk` says so on a complete model; for NECRO `nmca[49]` c24 and
+  TWELVE `nmca[46]` c30 no instrument in the tree can, because those characters'
+  landing models are void. What §37.4 establishes is that the out-of-range value
+  is not an authored `koc` — a statement about the datum, not about control flow.
+- **It does not model a cgd-6 C cell's skipped 16-byte tail.** The corrected
+  generator declines it, which is why 1,192 cells became `unmodelled`. Nothing
+  here says what those bytes are — the next script's body, another table's data,
+  or padding — and §30.8's first bullet still stands unamended.
+- **It does not re-open any verdict §30 drew.** The byte signature still fires on
+  1,402 cells, still lands at role 2 on every one it places, and still never
+  fires on a cell the walk calls `aligned` — at any `GRID_MIN_RECORDS` from 2
+  to 12.
+- **The PS2 side is not audited on this axis.** As §30.8: the question is which
+  arcade cells the audit's decoder misreads; the identical question for
+  `ps2_parse` over PS2-only regions was not asked.
+- **It does not touch `cg_number`.** `cells audited: 133901`, the TOTAL row and
+  `ArcadeCharData_ComputeDigest` are all unmoved, and no worklist item is created
+  or closed by it.
+- **No C changed and no build was run.** The change is
+  `tools/arcade-audit/cg_audit.py`, `tools/arcade-audit/README.md` and this
+  document.

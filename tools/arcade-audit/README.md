@@ -70,10 +70,13 @@ outruns the PS2 one and the PS2 has no bytes there), `no_oracle`. The run
 prints the census, the shape-mismatch split, and by name every OOB row the
 grid does **not** explain; it exits non-zero if the u32 byte signature ever
 fires on a cell the walk calls `aligned`. This replaces §21.6's "PS2 converter
-artifact" class, which does not exist. *(Word 5's entry in that transform list
-is right for a C cell's skipped tail and wrong for an L record's
-`cg_next_ix`|`cg_status` pair, which does not swap — measured and priced in
-doc §36.8, deliberately not applied.)*
+artifact" class, which does not exist. *(Word 5's generator carries the
+**L-record** permutation — the u16 swaps, the `cg_next_ix`|`cg_status` pair does
+not. A cgd-6 **C** cell's skipped 16-byte tail at the same offset does swap, and
+`word5_lc_gate()` measures both populations on every run, derives `GRID_GEN[5]`
+from the L one, and asserts that no crossing survives on a cell the walk calls
+`aligned`. It also emits the `koc` separation that adjudicates the seven
+`a_koc_oob` rows the grid declines — doc §36.8 and §37.)*
 
 The run also prints the **per-field divergence census**
 (`verbatim_field_census()`, doc §36) — how many cell-aligned live L cells each

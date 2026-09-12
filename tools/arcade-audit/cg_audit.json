@@ -524,10 +524,10 @@
    "span_gate_xcopy": "unmodelled",
    "span_gate_xcopy_reasons": 27,
    "grid_scripts": 619,
-   "grid_switch_scripts": 11,
-   "grid_aligned": 8022,
-   "grid_phantom": 100,
-   "grid_unmodelled": 66,
+   "grid_switch_scripts": 5,
+   "grid_aligned": 8021,
+   "grid_phantom": 91,
+   "grid_unmodelled": 76,
    "grid_signature": 65,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 0,
@@ -3364,7 +3364,7 @@
     "atca[15]": {
      "switches": [
       [
-       144,
+       137,
        6,
        2
       ]
@@ -3391,12 +3391,12 @@
       42,
       43
      ],
-     "phantom_cells": 20
+     "phantom_cells": 21
     },
     "atca[16]": {
      "switches": [
       [
-       144,
+       137,
        6,
        2
       ]
@@ -3423,12 +3423,12 @@
       42,
       43
      ],
-     "phantom_cells": 20
+     "phantom_cells": 21
     },
     "atca[17]": {
      "switches": [
       [
-       144,
+       137,
        6,
        2
       ]
@@ -3455,73 +3455,7 @@
       42,
       43
      ],
-     "phantom_cells": 20
-    },
-    "atca[118]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[119]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[130]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[131]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[142]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[143]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
+     "phantom_cells": 21
     },
     "exca[23]": {
      "switches": [
@@ -3553,10 +3487,10 @@
     }
    },
    "scripts": 619,
-   "switch_scripts": 11,
-   "aligned": 8022,
-   "phantom": 100,
-   "unmodelled": 66,
+   "switch_scripts": 5,
+   "aligned": 8021,
+   "phantom": 91,
+   "unmodelled": 76,
    "signature": 65,
    "signature_not_phantom": 0,
    "signature_unmodelled": 0
@@ -4248,7 +4182,7 @@
     "koc": 48,
     "ix": 0,
     "dead": true,
-    "grid": "phantom"
+    "grid": "unmodelled"
    },
    {
     "cls": "needs_manual_diff",
@@ -4268,7 +4202,7 @@
     "koc": 48,
     "ix": 0,
     "dead": true,
-    "grid": "phantom"
+    "grid": "unmodelled"
    },
    {
     "cls": "needs_manual_diff",
@@ -4288,7 +4222,7 @@
     "koc": 48,
     "ix": 0,
     "dead": true,
-    "grid": "phantom"
+    "grid": "unmodelled"
    },
    {
     "cls": "needs_manual_diff",
@@ -4308,7 +4242,7 @@
     "koc": 48,
     "ix": 0,
     "dead": true,
-    "grid": "phantom"
+    "grid": "unmodelled"
    }
   ],
   "stats": {
@@ -4360,10 +4294,10 @@
    "span_gate_xcopy": "unmodelled",
    "span_gate_xcopy_reasons": 3,
    "grid_scripts": 684,
-   "grid_switch_scripts": 9,
-   "grid_aligned": 7935,
-   "grid_phantom": 612,
-   "grid_unmodelled": 7,
+   "grid_switch_scripts": 8,
+   "grid_aligned": 7929,
+   "grid_phantom": 604,
+   "grid_unmodelled": 21,
    "grid_signature": 399,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 0,
@@ -4422,8 +4356,8 @@
    "code_oob_dead": 0,
    "koc_oob_dead": 4,
    "idx_oob_dead": 0,
-   "oob_phantom": 5,
-   "oob_not_phantom": 0,
+   "oob_phantom": 1,
+   "oob_not_phantom": 4,
    "vb_pairs": 6055,
    "vb_pairs_preterm": 6031,
    "vb_hidden": 0,
@@ -4714,21 +4648,10 @@
   },
   "grid_phase": {
    "off_grid_scripts": {
-    "atca[6]": {
-     "switches": [
-      [
-       131,
-       4,
-       0
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 1
-    },
     "atca[7]": {
      "switches": [
       [
-       101,
+       89,
        6,
        2
       ]
@@ -4750,7 +4673,7 @@
       30,
       31
      ],
-     "phantom_cells": 16
+     "phantom_cells": 17
     },
     "atca[41]": {
      "switches": [
@@ -4798,12 +4721,12 @@
        2
       ],
       [
-       459,
+       453,
        6,
        4
       ],
       [
-       643,
+       637,
        6,
        0
       ]
@@ -4906,7 +4829,7 @@
       200,
       203
      ],
-     "phantom_cells": 148
+     "phantom_cells": 146
     },
     "saca[57]": {
      "switches": [
@@ -4921,12 +4844,12 @@
        2
       ],
       [
-       459,
+       453,
        6,
        4
       ],
       [
-       643,
+       637,
        6,
        0
       ]
@@ -5029,7 +4952,7 @@
       200,
       203
      ],
-     "phantom_cells": 148
+     "phantom_cells": 146
     },
     "saca[58]": {
      "switches": [
@@ -5044,12 +4967,12 @@
        2
       ],
       [
-       459,
+       453,
        6,
        4
       ],
       [
-       643,
+       637,
        6,
        0
       ]
@@ -5152,7 +5075,7 @@
       200,
       203
      ],
-     "phantom_cells": 148
+     "phantom_cells": 146
     },
     "saca[59]": {
      "switches": [
@@ -5167,12 +5090,12 @@
        2
       ],
       [
-       459,
+       453,
        6,
        4
       ],
       [
-       643,
+       637,
        6,
        0
       ]
@@ -5275,14 +5198,14 @@
       200,
       203
      ],
-     "phantom_cells": 148
+     "phantom_cells": 146
     }
    },
    "scripts": 684,
-   "switch_scripts": 9,
-   "aligned": 7935,
-   "phantom": 612,
-   "unmodelled": 7,
+   "switch_scripts": 8,
+   "aligned": 7929,
+   "phantom": 604,
+   "unmodelled": 21,
    "signature": 399,
    "signature_not_phantom": 0,
    "signature_unmodelled": 0
@@ -5677,9 +5600,9 @@
    "span_gate_xcopy": "unmodelled",
    "span_gate_xcopy_reasons": 5,
    "grid_scripts": 697,
-   "grid_switch_scripts": 4,
-   "grid_aligned": 6528,
-   "grid_phantom": 8,
+   "grid_switch_scripts": 0,
+   "grid_aligned": 6536,
+   "grid_phantom": 0,
    "grid_unmodelled": 1,
    "grid_signature": 0,
    "grid_signature_not_phantom": 0,
@@ -5993,56 +5916,11 @@
    "foreign_cells": []
   },
   "grid_phase": {
-   "off_grid_scripts": {
-    "caca[14]": {
-     "switches": [
-      [
-       29,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "caca[15]": {
-     "switches": [
-      [
-       29,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "caca[16]": {
-     "switches": [
-      [
-       29,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "caca[17]": {
-     "switches": [
-      [
-       29,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    }
-   },
+   "off_grid_scripts": {},
    "scripts": 697,
-   "switch_scripts": 4,
-   "aligned": 6528,
-   "phantom": 8,
+   "switch_scripts": 0,
+   "aligned": 6536,
+   "phantom": 0,
    "unmodelled": 1,
    "signature": 0,
    "signature_not_phantom": 0,
@@ -7049,9 +6927,9 @@
    "span_gate_xcopy_reasons": 4,
    "grid_scripts": 914,
    "grid_switch_scripts": 2,
-   "grid_aligned": 10706,
-   "grid_phantom": 24,
-   "grid_unmodelled": 27,
+   "grid_aligned": 10713,
+   "grid_phantom": 27,
+   "grid_unmodelled": 17,
    "grid_signature": 4,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 1,
@@ -7483,7 +7361,7 @@
     "caca[8]": {
      "switches": [
       [
-       179,
+       161,
        2,
        0
       ],
@@ -7498,7 +7376,7 @@
       39,
       51
      ],
-     "phantom_cells": 23
+     "phantom_cells": 26
     },
     "yuca[19]": {
      "switches": [
@@ -7516,9 +7394,9 @@
    },
    "scripts": 914,
    "switch_scripts": 2,
-   "aligned": 10706,
-   "phantom": 24,
-   "unmodelled": 27,
+   "aligned": 10713,
+   "phantom": 27,
+   "unmodelled": 17,
    "signature": 4,
    "signature_not_phantom": 0,
    "signature_unmodelled": 1
@@ -7764,7 +7642,7 @@
     "koc": 6144,
     "ix": 0,
     "dead": true,
-    "grid": "phantom"
+    "grid": "unmodelled"
    },
    {
     "cls": "needs_manual_diff",
@@ -8267,10 +8145,10 @@
    "span_gate_xcopy": "unmodelled",
    "span_gate_xcopy_reasons": 5,
    "grid_scripts": 711,
-   "grid_switch_scripts": 25,
-   "grid_aligned": 8749,
-   "grid_phantom": 161,
-   "grid_unmodelled": 43,
+   "grid_switch_scripts": 21,
+   "grid_aligned": 8793,
+   "grid_phantom": 154,
+   "grid_unmodelled": 6,
    "grid_signature": 100,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 0,
@@ -8329,8 +8207,8 @@
    "code_oob_dead": 0,
    "koc_oob_dead": 33,
    "idx_oob_dead": 0,
-   "oob_phantom": 33,
-   "oob_not_phantom": 0,
+   "oob_phantom": 32,
+   "oob_not_phantom": 1,
    "vb_pairs": 6794,
    "vb_pairs_preterm": 6668,
    "vb_hidden": 8,
@@ -8918,51 +8796,7 @@
       11,
       12
      ],
-     "phantom_cells": 3
-    },
-    "saca[32]": {
-     "switches": [
-      [
-       389,
-       4,
-       2
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 1
-    },
-    "saca[33]": {
-     "switches": [
-      [
-       389,
-       4,
-       2
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 1
-    },
-    "saca[34]": {
-     "switches": [
-      [
-       389,
-       4,
-       2
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 1
-    },
-    "saca[35]": {
-     "switches": [
-      [
-       389,
-       4,
-       2
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 1
+     "phantom_cells": 2
     },
     "saca[36]": {
      "switches": [
@@ -9089,7 +8923,7 @@
       58,
       59
      ],
-     "phantom_cells": 32
+     "phantom_cells": 31
     },
     "saca[62]": {
      "switches": [
@@ -9132,14 +8966,14 @@
       58,
       59
      ],
-     "phantom_cells": 32
+     "phantom_cells": 31
     }
    },
    "scripts": 711,
-   "switch_scripts": 25,
-   "aligned": 8749,
-   "phantom": 161,
-   "unmodelled": 43,
+   "switch_scripts": 21,
+   "aligned": 8793,
+   "phantom": 154,
+   "unmodelled": 6,
    "signature": 100,
    "signature_not_phantom": 0,
    "signature_unmodelled": 0
@@ -9680,7 +9514,7 @@
     "koc": 6144,
     "ix": 0,
     "dead": false,
-    "grid": "phantom"
+    "grid": "unmodelled"
    },
    {
     "cls": "needs_manual_diff",
@@ -9882,9 +9716,9 @@
    "span_gate_xcopy_reasons": 8,
    "grid_scripts": 654,
    "grid_switch_scripts": 4,
-   "grid_aligned": 8137,
-   "grid_phantom": 90,
-   "grid_unmodelled": 46,
+   "grid_aligned": 8072,
+   "grid_phantom": 86,
+   "grid_unmodelled": 115,
    "grid_signature": 74,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 26,
@@ -9944,8 +9778,8 @@
    "code_oob_dead": 0,
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
-   "oob_phantom": 1,
-   "oob_not_phantom": 0,
+   "oob_phantom": 0,
+   "oob_not_phantom": 1,
    "vb_pairs": 6167,
    "vb_pairs_preterm": 6143,
    "vb_hidden": 0,
@@ -10221,7 +10055,7 @@
       46,
       47
      ],
-     "phantom_cells": 24
+     "phantom_cells": 23
     },
     "saca[48]": {
      "switches": [
@@ -10240,7 +10074,7 @@
       25,
       29
      ],
-     "phantom_cells": 16
+     "phantom_cells": 15
     },
     "saca[49]": {
      "switches": [
@@ -10259,7 +10093,7 @@
       25,
       29
      ],
-     "phantom_cells": 16
+     "phantom_cells": 15
     },
     "saca[66]": {
      "switches": [
@@ -10269,12 +10103,12 @@
        0
       ],
       [
-       131,
+       119,
        6,
        2
       ],
       [
-       201,
+       189,
        6,
        4
       ]
@@ -10292,14 +10126,14 @@
       55,
       58
      ],
-     "phantom_cells": 34
+     "phantom_cells": 33
     }
    },
    "scripts": 654,
    "switch_scripts": 4,
-   "aligned": 8137,
-   "phantom": 90,
-   "unmodelled": 46,
+   "aligned": 8072,
+   "phantom": 86,
+   "unmodelled": 115,
    "signature": 74,
    "signature_not_phantom": 0,
    "signature_unmodelled": 26
@@ -10791,9 +10625,9 @@
    "span_gate_xcopy": "unmodelled",
    "span_gate_xcopy_reasons": 5,
    "grid_scripts": 668,
-   "grid_switch_scripts": 2,
-   "grid_aligned": 7008,
-   "grid_phantom": 4,
+   "grid_switch_scripts": 0,
+   "grid_aligned": 7012,
+   "grid_phantom": 0,
    "grid_unmodelled": 6,
    "grid_signature": 0,
    "grid_signature_not_phantom": 0,
@@ -11108,34 +10942,11 @@
    ]
   },
   "grid_phase": {
-   "off_grid_scripts": {
-    "btca[20]": {
-     "switches": [
-      [
-       5,
-       4,
-       2
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "btca[21]": {
-     "switches": [
-      [
-       5,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    }
-   },
+   "off_grid_scripts": {},
    "scripts": 668,
-   "switch_scripts": 2,
-   "aligned": 7008,
-   "phantom": 4,
+   "switch_scripts": 0,
+   "aligned": 7012,
+   "phantom": 0,
    "unmodelled": 6,
    "signature": 0,
    "signature_not_phantom": 0,
@@ -11782,10 +11593,10 @@
    "span_gate_xcopy": "unmodelled",
    "span_gate_xcopy_reasons": 5,
    "grid_scripts": 795,
-   "grid_switch_scripts": 28,
-   "grid_aligned": 10145,
-   "grid_phantom": 34,
-   "grid_unmodelled": 85,
+   "grid_switch_scripts": 22,
+   "grid_aligned": 10170,
+   "grid_phantom": 22,
+   "grid_unmodelled": 72,
    "grid_signature": 4,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 0,
@@ -14816,72 +14627,6 @@
      "signature": [],
      "phantom_cells": 1
     },
-    "atca[118]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[119]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[130]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[131]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[142]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[143]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
     "yuca[0]": {
      "switches": [
       [
@@ -14936,10 +14681,10 @@
     }
    },
    "scripts": 795,
-   "switch_scripts": 28,
-   "aligned": 10145,
-   "phantom": 34,
-   "unmodelled": 85,
+   "switch_scripts": 22,
+   "aligned": 10170,
+   "phantom": 22,
+   "unmodelled": 72,
    "signature": 4,
    "signature_not_phantom": 0,
    "signature_unmodelled": 0
@@ -15420,9 +15165,9 @@
    "span_gate_xcopy_reasons": 27,
    "grid_scripts": 707,
    "grid_switch_scripts": 1,
-   "grid_aligned": 9689,
+   "grid_aligned": 9620,
    "grid_phantom": 1,
-   "grid_unmodelled": 5,
+   "grid_unmodelled": 74,
    "grid_signature": 0,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 0,
@@ -15710,9 +15455,9 @@
    },
    "scripts": 707,
    "switch_scripts": 1,
-   "aligned": 9689,
+   "aligned": 9620,
    "phantom": 1,
-   "unmodelled": 5,
+   "unmodelled": 74,
    "signature": 0,
    "signature_not_phantom": 0,
    "signature_unmodelled": 0
@@ -16332,9 +16077,9 @@
    "span_gate_xcopy": "unmodelled",
    "span_gate_xcopy_reasons": 4,
    "grid_scripts": 697,
-   "grid_switch_scripts": 8,
-   "grid_aligned": 8006,
-   "grid_phantom": 120,
+   "grid_switch_scripts": 5,
+   "grid_aligned": 8010,
+   "grid_phantom": 116,
    "grid_unmodelled": 1,
    "grid_signature": 48,
    "grid_signature_not_phantom": 0,
@@ -16602,28 +16347,6 @@
   },
   "grid_phase": {
    "off_grid_scripts": {
-    "btca[20]": {
-     "switches": [
-      [
-       5,
-       4,
-       2
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 1
-    },
-    "btca[21]": {
-     "switches": [
-      [
-       5,
-       4,
-       2
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 1
-    },
     "saca[28]": {
      "switches": [
       [
@@ -16740,17 +16463,6 @@
      ],
      "phantom_cells": 29
     },
-    "saca[32]": {
-     "switches": [
-      [
-       83,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
     "saca[73]": {
      "switches": [
       [
@@ -16764,9 +16476,9 @@
     }
    },
    "scripts": 697,
-   "switch_scripts": 8,
-   "aligned": 8006,
-   "phantom": 120,
+   "switch_scripts": 5,
+   "aligned": 8010,
+   "phantom": 116,
    "unmodelled": 1,
    "signature": 48,
    "signature_not_phantom": 0,
@@ -18377,12 +18089,12 @@
    "span_gate_xcopy_reasons": 4,
    "grid_scripts": 821,
    "grid_switch_scripts": 16,
-   "grid_aligned": 9099,
-   "grid_phantom": 492,
-   "grid_unmodelled": 76,
+   "grid_aligned": 9084,
+   "grid_phantom": 495,
+   "grid_unmodelled": 88,
    "grid_signature": 337,
    "grid_signature_not_phantom": 0,
-   "grid_signature_unmodelled": 2,
+   "grid_signature_unmodelled": 0,
    "caua_hosa_over_declared": 0,
    "caua_hosa_tail_reached": 0,
    "manu_direct": 14,
@@ -18929,7 +18641,7 @@
     "atca[14]": {
      "switches": [
       [
-       119,
+       101,
        6,
        2
       ]
@@ -18957,7 +18669,7 @@
       37,
       38
      ],
-     "phantom_cells": 19
+     "phantom_cells": 22
     },
     "atca[118]": {
      "switches": [
@@ -19121,7 +18833,7 @@
       111,
       114
      ],
-     "phantom_cells": 60
+     "phantom_cells": 59
     },
     "saca[45]": {
      "switches": [
@@ -19166,7 +18878,7 @@
       111,
       114
      ],
-     "phantom_cells": 60
+     "phantom_cells": 59
     },
     "saca[46]": {
      "switches": [
@@ -19211,7 +18923,7 @@
       111,
       114
      ],
-     "phantom_cells": 60
+     "phantom_cells": 59
     },
     "saca[47]": {
      "switches": [
@@ -19256,12 +18968,12 @@
       111,
       114
      ],
-     "phantom_cells": 60
+     "phantom_cells": 59
     },
     "saca[61]": {
      "switches": [
       [
-       107,
+       95,
        6,
        2
       ]
@@ -19310,12 +19022,12 @@
       62,
       63
      ],
-     "phantom_cells": 49
+     "phantom_cells": 50
     },
     "saca[62]": {
      "switches": [
       [
-       107,
+       95,
        6,
        2
       ]
@@ -19364,12 +19076,12 @@
       62,
       63
      ],
-     "phantom_cells": 49
+     "phantom_cells": 50
     },
     "saca[63]": {
      "switches": [
       [
-       107,
+       95,
        6,
        2
       ]
@@ -19418,12 +19130,12 @@
       62,
       63
      ],
-     "phantom_cells": 49
+     "phantom_cells": 50
     },
     "saca[64]": {
      "switches": [
       [
-       107,
+       95,
        6,
        2
       ]
@@ -19472,17 +19184,17 @@
       62,
       63
      ],
-     "phantom_cells": 49
+     "phantom_cells": 50
     }
    },
    "scripts": 821,
    "switch_scripts": 16,
-   "aligned": 9099,
-   "phantom": 492,
-   "unmodelled": 76,
+   "aligned": 9084,
+   "phantom": 495,
+   "unmodelled": 88,
    "signature": 337,
    "signature_not_phantom": 0,
-   "signature_unmodelled": 2
+   "signature_unmodelled": 0
   },
   "span_reach": {
    "tables": {
@@ -19826,9 +19538,9 @@
    "span_gate_xcopy_reasons": 7,
    "grid_scripts": 683,
    "grid_switch_scripts": 8,
-   "grid_aligned": 6448,
+   "grid_aligned": 6458,
    "grid_phantom": 8,
-   "grid_unmodelled": 10,
+   "grid_unmodelled": 0,
    "grid_signature": 0,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 0,
@@ -20398,9 +20110,9 @@
    },
    "scripts": 683,
    "switch_scripts": 8,
-   "aligned": 6448,
+   "aligned": 6458,
    "phantom": 8,
-   "unmodelled": 10,
+   "unmodelled": 0,
    "signature": 0,
    "signature_not_phantom": 0,
    "signature_unmodelled": 0
@@ -20781,10 +20493,10 @@
    "span_gate_xcopy": "unmodelled",
    "span_gate_xcopy_reasons": 3,
    "grid_scripts": 682,
-   "grid_switch_scripts": 0,
+   "grid_switch_scripts": 1,
    "grid_aligned": 7079,
-   "grid_phantom": 0,
-   "grid_unmodelled": 25,
+   "grid_phantom": 2,
+   "grid_unmodelled": 23,
    "grid_signature": 2,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 2,
@@ -21077,19 +20789,25 @@
   "grid_phase": {
    "off_grid_scripts": {
     "caca[18]": {
-     "switches": [],
+     "switches": [
+      [
+       371,
+       2,
+       0
+      ]
+     ],
      "signature": [
       52,
       58
      ],
-     "phantom_cells": 0
+     "phantom_cells": 2
     }
    },
    "scripts": 682,
-   "switch_scripts": 0,
+   "switch_scripts": 1,
    "aligned": 7079,
-   "phantom": 0,
-   "unmodelled": 25,
+   "phantom": 2,
+   "unmodelled": 23,
    "signature": 2,
    "signature_not_phantom": 0,
    "signature_unmodelled": 2
@@ -21807,10 +21525,10 @@
    "span_gate_xcopy": "unmodelled",
    "span_gate_xcopy_reasons": 4,
    "grid_scripts": 654,
-   "grid_switch_scripts": 19,
-   "grid_aligned": 7824,
-   "grid_phantom": 276,
-   "grid_unmodelled": 66,
+   "grid_switch_scripts": 13,
+   "grid_aligned": 7823,
+   "grid_phantom": 249,
+   "grid_unmodelled": 94,
    "grid_signature": 148,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 0,
@@ -22195,7 +21913,7 @@
     "atca[15]": {
      "switches": [
       [
-       131,
+       125,
        6,
        2
       ]
@@ -22227,7 +21945,7 @@
     "atca[16]": {
      "switches": [
       [
-       131,
+       125,
        6,
        2
       ]
@@ -22259,7 +21977,7 @@
     "atca[17]": {
      "switches": [
       [
-       131,
+       125,
        6,
        2
       ]
@@ -22302,7 +22020,7 @@
       36,
       38
      ],
-     "phantom_cells": 9
+     "phantom_cells": 8
     },
     "atca[25]": {
      "switches": [
@@ -22318,7 +22036,7 @@
       36,
       38
      ],
-     "phantom_cells": 9
+     "phantom_cells": 8
     },
     "atca[26]": {
      "switches": [
@@ -22334,73 +22052,7 @@
       36,
       38
      ],
-     "phantom_cells": 9
-    },
-    "atca[118]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[119]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[130]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[131]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[142]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
-    },
-    "atca[143]": {
-     "switches": [
-      [
-       71,
-       6,
-       4
-      ]
-     ],
-     "signature": [],
-     "phantom_cells": 2
+     "phantom_cells": 8
     },
     "atca[159]": {
      "switches": [
@@ -22475,7 +22127,7 @@
       88,
       90
      ],
-     "phantom_cells": 37
+     "phantom_cells": 34
     },
     "saca[71]": {
      "switches": [
@@ -22503,7 +22155,7 @@
       88,
       90
      ],
-     "phantom_cells": 37
+     "phantom_cells": 34
     },
     "saca[72]": {
      "switches": [
@@ -22531,7 +22183,7 @@
       88,
       90
      ],
-     "phantom_cells": 37
+     "phantom_cells": 34
     },
     "saca[73]": {
      "switches": [
@@ -22559,14 +22211,14 @@
       88,
       90
      ],
-     "phantom_cells": 37
+     "phantom_cells": 34
     }
    },
    "scripts": 654,
-   "switch_scripts": 19,
-   "aligned": 7824,
-   "phantom": 276,
-   "unmodelled": 66,
+   "switch_scripts": 13,
+   "aligned": 7823,
+   "phantom": 249,
+   "unmodelled": 94,
    "signature": 148,
    "signature_not_phantom": 0,
    "signature_unmodelled": 0
@@ -23040,9 +22692,9 @@
    "span_gate_xcopy_reasons": 4,
    "grid_scripts": 723,
    "grid_switch_scripts": 0,
-   "grid_aligned": 7529,
+   "grid_aligned": 7565,
    "grid_phantom": 0,
-   "grid_unmodelled": 37,
+   "grid_unmodelled": 1,
    "grid_signature": 0,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 0,
@@ -23345,9 +22997,9 @@
    "off_grid_scripts": {},
    "scripts": 723,
    "switch_scripts": 0,
-   "aligned": 7529,
+   "aligned": 7565,
    "phantom": 0,
-   "unmodelled": 37,
+   "unmodelled": 1,
    "signature": 0,
    "signature_not_phantom": 0,
    "signature_unmodelled": 0
@@ -24916,10 +24568,10 @@
    "span_gate_xcopy": "unmodelled",
    "span_gate_xcopy_reasons": 5,
    "grid_scripts": 694,
-   "grid_switch_scripts": 0,
-   "grid_aligned": 9049,
+   "grid_switch_scripts": 36,
+   "grid_aligned": 8653,
    "grid_phantom": 0,
-   "grid_unmodelled": 36,
+   "grid_unmodelled": 432,
    "grid_signature": 0,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 0,
@@ -25187,12 +24839,409 @@
    "foreign_cells": []
   },
   "grid_phase": {
-   "off_grid_scripts": {},
+   "off_grid_scripts": {
+    "atca[108]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[109]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[110]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[111]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[112]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[113]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[114]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[115]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[116]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[117]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[118]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[119]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[120]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[121]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[122]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[123]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[124]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[125]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[126]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[127]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[128]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[129]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[130]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[131]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[132]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[133]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[134]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[135]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[136]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[137]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[138]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[139]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[140]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[141]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[142]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[143]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    }
+   },
    "scripts": 694,
-   "switch_scripts": 0,
-   "aligned": 9049,
+   "switch_scripts": 36,
+   "aligned": 8653,
    "phantom": 0,
-   "unmodelled": 36,
+   "unmodelled": 432,
    "signature": 0,
    "signature_not_phantom": 0,
    "signature_unmodelled": 0
@@ -25601,10 +25650,10 @@
    "span_gate_xcopy": "unmodelled",
    "span_gate_xcopy_reasons": 41,
    "grid_scripts": 698,
-   "grid_switch_scripts": 0,
-   "grid_aligned": 9190,
+   "grid_switch_scripts": 36,
+   "grid_aligned": 8794,
    "grid_phantom": 0,
-   "grid_unmodelled": 37,
+   "grid_unmodelled": 433,
    "grid_signature": 0,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 0,
@@ -25954,12 +26003,409 @@
    "foreign_cells": []
   },
   "grid_phase": {
-   "off_grid_scripts": {},
+   "off_grid_scripts": {
+    "atca[108]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[109]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[110]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[111]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[112]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[113]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[114]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[115]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[116]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[117]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[118]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[119]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[120]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[121]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[122]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[123]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[124]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[125]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[126]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[127]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[128]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[129]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[130]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[131]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[132]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[133]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[134]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[135]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[136]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[137]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[138]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[139]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[140]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[141]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[142]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    },
+    "atca[143]": {
+     "switches": [
+      [
+       149,
+       2,
+       0
+      ]
+     ],
+     "signature": [],
+     "phantom_cells": 0
+    }
+   },
    "scripts": 698,
-   "switch_scripts": 0,
-   "aligned": 9190,
+   "switch_scripts": 36,
+   "aligned": 8794,
    "phantom": 0,
-   "unmodelled": 37,
+   "unmodelled": 433,
    "signature": 0,
    "signature_not_phantom": 0,
    "signature_unmodelled": 0
@@ -27373,7 +27819,7 @@
     "koc": 6144,
     "ix": 0,
     "dead": false,
-    "grid": "phantom"
+    "grid": "unmodelled"
    },
    {
     "cls": "needs_manual_diff",
@@ -27503,9 +27949,9 @@
    "span_gate_xcopy_reasons": 165,
    "grid_scripts": 671,
    "grid_switch_scripts": 5,
-   "grid_aligned": 9569,
-   "grid_phantom": 165,
-   "grid_unmodelled": 15,
+   "grid_aligned": 9486,
+   "grid_phantom": 161,
+   "grid_unmodelled": 102,
    "grid_signature": 162,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 6,
@@ -27564,8 +28010,8 @@
    "code_oob_dead": 0,
    "koc_oob_dead": 0,
    "idx_oob_dead": 0,
-   "oob_phantom": 1,
-   "oob_not_phantom": 0,
+   "oob_phantom": 0,
+   "oob_not_phantom": 1,
    "vb_pairs": 7146,
    "vb_pairs_preterm": 6601,
    "vb_hidden": 0,
@@ -28467,7 +28913,7 @@
       52,
       53
      ],
-     "phantom_cells": 24
+     "phantom_cells": 23
     },
     "saca[74]": {
      "switches": [
@@ -28612,14 +29058,14 @@
       288,
       290
      ],
-     "phantom_cells": 138
+     "phantom_cells": 135
     }
    },
    "scripts": 671,
    "switch_scripts": 5,
-   "aligned": 9569,
-   "phantom": 165,
-   "unmodelled": 15,
+   "aligned": 9486,
+   "phantom": 161,
+   "unmodelled": 102,
    "signature": 162,
    "signature_not_phantom": 0,
    "signature_unmodelled": 6
@@ -30729,8 +31175,8 @@
    "grid_scripts": 661,
    "grid_switch_scripts": 1,
    "grid_aligned": 6888,
-   "grid_phantom": 97,
-   "grid_unmodelled": 2,
+   "grid_phantom": 95,
+   "grid_unmodelled": 4,
    "grid_signature": 59,
    "grid_signature_not_phantom": 0,
    "grid_signature_unmodelled": 0,
@@ -31413,14 +31859,14 @@
       78,
       79
      ],
-     "phantom_cells": 97
+     "phantom_cells": 95
     }
    },
    "scripts": 661,
    "switch_scripts": 1,
    "aligned": 6888,
-   "phantom": 97,
-   "unmodelled": 2,
+   "phantom": 95,
+   "unmodelled": 4,
    "signature": 59,
    "signature_not_phantom": 0,
    "signature_unmodelled": 0
