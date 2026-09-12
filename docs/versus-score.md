@@ -147,9 +147,34 @@ draw over the attract demo.
 In a netplay session the draw rides `sdl_app.c`'s overlay pass, after
 `NetplayScreen_Render`, so a held frame (exhausted prediction window)
 still carries it; offline it draws from `game_step_0` beside
-`ReplayOverlay_Draw`. The two never fire in the same frame: the session-live
-branches in `sdl_app.c` and the offline branch in `game_step_0` are
-mutually exclusive on `Netplay_GetSessionState()`.
+`ReplayOverlay_Draw`.
+
+The two call sites are **not** made exclusive by `Netplay_GetSessionState()`
+alone, and an earlier version of this page overstated that. What holds:
+
+- `sdl_app.c`'s held-frame branch keys off `Netplay_ShouldHoldLastFrame()`,
+  not the state. It is still never taken on a frame whose `game_step_0`
+  ran the offline branch, but for a reason that is a chain, not a single
+  predicate: the flag is set only inside `run_netplay`, which only
+  `Netplay_Run`'s CONNECTING and RUNNING arms call; `Netplay_Run` clears the
+  flag at its top on every call and is called only from `game_step_0`'s
+  session branch; and `NETPLAY_SESSION_IDLE` is written only by
+  `Netplay_Run`'s EXITING arm, which never reaches `run_netplay`. So a true
+  flag means the last `Netplay_Run` call left the state non-IDLE, and the
+  call that produces IDLE clears the flag first. The offline branch needs
+  IDLE at its check; the flag is never true then.
+- The offline branch and `sdl_app.c`'s session-live branch **are** both
+  reached on one frame per session: `game_step_0`'s offline branch calls
+  `VersusScore_Draw` and then `Netplay_TickDirectP2P`, the writer of
+  `TRANSITIONING`, so `SDLApp_EndFrame` on that same frame sees a live
+  session. At most one of the two draws, because the netplay arm of the
+  gate needs `RUNNING`, which only `process_session` writes inside a later
+  `Netplay_Run`. Were both ever to draw, it would be the same quads at the
+  same coordinates.
+
+The held-frame flag itself is not cleared by the EXITING arm, only by the
+next `Netplay_Run` entry; that is pre-existing and, by the chain above,
+harmless to this feature.
 
 ## Not covered, on purpose
 
