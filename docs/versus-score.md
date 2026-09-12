@@ -23,8 +23,9 @@ asks, "who is up".
 
 ### Where the boundaries are
 
-- **Netplay:** `netplay.c` -> `Netplay_BeginDirectP2P` (the only writer of
-  `NETPLAY_SESSION_TRANSITIONING`, so every session starts there) and the
+- **Netplay:** `netplay.c` -> `Netplay_TickDirectP2P` (the only writer of
+  `NETPLAY_SESSION_TRANSITIONING`, so every session starts there;
+  `Netplay_BeginDirectP2P` only arms that deferred tick) and the
   `NETPLAY_SESSION_EXITING` arm of `Netplay_Run` (every exit, disconnect and
   desync lands there before `IDLE`). The post-match char-select and rematch
   branches (`menu.c` -> `VS_Result_Rematch_Select`) never pass either point,
@@ -121,7 +122,17 @@ The element is composed as `"NAME 2"` (P1) / `"2 NAME"` (P2) -- numbers
 inboard, like a scoreboard -- through `VersusScore_ComposeLabel`, fitted to
 `HUD_STRIP_LABEL_MAX_W` by the same measured-width path the replay names
 use. Today every name is empty and the bare number draws; wiring the lobby
-is `VersusScore_SetName`, not a re-layout. Names clear with the pairing.
+is `VersusScore_SetName`, not a re-layout.
+
+**Ordering rule for that wiring:** set the names *after* the session-start
+reset, never before or during session setup. `VersusScore_Reset` clears
+both names, and the netplay reset site is `netplay.c` ->
+`Netplay_TickDirectP2P`, which calls `setup_vs_mode()` and then
+`VersusScore_Reset()` on the frame the deferred handoff lands. A lobby that
+sets names when the orchestrator pairs the peers -- before that frame --
+loses them silently. The earliest safe moment is once
+`Netplay_GetSessionState()` has left `IDLE`. Names also clear at the other
+two reset sites (the `EXITING` arm and the menu's VERSUS case).
 
 ### Draw gate
 

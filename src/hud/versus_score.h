@@ -6,9 +6,10 @@
  * match, survives a rematch and a trip through character select (the same
  * two people picking different characters are still the same set), and
  * resets only at the session boundary:
- *   - netplay: Netplay_BeginDirectP2P() (the sole entry into
- *     NETPLAY_SESSION_TRANSITIONING) and the EXITING -> IDLE teardown in
- *     Netplay_Run(), which every exit / disconnect / desync path reaches;
+ *   - netplay: Netplay_TickDirectP2P() (the sole writer of
+ *     NETPLAY_SESSION_TRANSITIONING; Netplay_BeginDirectP2P() only arms
+ *     it) and the EXITING -> IDLE teardown in Netplay_Run(), which every
+ *     exit / disconnect / desync path reaches;
  *   - local versus: choosing VERSUS on the main menu (menu.c, the only
  *     writer of `Mode_Type = MODE_VERSUS`). Nothing else in the local flow
  *     is a pairing boundary: VS_Result's char-select branch and the rematch
@@ -56,7 +57,17 @@ void VersusScore_Reset(void);
 int VersusScore_Get(int player);
 
 /* Future lobby hook: the display name for `player` (0/1). NULL or "" clears
- * it. Nothing calls this yet. */
+ * it. Nothing calls this yet.
+ *
+ * ORDERING RULE: call it AFTER the session-start reset, never before or
+ * during session setup. VersusScore_Reset() clears both names, and the
+ * netplay reset site is netplay.c -> Netplay_TickDirectP2P(), which runs
+ * setup_vs_mode() and then VersusScore_Reset() on the frame the deferred
+ * handoff lands (Netplay_BeginDirectP2P() only arms that tick). A name set
+ * from the lobby / orchestrator before that frame is silently lost; the
+ * earliest safe moment is once Netplay_GetSessionState() has left IDLE.
+ * The EXITING arm of Netplay_Run() and the main menu's VERSUS case clear
+ * the names the same way. */
 void VersusScore_SetName(int player, const char* name);
 const char* VersusScore_GetName(int player);
 
