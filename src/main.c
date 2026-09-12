@@ -152,17 +152,16 @@ static u8* mppMalloc(u32 size) {
     return flAllocMemory(size);
 }
 
-// Signal-safe: emit "[3sx] signal N\n" to stderr. Uses write() + manual
-// itoa because fprintf/printf are not async-signal-safe. Logs only once
-// per fatal-class signal so we can distinguish wrapper-kill (SIGTERM)
-// from internal abort in post-mortem wrapper logs.
+// Signal-safe: emit "<prefix>N\n" to stderr. Uses write() + manual itoa
+// because fprintf/printf are not async-signal-safe. Logs only once per
+// fatal-class signal so we can distinguish wrapper-kill (SIGTERM) from
+// internal abort in post-mortem wrapper logs.
 #if !defined(_WIN32)
-static void log_shutdown_signal_safe(int signo) {
-    char buf[32];
-    static const char prefix[] = "[3sx] signal ";
+static void log_signal_line_safe(const char* prefix, size_t prefix_len, int signo) {
+    char buf[48];
     size_t pos = 0;
-    memcpy(buf, prefix, sizeof(prefix) - 1);
-    pos += sizeof(prefix) - 1;
+    memcpy(buf, prefix, prefix_len);
+    pos += prefix_len;
 
     int n = signo;
     if (n < 0) { buf[pos++] = '-'; n = -n; }
@@ -173,7 +172,74 @@ static void log_shutdown_signal_safe(int signo) {
     buf[pos++] = '\n';
     (void)!write(STDERR_FILENO, buf, pos);
 }
+
+static void log_shutdown_signal_safe(int signo) {
+    static const char prefix[] = "[3sx] signal ";
+    log_signal_line_safe(prefix, sizeof(prefix) - 1, signo);
+}
 #endif
+
+/* Fatal-signal handler: SIGSEGV / SIGBUS / SIGFPE / SIGILL / SIGABRT.
+ *
+ * Its ONLY job is to leave a marker on stderr and then die by the DEFAULT
+ * disposition, so the exit status still carries the real signal: the
+ * wrapper reports WIFSIGNALED children as 128 + WTERMSIG
+ * (vendor/Main_MiSTer/thirdsarm_wrapper.cpp), which is the `exit=139` line
+ * a post-mortem reads.
+ *
+ * Nothing here flushes stdio. fflush() is not async-signal-safe
+ * (POSIX.1-2017 XSH 2.4.3 lists neither fflush nor any stdio function), and
+ * a fault taken mid-fwrite on this thread -- or while another thread holds
+ * the FILE lock -- would deadlock, turning a diagnosable exit=139 into a
+ * hang the wrapper never reports. The log tail survives by construction
+ * instead: stderr is unbuffered; backend.log is flushed per line
+ * (sdl_app.c -> append_backend_log_line); the netplay session log is
+ * flushed by heartbeat_writer_thread after every row it writes. Not
+ * covered: the session log's non-heartbeat rows (netplay.c ->
+ * netplay_log_file_line) are block-buffered at 4 KB and stay that way.
+ *
+ * Everything this handler calls is on the async-signal-safe list: write(2)
+ * via log_signal_line_safe, signal(2) on the MinGW path, and raise(3).
+ * On POSIX the handler is installed with SA_RESETHAND | SA_NODEFER, so by
+ * the time it runs the disposition is already SIG_DFL and the signal is not
+ * blocked; raise() then delivers it immediately with the default action.
+ * SA_NODEFER also means a second fault inside the handler cannot recurse
+ * into it (the disposition is default by then). */
+static void on_fatal_signal(int signo) {
+#if !defined(_WIN32)
+    static const char prefix[] = "[3sx] fatal signal ";
+    log_signal_line_safe(prefix, sizeof(prefix) - 1, signo);
+#endif
+    /* MinGW's signal() resets to SIG_DFL before calling the handler for
+     * SIGSEGV/SIGILL/SIGFPE but not for SIGABRT; make it explicit. On POSIX
+     * SA_RESETHAND has already done this and the call is a no-op. */
+    signal(signo, SIG_DFL);
+    raise(signo);
+}
+
+/* Installed first thing in main(), before any subsystem: a fault during
+ * init is as much a crash tail as one during play. Never uninstalled --
+ * the default action these restore is the one we want anyway. */
+static void install_fatal_signal_handlers(void) {
+#if defined(_WIN32)
+    signal(SIGSEGV, on_fatal_signal);
+    signal(SIGABRT, on_fatal_signal);
+    signal(SIGFPE, on_fatal_signal);
+    signal(SIGILL, on_fatal_signal);
+#else
+    struct sigaction action;
+    SDL_zero(action);
+    action.sa_handler = on_fatal_signal;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_RESETHAND | SA_NODEFER;
+
+    sigaction(SIGSEGV, &action, NULL);
+    sigaction(SIGBUS, &action, NULL);
+    sigaction(SIGFPE, &action, NULL);
+    sigaction(SIGILL, &action, NULL);
+    sigaction(SIGABRT, &action, NULL);
+#endif
+}
 
 static void on_shutdown_signal(int signo) {
 #ifdef SIGUSR1
@@ -1596,6 +1662,7 @@ static SDL_AssertState SDLCALL test_harness_assert_handler(const SDL_AssertData*
 }
 
 int main(int argc, const char* argv[]) {
+    install_fatal_signal_handlers();
     read_args(argc, argv, &configuration);
 
     /* Loader-timing invariance instrument (task #66, src/test/

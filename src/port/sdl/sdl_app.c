@@ -672,8 +672,19 @@ static SuperEffectQualityMode current_renderer_super_effect_quality_mode(void);
 /* Keep the backend diagnostics stream open for the process. The old helper
  * opened, wrote, and closed backend.log for every line; the 120-frame perf
  * summary therefore performed synchronous path/file I/O on the frame thread.
- * The stream is block-buffered by SDL's file backend and is closed during the
- * normal SDL teardown below. */
+ * The stream is closed during the normal SDL teardown below.
+ *
+ * Every line is flushed as it is written. SDL_IOFromFile is stdio-backed and
+ * block-buffered, so without the flush a line sits in the process's buffer
+ * until SDL_CloseIO -- which runs only from SDLApp_Quit, i.e. never on a
+ * SIGSEGV. Measured before this change: 0 bytes on disk until close. The
+ * crash tail is the one thing this file is for (the project's only open
+ * SIGSEGV was diagnosed solely from the last lines before `exit=139`), so a
+ * buffered tail is worth nothing. Cost: one write(2) into the page cache per
+ * line. This function is not on the per-frame path -- its steady-state
+ * callers are the one-shot probe/setup lines and gameplay_diagnosticf's
+ * offline fallback, which emits at most one [perf_avg] line per 120 frames
+ * plus FRAME OUTLIER lines that exist only on frames already over 50 ms. */
 static SDL_IOStream* s_backend_log_io = NULL;
 
 static void append_backend_log_line(const char* line) {
@@ -692,6 +703,7 @@ static void append_backend_log_line(const char* line) {
     if (s_backend_log_io != NULL) {
         SDL_WriteIO(s_backend_log_io, line, SDL_strlen(line));
         SDL_WriteIO(s_backend_log_io, "\n", 1);
+        SDL_FlushIO(s_backend_log_io);
     }
 }
 
