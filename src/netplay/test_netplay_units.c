@@ -2705,6 +2705,31 @@ static int unit_versus_score_lifetime(void) {
     EXPECT_TRUE("vs-life-session-end", VersusScore_Get(0) == 0 && VersusScore_Get(1) == 0);
     EXPECT_TRUE("vs-life-session-end-pending", VersusScore_PendingFrame() == -1);
 
+    /* --- 8b. The offline tick after a netplay session. Mode_Type is still
+     * MODE_NETWORK (netplay.c's teardown never writes it back) and the
+     * engine predicate still admits it -- it must, for the netplay path --
+     * but TickLocal runs only when no session is live, so it must NOT
+     * count that edge. The same edge under MODE_VERSUS does count. --- */
+    Mode_Type = MODE_NETWORK;
+    Demo_Flag = 1;
+    G_No[0] = 2;
+    G_No[1] = 2;
+    Winner_id = 1;
+    VersusScore_TickLocal();
+    G_No[1] = 3;
+    EXPECT_TRUE("vs-offline-network-predicate-still-true", VersusScore_EngineMatchConcluded());
+    VersusScore_TickLocal();
+    VersusScore_TickLocal();
+    EXPECT_TRUE("vs-offline-network-not-counted", VersusScore_Get(0) == 0 && VersusScore_Get(1) == 0);
+    EXPECT_TRUE("vs-offline-network-not-latched", VersusScore_PendingFrame() == -1);
+    Mode_Type = MODE_VERSUS;
+    G_No[1] = 2;
+    VersusScore_TickLocal();
+    G_No[1] = 3;
+    VersusScore_TickLocal();
+    EXPECT_TRUE("vs-offline-versus-counted", VersusScore_Get(1) == 1);
+    VersusScore_Reset();
+
     /* --- 9. The label: a name slot plus the score, measured by the metric
      * the strip draws with. Empty name (today) is the bare number; a name
      * composes around it, P1 name-first, P2 score-first, and the widest

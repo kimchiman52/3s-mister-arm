@@ -101,7 +101,10 @@ void VersusScore_OnLoadEngine(int load_frame);
 
 /* Offline tick (no rollback): observe this frame and confirm with window 0.
  * Called from game_step_0 after the engine tick when no netplay session is
- * live. */
+ * live. Admits MODE_VERSUS only: Mode_Type is still MODE_NETWORK after a
+ * clean session exit (nothing in netplay.c writes it back), and this tick
+ * is by definition the no-session path, so the predicate's netplay arm is
+ * masked here and only here. */
 void VersusScore_TickLocal(void);
 
 /* Draw both labels on the HUD strip. Self-gates: HUD up (HudStrip_Visible),

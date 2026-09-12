@@ -136,7 +136,15 @@ void VersusScore_TickLocal(void) {
         return;
     }
     s_local_frame += 1;
-    VersusScore_ObserveEngine(s_local_frame);
+    /* Local versus only. This tick runs exactly when no session is live
+     * (main.c -> game_step_0's offline branch), and Mode_Type stays
+     * MODE_NETWORK after a clean session exit -- netplay.c writes it in
+     * setup_vs_mode and its teardown never writes it back -- so the
+     * predicate's netplay arm must not count here: an offline pass through
+     * the match-end edge after a session would otherwise tally at window 0.
+     * The netplay path (ObserveEngine from advance_game) is unchanged. */
+    VersusScore_Observe(VersusScore_EngineMatchConcluded() && Mode_Type == MODE_VERSUS, Winner_id,
+                        s_local_frame);
     (void)VersusScore_Confirm(s_local_frame, 0);
 }
 

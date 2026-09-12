@@ -93,7 +93,16 @@ before changing those numbers.
 
 Offline the window is 0: `main.c` -> `game_step_0` calls
 `VersusScore_TickLocal` after the engine tick and the edge applies on the
-frame it is seen.
+frame it is seen. That tick admits `MODE_VERSUS` only. The engine predicate
+has to admit `MODE_NETWORK` for the netplay path, but `Mode_Type` stays
+`MODE_NETWORK` after a clean session exit (`netplay.c` -> `setup_vs_mode`
+writes it and the teardown never writes it back; only a soft reset's
+`Reset_Sub0` does), and the offline tick is by definition the no-session
+path -- so without the mask an offline pass through the match-end edge
+after a session would tally at window 0. Invisible today, because the draw
+gate's netplay arm also needs a `RUNNING` session and every next pairing
+resets first; it is masked so that relaxing the draw gate later cannot
+surface it.
 
 ### It shares the strip with the replay viewer and never draws over it
 
