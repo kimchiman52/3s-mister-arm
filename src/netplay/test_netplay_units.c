@@ -105,7 +105,7 @@ static int checks_run = 0;
  * computes, so commenting a call out of the dispatch is a FAILURE and
  * not a smaller green run. The assertion floor catches the other shape:
  * a test that runs but whose body was short-circuited. */
-#define EXPECTED_TESTS 21
+#define EXPECTED_TESTS 22
 
 /* The real figure is 1100 and is printed in the summary. This sits below
  * it and above what a short-circuited run would produce. Not an exact
@@ -2742,6 +2742,108 @@ static int unit_versus_score_lifetime(void) {
     return (fail_count == fails_before) ? 0 : 1;
 }
 
+/* A TRIPWIRE, not a property. The tally's single-count rests on an
+ * invariant the code does NOT enforce and this harness cannot see:
+ * GekkoNet caps predicted input at input_prediction_window consecutive
+ * frames and HandleRollback rewinds to min_incorrect - 1, so once
+ * head - R >= window no load can arrive at L < R (GekkoNet @ 7be848c;
+ * netplay.c -> configure_gekko feeds s_pred_window and
+ * config.input_prediction_window from one variable). The core relies on
+ * that: VersusScore_Confirm clears s_pending_frame but leaves the edge
+ * detector's "previously concluded" seed as it was, so a load below R
+ * AFTER a confirm re-seeds the detector, the corrected timeline re-enters
+ * the winner scene, a second edge latches for the same match, and the
+ * next confirm counts it AGAIN.
+ *
+ * That sequence is unreachable while the bound holds, and no defensive
+ * state was added for it on purpose: a guard that swallowed the second
+ * count would also swallow the evidence of a regression in the bound.
+ * So this test pins what the code produces TODAY -- the double count --
+ * so that a change here is a red line to argue over, not a silent
+ * absorption. Measured against this file's own mutations: Confirm's
+ * reset and OnLoad's drop rule are already held by
+ * unit_versus_score_lifetime (deleting the one or widening the other
+ * fails it 35 and 4 ways); what ONLY this test catches is an OnLoad that
+ * stops re-seeding when nothing is pending, and a "remember the confirmed
+ * frame and refuse to re-latch it" guard -- both leave the rest of the
+ * suite green. If the numbers below ever need to change, the bound this
+ * comment describes has to be re-derived first. */
+static int unit_versus_score_post_confirm_load(void) {
+    tests_run++;
+    fprintf(stderr, "[test_netplay_units] versus_score_post_confirm_load: a load below R after "
+                    "the confirm is a double count -- unreachable under the GekkoNet bound, "
+                    "pinned so a weakened rule goes red\n");
+    const int fails_before = fail_count;
+    const int W = 8;
+
+    /* One match, confirmed at head - R >= W. */
+    VersusScore_Reset();
+    for (int f = 1; f <= 99; f++) {
+        VersusScore_Observe(false, 0, f);
+    }
+    for (int f = 100; f <= 108; f++) {
+        VersusScore_Observe(true, 1, f);
+    }
+    EXPECT_TRUE("vs-pcl-latched-100", VersusScore_PendingFrame() == 100);
+    EXPECT_TRUE("vs-pcl-confirm-108", VersusScore_Confirm(108, W));
+    EXPECT_TRUE("vs-pcl-p2-one", VersusScore_Get(1) == 1);
+    EXPECT_TRUE("vs-pcl-confirm-clears-pending", VersusScore_PendingFrame() == -1);
+
+    /* A load AT or PAST R after the confirm: nothing pending to drop, the
+     * restored state is already concluded, so the re-seeded detector sees
+     * no new edge and the number holds. */
+    VersusScore_OnLoad(100, true);
+    VersusScore_OnLoad(103, true);
+    for (int f = 104; f <= 120; f++) {
+        VersusScore_Observe(true, 1, f);
+        (void)VersusScore_Confirm(f, W);
+    }
+    EXPECT_TRUE("vs-pcl-load-at-or-past-R-holds", VersusScore_Get(1) == 1);
+    EXPECT_TRUE("vs-pcl-load-at-or-past-R-no-latch", VersusScore_PendingFrame() == -1);
+
+    /* The unreachable sequence: a load to R - 3 arriving AFTER the confirm.
+     * OnLoad has nothing to drop and leaves the score alone ... */
+    VersusScore_OnLoad(97, false);
+    EXPECT_TRUE("vs-pcl-load-below-R-score-untouched", VersusScore_Get(1) == 1);
+    EXPECT_TRUE("vs-pcl-load-below-R-nothing-pending", VersusScore_PendingFrame() == -1);
+    /* ... but it re-seeds the detector, so the corrected timeline's
+     * re-entry into the winner scene is a NEW edge for the SAME match. */
+    VersusScore_Observe(false, 0, 98);
+    VersusScore_Observe(false, 0, 99);
+    VersusScore_Observe(true, 1, 100);
+    EXPECT_TRUE("vs-pcl-second-edge-relatched-100", VersusScore_PendingFrame() == 100);
+    for (int f = 101; f <= 107; f++) {
+        VersusScore_Observe(true, 1, f);
+        EXPECT_FALSE("vs-pcl-second-edge-inside-window", VersusScore_Confirm(f, W));
+    }
+    VersusScore_Observe(true, 1, 108);
+    EXPECT_TRUE("vs-pcl-second-confirm-108", VersusScore_Confirm(108, W));
+    /* TODAY'S BEHAVIOUR: the same match counted twice. See the comment
+     * above before "fixing" this number. */
+    EXPECT_TRUE("vs-pcl-double-count-is-the-bounds-job", VersusScore_Get(1) == 2);
+    EXPECT_TRUE("vs-pcl-p1-untouched", VersusScore_Get(0) == 0);
+
+    /* Same sequence at R - 1, where the re-seed is the ONLY thing that can
+     * expose the edge: the restored frame 99 is not concluded and the very
+     * next simulated frame is the winner scene, so no intervening
+     * non-concluded observation re-seeds the detector on the way. Above,
+     * frames 98 and 99 did that themselves; here OnLoad has to. Pins that
+     * OnLoad re-seeds from the restored state even with nothing pending. */
+    VersusScore_OnLoad(99, false);
+    EXPECT_TRUE("vs-pcl-r1-nothing-pending", VersusScore_PendingFrame() == -1);
+    VersusScore_Observe(true, 1, 100);
+    EXPECT_TRUE("vs-pcl-r1-edge-via-reseed", VersusScore_PendingFrame() == 100);
+    for (int f = 101; f <= 108; f++) {
+        VersusScore_Observe(true, 1, f);
+    }
+    EXPECT_TRUE("vs-pcl-r1-third-confirm", VersusScore_Confirm(108, W));
+    EXPECT_TRUE("vs-pcl-r1-triple-count", VersusScore_Get(1) == 3);
+
+    VersusScore_Reset();
+    fprintf(stderr, "[test_netplay_units] versus_score_post_confirm_load OK\n");
+    return (fail_count == fails_before) ? 0 : 1;
+}
+
 /* ================================================================== */
 
 int Netplay_Test_NetplayUnits(void) {
@@ -2771,6 +2873,7 @@ int Netplay_Test_NetplayUnits(void) {
     rc |= unit_bg_repair_requires_source();
     rc |= unit_rematch_match_start_state();
     rc |= unit_versus_score_lifetime();
+    rc |= unit_versus_score_post_confirm_load();
 
     fprintf(stderr, "[test_netplay_units] summary: %d test(s), %d assertion(s), "
                     "%d failure(s)\n", tests_run, checks_run, fail_count);

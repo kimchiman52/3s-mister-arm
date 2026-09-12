@@ -73,6 +73,24 @@ A tally that differed between peers would be a desync-class bug; the
 harness pins the single-count under re-simulation of the end frame, a later
 corrected end, and a load that does not reach the edge.
 
+**The single-count is the bound's property, not the code's.** `Confirm`
+clears the pending frame but leaves the edge detector's seed alone, so a
+load below R that arrived *after* the confirm would re-seed the detector,
+the corrected timeline would re-enter the winner scene, and the same match
+would count twice. That load cannot arrive while the GekkoNet bound holds
+(a misprediction older than the window is impossible by construction), and
+no defensive latch was added for it on purpose: a guard that swallowed the
+second count would also swallow the only evidence of a regression in the
+bound. `test_netplay_units.c` -> `unit_versus_score_post_confirm_load` pins
+today's double count for exactly that sequence (at R-3 and at R-1, where
+only `OnLoad`'s re-seed can expose the edge), so a change there is a red
+line to argue over rather than a silent absorption. Measured by mutation:
+`Confirm`'s reset and `OnLoad`'s drop rule were already held by
+`unit_versus_score_lifetime`; an `OnLoad` that skips the re-seed when
+nothing is pending, and a confirmed-frame guard that refuses to re-latch,
+leave every other test green and fail only this one. Re-derive the bound
+before changing those numbers.
+
 Offline the window is 0: `main.c` -> `game_step_0` calls
 `VersusScore_TickLocal` after the engine tick and the edge applies on the
 frame it is seen.
