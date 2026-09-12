@@ -3595,7 +3595,16 @@ s32 VS_Result_Select_Sub(struct _TASK* task_ptr, s16 PL_id) {
 u16 After_VS_Move_Sub(u16 sw, s16 cursor_id, s16 menu_max) {
     s16 skip;
 
-    if (plw[0].wu.operator == 0 || plw[1].wu.operator == 0) {
+    /* Row 1 of the STOCK result menu is SAVE REPLAY (VS_Result_Move_Sub
+     * case 1 -> Exit_Sub(task_ptr, 0, 17) -> AT_Jmp_Tbl[17] = Save_Replay),
+     * which is hidden when either side is not a human operator. Row 1 of
+     * the rematch menu is CHAR SELECT, which has no such requirement -- and
+     * offline Versus reaches VS_Result with wu_operator == 0 whenever a
+     * partner is CPU (Game2_0 clears it for save_w[1].Partner_Type[ix]), so
+     * applying the stock skip there left CHAR SELECT unreachable by cursor.
+     * Netplay was never affected: setup_vs_mode sets both operators to 1. */
+    if (!VS_Result_UsesRematchMenu() &&
+        (plw[0].wu.operator == 0 || plw[1].wu.operator == 0)) {
         skip = 1;
     } else {
         skip = 99;
