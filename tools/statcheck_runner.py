@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-"""Run a statcheck executable against every preprocessed replay game."""
+"""Run a statcheck executable against every preprocessed replay game.
+
+Every oracle process gets its own `THIRDSARM_HOME` (`tools/hermetic_home.py`).
+It did not, until 2026-09-12: `Paths_GetPrefPath()` then resolved
+`SDL_GetPrefPath()`, the maintainer's real directory, so the verdict this
+runner reported depended on what was in that directory's `saves/settings` --
+measured, a rebound `Pad_Infor` alone turned ten known-good archives into
+`divergent` with a CLEAN seed.
+"""
 
 from __future__ import annotations
 
 import argparse
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -14,6 +23,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from rich.console import Console
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hermetic_home import child_env, donor_home, missing_reason, seed_home  # noqa: E402
 
 
 GAME_ARCHIVE_PATTERN = re.compile(r"game_(\d+)\.scrd$")
@@ -62,7 +74,9 @@ def timeout_output(exc: subprocess.TimeoutExpired) -> str:
     return exc.output or ""
 
 
-def run_statcheck(command: list[str], timeout_seconds: float) -> subprocess.CompletedProcess[str]:
+def run_statcheck(
+    command: list[str], timeout_seconds: float, home: Path
+) -> subprocess.CompletedProcess[str]:
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -70,6 +84,7 @@ def run_statcheck(command: list[str], timeout_seconds: float) -> subprocess.Comp
         text=True,
         errors="replace",
         start_new_session=True,
+        env=child_env(seed_home(home)),
     )
     try:
         output, _ = process.communicate(timeout=timeout_seconds)
@@ -119,6 +134,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         metavar="SECONDS",
         help=f"maximum statcheck time per game (default: {DEFAULT_STATCHECK_TIMEOUT_SECONDS:g})",
     )
+    parser.add_argument(
+        "--home-root",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="where the per-game hermetic THIRDSARM_HOMEs go, and kept afterwards "
+        "(default: a temporary directory removed on exit)",
+    )
     return parser.parse_args(argv)
 
 
@@ -145,6 +168,22 @@ def main(argv: list[str]) -> int:
         print(f"error: no game_N.scrd archives found under {args.replay_dir}", file=sys.stderr)
         return 1
 
+    # A statcheck run with no romset resolves PS2 balance and reports every
+    # archive divergent. That is a broken run, not a result -- refuse it.
+    donor = donor_home()
+    reason = missing_reason(donor)
+    if reason is not None:
+        print(f"error: {reason}", file=sys.stderr)
+        return 1
+
+    if args.home_root is not None:
+        home_root = args.home_root
+        home_root.mkdir(parents=True, exist_ok=True)
+        keep_homes = True
+    else:
+        home_root = Path(tempfile.mkdtemp(prefix="statcheck-homes-"))
+        keep_homes = False
+
     successes = 0
     timed_out = 0
     report = None
@@ -153,8 +192,9 @@ def main(argv: list[str]) -> int:
         for index, archive in enumerate(archives, start=1):
             label = f"{archive.replay}/game_{archive.game_index}"
             command = [str(executable), "--ram-archive", str(archive.path), "--headless"]
+            home = home_root / f"{os.getpid()}-{archive.replay}-game_{archive.game_index}"
             try:
-                result = run_statcheck(command, args.timeout)
+                result = run_statcheck(command, args.timeout, home)
             except StatcheckTimeoutError as exc:
                 timed_out += 1
                 if report is None:
@@ -191,6 +231,13 @@ def main(argv: list[str]) -> int:
     finally:
         if report is not None:
             report.close()
+        if not keep_homes:
+            # Each home holds two SYMLINKS into the donor pref directory, so
+            # this cleanup is one step away from deleting the maintainer's
+            # romset. It does not: shutil.rmtree unlinks a symlink-to-directory
+            # rather than descending it. Measured, not assumed -- a seeded tree
+            # rmtree'd leaves the donor's roms/ and resources/ intact.
+            shutil.rmtree(home_root, ignore_errors=True)
 
     percentage = successes * 100 / len(archives)
     print(f"{successes}/{len(archives)} successful ({percentage:.1f}%)")

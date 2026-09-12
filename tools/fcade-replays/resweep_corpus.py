@@ -18,7 +18,8 @@ the binary path, its size/mtime, the repo commit, and the per-segment result.
 Usage:
 
     python3 tools/fcade-replays/resweep_corpus.py <corpus-root> --tag <name> \
-        [--statcheck PATH] [--jobs N] [--timeout SECS] [--no-manifest]
+        [--statcheck PATH] [--jobs N] [--timeout SECS] [--no-manifest] \
+        [--home-root DIR]
 
 `--no-manifest` runs the sweep and writes `sweeps/<tag>/` but leaves
 `manifest.json` / `manifest.tsv` alone (use it for a control run whose verdicts
@@ -26,6 +27,13 @@ should not become the corpus's recorded state).
 
 ALWAYS passes `--headless`: without it a FAILING statcheck raises SIGSTOP and
 parks in process state `TN` forever.
+
+ALWAYS gives every oracle process its own `THIRDSARM_HOME`
+(`tools/hermetic_home.py`).  It did not, until 2026-09-12, and a sweep therefore
+read the maintainer's real `saves/settings`: a rebound `Pad_Infor` in that file
+took ten known-`pass` rows to rc 1 `divergent` with a CLEAN seed.  A verdict
+this script records must be a property of the archive and the binary, and of
+nothing else.
 """
 import argparse
 import json
@@ -38,6 +46,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / 'tools'))
+from hermetic_home import child_env, donor_home, missing_reason, seed_home  # noqa: E402
+
 DEFAULT_STATCHECK = REPO / 'build/statcheck-verify/3S-ARM.app/Contents/MacOS/3S-ARM'
 
 FAIL_RE = re.compile(r'^(/[^\s:]+\.c):(\d+): (.+)$')
@@ -47,10 +58,14 @@ PASS_RE = re.compile(r'^statcheck: PASS')
 VERDICTS = {0: 'pass', 1: 'divergent', 2: 'no-match', 3: 'cpu-player', 4: 'seed-gap'}
 
 
-def run_one(archive: Path, statcheck: Path, log_path: Path, timeout: int) -> dict:
-    env = dict(os.environ)
-    env['SDL_VIDEODRIVER'] = 'dummy'
-    env['SDL_AUDIODRIVER'] = 'dummy'
+def run_one(archive: Path, statcheck: Path, log_path: Path, timeout: int,
+            home: Path) -> dict:
+    # Every oracle process gets its OWN THIRDSARM_HOME (tools/hermetic_home.py).
+    # Without one they all resolve SDL_GetPrefPath() -- the maintainer's real
+    # directory -- and the verdict this function records becomes a function of
+    # whoever last touched the options screen. --jobs makes that sharing
+    # concurrent as well as global.
+    env = child_env(seed_home(home))
     t = time.time()
     try:
         p = subprocess.run([str(statcheck), '--ram-archive', str(archive), '--headless'],
@@ -65,6 +80,7 @@ def run_one(archive: Path, statcheck: Path, log_path: Path, timeout: int) -> dic
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(
         f"# statcheck {statcheck}\n# archive {archive}\n# rc {rc}\n# secs {secs}\n"
+        f"# home {home}\n"
         f"--- stdout ---\n{out}\n--- stderr ---\n{err}\n")
 
     assert_line = fail_frame = seed = seed_fields = pass_line = None
@@ -125,6 +141,9 @@ def main() -> int:
     ap.add_argument('--jobs', type=int, default=4)
     ap.add_argument('--timeout', type=int, default=300)
     ap.add_argument('--no-manifest', action='store_true')
+    ap.add_argument('--home-root', default=None,
+                    help='where the per-segment hermetic THIRDSARM_HOMEs go '
+                         '(default <root>/sweeps/<tag>/homes)')
     args = ap.parse_args()
 
     root: Path = args.root
@@ -133,6 +152,17 @@ def main() -> int:
     sweep_dir = root / 'sweeps' / args.tag
     (sweep_dir / 'logs').mkdir(parents=True, exist_ok=True)
 
+    # One hermetic THIRDSARM_HOME per segment, named with the sweep's pid so
+    # two concurrent sweeps of the same corpus cannot share one either.
+    home_root = Path(args.home_root) if args.home_root else sweep_dir / 'homes'
+    home_root.mkdir(parents=True, exist_ok=True)
+    donor = donor_home()
+    reason = missing_reason(donor)
+    if reason is not None:
+        print(f"error: {reason}", file=sys.stderr)
+        return 1
+    print(f"hermetic homes under {home_root} (romset donor: {donor})", flush=True)
+
     st = args.statcheck.stat()
     commit = subprocess.run(['git', '-C', str(REPO), 'rev-parse', 'HEAD'],
                             capture_output=True, text=True).stdout.strip()
@@ -140,9 +170,10 @@ def main() -> int:
                            capture_output=True, text=True).stdout.strip()
 
     def work(r):
-        name = f"{r['quarkid']}_game_{r['game_index']}.log"
-        res = run_one(Path(r['archive']), args.statcheck, sweep_dir / 'logs' / name, args.timeout)
-        res['log'] = f"sweeps/{args.tag}/logs/{name}"
+        stem = f"{r['quarkid']}_game_{r['game_index']}"
+        res = run_one(Path(r['archive']), args.statcheck, sweep_dir / 'logs' / f"{stem}.log",
+                      args.timeout, home_root / f"{os.getpid()}-{stem}")
+        res['log'] = f"sweeps/{args.tag}/logs/{stem}.log"
         return r, res
 
     t0 = time.time()
@@ -170,6 +201,7 @@ def main() -> int:
         "elapsed_secs": round(time.time() - t0, 1),
         "repo": str(REPO), "commit": commit, "worktree_dirty": bool(dirty),
         "statcheck_binary": str(args.statcheck),
+        "home_root": str(home_root), "romset_donor": str(donor) if donor else None,
         "statcheck_size": st.st_size, "statcheck_mtime": int(st.st_mtime),
         "segments": len(records), "eligible": len(eligible),
         "verdicts": counts, "eligible_verdicts": elig_counts,

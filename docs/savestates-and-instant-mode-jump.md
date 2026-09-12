@@ -1717,6 +1717,42 @@ compared row by row against each `manifest.json` on verdict / rc / fail-frame:
 `cpu-player` / `no-match` verdicts. The seeded `saves/settings` is byte-identical
 after all 463 runs.
 
+> #### Status 2026-09-12: the EXPOSURE is closed, not just the symptom
+>
+> `Playback_Settings_Pin()` fixes the fields it pins. It cannot fix a field
+> nobody has thought to pin — and `Pad_Infor`/`extra_option` are the proof that
+> the ones that matter are not obviously the ones that are seed-audited. The
+> hermetic home above was built by hand, for one measurement; the tools still
+> ran in the maintainer's real home every other time.
+>
+> They no longer do. `tools/hermetic_home.py` gives every oracle PROCESS its own
+> `THIRDSARM_HOME`, and `tools/statcheck_runner.py`, `resweep_corpus.py` and all
+> three corpora's `analyze.py` use it. A home is empty except for two read-only
+> symlinks into a donor pref directory:
+>
+> - `roms/` — without it `CFG_KEY_BALANCE=auto` resolves **PS2**, and the sweep
+>   reports every archive divergent. A sweep that cannot find a romset now
+>   REFUSES rather than producing that; a result nobody can tell apart from a
+>   real finding is worse than no result.
+> - `resources/` — without `SF33RD.AFS` the run reaches
+>   `MAIN_PHASE_COPYING_RESOURCES` and blocks in a modal dialog
+>   `SDL_VIDEODRIVER=dummy` makes invisible. It does not fail; it hangs until the
+>   timeout. Same reasoning as `link_resources()` in `run-gates.sh`.
+>
+> The romset is LINKED rather than pointed at with `$THIRDSARM_CPS3_ZIP`,
+> deliberately: the env var is a **different branch** of `load_cps3_char_data()`
+> — it additionally calls `Cps3FirstLight_TryLoad()`, which the directory search
+> never does. The standing 447/447 was measured through the directory search, so
+> the hermetic home reproduces that branch. `$THIRDSARM_CPS3_ZIP` is still
+> honoured when the caller sets it.
+>
+> No `config`, no `keymap`, no `saves/`, no `training` — each process boots from
+> `Game_Default_Data` and cannot read or write the maintainer's state.
+> Re-measured on the hermeticity change ALONE (identical binary, only the Python
+> moved): **463/463 records identical, 447/447 eligible pass, 0 differences**,
+> and the real home's 39 files are byte-identical before and after, `saves/settings`
+> still `e987ecfce2e65bdb20b69d69ea5e7f46`.
+
 **The one field the pin could have leaked into the user's file, and the
 barrier.** `Save_Game_Data()` rebuilds `Pad_Infor`, `Difficulty`, `Time_Limit`,
 `Battle_Number`, `Damage_Level`, `GuardCheck` and `Handicap` from
