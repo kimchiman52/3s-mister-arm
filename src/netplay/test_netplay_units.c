@@ -2494,12 +2494,13 @@ static int unit_rematch_match_start_state(void) {
  * are most likely to regress: the tally SURVIVES a char-select trip and a
  * rematch's match-start reset, and RESETS at the session boundary.
  *
- * What this cannot honestly pin: that Netplay_Run's EXITING branch and
- * Netplay_BeginDirectP2P actually call VersusScore_Reset(), and that the
+ * What this cannot pin: that Netplay_Run's EXITING branch and
+ * Netplay_TickDirectP2P actually call VersusScore_Reset(), and that the
  * main-menu VERSUS case does. Driving those needs a live Gekko session /
  * the menu task; deleting any of the three calls leaves this test green.
- * The engine predicate and the core ARE pinned, so what is left unproven
- * is placement, not logic. */
+ * That placement is held at the source instead, by
+ * tools/gates/check_versus_score_reset_sites.py (a run-gates.sh gate).
+ * The engine predicate and the core ARE pinned here. */
 static int unit_versus_score_lifetime(void) {
     tests_run++;
     fprintf(stderr, "[test_netplay_units] versus_score_lifetime: rollback-safe increment, "

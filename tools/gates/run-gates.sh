@@ -64,6 +64,7 @@ GATES=(
     "key-rate-budget|server per-key cap vs the CLIENT cadences it is derived from -- #123"
     "reclaim-window|slot-reclaim staleness vs the CLIENT cadences it is derived from -- #130"
     "constant-time-compare|the punch-token compare's SHAPE, which no unit test can see -- #132"
+    "versus-score-reset-sites|the win tally's three VersusScore_Reset sites, which no harness can drive -- docs/versus-score.md"
     "host-diagnostic-parity|diagnostics the host's fortified libc headers hide -- #106"
     "doc-citation-baselines|tools/doc-citations/check_baselines.py (breach AND slack)"
     "arm-cross-build|cross-compile the shipped config for ARM -- #106 (needs --arm)"
@@ -422,6 +423,32 @@ elif [ $rc -eq 1 ]; then
     record constant-time-compare RED; cat "${out_dir}/constant-time-compare.log"
 else
     record constant-time-compare ERROR; cat "${out_dir}/constant-time-compare.log"
+fi
+echo
+
+# ---------------------------------------------------------------------------
+# 4d. The win tally's reset sites -- docs/versus-score.md.
+#
+# VersusScore_Reset is the pairing boundary of the versus win tally, and its
+# lifetime rules ("starts at 0 with a new opponent", "survives char select
+# and a rematch") are the POSITIONS of its three calls: Netplay_TickDirectP2P
+# after setup_vs_mode and before the TRANSITIONING store, Netplay_Run's
+# EXITING arm before the IDLE store, and the menu's VERSUS case after the sole
+# MODE_VERSUS store. No harness can drive the EXITING arm, the deferred
+# handoff tick or the menu task, so deleting any of the three -- or adding a
+# fourth mid-set -- leaves every unit test green. Same shape as 4c: the
+# property is where a call sits, so it is checked at the source.
+# ---------------------------------------------------------------------------
+echo "=== versus-score reset sites ==="
+python3 tools/gates/check_versus_score_reset_sites.py \
+    > "${out_dir}/versus-score-reset-sites.log" 2>&1
+rc=$?
+if [ $rc -eq 0 ]; then
+    record versus-score-reset-sites GREEN
+elif [ $rc -eq 1 ]; then
+    record versus-score-reset-sites RED; cat "${out_dir}/versus-score-reset-sites.log"
+else
+    record versus-score-reset-sites ERROR; cat "${out_dir}/versus-score-reset-sites.log"
 fi
 echo
 

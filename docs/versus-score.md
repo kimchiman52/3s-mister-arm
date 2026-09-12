@@ -181,10 +181,18 @@ harmless to this feature.
 - No persistence to disk or across launches.
 - No names wired (the slot exists; nothing fills it).
 - The harness cannot drive `Netplay_Run`'s EXITING arm,
-  `Netplay_BeginDirectP2P`, or the main-menu VERSUS case without a live
+  `Netplay_TickDirectP2P`, or the main-menu VERSUS case without a live
   session or the menu task, so the *placement* of the three
-  `VersusScore_Reset` calls is unpinned; the core, the engine predicate and
-  the lifetime rules over the engine-bound path are pinned.
+  `VersusScore_Reset` calls is not a unit test. It is held at the source
+  instead, by `tools/gates/check_versus_score_reset_sites.py` (a
+  `run-gates.sh` gate, same shape as the constant-time-compare check):
+  each site, its order against the store it brackets (after
+  `setup_vs_mode` and before the `TRANSITIONING` store; before the `IDLE`
+  store; after the sole `MODE_VERSUS` store), the sole-writer counts, and
+  that there is no fourth site anywhere under `src/`. A new boundary is a
+  lifetime decision: change this page and that check in the same commit.
+  The core, the engine predicate and the lifetime rules over the
+  engine-bound path are pinned by the harness.
 - Not yet run on the MiSTer. The y=48 placement is the replay viewer's,
   already seen on a TV; the tally's own first-draw log line
   (`versus-score: HUD strip drawn`) is the SSH-verifiable evidence.
