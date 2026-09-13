@@ -46,8 +46,12 @@ import platform
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
+from hermetic_home import child_env, donor_home, missing_reason, seed_home  # noqa: E402
 
 DEFAULT_FRAMES = 600
 DEFAULT_LATENCY_MS = 400
@@ -64,7 +68,7 @@ class HarnessError(Exception):
     pass
 
 
-def run_game(binary, main_csv, slot_csv, log_path, latency_ms, barrier, frames, timeout):
+def run_game(binary, main_csv, slot_csv, log_path, latency_ms, barrier, frames, timeout, home):
     args = [binary] + BASE_ARGS + [
         "--afs-inject-latency-ms", str(latency_ms),
         "--ldreq-trace", main_csv,
@@ -74,9 +78,11 @@ def run_game(binary, main_csv, slot_csv, log_path, latency_ms, barrier, frames, 
     if barrier:
         args.append("--ldreq-barrier-force")
 
-    env = dict(os.environ)
-    env["SDL_VIDEODRIVER"] = "dummy"
-    env["SDL_AUDIODRIVER"] = "dummy"
+    # HARD RULE: every game run gets its own THIRDSARM_HOME. Without it
+    # Paths_GetPrefPath() resolved SDL_GetPrefPath() and each of the four runs
+    # booted against -- and wrote to -- the maintainer's real pref directory.
+    # child_env also sets the two SDL dummy drivers this used to set by hand.
+    env = child_env(seed_home(Path(home)))
 
     with open(log_path, "w") as logf:
         try:
@@ -220,6 +226,17 @@ def main():
         print(f"SLOT-RESIDUE SUMMARY: verdict=ERROR reason=binary-not-executable path={args.binary}")
         return 2
 
+    # Refused before the first run, not discovered as one: a private home with
+    # no resources/SF33RD.AFS reachable never leaves MAIN_PHASE_COPYING_RESOURCES
+    # and dies on --timeout, which this harness would report as run-failure.
+    # need_romset=False -- BASE_ARGS passes --test-enable and names no balance,
+    # which is ArcadeBalance_Init's PS2-pin branch, so no romset is in reach.
+    reason = missing_reason(donor_home(), need_romset=False)
+    if reason is not None:
+        print(f"[slot-residue] {reason}", file=sys.stderr)
+        print("SLOT-RESIDUE SUMMARY: verdict=ERROR reason=no-hermetic-home")
+        return 2
+
     outdir = args.outdir or tempfile.mkdtemp(prefix="ldreq-slot-")
     os.makedirs(outdir, exist_ok=True)
     print(f"[slot-residue] work dir: {outdir}")
@@ -236,7 +253,8 @@ def main():
                     os.path.join(outdir, tag + ".main.csv"),
                     os.path.join(outdir, tag + ".slots.csv"),
                     os.path.join(outdir, tag + ".log"),
-                    latency, barrier, args.frames, args.timeout)
+                    latency, barrier, args.frames, args.timeout,
+                    os.path.join(outdir, "homes", tag))
     except HarnessError as e:
         print(f"[slot-residue] {e}", file=sys.stderr)
         print("SLOT-RESIDUE SUMMARY: verdict=ERROR reason=run-failure")

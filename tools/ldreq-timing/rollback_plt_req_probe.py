@@ -39,11 +39,15 @@ Env:
 
 import os
 import sys
+from pathlib import Path
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 sys.path.insert(0, os.path.join(REPO_ROOT, "tools", "rollback-determinism"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
 import check_rollback_determinism as rbd  # noqa: E402
+from hermetic_home import child_env, donor_home, missing_reason, seed_home  # noqa: E402
+from require_debug_host_build import require_debug_host_build  # noqa: E402
 
 BIN = os.path.join(REPO_ROOT, "build", "host", "3S-ARM.app", "Contents", "MacOS", "3S-ARM")
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(REPO_ROOT, "build", "plt-req-probe")
@@ -82,9 +86,12 @@ def run(tag, preset, rollback, barrier, select_depth=8, select_period=8):
         args += ["--ldreq-barrier-force"]
     args += ["--ldreq-trace", csv, "--ldreq-trace-frames", str(FRAMES)]
     args += PRESETS[preset]
-    env = dict(os.environ)
-    env["SDL_VIDEODRIVER"] = "dummy"
-    env["SDL_AUDIODRIVER"] = "dummy"
+    # HARD RULE: every game run gets its own THIRDSARM_HOME. Without it
+    # Paths_GetPrefPath() resolved SDL_GetPrefPath() and every run this probe
+    # starts booted against -- and wrote to -- the maintainer's real pref
+    # directory. child_env also sets the two SDL dummy drivers set by hand here
+    # before. One home per run, named by the run's own tag.
+    env = child_env(seed_home(Path(os.path.join(OUT, "homes", tag))))
     with open(log, "w") as lf:
         pid = rbd.spawn_no_aslr_darwin(args, env, lf.fileno(), REPO_ROOT)
         rc = rbd.wait_with_timeout(pid, 1200, log)
@@ -139,6 +146,23 @@ def compare(tag_a, csv_a, tag_b, csv_b):
 
 
 def main():
+    # Same guard the four shell harnesses make: a Release build/host produces a
+    # binary with no --test-* hooks compiled in, which boots a normal game and
+    # dies on the wall-clock cap -- reported as a hang, read as an engine bug.
+    if not require_debug_host_build(BIN, "plt-req-probe"):
+        return 2
+
+    # And the same refusal the rest of the harnesses make: with no
+    # resources/SF33RD.AFS reachable, a private home never leaves
+    # MAIN_PHASE_COPYING_RESOURCES and every run below times out.
+    # need_romset=False -- every run passes --test-enable and names no balance,
+    # which is ArcadeBalance_Init's PS2-pin branch.
+    reason = missing_reason(donor_home(), need_romset=False)
+    if reason is not None:
+        print(f"error: cannot build a hermetic THIRDSARM_HOME: {reason}",
+              file=sys.stderr)
+        return 2
+
     os.makedirs(OUT, exist_ok=True)
     rbd.build_symbol_map_macho(BIN, os.path.join(OUT, "symmap.txt"))
     all_saved = []

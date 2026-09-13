@@ -54,9 +54,14 @@ import struct
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+
+sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
+from hermetic_home import child_env, donor_home, missing_reason, seed_home  # noqa: E402
+from require_debug_host_build import require_debug_host_build  # noqa: E402
 
 STREAM_MAGIC = 0x32444252  # "RBD2" (bumped when the footer gained ptr_canon)
 FOOTER_MAGIC = 0x46444252  # "RBDF"
@@ -360,7 +365,7 @@ def wait_with_timeout(pid, timeout, log_path):
 
 def run_game(binary, base_args, extra_args, out_path, map_path, frames,
              period, depth, select_period, select_depth, timeout, log_path,
-             address_layout_pad=False):
+             home, address_layout_pad=False):
     args = [binary, "--test-enable", "--test-pin-rng",
             "--rbd-capture", out_path, "--rbd-symmap", map_path,
             "--rbd-frames", str(frames)]
@@ -376,9 +381,22 @@ def run_game(binary, base_args, extra_args, out_path, map_path, frames,
                  "--rbd-select-rollback-period", str(select_period),
                  "--rbd-select-rollback-depth", str(select_depth)]
     args += base_args + extra_args
-    env = dict(os.environ)
-    env["SDL_VIDEODRIVER"] = "dummy"
-    env["SDL_AUDIODRIVER"] = "dummy"
+    # HARD RULE: every game run gets its own THIRDSARM_HOME. Without it
+    # Paths_GetPrefPath() resolved SDL_GetPrefPath() and all three runs of every
+    # scenario booted against -- and wrote to -- the maintainer's real pref
+    # directory. For this harness that is worse than untidy: A1/A2/B are
+    # compared symbol-by-symbol, so anything the previous run left behind in a
+    # SHARED home is state one side of the comparison saw and another did not.
+    #
+    # child_env also sets the two SDL dummy drivers this used to set by hand.
+    #
+    # WIPED, not merely re-seeded. The three runs of a scenario share ONE home
+    # PATH on purpose (see the call site) and each must start from the same
+    # bytes, so whatever the previous run wrote there -- config, logs/,
+    # balance.status -- is removed first. rmtree does not follow symlinks, so
+    # the donor's roms/ and resources/ are unlinked, never emptied.
+    shutil.rmtree(home, ignore_errors=True)
+    env = child_env(seed_home(Path(home)), dict(os.environ))
     if address_layout_pad:
         # See NOISE_PAD_ENV. Inert to the game; present only to shift the
         # initial stack / argv / envp addresses so the noise control is a
@@ -617,6 +635,25 @@ def run_scenario(name, extra, args, outdir, map_path, frames, entries,
     failure (contained by the caller)."""
     log(f"scenario {name}: baseline A1")
     runs = {}
+    # ONE home path for the scenario's three runs, wiped and re-seeded by
+    # run_game before each of them, rather than a separate path per run.
+    #
+    # The reason is structural, not measured: this harness compares A1/A2/B
+    # symbol by symbol, the pref path is strdup'd into pref_path by
+    # Paths_GetPrefPath(), and per-run paths differ in their own bytes. That
+    # plants a difference inside the comparison the harness exists to make, and
+    # NOISE_PAD_ENV is the only perturbation here that is supposed to be there.
+    #
+    # MEASURED 2026-09-12, honestly: it made no difference to the verdict.
+    # Per-run paths and one wiped path both reported
+    # `divergent=0 feedback=0 allowlisted=67 noise=151 unstable=0` -- as did the
+    # pre-hermetic-home driver run against a COPY of the maintainer's real pref
+    # directory. So nothing here is load-bearing for the numbers; the shared
+    # wiped path is chosen because it is the shape that cannot go wrong later.
+    # (The noise=141 in docs/rollback-determinism-harness.md is a 2026-08-25
+    # row on a different tree, and the three runs above locate that drift in the
+    # binary, not in this change.)
+    home = os.path.join(outdir, "homes", name)
     for run_name, period in (("A1", 0), ("A2", 0), ("B", args.rollback_period)):
         if run_name != "A1":
             log(f"scenario {name}: {'baseline ' + run_name if period == 0 else 'rollback B'}")
@@ -627,7 +664,7 @@ def run_scenario(name, extra, args, outdir, map_path, frames, entries,
                                   frames, period, args.rollback_depth,
                                   args.select_rollback_period,
                                   args.select_rollback_depth,
-                                  args.timeout, runlog,
+                                  args.timeout, runlog, home,
                                   address_layout_pad=(run_name == "A2"))
 
     b = runs["B"]
@@ -800,6 +837,25 @@ def main(argv):
     if not os.path.exists(args.binary):
         fail(f"binary not found: {args.binary} (build build/host first — "
              f"see tools/rollback-determinism/run.sh)")
+
+    # run.sh already makes this check, but the driver is also run directly and
+    # `--binary` can point anywhere, so the guard belongs at the binary the
+    # driver is actually about to execute.
+    if not require_debug_host_build(args.binary, "rbd/check"):
+        return 2
+
+    # Refused up front rather than discovered as a result: with no
+    # resources/SF33RD.AFS reachable, a private home never leaves
+    # MAIN_PHASE_COPYING_RESOURCES and every run dies on --timeout, which reads
+    # as an engine hang. need_romset=False because ArcadeBalance_Init's
+    # `configuration.test.enabled && !test_requests_arcade` branch pins PS2, and
+    # every run below passes --test-enable and names no balance, so a romset
+    # cannot change what this harness measures. (A caller that pushes
+    # --test-balance arcade through --game-arg is asking for arcade without
+    # saying so; it gets the game's own fallback-to-PS2 log line, not a refusal.)
+    reason = missing_reason(donor_home(), need_romset=False)
+    if reason is not None:
+        fail(f"cannot build a hermetic THIRDSARM_HOME: {reason}")
 
     frames = args.frames or (1500 if args.mode == "fast" else 2400)
     scenarios = FAST_SCENARIOS if args.mode == "fast" else THOROUGH_SCENARIOS

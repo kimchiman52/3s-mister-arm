@@ -256,10 +256,13 @@ void StatcheckRunner_PinConfig(void) {
      * PinConfig runs from initialize_game() BEFORE sf3_init(), so
      * Init_Task_1st -> Game_Data_Init() -> Setup_Default_Game_Option()
      * re-seeds every slot after it and the settings load then writes save_w[1]
-     * from the user's file. MEASURED 2026-09-07, and it is not theoretical for
-     * this harness: the corpus sweeps run the oracle in the maintainer's REAL
-     * home (tools/statcheck_runner.py and the corpus analyze.py set no
-     * THIRDSARM_HOME), which has held a saves/settings since 2026-09-02.
+     * from the user's file. MEASURED 2026-09-07, when the corpus sweeps still
+     * ran the oracle in the maintainer's REAL home -- which has held a
+     * saves/settings since 2026-09-02, so the settings load had a file to read.
+     * Every sweep and harness now gets a private THIRDSARM_HOME with no
+     * saves/settings in it (tools/hermetic_home.py), so that particular file is
+     * out of reach; the pin below stays, because a home is a property of the
+     * CALLER and this function cannot check what its caller did.
      *
      * So the pin is now Playback_Settings_Pin() (sys_sub.c), re-asserted every
      * tick from StatcheckRunner_Prologue() and covering the whole

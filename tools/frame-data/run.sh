@@ -167,6 +167,37 @@ if [ "$BALANCE" = "arcade" ] && [ -n "${FDH_CPS3_ZIP:-}" ]; then
     export THIRDSARM_CPS3_ZIP="$FDH_CPS3_ZIP"
 fi
 
+# HARD RULE: every game run gets its own THIRDSARM_HOME. $THIRDSARM_CPS3_ZIP
+# alone is NOT that -- it moves where the romset comes from and nothing else,
+# so without the line below Paths_GetPrefPath() resolved SDL_GetPrefPath() and
+# every corpus in a suite run booted against, and WROTE TO, the maintainer's
+# real pref directory: training_config.c's `fopen("%straining", "wb")`,
+# arcade_balance.c's write_status_file(), sdl_app.c's
+# append_backend_log_line(), and Paths_OpenUserStorage()'s saves/.
+#
+# Seeded by tools/hermetic_home.py rather than by this script, so the seeding
+# rules (link roms/ or `auto` silently resolves PS2 and the corpus measures the
+# wrong engine; link resources/ or Resources_Check() fails and the run hangs
+# invisibly in MAIN_PHASE_COPYING_RESOURCES) have ONE implementation, shared
+# with tools/statcheck_runner.py and the Python harnesses. It refuses nonzero
+# when the home it would hand back is unusable.
+#
+# --no-romset for a `ps2` corpus: 96 of the 100 corpora are PS2-balance and
+# need no romset at all, so requiring one would refuse the harness on a machine
+# where it has always worked. An `arcade` corpus does need one, and gets the
+# refusal.
+#
+# A scalar, deliberately unquoted at the call below, rather than an array: this
+# script runs under `set -u` on macOS's bash 3.2, where expanding an EMPTY array
+# is itself an unbound-variable error. Same reason EXTRA_ARGS above is a string.
+HOME_ROMSET_ARG=""
+if [ "$BALANCE" != "arcade" ]; then
+    HOME_ROMSET_ARG="--no-romset"
+fi
+# shellcheck disable=SC2086  # intentional word-split; see above
+FDH_HOME="$(python3 "${REPO_ROOT}/tools/hermetic_home.py" --seed "$RUNDIR/home" $HOME_ROMSET_ARG)" || exit 1
+export THIRDSARM_HOME="$FDH_HOME"
+
 # EX/Supers program, Step 1 procedure item 4: optional `p1_super_art` /
 # `sa_gauge` meta.json keys, present only when the corpus's `super_art:` /
 # `sa_gauge:` top-level keys asked for them (compile_corpus.py). Threaded as

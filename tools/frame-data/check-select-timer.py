@@ -63,6 +63,10 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
+
+sys.path.insert(0, str(REPO_ROOT / "tools"))
+from hermetic_home import child_env, donor_home, missing_reason, seed_home  # noqa: E402
+from require_debug_host_build import require_debug_host_build  # noqa: E402
 BIN_PATH = REPO_ROOT / "build" / "host" / "3S-ARM.app" / "Contents" / "MacOS" / "3S-ARM"
 
 # Non-training preset: PHASE_MENU's training-mode branch (test_runner.c) is not
@@ -178,21 +182,43 @@ def main(argv=None):
         print(f"error: {BIN_PATH} not found -- build build/host first", file=sys.stderr)
         return 1
 
+    # The docstring already says this needs a #if DEBUG build. Saying it and
+    # checking it are different things: a Release build/host compiles no
+    # --test-select-dwell-frames, so the run never dwells, observes zero ticks,
+    # and this reports FAIL against the engine.
+    if not require_debug_host_build(BIN_PATH, "select-timer"):
+        return 1
+
+    # Liveness only. The romset half is the arcade leg's own business -- it
+    # already SKIPs loudly when --cps3-zip names no file -- and demanding one
+    # here would refuse the ps2 leg too.
+    reason = missing_reason(donor_home(), need_romset=False)
+    if reason is not None:
+        print(f"error: cannot build a hermetic THIRDSARM_HOME: {reason}",
+              file=sys.stderr)
+        return 1
+
     tmpdir = Path(tempfile.mkdtemp(prefix="t108-select-"))
     probe_path = tmpdir / "select-probe.txt"
     failures = []
     skips = []
 
     base_env = dict(os.environ)
-    base_env["SDL_VIDEODRIVER"] = "dummy"
-    base_env["SDL_AUDIODRIVER"] = "dummy"
     base_env["FD_SELECT_PROBE"] = str(probe_path)
+    # Popped so the ps2 leg cannot inherit a romset the arcade leg is supposed
+    # to supply explicitly. It has to stay popped through child_env, which is
+    # why every leg below passes this dict as the BASE rather than letting
+    # child_env default to os.environ.
     base_env.pop("THIRDSARM_CPS3_ZIP", None)
 
     wrapper = timeout_wrapper(args.timeout)
 
     for balance in ("ps2", "arcade"):
-        env = dict(base_env)
+        # HARD RULE: every game run gets its own THIRDSARM_HOME. Without it
+        # Paths_GetPrefPath() resolved SDL_GetPrefPath(), so both legs booted
+        # against -- and wrote to -- the maintainer's real pref directory.
+        # child_env also sets the two SDL dummy drivers set by hand before.
+        env = child_env(seed_home(tmpdir / f"home-{balance}"), base_env)
         if balance == "arcade":
             if not args.cps3_zip or not Path(args.cps3_zip).is_file():
                 skips.append("arcade: no romset (pass --cps3-zip / set FDH_CPS3_ZIP)")
@@ -229,7 +255,7 @@ def main(argv=None):
             check=True, stdout=subprocess.DEVNULL,
         )
         meta = json.loads((rundir / "meta.json").read_text())
-        env = dict(base_env)
+        env = child_env(seed_home(tmpdir / "home-baseline"), base_env)
         env["FRAME_TRACE_PATH"] = str(rundir / "trace.log")
         argv_leg = wrapper + [
             str(BIN_PATH),
