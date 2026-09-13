@@ -1092,6 +1092,89 @@ def cmd_selftest(img: Image, args) -> int:
         "0x060C37E8, 0x060C380A",
     )
 
+    # -- section 16.2: the three plcnt.c clamps the arcade does not have --
+    # Adjudicated 2026-09-12: all three are INERT, because every value the
+    # arcade's own tables can hand the port's clamps is already inside the
+    # clamp's range.  That is a property of ROM DATA, so it is checked here
+    # rather than asserted in prose -- an edit to either table that moved a
+    # value out of range would reopen the question silently otherwise.
+    print("")
+    print("-- research-arcade-cg-data-accuracy.md section 16.2: the three ungated clamps --")
+
+    # pl_piyo_tbl is the whole input to set_kizetsu_status's [56,72] clamp
+    # (piyori_type[].genkai has no other writer anywhere in the port).
+    pl_piyo_tbl = 0x065EAC70
+    slot_pp, insn_pp = _sole_ref(img, pl_piyo_tbl)
+    check("pl_piyo_tbl 0x065EAC70: sole literal referrer (pool word)", slot_pp, 0x0611864C)
+    check("  loaded by the instruction at", insn_pp, 0x061185D8)
+    check("  -> enclosing routine = set_kizetsu_status", find_function_start(img, insn_pp) if insn_pp else None, 0x0611856C)
+    piyo = [img.s16(pl_piyo_tbl + i * 2) for i in range(21)]
+    check(
+        "pl_piyo_tbl's 21 arcade values == plcnt.c's, entry for entry",
+        str(piyo),
+        "[72, 72, 64, 64, 72, 64, 72, 64, 64, 72, 64, 64, 64, 64, 56, 56, 64, 64, 72, 64, 56]",
+    )
+    check("  ... min/max 56/72, so the [56,72] clamp cannot bind", "%d/%d" % (min(piyo), max(piyo)), "56/72")
+    # The gap between the read (0x061185F8) and the genkai store (0x061185FC)
+    # holds one instruction, and it sign-extends the INDEX for the next
+    # statement.  No cmp, no branch: the arcade copies the table value.
+    check(
+        "set_kizetsu_status: table read -> genkai store, nothing between but an index exts",
+        str([(i.mnemonic, i.op_str) for i in img.disasm(0x061185F8, 6)]),
+        str([("mov.w", "@(r0,r1),r0"), ("exts.w", "r7,r7"), ("mov.w", "r0,@(2,r5)")]),
+    )
+
+    # super_arts_data feeds remake_sa_store_max's [1,9] and
+    # remake_sa_gauge_len's [0x40,0x80].
+    sad = 0x065EA670
+    slot_sa, insn_sa = _sole_ref(img, sad)
+    check("super_arts_data 0x065EA670: sole literal referrer (pool word)", slot_sa, 0x061187B8)
+    check("  loaded by the instruction at", insn_sa, 0x0611868C)
+    check("  -> enclosing routine = set_super_arts_status", find_function_start(img, insn_sa) if insn_sa else None, 0x06118680)
+    check(
+        "set_super_arts_status: gauge_len then store_max, both plain mov.w copies",
+        str([(i.mnemonic, i.op_str) for i in img.disasm(0x061186D2, 8)]),
+        str([("mov.w", "@(8,r6),r0"), ("mov.w", "r0,@(22,r5)"), ("mov.w", "@(10,r6),r0"), ("mov.w", "r0,@r1")]),
+    )
+
+    def _sa_pair(c, s):
+        """(gauge_len, store_max) of super_arts_data[c][s]; SA_DATA is 16 bytes."""
+        r = sad + (c * 4 + s) * 16
+        return (img.s16(r + 8), img.s16(r + 10))
+
+    # Slots 0..2 are every Super_Arts value a shipped build can reach (section
+    # 16.2's writer enumeration).  Both clamps are no-ops across all of them.
+    check(
+        "slots 0..2: every gauge_len, all inside [0x40, 0x80]",
+        str(sorted({_sa_pair(c, s)[0] for c in range(21) for s in range(3)})),
+        "[64, 72, 80, 88, 96, 104, 112, 120, 128]",
+    )
+    check(
+        "slots 0..2: every store_max, all inside [1, 9]",
+        str(sorted({_sa_pair(c, s)[1] for c in range(21) for s in range(3)})),
+        "[1, 2, 3]",
+    )
+    # Slot 3 is the ONLY place either clamp binds, and Super_Arts == 3 reaches
+    # it in no shipped build.  Pinned because the doc names these characters:
+    # Alex and Ryu bind both clamps, Oro only store_max (its gauge_len is
+    # already 0x40, and the test is strict `<`).
+    check(
+        "slot 3 (gauge_len, store_max) for arcade chars 1 / 2 / 9 = Alex / Ryu / Oro",
+        "%s %s %s" % (_sa_pair(1, 3), _sa_pair(2, 3), _sa_pair(9, 3)),
+        "(0, 0) (0, 0) (64, 0)",
+    )
+    check(
+        "  every other arcade character's slot 3 (neither clamp binds)",
+        str(sorted({_sa_pair(c, 3) for c in range(21) if c not in (1, 2, 9)})),
+        "[(64, 1)]",
+    )
+    # Not "the all-zero fourth slot": dtm is 65536 in all 21 records.
+    check(
+        "slot 3 is not all-zero -- dtm is 65536 in every one of the 21 records",
+        str(sorted({img.u32(sad + (c * 4 + 3) * 16 + 12) for c in range(21)})),
+        "[65536]",
+    )
+
     # ------------------------------------------------------------------
     # Regressions.  Every check below FAILED before the commit that added it;
     # each names the wrong answer the tool used to give.  They exist because

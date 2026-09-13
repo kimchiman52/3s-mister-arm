@@ -1470,8 +1470,12 @@ void clear_chainex_check(s16 ix) {
  *
  * It reads pl_piyo_tbl[plnum] at 0x061185F8 and stores it to genkai at
  * 0x061185FC. Nothing between: no add, and no clamp either. Only the modifier
- * is gated -- pl_piyo_tbl holds 56, 64 and 72 only, so the [56,72] clamp below
- * is inert at omake 0 and the arcade arm lands on exactly the arcade's value.
+ * is gated, and the [56,72] clamp below is left alone because it is INERT --
+ * adjudicated 2026-09-12, no longer an assumption. genkai has no writer in the
+ * tree but this statement, the arcade's own pl_piyo_tbl at 0x065EAC70 holds the
+ * same 21 values this file's does, and their min/max are 56 and 72, so at omake
+ * 0 the arcade arm lands on exactly the arcade's value and the clamp never
+ * binds. Section 16.3 has the pin; cps3.py selftest holds it. Do not re-derive.
  *
  * Additive, so the identity is 0, which is what default Extra Options already
  * select (contents[2][0..1] == 2, stun_gauge_len_omake[2] == 0). */
@@ -1559,12 +1563,19 @@ void set_super_arts_status(s16 ix) { // 🟢
  * Options (contents[1][2..3] == 2 -> sag_stock_omake[2] == 0; contents[1][4..5]
  * == 8 -> sag_length_omake[8] == 0).
  *
- * The CLAMPS are deliberately NOT gated, on section 16.1's principle: zeroing
- * only the modifier is provably neutral with respect to today's numbers,
- * whereas dropping the clamps would not be. At omake 0 they are reachable only
- * for Super_Arts == 3 on chars 1, 2 and 9 -- the all-zero fourth SA_DATA slot,
- * where store_max 0 becomes 1 and gauge_len 0 becomes 64. Whether that slot is
- * selectable was not established; see section 16.2's residuals. */
+ * The CLAMPS stay ungated because they are INERT, adjudicated 2026-09-12 --
+ * not because the question was left open, which is what this comment used to
+ * say. Both bind only on the FOURTH SA_DATA slot, and Super_Arts == 3 is the
+ * only way to index it: every writer of Super_Arts[] in a shipped build is
+ * bounded to 0..2 (the enumeration is in section 16.3). Slots 0..2 carry
+ * gauge_len in [0x40,0x80] and store_max in [1,9] on all 20 characters in both
+ * tables, so at omake 0 neither clamp has anything to do.
+ *
+ * Two things the old comment got wrong, kept here because they are the traps:
+ * slot 3 is NOT all-zero (dtm is 65536 in all 20 records), and the two clamps
+ * do not bind on the same characters -- Alex and Ryu bind both (gauge_len 0 ->
+ * 64, store_max 0 -> 1), Oro binds only store_max, because its slot-3
+ * gauge_len is already 0x40 and the test is a strict `<`. */
 static s16 sa_store_max_omake(s16 ix) {
     if (ArcadeBalance_IsEnabled()) {
         return 0;

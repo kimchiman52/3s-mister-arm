@@ -141,7 +141,9 @@ command and its observed output, or a named primary source. Things that were
   13 sections (the ones a CG audit cannot see). This is upstream issue **#325**.
 - **Worried about command inputs?** §16. **That question is closed** — do not
   re-open it. Its one residual, the two ungated System Direction modifiers, is
-  **gated as of 2026-09-06**: §16.1.
+  **gated as of 2026-09-06**: §16.1. The seven neighbouring `*_omake` modifiers
+  are gated too (§16.2, 2026-09-07), and the three `plcnt.c` clamps §16.2 left
+  unadjudicated are **closed as inert, no code change** (§16.3, 2026-09-12).
 
 ---
 
@@ -265,7 +267,7 @@ command and its observed output, or a named primary source. Things that were
 | **Selected OVIX index past the OVIX** | **CHANGED 2026-09-07** (§31.8). Seven characters (Ibuki's live one from §18.6(i), six more post-terminator) now read `reach-unmodelled(ovix-oob …)` instead of `ok`; `residual_audit.py` forces `part_reachable` for them. The §6.1 verdict on Ibuki's overrun itself is unchanged |
 | Upstream issue #363 | **OPEN** upstream; our findings not yet reported (§13) |
 | **The other 13 sections** (issue **#325**) | **AUDITED, no defect** — differences enumerated and classified (§15) |
-| **Arcade command tables** (input recognition) | **CLOSED — no bug** (§16). §16's one residual — `cmd_data_set` applying the PS2-only `blok_b_omake`/`blok_r_omake` System Direction modifiers to arcade command records with no gate — is **LANDED 2026-09-06** (§16.1): the arcade's own `cmd_data_set` (`0x060B299C`) is 310 straight-line bytes with no branch and no call, so it applies neither; both are now gated to 0 under arcade balance, PS2 arm unchanged. Digest unmoved (`e96e88beec2ac2b5`), as §8.O predicted. §16.1 also settles the netplay question §16 left open: System Direction is never exchanged, hashed or checked, but the netplay arm reads `system_dir[2]`, which nothing writes after boot |
+| **Arcade command tables** (input recognition) | **CLOSED — no bug** (§16). §16's one residual — `cmd_data_set` applying the PS2-only `blok_b_omake`/`blok_r_omake` System Direction modifiers to arcade command records with no gate — is **LANDED 2026-09-06** (§16.1): the arcade's own `cmd_data_set` (`0x060B299C`) is 310 straight-line bytes with no branch and no call, so it applies neither; both are now gated to 0 under arcade balance, PS2 arm unchanged. Digest unmoved (`e96e88beec2ac2b5`), as §8.O predicted. §16.1 also settles the netplay question §16 left open: System Direction is never exchanged, hashed or checked, but the netplay arm reads `system_dir[2]`, which nothing writes after boot. The seven neighbouring `*_omake` modifiers are **GATED 2026-09-07** (§16.2), and the three `plcnt.c` clamps that pass left unadjudicated are **CLOSED 2026-09-12 as inert, no code change** (§16.3): `Super_Arts == 3` is unreachable in a shipped build, so neither `SA_DATA` clamp can bind, and the arcade's own `pl_piyo_tbl` (`0x065EAC70`) holds the same 21 values ours does, min 56 max 72 |
 | **`location_data[]` over-declared spans** | **CLOSED 2026-09-06 — no code change, defended by the audit** (§27). Both consequences adjudicated: (1) no path the engine can take forms a cell index inside any over-declared tail — every writer of `cg_ix` is modelled in `cg_audit.py` -> `span_closure()`, and the only cells reachable past a first terminator are 18 in-bounds script cells of Dudley `caca[6]`/`saca[87]` and Elena `atca[159]`; Remy's CAUA/HOSA tails are never indexed (`max cuix` 6 of 7, `max hoix` 11 of 12). (2) `ArcadeCharData_ComputeDigest` does hash 49,288 B (1.90% of its 2,590,884 B input) of decoded ROM past the real data, but the ROM is SHA-256-pinned to one revision (`rom_load.c`) and the decode is a pure function of it, so every peer hashes the same bytes: harmless, and deliberately NOT tightened (a digest move forces a lockstep client update). Real ends re-derived by reach, not by §19's terminator scan; §19.7's `Real end` column corrected in 14 spans |
 | **Residual (second-door) bounds** | **AUDITED, FIXED** `a5bc6a5b` — pre-fix baseline was 6 violations, all Remy → Gill's group; current tree measures 0 (§17.3, §17.5); tooling `residual_audit.py` (§8.K) |
 | **Under-declared (truncating) spans** | **CLOSED — none exist.** 500/500 spans COVERED (§19) |
@@ -3667,6 +3669,15 @@ anything else would not be:
   inert: `pl_piyo_tbl` holds only 56, 64 and 72, so at omake 0 the arcade arm
   lands on exactly the arcade's value regardless.
 
+> **CORRECTION (§16.3, 2026-09-12): all three are inert, and the description of
+> the first two above is wrong twice.** Slot 3 is **not** all-zero — `dtm` is
+> 65536 in all 20 port records and all 21 arcade records. And the two clamps do
+> not bind on the same three characters: Alex and Ryu bind both, **Oro binds
+> only `store_max`**, because its slot-3 `gauge_len` is already `0x40` and the
+> test is a strict `<`. "Whether that slot is selectable" is now settled in
+> §16.3: no shipped build can reach it. The `[56,72]` bullet's verdict stands
+> and is now measured rather than inferred.
+
 #### Not modifiers, and still not touched
 
 §16.1's exclusion holds and was re-checked: `guard_distance` (`pls01.c`),
@@ -3743,15 +3754,159 @@ rests on the disassembly alone.**
 
 Three residuals, recorded rather than papered over:
 
-- **The three clamps above are not adjudicated.** The arcade has none of them.
-  Whether `Super_Arts == 3` is selectable — the only case where two of them
-  fire — was not established, and no attempt was made to remove them.
+- ~~**The three clamps above are not adjudicated.**~~ **CLOSED 2026-09-12 —
+  §16.3. All three are inert; the code is unchanged and that is now a verdict
+  rather than a deferral.**
 - **The `asag * 4` training multiplier** is a divergence from the arcade that
   this pass saw and did not act on. It is a DIP-table knob, not an `*_omake`
   modifier, and needs its own decision.
 - **No in-game measurement** was made of any of the seven. The identity values
   and the non-default steps are read off the tables; the arcade's behaviour is
   read off the disassembly.
+
+### 16.3 The three `plcnt.c` clamps: ADJUDICATED 2026-09-12 — all three inert, nothing gated, and the reachability question is closed
+
+§16.2 gated seven modifiers and left three clamps standing, recording that it
+did not know whether the input that makes two of them fire is selectable. This
+section answers that, and the answer is that **no shipped build can reach it**.
+All three clamps are therefore **inert**: they cannot bind on any input a
+shipped build can present, so the arcade arm already lands on exactly the value
+the arcade's own routine writes. **No code changed. The digest did not move —
+this section parses no span.**
+
+The three verdicts, one line each:
+
+| clamp | verdict | why |
+|---|---|---|
+| `remake_sa_store_max`'s `[1,9]` | **inert** | binds only on `SA_DATA` slot 3 (`store_max` 0 → 1, for Alex, Ryu and Oro); slot 3 needs `Super_Arts == 3`, which no shipped writer can produce |
+| `remake_sa_gauge_len`'s `[0x40,0x80]` | **inert** | binds only on slot 3, and only for Alex and Ryu (`gauge_len` 0 → 64); Oro's slot-3 `gauge_len` is already `0x40` |
+| `set_kizetsu_status`'s `[56,72]` | **inert** | `genkai` has one writer in the whole tree, its only input at omake 0 is `pl_piyo_tbl`, and the **arcade's own** `pl_piyo_tbl` holds the same 21 values — min 56, max 72 |
+
+#### Every writer of `Super_Arts[]`, and what bounds each
+
+`Super_Arts` is `s8[2]` (`workuser.c`). This is the whole set, from a tree-wide
+sweep of `src/` — not the character-select path only.
+
+| writer | bound |
+|---|---|
+| `game.c` -> `Before_Select_Sub` (`Super_Arts[0] = 0; Super_Arts[1] = 0;`) | literal 0 |
+| `netplay.c` -> `setup_vs_mode` (`SDL_zeroa(Super_Arts)`) | 0 |
+| `sel_pl.c` -> `Sel_PL_Sub` (`Arts_Y[ID] = Super_Arts[ID] = Last_Super_Arts[ID] = 0;`) | literal 0 |
+| `sel_pl.c` -> `Sel_Arts_Sub` (`= Arts_Y[PL_id]`) | `Arts_Y` is the cursor, wrapped in the same function (`+= 1 > 2 -> 0`, `-= 1 < 0 -> 2`); its other writers are literal 0, the file-clamped training config, `scene_jump.c`'s params, and `GS_LOAD` |
+| `sel_pl.c` -> `Sel_PL_1st` (`Arts_Y[ID] = Super_Arts[ID] = Last_Super_Arts[ID];`) | every `Last_Super_Arts` writer is itself in `[0,2]` — see below |
+| `demo02.c` -> `Setup_Demo_Arts` | `Arts_Rnd_Demo_Data[8] = { 0, 0, 0, 1, 1, 1, 2, 2 }`, indexed `random_16() & 7` |
+| `next_cpu.c` -> `Setup_Next_Fighter` (`= Setup_Com_Arts()`) | `Setup_Com_Arts` returns 1, or `Arts_Rnd_Data[8] = { 0, 0, 0, 1, 1, 1, 2, 2 }`, or `Stock_Com_Arts[]` — which is only ever `-1` (`game.c`, `manage.c`) or a previous `Setup_Com_Arts()` result |
+| `next_cpu.c` -> `Setup_Next_Fighter` (`= Debug_w[32] - 1`) | `Debug_w` is the all-zero stub in a release build, so the `if` never fires; in a Debug build it is `debug_config.values`, and both its writers (`Debug_2nd`'s menu keys, `DebugConfig_Set`) clamp to `debug_string_data[32].max`, which is **3** for `"CPU S.A"` — so the subtraction yields at most 2 |
+| `pls03.c` -> `check_super_arts_attack` | `for (i = 0; i < 3; i++) Super_Arts[wk->wu.id] = i;` |
+| `menu.c` -> `Load_Replay_Sub` (`= Replay_w.game_infor.player_infor[ix].sa`) | on this port `Replay_w` has exactly one writer, `sys_sub.c` -> `Check_Replay`'s `memset(&Replay_w, 0, sizeof(Replay_w))`; nothing loads a replay into it, so `sa` is always 0 |
+| `scene_jump.c` -> `SceneJump_ExecuteTrainingChain` (`= params->arts[ix]`) | its one shipped caller is `quick_training.c` -> `qt_begin`, which fills `arts` from `TrainingConfig_GetLastUsed` — and that rejects any stored byte outside `[0, 3)`, leaving the caller's default of 0 in place |
+| `game_state.c` -> `GameState_Load` (`GS_LOAD(Super_Arts)`) | not an independent source: `save_state` and `load_state_from_event` both work on GekkoNet's local ring, written by this process, and nothing on the wire carries a `GameState` (§16.1's payload enumeration) |
+| `replay_player.c` -> the `PHASE_MENU` arm (writes `Last_Super_Arts`, which reaches `Super_Arts` through `Sel_PL_1st`) | the `.3sr` loader rejects the file outright on `supers[i] > 2` |
+
+`Last_Super_Arts`, the one indirect route, has the same property: its writers
+are literal 0 (`sel_pl.c` -> `Sel_PL_Sub`, `sys_sub.c` -> `Clear_Personal_Data`),
+`Arts_Y`, `scene_jump.c`'s params, the `< 3` training-config clamp,
+`replay_player.c`'s validated `supers`, and `GS_LOAD`.
+
+**So `Super_Arts == 3` is unreachable in a shipped build, and `SA_DATA` slot 3
+is dead data there.** That was established by enumerating writers, not by
+observing that the game never offers a fourth Super Art.
+
+#### The two harness builds where it IS reachable — the residual this leaves
+
+Not "provably not, everywhere". Two harness-only routes reach 3, and both are
+recorded rather than dismissed, because the second sits inside the arcade oracle
+itself:
+
+- **`#if DEBUG`:** `args.c` validates `--test-p1-super-art` /
+  `--test-p2-super-art` to `0..2` but applies **no bound at all** to
+  `--test-fcade-p1-arts` / `--test-fcade-p2-arts` (documented as a "raw arcade
+  byte"), and `test_runner.c` -> `fcade_force_setup` writes them straight into
+  `Super_Arts[]` behind a bare `>= 0`. `--test-fcade-p1-arts 3` reaches slot 3.
+  Neither flag has any caller in the tree.
+- **`#if STATCHECK`:** `scrd_game.c` and `replay_game.c` read the raw
+  `Super_Arts` byte out of an archive frame at `SUPER_ARTS_OFFSET` with no range
+  check, and `statcheck_runner.c` -> `StatcheckRunner_Prologue` writes it into
+  `Last_Super_Arts[]`. `tools/fcade-replays/make_3sr.py` only *warns* on a value
+  outside `[0,2]`; it does not reject one.
+
+**The fix is one range test per flag in `args.c`, and it was deliberately not
+applied here** — it is an argument-validation change in a file this item does
+not otherwise touch, and adding the same `0..2` test the two neighbouring flags
+already carry would make the verdict above hold in every build rather than only
+in shipped ones. Recorded as a work item, not done.
+
+**Gating the clamps was considered and rejected.** It buys nothing a shipped
+build can observe, and it would let `gauge_len` 0 / `store_max` 0 through to
+`spgauge.c` (`spg_len = gauge_len / 8`, `spg_maxlevel = store_max`) and
+`grade.c`'s `switch (plw[ix].sa->store_max)` — consumers no input has ever
+presented with 0. Removing a clamp that cannot fire is not an accuracy gain; it
+is a new untested path in exchange for nothing.
+
+#### The measurements, and how each was pinned
+
+Everything below is read off the decrypted image (md5
+`909f5abec4b6b21bf7d2a452a03fdfcc`) with `tools/cps3-disasm/cps3.py`, and every
+value is now asserted by `cps3.py selftest` — 16 new checks — so this section
+does not rest on prose.
+
+- **`pl_piyo_tbl` = `0x065EAC70`, and the arcade's copy equals ours.** The
+  42-byte value pattern occurs **twice** in the image, so it is not the anchor:
+  the address is pinned instead by its **sole literal referrer**, the pool word
+  `0x0611864C` loaded at `0x061185D8`, inside the routine starting `0x0611856C`
+  — the same routine that loads `pl_nr_piyo_tbl` at `0x06118600`, i.e. §16.2's
+  arcade `set_kizetsu_status`. (The other pattern hit, `0x061B86C8`, is
+  referenced only from `~0x060D9DA6`, a different routine entirely — a
+  coincidental byte run, recorded so the scan is not re-run.) Its 21 `s16` are
+  `72, 72, 64, 64, 72, 64, 72, 64, 64, 72, 64, 64, 64, 64, 56, 56, 64, 64, 72, 64, 56`
+  — `plcnt.c`'s table entry for entry, Shin Akuma included. Min 56, max 72.
+  **This is the fact §16.2 asserted without measuring the arcade side; it
+  holds.**
+- **No clamp in the arcade's `set_kizetsu_status`.** `0x061185F8`
+  `mov.w @(r0,r1),r0` reads the table; `0x061185FC` `mov.w r0,@(2,r5)` stores
+  `genkai`. The one instruction between them, `exts.w r7,r7`, sign-extends the
+  **index** for the `pl_nr_piyo_tbl` read that follows. No `cmp`, no branch.
+- **`genkai` has exactly one writer in the port.** A tree-wide sweep finds
+  `set_kizetsu_status` and nothing else; every other `genkai` mention is a read
+  (`effe3.c`, `plpca.c`, `plpdm.c`, `stun.c`). So under arcade balance, where
+  the modifier is 0, its only input is `pl_piyo_tbl[My_char[ix]]`.
+- **`super_arts_data` = `0x065EA670`**, sole literal referrer pool word
+  `0x061187B8` loaded at `0x0611868C`, routine start `0x06118680` — §16.2's
+  arcade `set_super_arts_status`. `0x061186D2`/`0x061186D4` copy `gauge_len`
+  (`saptr+8` → SA work +22) and `0x061186D6`/`0x061186D8` copy `store_max`
+  (`saptr+10` → SA work +32, through a register preloaded earlier in the
+  routine) as plain `mov.w` pairs with nothing between.
+- **Arcade slots 0..2 cannot trip either clamp.** Across all 21 arcade
+  characters, `gauge_len` ∈ `{64, 72, 80, 88, 96, 104, 112, 120, 128}` and
+  `store_max` ∈ `{1, 2, 3}` — every value already inside `[0x40,0x80]` and
+  `[1,9]`. The port's `super_arts_data` agrees value set for value set, and
+  `super_arts_DATA` is uniform 120/2 across slots 0..2.
+- **Arcade slot 3 is where they bind, and it matches the port byte for byte.**
+  Arcade characters 1 and 2 (Alex, Ryu) hold `(gauge_len, store_max) = (0, 0)`;
+  arcade character 9 (Oro) holds `(64, 0)`; the other eighteen hold `(64, 1)`.
+  `dtm` is 65536 in all 21 — **the slot is not "all-zero"**, which is §16.2's
+  first error. So had slot 3 been reachable the divergence would have been real:
+  the arcade writes 0 where the port writes 64 and 1. That is why this was worth
+  settling rather than waving through.
+
+#### What none of this can see
+
+- **No in-game measurement**, as with §16.2's seven. The verdict rests on the
+  disassembly and the tables.
+- **`statcheck_compare.c` does not compare `super_arts[].gauge_len`,
+  `store_max` or `piyori_type[].genkai` at all**, so a corpus sweep is blind to
+  exactly these three fields. None was run, and "the replays came back clean"
+  would have been a meaningless sentence here. `data_audit.py` cannot see them
+  either: it audits the per-character `CharDataSpan` sections, and all three
+  tables are global engine tables in `plcnt.c`.
+- **The `My_char[]` index is out of scope.** `pl_piyo_tbl[plnum]` and
+  `super_arts_data[My_char[ix]]` are in range for `My_char` ∈ `[0, NUM_CHARS)`;
+  an out-of-range `My_char` would make both clamps see garbage, but that is a
+  different hazard with a different writer set (§24, §27 and §28 bound `My_char`
+  for their own purposes) and no claim above depends on it.
+- **`super_arts_DATA` is not adjudicated against the arcade here.** §16.2 found
+  the all-super-arts variant has no ROM counterpart at all; its slots 0..2 were
+  checked for clamp binding only, not for content.
 
 ---
 
