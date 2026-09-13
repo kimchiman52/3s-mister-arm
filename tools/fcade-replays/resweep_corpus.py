@@ -55,7 +55,11 @@ FAIL_RE = re.compile(r'^(/[^\s:]+\.c):(\d+): (.+)$')
 FRAME_RE = re.compile(r'^statcheck: FAIL at archive frame (\d+)')
 SEED_RE = re.compile(r'^statcheck-seed: (CLEAN|DIRTY) at seed frame (\d+)[\s\-(]*(\d+)?')
 PASS_RE = re.compile(r'^statcheck: PASS')
-VERDICTS = {0: 'pass', 1: 'divergent', 2: 'no-match', 3: 'cpu-player', 4: 'seed-gap'}
+# Keyed by the oracle's exit code (src/main.c's statcheck block plus
+# statcheck_compare.c's dirty-seed exit). Only 'divergent' is an engine defect;
+# every other non-zero verdict is a segment the harness cannot grade.
+VERDICTS = {0: 'pass', 1: 'divergent', 2: 'no-match', 3: 'cpu-player', 4: 'seed-gap',
+            5: 'bad-setup'}
 
 
 def run_one(archive: Path, statcheck: Path, log_path: Path, timeout: int,

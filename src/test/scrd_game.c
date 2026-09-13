@@ -24,18 +24,91 @@ static void scrd_adjust_character_numbers(ScrdGame* game) {
     }
 }
 
-static void scrd_read_match_setup(ScrdGame* game, SDL_IOStream* io) {
-    SDL_SeekIO(io, MY_CHAR_OFFSET, SDL_IO_SEEK_SET);
-    SDL_ReadIO(io, game->characters, 2);
+/* The raw character bound below is stated in the ARCADE index space, because
+ * that is what the archive byte holds; every consumer sees it only after
+ * CHAR_ARCADE_TO_3SX. This assertion is what makes the raw bound imply the
+ * subscript bound, so the two cannot drift apart silently. */
+_Static_assert(CHAR_ARCADE_TO_3SX(SCRD_MAX_RAW_CHARACTER) == NUM_CHARS - 1,
+               "the raw arcade character bound must map to the last 3SX character index");
 
-    SDL_SeekIO(io, SUPER_ARTS_OFFSET, SDL_IO_SEEK_SET);
-    SDL_ReadIO(io, game->supers, 2);
+/* Read `count` bytes at `offset` and REFUSE the run if any is outside 0..max.
+ *
+ * Every field this reads is an array subscript or a two-element player id once
+ * the runner injects it, and the archive byte is raw, so 0..255. Verified
+ * targets, all in `statcheck_runner.c` -> `StatcheckRunner_Prologue` unless
+ * noted:
+ *
+ *   characters[]   -> `set_cursor` -> `character_to_cursor[20][2]`, and
+ *                     `Last_My_char2[]` -> `My_char[]`, the 20-row FIRST
+ *                     dimension of `super_arts_data` (`plcnt.c`)
+ *   supers[]       -> `Last_Super_Arts[]` -> `Super_Arts[]`, whose fourth
+ *                     `SA_DATA` slot no shipped build can select
+ *                     (docs/research-arcade-cg-data-accuracy.md §16.3 -- that
+ *                     unreachability is what holds the three SA clamps inert)
+ *   colors[]       -> `color_to_keys[13]`
+ *   new_challenger -> `New_Challenger`, then `Champion = New_Challenger ^ 1`
+ *                     and `plw[New_Challenger]` / `Operator_Status[...]` /
+ *                     `Continue_Coin[...]` (`entry.c` -> Break_Into_Check),
+ *                     all `[2]`
+ *   stage          -> `Debug_w[DEBUG_STAGE_SELECT] = stage + 1`, a DIRECT write
+ *                     that bypasses `DebugConfig_Set`'s clamp against
+ *                     `debug_string_data[31].max` of 21, then
+ *                     `bg_w.stage = Debug_w[31] - 1` (`sel_pl.c` -> Exit_2nd)
+ *                     and `app_type_tbl[20][20][22]` (`appear.c`)
+ *
+ * REJECT rather than clamp: the archive IS the setup under test, so a clamped
+ * value runs the harness against a match the archive does not describe and
+ * then reports it as a PASS -- the one outcome this harness exists to make
+ * trustworthy. Same choice `args.c` makes for `--test-p1-super-art` and
+ * `test_runner.c` -> `read_bounded_archive_pair` makes for `--test-states`.
+ *
+ * Reported through ScrdGameInitResult rather than `exit(2)`: this file has no
+ * other exit, and routing it through the enum is what lets `main.c` keep a
+ * malformed archive out of exit code 1, which means "the engine diverged from
+ * CPS3" and is what a sweep turns into a worklist item. */
+static bool scrd_read_bounded(
+    SDL_IOStream* io, Sint64 offset, const char* what, unsigned max, int count, Uint8* out) {
+    SDL_SeekIO(io, offset, SDL_IO_SEEK_SET);
 
-    SDL_SeekIO(io, NEW_CHALLENGER_OFFSET, SDL_IO_SEEK_SET);
-    SDL_ReadU8(io, &game->new_challenger);
+    if (SDL_ReadIO(io, out, (size_t)count) != (size_t)count) {
+        SDL_Log("ScrdGame_Init: archive frame is too short to hold %s at offset 0x%llX",
+                what,
+                (unsigned long long)offset);
+        return false;
+    }
 
-    SDL_SeekIO(io, PLAYER_COLOR_OFFSET, SDL_IO_SEEK_SET);
-    SDL_ReadIO(io, game->colors, 2);
+    for (int i = 0; i < count; i++) {
+        if (out[i] > max) {
+            SDL_Log("ScrdGame_Init: archive frame holds %s[%d] = %u, outside 0..%u", what, i, out[i], max);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool scrd_read_match_setup(ScrdGame* game, SDL_IOStream* io) {
+    /* Arcade index space -- scrd_adjust_character_numbers() maps it below.
+     * Arcade 15 (CHAR_SHIN_AKUMA) is NOT rejected here: CHAR_ARCADE_TO_3SX
+     * folds it onto CHAR_AKUMA, which is in range, so it is a fidelity
+     * question about a character the port does not have rather than an
+     * out-of-bounds one. Recorded, not decided here. */
+    if (!scrd_read_bounded(io, MY_CHAR_OFFSET, "My_char", SCRD_MAX_RAW_CHARACTER, 2, game->characters)) {
+        return false;
+    }
+
+    if (!scrd_read_bounded(io, SUPER_ARTS_OFFSET, "Super_Arts", SCRD_MAX_SUPER_ART, 2, game->supers)) {
+        return false;
+    }
+
+    if (!scrd_read_bounded(
+            io, NEW_CHALLENGER_OFFSET, "New_Challenger", SCRD_MAX_NEW_CHALLENGER, 1, &game->new_challenger)) {
+        return false;
+    }
+
+    if (!scrd_read_bounded(io, PLAYER_COLOR_OFFSET, "Player_Color", SCRD_MAX_PLAYER_COLOR, 2, game->colors)) {
+        return false;
+    }
 
     /* Stage (H2, docs/research-arcade-balance-desyncs.md). It is NOT
      * reconstructible from the character select: on the arcade the stage
@@ -51,11 +124,18 @@ static void scrd_read_match_setup(ScrdGame* game, SDL_IOStream* io) {
      * arcade index 15 (CHAR_SHIN_AKUMA) from both spaces -- which is exactly why
      * `app_type_tbl` is [20][20][22] here against the arcade's [21][21][23]. */
     Uint8 stage = 0;
-    SDL_SeekIO(io, BG_W_STAGE_OFFSET, SDL_IO_SEEK_SET);
-    SDL_ReadU8(io, &stage);
+
+    /* Same arcade-space bound as the characters above, and for the reason the
+     * comment gives: the byte at BG_W_STAGE_OFFSET is one of the two players'
+     * arcade character ids. */
+    if (!scrd_read_bounded(io, BG_W_STAGE_OFFSET, "bg_w.stage", SCRD_MAX_RAW_CHARACTER, 1, &stage)) {
+        return false;
+    }
+
     game->stage = (Uint8)CHAR_ARCADE_TO_3SX(stage);
 
     scrd_adjust_character_numbers(game);
+    return true;
 }
 
 /* Finding the match start (H1, docs/research-arcade-balance-desyncs.md).
@@ -116,8 +196,18 @@ ScrdGameInitResult ScrdGame_Init(ScrdGame* game, const char* ram_archive_path) {
 
         armed = (g_no_1 == 2) && (g_no_2 == 0) && (g_no_3 == 0);
 
-        if (armed) {
-            scrd_read_match_setup(game, io);
+        if (armed && !scrd_read_match_setup(game, io)) {
+            /* scrd_read_bounded() has already named the field and the value.
+             * Refuse the whole archive rather than the frame: a malformed setup
+             * is not something a later armed frame can repair, and the runner
+             * injects whichever armed frame's setup was latched last. */
+            SDL_CloseIO(io);
+            SDL_Log("ScrdGame_Init: '%s' holds an out-of-range match setup at archive frame %d; refusing to "
+                    "compare rather than clamping, because the archive IS the setup under test",
+                    ram_archive_path,
+                    frame_num);
+            RamArchive_Destroy(&game->archive);
+            return SCRD_GAME_INIT_BAD_SETUP;
         }
 
         SDL_CloseIO(io);

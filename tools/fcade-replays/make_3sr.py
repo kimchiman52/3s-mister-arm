@@ -40,7 +40,9 @@ PROVENANCE:
     detector, so Stage C can reuse it verbatim).
 
 Exit codes (`generate`): 0 converted, 1 failure, 2 segment holds no match
-(H1), 3 recorded against the CPU (H4b). 2 and 3 mean SKIP, not fail.
+(H1), 3 recorded against the CPU (H4b), 5 out-of-range match setup. 2, 3 and 5
+mean SKIP, not fail. 4 is reserved to the oracle's dirty-seed verdict
+(src/test/statcheck_compare.c) and this tool never returns it.
 
 Subcommands:
   generate  <archive.scrd> --out <out.3sr>
@@ -217,6 +219,35 @@ class CpuPlayerError(ExtractError):
     `src/main.c`'s mapping of `SCRD_GAME_INIT_CPU_PLAYER`."""
 
 
+class BadSetupError(ExtractError):
+    """A raw match-setup byte is outside the range its consumer can subscript.
+
+    The consumer half is `scrd_read_bounded` (`src/test/scrd_game.c`), which
+    refuses the run rather than clamping -- the archive IS the setup under test,
+    so a clamped value grades the engine against a match the archive does not
+    describe and reports it as a PASS. This is the same refusal one step
+    earlier, so an unusable segment is never converted in the first place.
+
+    `cmd_generate` turns it into exit code 5, mirroring `src/main.c`'s mapping
+    of `SCRD_GAME_INIT_BAD_SETUP` (5, not 4: the oracle already spends 4 on a
+    dirty seed). Raised from `find_match_start`, so
+    `probe_match_start` -- and therefore publish_3sr.py's skip path -- sees it
+    too.
+
+    REFUSED HERE, WARNED IN `verify`, and the asymmetry is deliberate:
+    `cmd_generate` CREATES an artifact, and the one it would create is a .3sr
+    the oracle will now always refuse to grade, so writing it manufactures a
+    file whose only future is exit 4. `cmd_verify` INSPECTS an artifact that
+    already exists, where a hard error would make a bad file
+    un-inspectable exactly when someone is trying to find out what is wrong
+    with it -- so `_sanity_check_ranges` stays soft there, as its own docstring
+    already argues.
+
+    Covers the four setup fields a .3sr carries. `bg_w.stage` is bounded on the
+    consumer side only, because this format does not carry it -- nothing here
+    reads BG_W_STAGE_OFFSET."""
+
+
 class FormatError(Exception):
     """A .3sr file failed structural validation."""
 
@@ -297,6 +328,38 @@ def _iter_archive_frames(data: bytes, table):
         payload_int = int.from_bytes(payload, "big")
         accum_int = payload_int if i == 0 else (accum_int ^ payload_int)
         yield i, accum_int.to_bytes(RAM_FRAME_SIZE, "big")
+
+
+# Inclusive bounds on the setup fields a .3sr carries, as ONE table so the
+# producer's refusal and `verify`'s warning cannot drift apart. Each mirrors a
+# SCRD_MAX_* in src/test/scrd_game.h, which is where the C side's own
+# _Static_asserts hold them against the tables they bound; `characters` is the
+# POST-char_arcade_to_3sx id, matching what `_read_setup_block` stores.
+#
+# `bg_w.stage` is absent on purpose: this format does not carry it.
+_SETUP_BOUNDS: tuple[tuple[str, int, int, str], ...] = (
+    ("characters", 0, 19, "3SX My_char range"),
+    ("supers", 0, 2, "Super_Arts range"),
+    ("colors", 0, 12, "Player_Color range"),
+    ("new_challenger", 0, 1, "player id"),
+)
+
+
+def _setup_range_problems(setup: SetupBlock) -> list[str]:
+    """Every setup field outside its bound, as human-readable strings."""
+    problems: list[str] = []
+
+    for name, low, high, what in _SETUP_BOUNDS:
+        value = getattr(setup, name)
+        values = value if isinstance(value, tuple) else (value,)
+        indexed = len(values) > 1
+
+        for i, v in enumerate(values):
+            if not (low <= v <= high):
+                where = f"{name}[{i}]" if indexed else name
+                problems.append(f"{where}={v} outside the expected {what} [{low},{high}]")
+
+    return problems
 
 
 def _read_setup_block(frame: bytes) -> SetupBlock:
@@ -384,6 +447,16 @@ def find_match_start(path: Path, frames) -> MatchStart:
         g_no_1, g_no_2, g_no_3 = struct.unpack_from(">HHH", frame, G_NO_OFFSET + 2)
         if g_no_1 == 2 and g_no_2 == 0 and g_no_3 == 0:
             armed_setup = _read_setup_block(frame)
+            # Refuse an unusable setup here rather than convert a .3sr the
+            # oracle would only ever exit 4 on. See BadSetupError.
+            problems = _setup_range_problems(armed_setup)
+            if problems:
+                raise BadSetupError(
+                    f"{path}: out-of-range match setup at archive frame {i} -- "
+                    + "; ".join(problems)
+                    + " -- refusing to convert rather than clamping, because the setup IS what the "
+                    "oracle grades against"
+                )
             armed_index = i
         else:
             armed_setup = None
@@ -622,23 +695,13 @@ def parse_3sr(data: bytes) -> Parsed3sr:
 def _sanity_check_ranges(parsed: Parsed3sr) -> list[str]:
     """Plausibility checks beyond structural parsing -- warnings, not hard
     errors (a future ROM revision or edge case could legitimately differ),
-    but worth surfacing during `verify`."""
-    warnings: list[str] = []
+    but worth surfacing during `verify`.
 
-    for i, c in enumerate(parsed.setup.characters):
-        if not (0 <= c < 20):
-            warnings.append(f"characters[{i}]={c} out of expected 3SX range [0,19]")
-
-    for i, s in enumerate(parsed.setup.supers):
-        if not (0 <= s <= 2):
-            warnings.append(f"supers[{i}]={s} out of expected Super_Arts range [0,2]")
-
-    for i, c in enumerate(parsed.setup.colors):
-        if not (0 <= c <= 12):
-            warnings.append(f"colors[{i}]={c} out of expected Player_Color range [0,12]")
-
-    if parsed.setup.new_challenger not in (0, 1):
-        warnings.append(f"new_challenger={parsed.setup.new_challenger} is not 0 or 1")
+    The setup-field half shares `_SETUP_BOUNDS` with the producer's hard
+    BadSetupError refusal, so the two cannot disagree about what is in range --
+    only about what to do about it. That difference is argued in BadSetupError:
+    refuse where an artifact is created, warn where one is inspected."""
+    warnings: list[str] = list(_setup_range_problems(parsed.setup))
 
     if parsed.checksum_interval and parsed.checksum_count:
         expected_count = (parsed.frame_count + parsed.checksum_interval - 1) // parsed.checksum_interval
@@ -735,9 +798,15 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
     # Exit codes deliberately match `src/main.c`'s statcheck mapping so a caller
     # can use one table for the oracle and the producer: 0 = converted,
-    # 1 = failure, 2 = segment holds no match, 3 = recorded against the CPU.
-    # 2 and 3 are NOT failures -- they are "this segment is not convertible",
-    # and a caller must skip the segment, never publish a .3sr for it.
+    # 1 = failure, 2 = segment holds no match, 3 = recorded against the CPU,
+    # 5 = the match setup is out of range. 2, 3 and 5 are NOT failures -- they
+    # are "this segment is not convertible", and a caller must skip the segment,
+    # never publish a .3sr for it.
+    #
+    # 4 is deliberately SKIPPED here: the oracle spends it on a dirty seed
+    # (src/test/statcheck_compare.c, tabulated by resweep_corpus.py's VERDICTS),
+    # a condition only the oracle can detect, and the one-table claim above only
+    # holds if a code never means two things.
     try:
         game = extract_scrd_game(scrd_path, checksum_interval=args.checksum_interval)
     except NoMatchStartError as exc:
@@ -746,6 +815,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
     except CpuPlayerError as exc:
         print(f"skip: {exc}", file=sys.stderr)
         return 3
+    except BadSetupError as exc:
+        print(f"skip: {exc}", file=sys.stderr)
+        return 5
     except CorruptArchiveError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

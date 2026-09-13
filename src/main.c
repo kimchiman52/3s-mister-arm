@@ -1749,6 +1749,28 @@ int main(int argc, const char* argv[]) {
             return 3;
         }
 
+        /* Exit 5, not 1, when the archive's match setup is out of range. Same
+         * rule as the H1 exit 2 and the H4b exit 3 above: 1 means "the engine
+         * diverged from CPS3". A malformed or hand-edited archive whose
+         * My_char / Super_Arts / Player_Color / New_Challenger / bg_w.stage
+         * byte cannot be injected without indexing off the end of the runner's
+         * own tables describes no match at all, so there is nothing for the
+         * engine to have diverged from. ScrdGame_Init refuses rather than
+         * clamping -- a clamp would compare against a match the archive does
+         * not describe and report it as a PASS. Callers that gate publication
+         * on rc == 0 (publish_3sr.py's statcheck_gate) are unaffected.
+         *
+         * 5 and NOT 4: `statcheck_compare.c` already exits 4 for a dirty seed
+         * (StatcheckSeedAudit_Dirty), and `tools/fcade-replays/resweep_corpus.py`
+         * -> VERDICTS maps 4 to 'seed-gap'. Reusing it would make one code mean
+         * two different un-gradeable conditions in a tool that tabulates them. */
+        if (init_result == SCRD_GAME_INIT_BAD_SETUP) {
+            printf("statcheck: BAD-SETUP — archive '%s' holds an out-of-range match setup byte; "
+                   "refusing to compare (see the ScrdGame_Init log line above for the field and value)\n",
+                   configuration.statcheck.ram_archive_path);
+            return 5;
+        }
+
         if (init_result != SCRD_GAME_INIT_OK) {
             SDL_Log("statcheck: failed to open/parse RAM archive '%s'",
                     configuration.statcheck.ram_archive_path);

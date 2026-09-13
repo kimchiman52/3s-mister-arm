@@ -1270,7 +1270,32 @@ static const CgRemapRange chunli_cg_ranges[] = {
 // a wide raw span, all resolving via Ryu's -0x1E0.
 static const CgRemapRange makoto_cg_ranges[] = {
     { .first = 0x7120, .last = 0x712A, .delta = -0x1760 },
-    { .first = 0xA000, .last = UINT16_MAX, .delta = -0x5378 },
+    /* The high Makoto bank, TIGHTENED 2026-09-13 from `0xA000..UINT16_MAX` to
+       its measured hull -- the last row in the file that was not one (doc §8.T).
+       238 observations, 1,007 cells, no interior conflict.
+
+       It was never a measured span. It began as `if (character == 16 && value >=
+       0xA000) adjusted -= 0x45F8;` inside `remap_cg_number` (`da493399`), whose
+       only recorded justification is "Makoto has a separate high cg-number bank
+       that maps with an additional shift on PS2" -- an argument for the DELTA,
+       not for the extent -- and `1f64b621` transcribed that open-ended `>=` into
+       a row's `last` when it moved the logic into these tables. The same commit
+       gave Ibuki a bounded hull row, so the open end was not a convention.
+
+       Tightening is what §8.S/§8.T require of every other row: `first`/`last`
+       are the lowest and highest OBSERVED raws at the delta, and neither end
+       extrapolates. The 24,265 values it used to claim past its ends are
+       measured-absent cast-wide, not merely absent for Makoto -- 0xAD2E is the
+       highest raw ANY of the twenty characters' parsed cells holds, so 21,201 of
+       them sat above the top of the whole cast's observed cg_number space. No
+       cell can reach the difference, which is why the digest does not move.
+
+       Do not restore the open end without a measurement: an unobserved raw here
+       now takes Makoto's default_delta (-0x0D80) instead of -0x5378, and nothing
+       in the ROM says which is right for a value no script ever names. That
+       symmetry is the point -- neither answer is evidenced, so the row states
+       only what was measured. */
+    { .first = 0xABF8, .last = 0xAD2E, .delta = -0x5378 },
     /* The Ryu-bank band, as ONE row over its measured hull (doc §8.T). This
        was 13 discrete rows covering exactly the 42 observed raws and nothing
        else -- the fitted-to-points shape that cost Twelve 44 wrongly-rendered

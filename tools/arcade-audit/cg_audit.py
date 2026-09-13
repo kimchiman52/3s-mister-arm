@@ -169,18 +169,21 @@ def check_range_overlaps():
 # character's band.  `--test-cg-ranges` cannot see this at all -- it compares rows only WITHIN one
 # character's table -- and neither could anything else until this check existed.
 #
-# Two rows were doing it (`ryu_cg_ranges` reaching 4 values down into Alex's band, `sean_cg_ranges`
-# reaching 1 value up onto Urien's band start) and are tightened to their hulls.  The third is
-# excused, not fixed:
-RANGE_HULL_EXCUSED = {
-    # `makoto_cg_ranges`' sentinel row, pre-existing and NOT one of §8.T's three.  Its hull is
-    # 0xABF8..0xAD2E (238 observations) and it is declared 0xA000..0xFFFF -- 24,338 unobserved values,
-    # nearly the whole upper quarter of the u16 space.  Left as it stands because narrowing a
-    # catch-all to its hull is a behaviour decision about what an unobserved raw SHOULD remap to, not
-    # a bookkeeping fix, and nothing in the tree records which it was meant to be.  Recorded here so
-    # it is a known excused row rather than an unmeasured one.
-    ('MAKOTO', 0xA000, 0xFFFF, -0x5378): 'catch-all sentinel row; narrowing it is a behaviour decision',
-}
+# Three rows were doing it and ALL THREE are now tightened to their hulls: `ryu_cg_ranges` reaching 4
+# values down into Alex's band, `sean_cg_ranges` reaching 1 value up onto Urien's band start (both
+# 2026-09-13's predecessor), and `makoto_cg_ranges`' `0xA000..0xFFFF` catch-all (2026-09-13).
+#
+# The Makoto row was the last exception and is no longer excused.  It was excused on the grounds that
+# "narrowing a catch-all is a behaviour decision, not a bookkeeping fix".  That framing survived the
+# measurement but the excuse did not: its 24,265 extrapolated values are absent CAST-WIDE, not merely
+# for Makoto -- 0xAD2E is the highest raw any of the twenty characters' parsed cells holds -- so no
+# cell can reach the difference, the digest is byte-identical either way, and `remap_cg_number` is
+# static with one call site whose only input is the SHA-pinned ROM.  A behaviour decision nothing can
+# observe is a bookkeeping fix.
+#
+# The dict stays: it is the mechanism by which a future exception has to be NAMED rather than
+# silently tolerated, and an empty one is the assertion that there are none.
+RANGE_HULL_EXCUSED = {}
 
 _RAWS_CACHE = {}
 def observed_raws(ci):
@@ -4042,15 +4045,32 @@ if __name__ == "__main__":
                      "none" if r['hull'] is None else "0x%04X-0x%04X" % r['hull'], r['below'], r['above'],
                      ", ".join(r['foreign']) or "no other character's band"))
         sys.exit(1)
-    print("range-hull check: %d of %d row(s) are exactly their measured hull; %d excused by name:"
-          % (_hn - len(_hx), _hn, len(_hx)))
+    print("range-hull check: %d of %d row(s) are exactly their measured hull; %d excused by name%s"
+          % (_hn - len(_hx), _hn, len(_hx), ":" if _hx else " (none)"))
     for r in _hx:
         print("  %-7s row %d 0x%04X-0x%04X delta %+d: hull 0x%04X-0x%04X over %d observation(s), "
               "%d value(s) below and %d above -- %s"
               % (r['character'], r['row'], r['first'], r['last'], r['delta'], r['hull'][0], r['hull'][1],
                  r['observed'], r['below'], r['above'],
                  RANGE_HULL_EXCUSED[(r['character'], r['first'], r['last'], r['delta'])]))
-    assert len(_hx) == len(RANGE_HULL_EXCUSED), (len(_hx), len(RANGE_HULL_EXCUSED))
+    # Every excused key must have been CONSUMED by a live overreaching row.  A key left behind by a
+    # row that was tightened (or retyped) matches nothing, so it would otherwise sit there looking
+    # like a live excuse forever.  The message names the orphans, because `(0, 1)` does not say which.
+    #
+    # This subsumes a separate "does the key name a live row" test, and deliberately replaces one:
+    # a key naming a row that exists but no longer overreaches is equally unconsumed, and both
+    # arrive here as the same count mismatch.  Measured 2026-09-13 -- re-adding
+    # ('MAKOTO', 0xA000, 0xFFFF, -0x5378) after the tightening fires THIS line, so a second
+    # assertion after it could not fail and was dropped rather than shipped vacuous.
+    _orphans = sorted(set(RANGE_HULL_EXCUSED) - {(r['character'], r['first'], r['last'], r['delta'])
+                                                 for r in _hx})
+    assert len(_hx) == len(RANGE_HULL_EXCUSED), \
+        "RANGE_HULL_EXCUSED has %d entry/entries no overreaching row claims: %r" % (len(_orphans), _orphans)
+    # The population, so "0 rows overreach" cannot be green because zero rows were CHECKED -- the
+    # failure mode `--test-cg-ranges` SUB_A had before f4144e5e pinned the same 68 (its
+    # EXPECTED_CG_RANGE_ROWS, src/test/test_cg_ranges.c).  Both sides parse cg_maps[] independently,
+    # so the two agreeing on 68 is a real cross-check and not one number read twice.
+    assert _hn == 68, "check_range_hulls saw %d rows, expected 68" % _hn
 
     res = audit()
     json.dump(res, open(os.path.join(HERE, "cg_audit.json"), "w"), indent=1)

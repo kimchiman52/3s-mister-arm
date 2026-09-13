@@ -86,6 +86,30 @@ static const SWKey color_to_keys[13] = {
     SWK_START | SWK_RIGHT_TRIGGER,
 };
 
+/* ScrdGame_Init bounds the archive's raw setup bytes against the SCRD_MAX_*
+ * constants in scrd_game.h; these two tables are what those bounds are FOR, and
+ * this is what keeps the pair honest. Resizing either table without moving its
+ * bound is exactly the drift that would re-open the out-of-range subscript the
+ * bound closes, so it is a build error rather than a comment.
+ *
+ * character_to_cursor is indexed by the POST-CHAR_ARCADE_TO_3SX id, so its row
+ * count is NUM_CHARS and the raw bound is one higher; see the assertion beside
+ * SCRD_MAX_RAW_CHARACTER's use in scrd_game.c.
+ *
+ * WHAT THE FIRST ASSERTION DOES NOT COVER, measured rather than assumed: the
+ * `[20]` is explicit, so `sizeof` does not move when an initializer ROW is
+ * deleted -- the row just zero-fills. Verified 2026-09-13: deleting the last
+ * `{ 5, 1 }` pair builds clean and this assertion stays green; shrinking the
+ * declared dimension to `[19]` fires it (plus -Wexcess-initializers). So it
+ * guards the declared size against NUM_CHARS, which is the drift that would
+ * un-bound the subscript, and NOT a silently dropped row. A dropped row is a
+ * wrong-cursor bug, not an out-of-range one, and nothing here can see it. */
+_Static_assert(SDL_arraysize(character_to_cursor) == NUM_CHARS,
+               "character_to_cursor needs one row per character: it is subscripted by My_char");
+_Static_assert(SDL_arraysize(color_to_keys) == SCRD_MAX_PLAYER_COLOR + 1,
+               "SCRD_MAX_PLAYER_COLOR must be color_to_keys' last index -- ScrdGame_Init bounds the archive's "
+               "Player_Color byte against it before this table is subscripted by it");
+
 static Uint64 frame_index = 0;
 static Phase phase = PHASE_TITLE;
 static int char_select_phase = 0;

@@ -23,11 +23,15 @@
  * Exit code 0 = every archived frame matched; 1 = first mismatch (printed
  * with archive frame number by statcheck_compare.c); 2 = the archive holds no
  * match to check (H1, see ScrdGame_Init); 3 = the recording had a CPU player,
- * which this harness cannot reproduce (H4b, see ScrdGame_Init).
+ * which this harness cannot reproduce (H4b, see ScrdGame_Init); 4 = the run's
+ * seed was dirty (statcheck_compare.c, StatcheckSeedAudit_Dirty); 5 = the
+ * archive's match setup is out of range and the run was refused rather than
+ * clamped (see ScrdGame_Init -> scrd_read_bounded).
  *
- * Init returns ScrdGame_Init's result verbatim so main.c can keep the two
+ * Init returns ScrdGame_Init's result verbatim so main.c can keep the three
  * harness-limit outcomes (SCRD_GAME_INIT_NO_MATCH_START,
- * SCRD_GAME_INIT_CPU_PLAYER) out of the divergence exit code. */
+ * SCRD_GAME_INIT_CPU_PLAYER, SCRD_GAME_INIT_BAD_SETUP) out of the divergence
+ * exit code. */
 ScrdGameInitResult StatcheckRunner_Init(const char* ram_archive_path);
 void StatcheckRunner_Destroy(void);
 

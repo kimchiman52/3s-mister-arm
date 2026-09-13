@@ -2149,6 +2149,12 @@ the gate's verdict moved on its own.
 
 ### T. The same fitted-to-points shape in Sean, Makoto and Q — WIDENED 2026-09-07, and the digest did not move
 
+> Makoto carried a **fourth** row, the `0xA000`-`0xFFFF` catch-all, which this
+> pass did not touch and `f4144e5e` later excused by name. It was tightened to
+> its hull on 2026-09-13 — see **§8.T.1** at the end of this section, which is
+> also where the "a row is only ever its measured hull" rule is reconciled with
+> the interior-gap widening below.
+
 **Status.** Fixed, pre-emptively. §8.S's Twelve fix cured a band that had
 already gone wrong; a survey found three more `cg_ranges` tables built the same
 way — a set of discrete rows fitted to exactly the raws the cell-index diff
@@ -2237,6 +2243,81 @@ audit run can distinguish the change from a no-op; every gate below is a
 regression check that nothing moved, and all of them agree that nothing did.
 The claim rests on the oracle's bracketing rule and the interleave measurement,
 not on an observation of any gap value.
+
+#### T.1 Makoto's fourth row — the catch-all — TIGHTENED 2026-09-13
+
+The three rows above were widened *inward* onto their hulls. Makoto carried a
+fourth row that ran the other way and was left alone at the time:
+`{ 0xA000, UINT16_MAX, -0x5378 }`, against the `0xABF8`-`0xAD2E` hull this
+section's own oracle table already records. `f4144e5e` added
+`check_range_hulls()` and excused it by name — "narrowing a catch-all is a
+behaviour decision, not a bookkeeping fix". **It is now tightened to its hull,
+and `RANGE_HULL_EXCUSED` is empty: 68 of 68 rows are exactly their measured
+hull, 0 excused.**
+
+**It was never a measured span, and this is the part that was not known when it
+was excused.** It began life as a bare inequality inside `remap_cg_number()`
+itself — `if (character == 16 && value >= 0xA000) adjusted -= 0x45F8;`
+(`da493399`) — whose entire recorded justification is the comment "Makoto has a
+separate high cg-number bank that maps with an additional shift on PS2". That
+argues for the **delta**, not for the extent. `1f64b621` then transcribed the
+open-ended `>=` into a row's `last` when it moved the logic into
+`CgRemapRange` tables. The same commit gave Ibuki a *bounded* hull row
+(`0x9BA8`-`0x9C6F`), so an open end was never the convention here; it was one
+condition's shape surviving a refactor. `git log -L` over the row returns
+exactly those two commits — never wider, never narrower, and never argued for.
+
+**Why the "behaviour decision" excuse did not survive measurement.** The excuse
+assumed the choice was observable. It is not, and the overreach is absent
+**cast-wide** rather than merely for Makoto:
+
+- Over every `L` cell of all ten remapped tables — not shape-ok-filtered —
+  Makoto observes **238 distinct raws / 1,007 cells** in `0xA000`-`0xFFFF`, hull
+  exactly `0xABF8`-`0xAD2E`, and **zero** in either `0xA000`-`0xABF7` (3,064
+  values) or `0xAD2F`-`0xFFFF` (21,201).
+- **`0xAD2E` is the highest raw any of the twenty characters' parsed cells
+  holds.** So 21,201 of the 24,265 extrapolated values — 87% of the overreach —
+  sat above the top of the entire cast's observed `cg_number` space, and no
+  character's oracle pins anything in either zone either.
+- `remap_cg_number()` is `static` with one call site (`read_char_table()`),
+  whose only input is the SHA-pinned ROM: `read_and_verify_entry()` accepts a
+  SIMM only on a `simm_specs[]` hash match, and a miss makes `Rom_Load()`
+  return NULL and the build fall back to PS2 balance. There is no API by which
+  anything — harness, audit tooling, corpus — can hand it a synthetic raw.
+  `test_cg_ranges.c`'s three synthetic tables go to
+  `ArcadeCharData_CgRangeDefects()`, never to the remap.
+
+A behaviour decision that no input can reach is a bookkeeping fix, and §8.S/the
+third property above already forbid the shape: `first`/`last` are the lowest
+and highest **observed** raws, and neither end extrapolates.
+
+**Interior gaps versus ends, since this row confuses the two.** Widening the
+three rows above swept *interior* gaps, which §29's `bracketed` verdict
+adjudicates — that is the Twelve lesson. Reaching past an **end** is the
+opposite and §8.S settled it explicitly: when raws turned up above Twelve's
+hull (`0x2096`, `0x2098`, `0x209A`) the fix was a **separate row**, not a wider
+one, because "dead-by-reach is a statement about the executor, not about the
+remap". This tightening is that same rule applied to the one row still
+violating it.
+
+**The digest did not move**, measured two independent ways. `cg_audit.py`'s
+byte-level mirror of `read_char_table()` over all 200 tables gives
+`3d7bd951ede754185d0b211123bdaedc81f517169db3013f1fc454b50e9fe1e2` both before
+and after — the same reading §8.T's predecessor recorded — with a live control
+that *does* move (starting the row at `0xABF9` instead, dropping the observed
+`0xABF8`, gives `31f19782…`), so the instrument is sensitive rather than blind.
+And `cg_audit.json` regenerates **byte-identical** to its committed state
+(md5 `cfe36749935a4703298a94f6fb825e78`, stable across two runs). §8.O needs no
+new entry.
+
+**What this does not establish.** That `default_delta` (`-0x0D80`) is the
+*right* answer for an unobserved raw in the former overreach — only that
+`-0x5378` was never evidenced for it either. Nothing in the ROM names those
+values, so neither choice is measured; the row now states only what was. That
+symmetry is the reason to prefer the hull: it is the form that makes no claim.
+If a different ROM revision were ever accepted the digest changes by design and
+the question re-opens then — a boundary on the claim, not a reason to keep the
+span.
 
 ---
 

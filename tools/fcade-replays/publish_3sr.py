@@ -77,6 +77,7 @@ sys.path.insert(0, str(TOOLS_DIR))  # replay_preprocessor, compress_ram_dumps, s
 from fcade_replay_tool import ReplayTarget, download_replay  # noqa: E402
 from compress_ram_dumps import compress_ram_dumps  # noqa: E402
 from make_3sr import (  # noqa: E402
+    BadSetupError,
     CorruptArchiveError,
     CpuPlayerError,
     ExtractError,
@@ -121,8 +122,9 @@ class QuarkOutcome:
       published  -- a `.3sr` was written.
       skipped    -- reason -> game indices. INELIGIBLE segments: the recording
                     itself cannot be replayed by the device viewer, whatever
-                    the engine does. "no-match-start" (H1) and "cpu-player"
-                    (H4b), both detected by `make_3sr.probe_match_start`.
+                    the engine does. "no-match-start" (H1), "cpu-player"
+                    (H4b) and "bad-setup" (an out-of-range match-setup byte),
+                    all three detected by `make_3sr.probe_match_start`.
                     Expected, not a defect; this is why a quark can yield fewer
                     games than `quark.json.num_matches`.
       divergent  -- statcheck ran on a comparable segment and the engine
@@ -369,12 +371,13 @@ def generate_3sr(scrd_path: Path, out_3sr: Path, out_meta: Path, quark_json: Pat
     ]
     proc = subprocess.run(command, capture_output=True, text=True)
     if proc.returncode != 0:
-        # 2 = no match in segment, 3 = recorded against the CPU (make_3sr.py
-        # `cmd_generate`, same codes as src/main.c gives statcheck). Both are
-        # SKIPS, not failures -- and both should already have been caught by
-        # the probe_match_start() gate above, so reaching here means the two
-        # disagreed and is worth saying out loud.
-        verb = "SKIPPED" if proc.returncode in (2, 3) else "FAILED"
+        # 2 = no match in segment, 3 = recorded against the CPU, 5 = the match
+        # setup is out of range (make_3sr.py `cmd_generate`, same codes as
+        # src/main.c gives statcheck). All three are SKIPS, not failures -- and
+        # all three should already have been caught by the probe_match_start()
+        # gate above, so reaching here means the two disagreed and is worth
+        # saying out loud.
+        verb = "SKIPPED" if proc.returncode in (2, 3, 5) else "FAILED"
         log(f"    make_3sr {verb} (rc={proc.returncode}) for {scrd_path.name}: {proc.stderr.strip()}")
         return proc.returncode
     log(f"    make_3sr OK: {out_3sr}")
@@ -478,6 +481,14 @@ def publish_quark(
                 log(f"    SKIPPED game_{game_index} (cpu-player -- recorded against the CPU, "
                     f"NOT a divergence): {exc}")
                 continue
+            # BEFORE the ExtractError arm below, which it subclasses: an
+            # out-of-range setup byte is an INELIGIBLE segment, not an unreadable
+            # archive, and the arm below would book it as `failed`.
+            except BadSetupError as exc:
+                outcome.skip("bad-setup", game_index)
+                log(f"    SKIPPED game_{game_index} (bad-setup -- out-of-range match setup byte, "
+                    f"NOT a divergence): {exc}")
+                continue
             except (CorruptArchiveError, ExtractError) as exc:
                 outcome.failed.append(game_index)
                 log(f"    FAILED game_{game_index} (unreadable archive): {exc}")
@@ -498,6 +509,8 @@ def publish_quark(
                 outcome.skip("no-match-start", game_index)
             elif rc == 3:
                 outcome.skip("cpu-player", game_index)
+            elif rc == 5:
+                outcome.skip("bad-setup", game_index)
             else:
                 outcome.failed.append(game_index)
 
