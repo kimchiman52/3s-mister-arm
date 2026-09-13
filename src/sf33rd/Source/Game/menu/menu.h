@@ -20,6 +20,13 @@ enum {
     MATCH_START_ENTER = 6
 };
 
+/* Fade-out frames both match-start entries (Load_Replay_Sub case 2,
+ * VS_Result_Rematch) arm before MATCH_START_LOAD's `--timer <= 0` fires the
+ * purge and the LDREQ pushes. Named so menu.c can ASSERT its relationship to
+ * the netplay prediction window instead of describing it; see the
+ * rollback-exposure note above Match_Start_Sub. */
+#define MATCH_START_FADE_OUT_FRAMES 0xA
+
 /* Setup_VS_Mode without parking the menu task (r_no[0] = 5). */
 void Setup_VS_Players(void);
 /* Rematch: the rollback-final confirmation wait (true while still waiting)

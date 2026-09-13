@@ -51,8 +51,10 @@
 
 #include "hud/hud_strip.h"    /* HUD_STRIP_LABEL_MAX_W, for the label width pin */
 #include "hud/versus_score.h" /* the pairing win tally's pure core + engine predicate */
+#include "main.h" /* TASK_MENU */
 #include "netplay/connect_fail.h"
 #include "netplay/direct_p2p.h"
+#include "netplay/game_state.h" /* GameState_Save/Load: the real rollback restore */
 #include "netplay/natpmp.h"
 #include "netplay/netplay.h" /* #145: Netplay_TestHook_MenuExit* predicates */
 #include "netplay/rendezvous.h"
@@ -62,6 +64,7 @@
 #include "replay/replay_shuffle.h" /* ReplayShuffle_EngineInAttract: the RS_EMPTY gate */
 #include "sf33rd/Source/Common/PPGWork.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
+#include "sf33rd/Source/Game/io/gd3rd.h" /* q_ldreq/ldreq_result: the dedup's inputs */
 #include "sf33rd/Source/Game/menu/menu.h"
 #include "sf33rd/Source/Game/stage/bg.h"
 #include "sf33rd/Source/Game/system/ramcnt.h"
@@ -106,7 +109,7 @@ static int checks_run = 0;
  * computes, so commenting a call out of the dispatch is a FAILURE and
  * not a smaller green run. The assertion floor catches the other shape:
  * a test that runs but whose body was short-circuited. */
-#define EXPECTED_TESTS 23
+#define EXPECTED_TESTS 24
 
 /* The real figure is 1100 and is printed in the summary. This sits below
  * it and above what a short-circuited run would produce. Not an exact
@@ -2521,6 +2524,208 @@ static int unit_rematch_match_start_state(void) {
 
 /* ================================================================== */
 
+/* THE MATCH-START LOAD FRAME RE-EXECUTES ACROSS A ROLLBACK.
+ *
+ * menu.c -> Match_Start_Sub's MATCH_START_LOAD arm fires
+ * Purge_memory_of_kind_of_key(0xC) + Push_LDREQ_Queue_Player/BG on the frame
+ * `--task_ptr->timer <= 0` first holds. That frame is
+ * MATCH_START_FADE_OUT_FRAMES after the mutual-confirm frame R0, and
+ * NETPLAY_POST_MATCH_CONFIRMATION_FRAMES protects only R0 -- so the load frame
+ * is itself inside the prediction window and a misprediction anywhere in the
+ * fade re-simulates through it.
+ *
+ * WHAT THIS PINS, AND HOW FAR IT GOES. No harness in the tree can drive a live
+ * GekkoNet rollback onto this frame: RollbackDeterminism_PreFrame injects only
+ * while TestRunner_IsPhaseActive("game") or ("character-select"), the
+ * surrounding "game-transition" phase is deliberately excluded, and no
+ * scripted scenario reaches VS_Result_Rematch or Load_Replay_Sub at all. So
+ * the four facts the analysis rests on are pinned here, each through the
+ * production function that owns it, rather than end to end:
+ *   1. the arithmetic -- the load frame lands inside the window;
+ *   2. the re-arm -- the real GameState_Load restores the gate, so it fires a
+ *      second time (this doubles as the GS_SAVE coverage assertion for task[]:
+ *      if task[] were not in the save set, step 2 would go red);
+ *   3. the purge is idempotent, so re-execution costs nothing there;
+ *   4. Push_LDREQ_Queue's dedup cannot cover this site, because it matches
+ *      only be != 0 and the barrier drains every slot inside the frame.
+ * Fact 4 is what makes this different from the select path, and the reason
+ * q_ldreq_texture_group's case-2 reclaim is load-bearing here. */
+static int unit_match_start_rollback_exposure(void) {
+    tests_run++;
+    fprintf(stderr, "[test_netplay_units] match_start_rollback_exposure: the load frame is inside "
+                    "the prediction window, re-arms across a real GameState_Load, and the LDREQ "
+                    "dedup cannot see it\n");
+    const int fails_before = fail_count;
+
+    /* --- 1. The arithmetic, over the real confirmation wait. --------- */
+
+    struct _TASK probe;
+    memset(&probe, 0, sizeof(probe));
+    probe.timer = NETPLAY_POST_MATCH_CONFIRMATION_FRAMES;
+    int confirm_frames = 0;
+    while (VS_Result_Rematch_ConfirmationPending(&probe)) {
+        confirm_frames++;
+        if (confirm_frames > 4096) {
+            break;
+        }
+    }
+    EXPECT_TRUE("match-start-confirm-terminates", confirm_frames <= 4096);
+    /* The frame the wait releases on is R0 + N: N-1 pending calls, then the
+     * call that returns false and runs VS_Result_Rematch's r_no[3] == 0 arm. */
+    confirm_frames++;
+    EXPECT_TRUE("match-start-confirm-is-window-plus-one", confirm_frames == NETPLAY_POST_MATCH_CONFIRMATION_FRAMES);
+    EXPECT_TRUE("match-start-confirm-clears-the-window", confirm_frames > NETPLAY_MAX_INPUT_PREDICTION_WINDOW);
+
+    /* R0 is rollback-final at R0 + confirm_frames. The load frame is
+     * MATCH_START_FADE_OUT_FRAMES beyond that and the head is AT it when it
+     * executes, so it is inside the window and re-executes. This is the
+     * premise menu.c's _Static_assert guards. */
+    EXPECT_TRUE("match-start-load-frame-is-inside-the-window",
+                MATCH_START_FADE_OUT_FRAMES <= NETPLAY_MAX_INPUT_PREDICTION_WINDOW);
+
+    /* --- 2. The re-arm, through the real GameState save/load. -------- */
+
+    GameState* outer = malloc(sizeof(GameState));
+    GameState* pre_f = malloc(sizeof(GameState));
+    EXPECT_TRUE("match-start-gs-buffers", outer != NULL && pre_f != NULL);
+
+    if (outer != NULL && pre_f != NULL) {
+        GameState_Save(outer); /* so this block perturbs nothing downstream */
+
+        /* Park the menu task one frame short of the load frame, then let
+         * GekkoNet's save run. */
+        task[TASK_MENU].r_no[3] = MATCH_START_LOAD;
+        task[TASK_MENU].timer = 1;
+        GameState_Save(pre_f);
+
+        /* The MATCH_START_LOAD gate, as the arm runs it. */
+        task[TASK_MENU].timer -= 1;
+        EXPECT_TRUE("match-start-gate-fires", task[TASK_MENU].timer <= 0);
+        task[TASK_MENU].r_no[3] += 1;
+        EXPECT_TRUE("match-start-advances", task[TASK_MENU].r_no[3] == MATCH_START_FADE_IN);
+
+        /* The rollback: the real GekkoLoadEvent restore. */
+        GameState_Load(pre_f);
+        EXPECT_TRUE("match-start-rollback-restores-stage", task[TASK_MENU].r_no[3] == MATCH_START_LOAD);
+        EXPECT_TRUE("match-start-rollback-restores-timer", task[TASK_MENU].timer == 1);
+
+        /* ...and the gate fires a SECOND time. That is the exposure. */
+        task[TASK_MENU].timer -= 1;
+        EXPECT_TRUE("match-start-gate-fires-again", task[TASK_MENU].timer <= 0);
+
+        GameState_Load(outer);
+    }
+
+    free(outer);
+    free(pre_f);
+
+    /* --- 3. The purge is idempotent. -------------------------------- */
+
+    /* kokey 0xC is the menu group, and the arm's second execution must find
+     * nothing left to free. Run it against a private ramcnt heap so the real
+     * allocator does the work; group 0 keeps purge_texture_group out of it. */
+    {
+        RCKeyWork saved_keys[RCKEY_WORK_MAX];
+        s16 saved_que[RCKEY_WORK_MAX];
+        const s16 saved_ctr = rckeyctr;
+        const s16 saved_min = rckeymin;
+        const _MEMMAN_OBJ saved_obj = rckey_mmobj;
+        memcpy(saved_keys, rckey_work, sizeof(saved_keys));
+        memcpy(saved_que, rckeyque, sizeof(saved_que));
+
+        const s32 heap_size = 1 << 18;
+        u8* heap = malloc((size_t)heap_size);
+        EXPECT_TRUE("match-start-purge-heap", heap != NULL);
+
+        if (heap != NULL) {
+            Init_ram_control_work(heap, heap_size);
+            const s16 key = Pull_ramcnt_key(1024, 0xC, 0, 0);
+            EXPECT_TRUE("match-start-purge-key-allocated", key > 0);
+            EXPECT_TRUE("match-start-purge-key-is-menu-kokey", Search_ramcnt_type(0xC) == key);
+
+            const s16 ctr_resident = rckeyctr;
+            Purge_memory_of_kind_of_key(0xC);
+            EXPECT_TRUE("match-start-purge-frees-the-key", Search_ramcnt_type(0xC) == 0);
+            EXPECT_TRUE("match-start-purge-returns-the-key", rckeyctr == ctr_resident + 1);
+
+            const s16 ctr_purged = rckeyctr;
+            Purge_memory_of_kind_of_key(0xC);
+            EXPECT_TRUE("match-start-purge-second-call-is-a-noop", rckeyctr == ctr_purged);
+            EXPECT_TRUE("match-start-purge-stays-purged", Search_ramcnt_type(0xC) == 0);
+
+            free(heap);
+        }
+
+        memcpy(rckey_work, saved_keys, sizeof(saved_keys));
+        memcpy(rckeyque, saved_que, sizeof(saved_que));
+        rckeyctr = saved_ctr;
+        rckeymin = saved_min;
+        rckey_mmobj = saved_obj;
+    }
+
+    /* --- 4. The dedup cannot see a re-execution of this frame. ------- */
+
+    /* Push_LDREQ_Queue matches only slots with be != 0. Under the barrier,
+     * Check_LDREQ_Queue drains the queue to completion inside the frame that
+     * pushed it (it runs after the task dispatch, game.c), so by frame end
+     * every slot is be == 0 and the re-issued set is NOT swallowed. */
+    {
+        REQ saved_q[16];
+        u8 saved_result[294];
+        s16 saved_plt[2];
+        u8 saved_my_char[2];
+        memcpy(saved_q, q_ldreq, sizeof(saved_q));
+        memcpy(saved_result, ldreq_result, sizeof(saved_result));
+        memcpy(saved_plt, plt_req, sizeof(saved_plt));
+        memcpy(saved_my_char, My_char, sizeof(saved_my_char));
+
+        memset(q_ldreq, 0, sizeof(saved_q));
+        memset(ldreq_result, 0, sizeof(saved_result));
+        My_char[0] = 0;
+        My_char[1] = 1; /* neither is Twelve (0x12), so Metamor pushes nothing */
+
+        Push_LDREQ_Queue_BG(0);
+        int live = 0;
+        for (int i = 0; i < 16; i++) {
+            live += (q_ldreq[i].be != 0) ? 1 : 0;
+        }
+        EXPECT_TRUE("match-start-bg-push-occupies-slots", live > 0);
+
+        /* Re-execution WHILE the requests are still queued: deduped. */
+        Push_LDREQ_Queue_BG(0);
+        int live_after_dup = 0;
+        for (int i = 0; i < 16; i++) {
+            live_after_dup += (q_ldreq[i].be != 0) ? 1 : 0;
+        }
+        EXPECT_TRUE("match-start-dedup-holds-while-queued", live_after_dup == live);
+
+        /* Now the barrier's in-frame full drain: every slot be == 0. */
+        for (int i = 0; i < 16; i++) {
+            q_ldreq[i].be = 0;
+        }
+        EXPECT_TRUE("match-start-barrier-drains-the-queue", Check_LDREQ_Clear() != 0);
+
+        /* Re-execution after the drain: the dedup is blind and the whole set is
+         * re-issued. This is why the texgroup reclaim is load-bearing here. */
+        Push_LDREQ_Queue_BG(0);
+        int live_after_drain = 0;
+        for (int i = 0; i < 16; i++) {
+            live_after_drain += (q_ldreq[i].be != 0) ? 1 : 0;
+        }
+        EXPECT_TRUE("match-start-dedup-is-blind-after-a-drain", live_after_drain == live);
+
+        memcpy(q_ldreq, saved_q, sizeof(saved_q));
+        memcpy(ldreq_result, saved_result, sizeof(saved_result));
+        memcpy(plt_req, saved_plt, sizeof(saved_plt));
+        memcpy(My_char, saved_my_char, sizeof(saved_my_char));
+    }
+
+    fprintf(stderr, "[test_netplay_units] match_start_rollback_exposure OK\n");
+    return (fail_count == fails_before) ? 0 : 1;
+}
+
+/* ================================================================== */
+
 /* The pairing win tally (src/hud/versus_score.c). Pure core first --
  * Observe/OnLoad/Confirm driven with literal frames, the way advance_game,
  * the GekkoLoadEvent handler and run_netplay drive them -- then the engine
@@ -2997,6 +3202,7 @@ int Netplay_Test_NetplayUnits(void) {
     rc |= unit_no_draw_frame_hold();
     rc |= unit_bg_repair_requires_source();
     rc |= unit_rematch_match_start_state();
+    rc |= unit_match_start_rollback_exposure();
     rc |= unit_versus_score_lifetime();
     rc |= unit_versus_score_post_confirm_load();
     rc |= unit_replay_shuffle_attract_gate();

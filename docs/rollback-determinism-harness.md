@@ -977,6 +977,22 @@ allowlist entry defeats the whole tool.
    not byte divergence; this byte-diff harness surfaces them as
    scenario ERRORs rather than symbol findings, and they remain
    catalogued here and in the 2026-04-29 arcade-trap sweep notes.
+
+   **The shared match start is unreachable here, for a second and
+   independent reason (2026-09-13).** `menu.c -> Match_Start_Sub`'s
+   `MATCH_START_LOAD` arm — the rematch's and the replay start's purge +
+   LDREQ push — re-executes across a rollback, and no run of this harness
+   can show it. Two blockers, either one sufficient: the phase gate above
+   excludes `game-transition`, *and* no scripted `test_runner.c` scenario
+   ever reaches `VS_Result_Rematch` or `Load_Replay_Sub`, so the arm does
+   not execute at all under any scenario. A green run of this gate
+   therefore says nothing about that frame. The exposure is analysed at
+   the site (the note above `Match_Start_Sub`) and pinned instead by
+   `test_netplay_units.c -> unit_match_start_rollback_exposure`, which
+   drives the real `GameState_Save`/`GameState_Load` and the real
+   `Push_LDREQ_Queue_BG` rather than the frame loop. Reaching it here
+   would need scripted rematch scenarios *and* a new phase predicate, and
+   would re-open the crash class above at the same time.
 2. **Noise-masked symbols.** Anything nondeterministic between two
    identical baseline runs (stored pointer values under per-process
    ASLR, audio-mixer state advanced by a real-time thread, allocator

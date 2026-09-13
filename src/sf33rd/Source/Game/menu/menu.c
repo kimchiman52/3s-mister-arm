@@ -1521,7 +1521,7 @@ void Load_Replay_Sub(struct _TASK* task_ptr) {
     case 2:
         FadeOut(0, 0xFF, 8);
         task_ptr->r_no[3] += 1;
-        task_ptr->timer = 0xA;
+        task_ptr->timer = MATCH_START_FADE_OUT_FRAMES;
         System_all_clear_Level_B();
         pulpul_stop();
         init_pulpul_work();
@@ -1584,6 +1584,43 @@ static s32 Match_Start_Audio_Ready(void) {
 
     return sndCheckVTransStatus(0) != 0;
 }
+
+/* MATCH_START_LOAD IS NOT ROLLBACK-FINAL, AND THE CONFIRM WAIT DOES NOT MAKE
+ * IT SO. NETPLAY_POST_MATCH_CONFIRMATION_FRAMES protects the mutual-confirm
+ * frame R0 only. The arm below fires MATCH_START_FADE_OUT_FRAMES frames after
+ * that, at a frame the simulation has only just reached, and task[] is
+ * rollback-saved (game_state.c GS_SAVE(task)/GS_LOAD(task)) -- so a rollback
+ * restores r_no[3] and timer, and `--timer <= 0` FIRES AGAIN. This frame
+ * executes more than once.
+ *
+ * Do not "fix" that by lengthening the wait: the condition that would make it
+ * safe is `head - F >= W`, and the simulation only ever runs at the head, so
+ * it is not available here. What actually holds the line, and must not be
+ * removed on the belief that this wait covers it:
+ *   - Purge_memory_of_kind_of_key acts only on keys with use != 0, so the
+ *     second execution is a no-op. It drops the MENU group (kokey 0xC,
+ *     load_any_texture_patnum(0x7F30, 0xC, 0) in Menu_Init / win.c /
+ *     aboutspr.c) -- not the stage and not the characters.
+ *   - q_ldreq_texture_group's case-2 reclaim (texgroup.c), which is what
+ *     keeps the re-issued character loads from stranding a block.
+ * Push_LDREQ_Queue's dedup does NOT cover this site. It matches only slots
+ * with be != 0, Check_LDREQ_Queue runs after the task dispatch in the same
+ * frame (game.c), and with the barrier active it drains the queue to
+ * completion inside this frame -- so every slot is be == 0 by frame end and a
+ * re-execution at ANY depth re-issues the whole set. The depth table in
+ * Push_LDREQ_Queue's comment was measured on the unbarriered select path.
+ *
+ * The residual risk is the barrier's budget break (gd3rd.h
+ * LDREQ_BARRIER_BUDGET_MS): the re-issued loads widen the drain at exactly
+ * the frame where a break would leave MATCH_START_WAIT's Check_PL_Load() gate
+ * -- which advances rollback-SAVED r_no[3] -- reading ldreq_result[] at a
+ * wall-clock-dependent pump position. That is the path from hitch to desync.
+ *
+ * Pinned by test_netplay_units.c -> unit_match_start_rollback_exposure. */
+_Static_assert(MATCH_START_FADE_OUT_FRAMES <= NETPLAY_MAX_INPUT_PREDICTION_WINDOW,
+               "MATCH_START_LOAD no longer fires inside the input prediction window — "
+               "re-read the exposure note above Match_Start_Sub and the reclaim in "
+               "q_ldreq_texture_group before treating this frame as rollback-final");
 
 /* The match start that follows a completed selection: requeue the retained
  * characters and stage, fade in, wait for the loads and the audio
@@ -3494,8 +3531,12 @@ static void VS_Result_Rematch_Select(struct _TASK* task_ptr) {
         task_ptr->r_no[3] = 0;
         /* task[] is rollback-saved. Never place the local Gekko prediction
          * setting here: peers are allowed to configure it independently.
-         * The fixed maximum-plus-one wait makes the mutual confirmation
-         * rollback-final before any lifecycle work begins. */
+         * The fixed maximum-plus-one wait makes THIS FRAME -- the mutual
+         * confirmation -- rollback-final. It does NOT make the lifecycle
+         * work rollback-final: that runs MATCH_START_FADE_OUT_FRAMES later,
+         * at a frame still inside the prediction window. See the exposure
+         * note above Match_Start_Sub before relying on this wait for
+         * anything but the confirm itself. */
         task_ptr->timer = Mode_Type == MODE_NETWORK
                               ? NETPLAY_POST_MATCH_CONFIRMATION_FRAMES
                               : 0;
@@ -3578,7 +3619,7 @@ static void VS_Result_Rematch(struct _TASK* task_ptr) {
         System_all_clear_Level_B();
         pulpul_stop();
         init_pulpul_work();
-        task_ptr->timer = 0xA;
+        task_ptr->timer = MATCH_START_FADE_OUT_FRAMES;
         task_ptr->r_no[3] = MATCH_START_LOAD;
         return;
     }
