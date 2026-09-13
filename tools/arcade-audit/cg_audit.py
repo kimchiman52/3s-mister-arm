@@ -158,6 +158,62 @@ def check_range_overlaps():
                     overlaps.append(dict(character=NAMES[ci], kind='overlap', row_a=i, a=a, row_b=j, b=b))
     return overlaps
 
+# doc §8.T: a range row may not extend past the band it was MEASURED from.
+#
+# §8.T's discipline is that a row's `first`/`last` are the lowest and highest raw the character's own
+# scripts actually observe at that delta -- "the measured hull ... extrapolates past neither end".
+# Interior gaps are fine and deliberate: the oracle's own bracketing rule adjudicates them, and the
+# alternative (one row per observed point) is the fitted-to-points shape that cost Twelve 44 wrongly
+# rendered cells (§8.S).  Reaching PAST an end is the opposite: it claims a delta for raws nothing
+# measured, and where the neighbouring band belongs to another character it claims them off that
+# character's band.  `--test-cg-ranges` cannot see this at all -- it compares rows only WITHIN one
+# character's table -- and neither could anything else until this check existed.
+#
+# Two rows were doing it (`ryu_cg_ranges` reaching 4 values down into Alex's band, `sean_cg_ranges`
+# reaching 1 value up onto Urien's band start) and are tightened to their hulls.  The third is
+# excused, not fixed:
+RANGE_HULL_EXCUSED = {
+    # `makoto_cg_ranges`' sentinel row, pre-existing and NOT one of §8.T's three.  Its hull is
+    # 0xABF8..0xAD2E (238 observations) and it is declared 0xA000..0xFFFF -- 24,338 unobserved values,
+    # nearly the whole upper quarter of the u16 space.  Left as it stands because narrowing a
+    # catch-all to its hull is a behaviour decision about what an unobserved raw SHOULD remap to, not
+    # a bookkeeping fix, and nothing in the tree records which it was meant to be.  Recorded here so
+    # it is a known excused row rather than an unmeasured one.
+    ('MAKOTO', 0xA000, 0xFFFF, -0x5378): 'catch-all sentinel row; narrowing it is a behaviour decision',
+}
+
+_RAWS_CACHE = {}
+def observed_raws(ci):
+    """Every raw `cg_number` any sprite cell of character `ci`'s own ten script tables carries."""
+    if ci not in _RAWS_CACHE:
+        _RAWS_CACHE[ci] = collections.Counter(c[1]['num'] for _s, _i, _g, cells in _all_cells(ci)
+                                              for c in cells if c[0] == 'L')
+    return _RAWS_CACHE[ci]
+
+def check_range_hulls():
+    """Rows whose [first, last] reaches past the observed hull of their own delta, and the raws in the
+    overreach that belong to ANOTHER character's band.  Returns (rows, excused, total_rows)."""
+    bands = {ci: [(f, l) for (f, l, _d) in CGMAP[ci]['ranges']] for ci in range(20)}
+    out, excused, total = [], [], 0
+    for ci in range(20):
+        obs = observed_raws(ci)
+        for i, (f, l, d) in enumerate(CGMAP[ci]['ranges']):
+            total += 1
+            inside = sorted(v for v in obs if f <= v <= l)
+            if not inside:
+                out.append(dict(character=NAMES[ci], row=i, first=f, last=l, delta=d, observed=0,
+                                hull=None, below=l - f + 1, above=0, foreign=[]))
+                continue
+            lo, hi = inside[0], inside[-1]
+            if lo == f and hi == l: continue
+            over = list(range(f, lo)) + list(range(hi + 1, l + 1))
+            foreign = sorted(set("%s[%d]" % (NAMES[cj], j) for v in over for cj in range(20) if cj != ci
+                                 for j, (bf, bl) in enumerate(bands[cj]) if bf <= v <= bl))
+            r = dict(character=NAMES[ci], row=i, first=f, last=l, delta=d, observed=len(inside),
+                     hull=(lo, hi), below=lo - f, above=l - hi, foreign=foreign)
+            (excused if (NAMES[ci], f, l, d) in RANGE_HULL_EXCUSED else out).append(r)
+    return out, excused, total
+
 # ---------------------------------------------------------------- remap (mirrors arcade_char_data.c:85-109)
 def remap(value, ci):
     if value < CG_REMAP_CUTOFF: return value
@@ -173,6 +229,48 @@ def remap(value, ci):
 # table, whose end offset is location.size and is over-declared for some
 # characters (see the "over-declared section size" finding).
 TERMINATORS = {1, 2, 3, 4, 6, 17, 19, 21, 23, 25, 27, 29, 31, 69, 102, 115}
+
+# ---------------------------------------------------------------- the sprite cell's field layout
+#
+# Every decoder below that reads a NAMED field out of a sprite (L) cell needs the same byte offsets,
+# and three of them used to carry the offsets as literals.  That is how `_span_cell` came to read
+# `cg_next_ix` from `p + 20`, which is `cg_add_xy`'s HIGH BYTE: the cell's three u16s at 16/18/20 are
+# `cg_zoom | cg_rival | cg_add_xy` and the u8 pair that follows them is at 22/23.  The wrong byte
+# took 6 distinct values cast-wide ({0,1,2,4,128,138}); the right one takes 39, and they are cell
+# indices up to 117.  So the offsets are PARSED, from the one declaration that defines them, and
+# `_assert_cell_field_offsets` cross-checks the result against `char_table_image`'s independent walk.
+def parse_cell_layout():
+    """(in-memory offset, ROM offset, width) per field of the sprite cell, from `include/structs.h`'s
+    `cg_type .. cg_status` block.  The two differ in exactly one place: `read_char_table` reads
+    `cg_att_ix` BEFORE `cg_hit_ix` and stores them the other way round (the §32.1 RE-EMISSION note),
+    so the ROM order is the declaration order with that one pair exchanged."""
+    s = src("include/structs.h")
+    m = re.search(r'\bu8 cg_type;(.*?)\bu8 cg_status;', s, re.S)
+    if not m: raise RuntimeError("structs.h: cannot find the cg_type .. cg_status cell block")
+    decls = [('u8', 'cg_type')] + re.findall(r'\b([us]8|[us]16)\s+(cg_\w+);', m.group(1)) + [('u8', 'cg_status')]
+    w = {'u8': 1, 's8': 1, 'u16': 2, 's16': 2}
+    mem, o = {}, 0
+    for t, n in decls:
+        if w[t] == 2 and o % 2: raise RuntimeError("structs.h: %s is misaligned at +%d" % (n, o))
+        mem[n] = (o, w[t]); o += w[t]
+    if o != 24: raise RuntimeError("structs.h: cell block is %d B, not the ROM's 24" % o)
+    order = [n for _, n in decls]
+    i = order.index('cg_hit_ix')
+    if order[i + 1] != 'cg_att_ix': raise RuntimeError("structs.h: cg_hit_ix is not followed by cg_att_ix")
+    order[i], order[i + 1] = order[i + 1], order[i]         # ROM order: att, then hit
+    rom, o = {}, 0
+    for n in order: rom[n] = o; o += mem[n][1]
+    return {n: (mem[n][0], rom[n], mem[n][1]) for n in mem}
+
+CELL = parse_cell_layout()
+CELL_MEM = {n: v[0] for n, v in CELL.items()}    # offset in the buffer read_char_table builds
+CELL_ROM = {n: v[1] for n, v in CELL.items()}    # offset in the ROM record
+CELL_SIZE = 24
+
+# The five fields only a cgd-6 record carries.  Kept SEPARATE from `_VERBATIM_L` on purpose: that
+# tuple is also `_vmatch`'s identity test, which `_pin_lpair` and the §34 counterpart oracle depend
+# on, so widening it would silently change verdicts.  These are censused beside it instead.
+_VERBATIM_L6 = ('zoom', 'rival', 'add_xy', 'next_ix', 'status')
 
 # ---------------------------------------------------------------- arcade parsing (mirrors read_char_table)
 def arc_offsets(off, size):
@@ -209,7 +307,18 @@ def arc_parse(ci, sec, idx, tabs):
                 att, hit = struct.unpack_from('>hH', ROM, q2)
                 ext, canc, eff, eft = ROM[q2+4], ROM[q2+5], ROM[q2+6], ROM[q2+7]
                 r.update(att=att, hit=hit, ext=ext, canc=canc, eff=eff, eftype=eft); q2 += 8
-            if cgd == 6: q2 += 8
+            if cgd == 6:
+                # The cgd-6 TAIL, `cg_zoom | cg_rival | cg_add_xy | cg_next_ix | cg_status`.  It used
+                # to be skipped whole (`q2 += 8`), which is why the five fields §36.6 publishes had no
+                # instrument behind them at all -- and why `cg_rival`'s published figure could be
+                # "corrected" to a number that does not reproduce.  `cg_next_ix` is also control flow
+                # (`charset.c` -> `check_cm_extended_code` makes a nonzero value
+                # `cg_ix = (cg_next_ix - 1) * cgd_type`, a jump to cell `cg_next_ix - 1`), and
+                # `_k7_succ` needs it to model the same edge `span_closure`'s `succ` already models.
+                for _f in _VERBATIM_L6:
+                    _o, _w = CELL_ROM['cg_' + _f], CELL['cg_' + _f][2]
+                    r[_f] = ROM[q + _o] if _w == 1 else struct.unpack_from('>H', ROM, q + _o)[0]
+                q2 += 8
             out.append(('L', r)); q = q2
     return cgd, out
 
@@ -345,6 +454,53 @@ def _assert_char_table_image():
             n += 1
     return n
 
+def _assert_cell_field_offsets():
+    """`_span_cell` reads named cell fields out of the ROM at `CELL_ROM`; `char_table_image` writes the
+    same fields into the buffer `read_char_table` builds, by WALKING it, at offsets it never names.  So
+    the two are independent derivations of one layout and must agree on every cgd-6 sprite cell in the
+    cast.  This is the check that was missing when `_span_cell` read `cg_next_ix` from `cg_add_xy`'s
+    high byte: the wrong byte agreed with nothing.
+
+    Non-emptiness is asserted, and so is the non-triviality of each field compared -- an all-zero
+    column would let a wrong offset that happens to land in padding pass.  Returns (cells, fields)."""
+    fields = ('cg_number', 'cg_extdat', 'cg_cancel', 'cg_effect', 'cg_eftype', 'cg_rival', 'cg_next_ix')
+    keys = dict(cg_number='num', cg_extdat='ext', cg_cancel='canc', cg_effect='eff',
+                cg_eftype='eftype', cg_rival='rival', cg_next_ix='next_ix')
+    n, nz = 0, collections.Counter()
+    for ci in range(20):
+        tabs, frames = span_frames(ci)
+        buf = {sec: char_table_image(ci, sec)[0] for sec in KOC2SEC.values()}
+        for (sec, si), (base, st) in sorted(frames.items()):
+            if st != CELL_SIZE: continue
+            for k in range(_script_cells(ci, sec, si, tabs)):
+                pos = base + k * st
+                c = _span_cell(ci, sec, pos, st)
+                if c is None or c['C']: continue
+                b = buf[sec]
+                for f in fields:
+                    o, w = CELL_MEM[f], CELL[f][2]
+                    want = b[pos + o] if w == 1 else struct.unpack_from('<H', b, pos + o)[0]
+                    got = c[keys[f]]
+                    # `char_table_image` stores `cg_number` remapped (`read_char_table` ->
+                    # `remap_cg_number`); `_span_cell` reads the ROM, so remap before comparing.
+                    if f == 'cg_number': got = remap(got, ci)
+                    assert got == want, (NAMES[ci], sec, si, k, f, hex(got), hex(want))
+                    if got: nz[f] += 1
+                n += 1
+    assert n > 10000, "only %d cgd-6 sprite cells compared" % n
+    for f in fields:
+        assert nz[f] > 0, "%s is all-zero cast-wide: a wrong offset would not be caught" % f
+    return n, len(fields)
+
+def _script_cells(ci, sec, si, tabs):
+    """Cell slots in script `si` of `ci`'s `sec`, at that script's own stride -- what `arc_parse` walks."""
+    off, size = LOC[ci][sec]; ents = tabs[sec]
+    so = sorted(set(ents)); nxt = [o for o in so if o > ents[si]]
+    start = ents[si] - 8; end = (nxt[0] - 8) if nxt else size
+    base, st = span_frames(ci)[1][(sec, si)]
+    if st is None or start < 0 or end <= start: return 0
+    return max(0, (off + end - (off + base)) // st)
+
 # ---------------------------------------------------------------- PS2 parsing (AFS tail + 25-offset header)
 AFS = open(AFS_PATH, 'rb')
 assert AFS.read(4) == b'AFS\x00'
@@ -399,7 +555,11 @@ def ps2_parse(blob, base, size, ents, idx):
                 hit, att = struct.unpack_from('<Hh', blob, q2)
                 ext, canc, eff, eft = blob[q2+4], blob[q2+5], blob[q2+6], blob[q2+7]
                 r.update(att=att, hit=hit, ext=ext, canc=canc, eff=eff, eftype=eft); q2 += 8
-            if cgd == 6: q2 += 8
+            if cgd == 6:                                     # the PS2 blob is the IN-MEMORY layout
+                for _f in _VERBATIM_L6:
+                    _o, _w = CELL_MEM['cg_' + _f], CELL['cg_' + _f][2]
+                    r[_f] = blob[q + _o] if _w == 1 else struct.unpack_from('<H', blob, q + _o)[0]
+                q2 += 8
             out.append(('L', r)); q = q2
     return cgd, out
 
@@ -1610,10 +1770,15 @@ def k7_entry_walk(ci):
 K7_OPND = {'koc': 2, 'ix': 3, 'pat': 4}     # arc_parse's C tuple is ('C', code, koc, ix, pat)
 
 def _k7_succ(cells, i, cgd):
-    """Cells of the SAME script the executor can be on next, given it is on cell `i`.  Six writers of
+    """Cells of the SAME script the executor can be on next, given it is on cell `i`.  Seven writers of
     `cg_ix` besides `+= cgd_type` stay inside the frame (`charset.c` unless noted), and each one can
     revive a cell a linear scan calls dead:
 
+      cg_next_ix              `check_cm_extended_code`: a nonzero cell byte is
+                              `cg_ix = (cg_next_ix - 1) * cgd_type`.  `cgd_type 6` only -- the byte is
+                              word 5 of the cell, which shorter strides do not carry.  This edge was
+                              missing here while `span_closure` -> `succ` modelled it, so the two
+                              liveness models disagreed about the one writer the data itself carries
       comm_end (code 2)       `cg_ix = (pat - 2) * cgd_type`, then the dispatch loop's `+= cgd_type`
       comm_ixfw/ixbw (49/50)  `+= (pat - 1) * cgd_type` / `-= (pat + 1) * cgd_type`, then `+=`
       decord_if_jump          32 `decode_chcmd` slots (`parse_decord_slots`): 0x4000 relative forward,
@@ -1636,6 +1801,7 @@ def _k7_succ(cells, i, cgd):
     if cgd == 1: return [i + 1], True        # every index in the script is off this grid
     if c[0] == 'L':
         r, out = c[1], [i + 1]
+        if r.get('next_ix'): out.append(r['next_ix'] - 1)     # cgd 6 only; see arc_parse's tail
         if cgd >= 4:
             if r['type'] != 0xFF and (r['type'] & 0x80): out.append((r['type'] & 0x7F) - 1)
             if r['ext'] & 0x3F: out.append((r['ext'] & 0x3F) - 1)
@@ -1803,6 +1969,27 @@ def parse_dm17_to_nm23():
     assert len(v) == 20
     return v
 
+def assert_nmca_variable_koc_writers():
+    """doc §35.8.3: the ONE `nmca` writer whose koc is a variable, and the index set it can reach.
+
+    §35.8.3 argues NECRO `nmca[28]` is a dead slot partly on "`plpnm.c` -> `Player_normal` installs
+    koc 0 at all 40 of its sites and no other koc" and "`plpdm.c` -> `Player_damage` installs koc 1
+    at 12 sites and koc 6 at 15 sites, and no other koc".  The second is not true as written:
+    `plpdm.c` -> `Damage_17000` calls
+    `exset_char_move_init(&wk->wu, wk->wu.now_koc, dm17_to_nm23_change[wk->player_number])`, whose
+    koc is whatever `now_koc` holds -- so it can land on `nmca` -- and whose INDEX is a table.
+
+    What is enumerable is the index set, and it settles the slot: the table's minimum is 37, so this
+    call cannot reach `nmca[28]` whatever `now_koc` is.  Asserted rather than argued, and the call
+    site is asserted to exist so a rename cannot make this vacuous.  Returns (min, max, sites)."""
+    s = src("src/sf33rd/Source/Game/engine/plpdm.c")
+    sites = re.findall(r'exset_char_move_init\(&?[\w>.-]+,\s*([\w>.-]+),\s*dm17_to_nm23_change\[', s)
+    assert len(sites) == 1, sites                      # the call this claim is about still exists
+    assert sites[0].endswith('now_koc'), sites         # ... and its koc is still the variable one
+    v = parse_dm17_to_nm23()
+    assert min(v) > 28, (min(v), v)                    # cannot reach nmca[28]
+    return min(v), max(v), len(sites)
+
 def arcade_id(c):
     """constants.h CHAR_3SX_TO_ARCADE: arcade ids skip 15 (Shin Akuma)."""
     return c + 1 if c > NAMES.index('AKUMA') else c
@@ -1833,12 +2020,14 @@ def _span_cell(ci, sec, pos, st):
         koc, ix, pat = struct.unpack_from('>hhh', ROM, p + 2)
         return dict(C=True, code=code, koc=koc, ix=ix, pat=pat)
     if pos + st > size: return None
-    r = dict(C=False, type=code & 0xFF, ctr=code >> 8, num=struct.unpack_from('>H', ROM, p + 6)[0])
+    r = dict(C=False, type=code & 0xFF, ctr=code >> 8,
+             num=struct.unpack_from('>H', ROM, p + CELL_ROM['cg_number'])[0])
     if st >= 16:
-        r['ext'], r['canc'], r['eff'], r['eftype'] = ROM[p+12], ROM[p+13], ROM[p+14], ROM[p+15]
-    if st == 24:
-        r['rival'] = struct.unpack_from('>H', ROM, p + 18)[0]
-        r['next_ix'] = ROM[p+20]
+        r['ext'], r['canc'], r['eff'], r['eftype'] = (ROM[p + CELL_ROM['cg_extdat']], ROM[p + CELL_ROM['cg_cancel']],
+                                                      ROM[p + CELL_ROM['cg_effect']], ROM[p + CELL_ROM['cg_eftype']])
+    if st == CELL_SIZE:
+        r['rival'] = struct.unpack_from('>H', ROM, p + CELL_ROM['cg_rival'])[0]
+        r['next_ix'] = ROM[p + CELL_ROM['cg_next_ix']]
     return r
 
 def _covered(iv):
@@ -2446,10 +2635,21 @@ def group_unobserved_gate(ci, skip):
 #
 # WHY IT IS BELIEVED -- two controls, both asserted every run rather than described here:
 #
-#   SOUNDNESS.  Over every live L-cell of every shape-mismatched script where `manu_delta_gate`'s own
-#   oracle DOES have a verdict, the multiset test covers the cells it confirms and NONE of the cells
-#   it contradicts.  Measured cast-wide: 2,698 confirmed cells covered, 0 of the 2 contradicted ones.
-#   A single false positive there would make the instrument unusable and the run says so.
+#   SOUNDNESS, and the shape of it matters.  The form this started as -- "the multiset test covers
+#   the cells the oracle confirms and NONE of the cells it contradicts" -- CANNOT FAIL, and saying so
+#   is the honest version.  Its contradicted arm counts only cells the oracle calls `divergent`, and
+#   `8157f348` took that count cast-wide from 2 to 0, so the arm's population is empty; its armed
+#   verdicts are also complementary with the counterpart gate's, so it never sees a cell the multiset
+#   test actually decided.  `mset_conf_bad == 0` is still asserted -- it is free and a returning
+#   `divergent` should re-arm it -- but it is not the control.
+#
+#   The control is the same question asked where it can come out wrong: over the cells with a GROUND
+#   TRUTH (the oracle has an answer), sweep the candidate deltas and ask whether the multiset test
+#   ACCEPTS any delta that answer contradicts.  Measured cast-wide over 3,487 such cells: 2,699
+#   accept exactly ours, 787 accept nothing, and exactly ONE accepts a second delta -- AKUMA
+#   `dmca[3]` c0, raw `0x5468`, oracle `-3232`, also accepting `-3266`.  It is pinned in
+#   `MSET_UNSOUND` and no verdict rests on it, because the oracle settles that cell itself.  A second
+#   one stops the run.
 #
 #   UNIQUENESS.  For every cell this gate confirms, the candidate delta is swept over the whole set of
 #   deltas that character's own oracle measures anywhere, plus ours.  Ours must be the UNIQUE delta
@@ -2555,6 +2755,23 @@ def _mset_accepts(ci, raw, ours, live_raws, P):
     cands = sorted(set(char_oracle(ci)[1].values()) | {ours})
     return [d for d in cands if _mset_covers(ci, raw, d, live_raws, P)]
 
+# doc §34's SOUNDNESS bound, as a pin rather than as a sentence.
+#
+# `mset_conf_bad` -- "does the multiset test ever COVER a cell the oracle calls divergent" -- cannot
+# fail, for two independent reasons.  Its arm is `v in ('direct','bracketed','divergent')` and the
+# counterpart gate's arm is `('unbracketed','bracket_disagree')`, which are complementary, so the
+# control never sees a cell whose verdict the multiset test actually decided; and it increments only
+# on `divergent`, whose cast-wide count `8157f348` took 2 -> 0.  A control that is zero because its
+# population is empty says nothing about soundness.
+#
+# The falsifiable question is the other way round: over the cells where this character's own oracle
+# HAS an answer -- the only population with a ground truth -- does the multiset test ever ACCEPT a
+# delta that answer contradicts?  Measured cast-wide over 3,487 such cells: 2,699 accept exactly
+# ours, 787 accept nothing, and ONE accepts a second delta as well.  That one is pinned here.  No
+# verdict rests on it: the oracle settles the cell `direct` and the multiset test is never consulted
+# where the oracle has spoken.  What the pin buys is that a SECOND one stops the run.
+MSET_UNSOUND = (('AKUMA', 'dmca', 3, 0, 0x5468, -3232, (-3266,)),)
+
 def counterpart_verdict(ci, raw, ours, live_raws, P, pair, cell):
     """What the PS2 counterpart says about this cell, or None if it is silent.
 
@@ -2626,6 +2843,8 @@ def manu_delta_gate(ci):
                    xchar=0, xchar_divergent=0, counterpart=0, counterpart_divergent=0, divergent=0)
     # doc §34's two controls, accumulated over every cell and asserted once the walk is done.
     mset_conf_ok = mset_conf_bad = 0
+    mset_ground = collections.Counter()      # oracle-covered cells by how many deltas the mset test accepts
+    mset_unsound = []                        # ... and the ones that accept a delta the oracle contradicts
     bd_cells = bd_collapse_lower = 0
     coll = collapse_witnesses(ci)
     pin_scripts = collections.Counter()
@@ -2662,6 +2881,16 @@ def manu_delta_gate(ci):
                 if _mset_covers(ci, raw, ours, live_raws, P_ms):
                     if v == 'divergent': mset_conf_bad += 1
                     else:                mset_conf_ok += 1
+                # And the control that can actually fail (see MSET_UNSOUND): on this same
+                # ground-truth population, does the multiset test ACCEPT a delta the oracle
+                # contradicts?  `mset_conf_bad` above cannot answer that -- it only ever looks at
+                # `ours`, and only where the oracle already calls `ours` wrong.
+                if v != 'divergent':
+                    _acc = _mset_accepts(ci, raw, ours, live_raws, P_ms)
+                    mset_ground[len(_acc) if len(_acc) < 2 else 2] += 1
+                    _extra = tuple(d for d in _acc if d != want)
+                    if _extra:
+                        mset_unsound.append((NAMES[ci], sec, si, i, raw, want, _extra))
                 # doc §34: the pinned pairing names the PS2 cell, so where it disagrees with a verdict
                 # the oracle already reached, the two releases differ in CONTENT at that cell.  The
                 # oracle wins -- `remap` is a per-raw-value function and cannot say "except here" --
@@ -2730,10 +2959,18 @@ def manu_delta_gate(ci):
     # cell this character's own oracle CONTRADICTS.  If it ever does, the instrument is unsound and
     # every `counterpart` verdict above has to be thrown out -- which is why the run stops here.
     assert mset_conf_bad == 0, (NAMES[ci], mset_conf_bad)
+    # ... and the control that CAN fail: the set of ground-truth cells where the multiset test accepts
+    # a delta the oracle contradicts must be exactly the pinned one.  This is what `mset_conf_bad` was
+    # believed to be doing; it is what it could not do, because `divergent` is 0 cast-wide.
+    assert tuple(sorted(mset_unsound)) == tuple(sorted(r for r in MSET_UNSOUND if r[0] == NAMES[ci])), \
+        (NAMES[ci], mset_unsound)
+    assert sum(mset_ground.values()) > 0 or not scripts, (NAMES[ci], 'no ground-truth cell to control on')
     out = dict(scripts=scripts, rows=rows, cells=cellcls,
                oracle_raws=len(obs), oracle_conflicts=len(conflict),
                sub_cutoff_obs=subcut_obs,
                mset_control_ok=mset_conf_ok, mset_control_bad=mset_conf_bad,
+               mset_ground_unique=mset_ground[1], mset_ground_silent=mset_ground[0],
+               mset_ground_multi=mset_ground[2], mset_unsound=[list(r) for r in mset_unsound],
                bracket_disagree_cells=bd_cells, bracket_disagree_collapse_lower=bd_collapse_lower,
                collapse_raws=len(coll),
                pin={k2: v2 for k2, v2 in sorted(pin_scripts.items())},
@@ -3014,19 +3251,38 @@ def word5_lc_gate():
                         if a[0] != a[1]:
                             ctl['l_' + ('crossed' if (p[0], p[1]) == (a[1], a[0]) else
                                         'identical' if (p[0], p[1]) == (a[0], a[1]) else 'neither')] += 1
-            if pc is None: continue
             rec = 8 if cgd == 1 else 4 * cgd         # arc_parse: C -> 8 + max(cgd*4-8,0), L -> the same
-            for k in range(min(len(ac), len(pc))):
-                if ac[k][0] != 'C' or pc[k][0] != 'C' or ac[k][1] not in (3, 4, 5): continue
+            for k in range(len(ac)):
+                if ac[k][0] != 'C' or ac[k][1] not in (3, 4, 5): continue
                 o = 8 + rec * k
-                if o + 4 > L: continue               # past the common prefix: the PS2 has no bytes
+                kc = ac[k][2]
+                bad = kc < 0 or kc >= N_KOC
+                # THREE cases, and only the first two used to exist here.  The PS2 either has the
+                # four bytes or it does not, and if it does its decoder either framed a C cell there
+                # or it framed an L record.
+                #   no_bytes  -- `o + 4 > L`, or the cell is past the PS2 decoder's last cell.  The
+                #                word-0 test cannot run AT ALL.  This case used to `continue`, which
+                #                silently dropped HUGO `nmca[49]` c24 -- the same four bytes
+                #                `00 04 18 00` as the DUDLEY/NECRO/TWELVE rows, on a script whose
+                #                PS2 side is 64 B / 4 cells against the arcade's 48.  An
+                #                out-of-range `koc` here is now EMITTED under its own name, so the
+                #                population the assertion checks is the whole population.
+                #   PS2 says L -- not a comparable C cell.  That reading IS the off-grid signal the
+                #                `grid` axis already carries as `phantom`; it votes on nothing here.
+                #   comparable -- (e)'s actual test.
+                if pc is None or k >= len(pc) or o + 4 > L:
+                    if bad:
+                        koc['nocmp_oob'] += 1
+                        rows.append(dict(character=NAMES[ci], table=sec, script=si, cell=k,
+                                         word0='no_ps2_bytes', code=ac[k][1], koc=kc, ps2_koc=None,
+                                         arcade=struct.pack('>Hh', ac[k][1], kc).hex(' '), ps2=None))
+                    continue
+                if pc[k][0] != 'C': continue
                 a = tuple(ab[o:o+4]); p = tuple(pb[o:o+4])
                 # A block whose second half is byte-palindromic satisfies both; count it as a header,
                 # which is the direction that makes (e) harder to pass, never easier.
                 kind = ('header' if p == _grid_perm(a, GRID_GEN[0]) else
                         'halfswap' if p == _grid_perm(a, (1, 0, 2, 3)) else 'other')
-                kc = ac[k][2]
-                bad = kc < 0 or kc >= N_KOC
                 koc[kind + ('_oob' if bad else '_ok')] += 1
                 if bad:
                     rows.append(dict(character=NAMES[ci], table=sec, script=si, cell=k, word0=kind,
@@ -3042,6 +3298,12 @@ def word5_lc_gate():
 def _assert_word5_lc_gate(g):
     """Fail toward the finding: every one of these would have passed silently under §30.2's reading."""
     w5, ctl, koc = g['word5'], g['control'], g['koc']
+    # (d) FIRST, because it has to be derived from the counts rather than from the assertions below.
+    #     This used to sit after `l_crossed == 0`, which made its conditional a tautology -- the only
+    #     branch reachable was `(1,0,2,3)`, so it asserted a literal against itself.  Taken here it
+    #     can genuinely yield `(1,0,3,2)` and fail.
+    assert GRID_GEN[5] == ((1, 0, 2, 3) if w5.get('l_identical', 0) > w5.get('l_crossed', 0)
+                           else (1, 0, 3, 2)), (GRID_GEN[5], w5)
     # (a) An L record's u8 pair does not cross -- unanimously, and over a population that exists.
     assert w5.get('l_crossed', 0) == 0, w5
     assert w5.get('l_identical', 0) > 0, w5
@@ -3056,14 +3318,33 @@ def _assert_word5_lc_gate(g):
     # (c) Control: a u16 in the same word crosses and is never identical, so (a) reads real fields
     #     at real offsets rather than agreeing by reading four bytes that were never a word 5.
     assert ctl.get('l_crossed', 0) > 0 and ctl.get('l_identical', 0) == 0, ctl
-    # (d) The generator is DERIVED from (a), not compared against the constant it is checking.
-    assert GRID_GEN[5] == ((1, 0, 2, 3) if w5['l_identical'] > w5.get('l_crossed', 0) else (1, 0, 3, 2)), GRID_GEN[5]
     # (e) The out-of-range `koc` population is exactly the non-header population, in both directions.
     assert koc.get('header_oob', 0) == 0, koc
     assert koc.get('other_oob', 0) == 0, koc
     assert koc.get('halfswap_ok', 0) == 0, koc
-    assert koc.get('halfswap_oob', 0) == len(g['koc_rows']), (koc, len(g['koc_rows']))
     assert koc.get('halfswap_oob', 0) > 0, koc
+    # (e') EVERY out-of-range `koc` is emitted, and the two kinds sum to the rows.  The old form was
+    #      `halfswap_oob == len(koc_rows)`, which read green at 7 over a population of 8: the one row
+    #      the PS2 has no bytes for was dropped before it could be counted, so the assertion held
+    #      over the comparable population and said nothing about the other.
+    assert koc.get('halfswap_oob', 0) + koc.get('nocmp_oob', 0) == len(g['koc_rows']), (koc, len(g['koc_rows']))
+    for kind, ctr in (('halfswap', 'halfswap_oob'), ('no_ps2_bytes', 'nocmp_oob')):
+        assert sum(1 for r in g['koc_rows'] if r['word0'] == kind) == koc.get(ctr, 0), (kind, koc)
+
+def _assert_word5_koc_population(g, res):
+    """(e) is a claim about `audit()`'s `a_koc_oob` population, and it is measured on a population of
+    the GATE's own construction.  So hold the two instruments against each other: an out-of-range
+    `koc` the audit reports and the grid does not excuse as `phantom` must appear in the gate's rows,
+    and nothing else may.  Nothing checked this, and for six days HUGO `nmca[49]` c24 was in the
+    audit's population and not in the gate's.  Returns (rows, half-swap rows, uncomparable rows)."""
+    aud = set((n, v['table'], v['script'], v['cell'])
+              for n in NAMES for v in res[n]['violations']
+              if v['cls'] == 'a_koc_oob' and v['grid'] != 'phantom')
+    gate = set((r['character'], r['table'], r['script'], r['cell']) for r in g['koc_rows'])
+    assert gate == aud, sorted(gate ^ aud)
+    assert len(aud) > 0, "no un-excused a_koc_oob row: the gate would prove nothing"
+    return (len(aud), sum(1 for r in g['koc_rows'] if r['word0'] == 'halfswap'),
+            sum(1 for r in g['koc_rows'] if r['word0'] == 'no_ps2_bytes'))
 
 # ---------------------------------------------------------------- SA naming for saca scripts
 def sa_labels(ci):
@@ -3166,6 +3447,9 @@ def verbatim_field_census():
     scripts, scripts_pre = collections.defaultdict(set), collections.defaultdict(set)
     hidden, hidden_dead = [], 0
     pairs = pairs_pre = 0
+    # The cgd-6 tail, same two scopes.  `rival_law` is the §8.H stride law `arcade * 5 == ps2 * 6`,
+    # counted over every `cg_rival` divergence rather than asserted from a write-up.
+    rival_law = collections.Counter()
     for ci in range(20):
         arc_tabs = {sec: arc_offsets(*LOC[ci][sec]) for sec in KOC2SEC.values()}
         blob, bsd = ps2_tail(ci)
@@ -3204,25 +3488,48 @@ def verbatim_field_census():
                             else:
                                 pre[f] += 1
                                 scripts_pre[f].add((ci, sec, si))
+                    # The cgd-6 tail, in the same pass and at the same two scopes.  Separate loop
+                    # because these fields must not join `_VERBATIM_L` (see its note).
+                    for f in _VERBATIM_L6:
+                        if (f in ar) != (f in pr):
+                            if not d: absent[f] += 1
+                        elif f in ar and ar[f] != pr[f]:
+                            if d: continue
+                            full[f] += 1
+                            scripts[f].add((ci, sec, si))
+                            if not past:
+                                pre[f] += 1
+                                scripts_pre[f].add((ci, sec, si))
+                            if f == 'rival':
+                                rival_law['ok' if ar[f] * 5 == pr[f] * 6 else 'bad'] += 1
+    _both = _VERBATIM_L + _VERBATIM_L6
     return dict(pairs=pairs, pairs_preterm=pairs_pre, hidden=hidden, hidden_dead=hidden_dead,
-                full={f: full[f] for f in _VERBATIM_L}, preterm={f: pre[f] for f in _VERBATIM_L},
-                absent={f: absent[f] for f in _VERBATIM_L},
-                scripts={f: len(scripts[f]) for f in _VERBATIM_L},
-                scripts_preterm={f: len(scripts_pre[f]) for f in _VERBATIM_L})
+                rival_law=dict(rival_law),
+                full={f: full[f] for f in _both}, preterm={f: pre[f] for f in _both},
+                absent={f: absent[f] for f in _both},
+                scripts={f: len(scripts[f]) for f in _both},
+                scripts_preterm={f: len(scripts_pre[f]) for f in _both})
 
 
 def _assert_verbatim_census(cen, T):
-    """The cross-check: this file's two counts of the same census must agree field by field.
+    """The cross-check: this file's two ACCUMULATIONS of the same census must agree field by field.
 
-    `cen` is `verbatim_field_census()`'s own walk; `T` carries the counters `audit()` accumulated
-    in its cell loop.  A scope change in either -- a terminator cut, a dead-cell filter, a
-    different shape test -- moves one and not the other, and the run stops instead of publishing
-    the smaller number.  Every hidden cell is additionally asserted LIVE: a hidden DEAD cell would
-    be a case where the narrow scope is defensible, and that is a different finding needing its own
-    adjudication rather than a silent pass."""
+    WHAT THIS DOES AND DOES NOT COVER, stated exactly, because it was called "independent" and is
+    not.  `cen` is `verbatim_field_census()`'s walk and `T` carries the counters `audit()`'s own cell
+    loop accumulated, but the two share `arc_parse`, `ps2_parse`, `_first_terminator`,
+    `k7_entry_walk`, `_VERBATIM_L` and the shape predicate.  So what it catches is a SCOPE or FILTER
+    change in one accumulator and not the other -- a terminator cut, a dead-cell filter, a different
+    shape test -- which is the defect §36 exists about, and the run then stops instead of publishing
+    the smaller number.  What it cannot catch is a change in the shared parse, which moves both
+    counters together; that is `_assert_cell_field_offsets`' and `_assert_char_table_image`'s job.
+
+    Non-emptiness is asserted, because every equality below holds over an empty census and the whole
+    battery used to pass on one.  So is each half against the other where two halves exist:
+    `hidden_dead` was checked against the literal 0 and never against `audit()`'s own count of it,
+    so `T['vb_hidden_dead']` could hold any value at all."""
     assert cen['pairs'] == T['vb_pairs'], (cen['pairs'], T['vb_pairs'])
     assert cen['pairs_preterm'] == T['vb_pairs_preterm'], (cen['pairs_preterm'], T['vb_pairs_preterm'])
-    for f in _VERBATIM_L:
+    for f in _VERBATIM_L + _VERBATIM_L6:
         assert cen['full'][f] == T['vb_' + f], (f, cen['full'][f], T['vb_' + f])
         assert cen['preterm'][f] == T['vb_pre_' + f], (f, cen['preterm'][f], T['vb_pre_' + f])
         assert cen['absent'][f] == T['vb_absent_' + f], (f, cen['absent'][f], T['vb_absent_' + f])
@@ -3230,15 +3537,51 @@ def _assert_verbatim_census(cen, T):
     assert len(cen['hidden']) == T['vb_hidden'], (len(cen['hidden']), T['vb_hidden'])
     assert len(cen['hidden']) == sum(cen['full'][f] - cen['preterm'][f] for f in _VERBATIM_L)
     # Fail toward the finding: a divergence the cut would hide on a cell no entry point reaches is
-    # NOT covered by the argument above and may not ride along on it.
+    # NOT covered by the argument above and may not ride along on it.  Asserted in BOTH
+    # accumulators, and against each other -- the second half is what was missing.
+    assert cen['hidden_dead'] == T['vb_hidden_dead'], (cen['hidden_dead'], T['vb_hidden_dead'])
     assert cen['hidden_dead'] == 0, cen['hidden_dead']
+    # doc §8.H / §36.6: every `cg_rival` divergence is the 24-vs-20 stride law, counted rather than
+    # quoted.  §36.6 published a corrected `cg_rival` figure of 3,235 that reproduces at NEITHER
+    # scope -- whole-span is 3,270 and pre-terminator is 3,023, and 3,023 is §22.7's original number,
+    # so that field was a sixth instance of §36.2's one rule and not an error at all.  Nothing could
+    # have caught it: `cg_rival` is not in `_VERBATIM_L` and the cgd-6 tail was not decoded, so no
+    # instrument held it.  It is held here now, at both scopes, with the law asserted over all of it.
+    assert cen['rival_law'].get('bad', 0) == 0, cen['rival_law']
+    assert cen['rival_law'].get('ok', 0) == cen['full']['rival'], (cen['rival_law'], cen['full']['rival'])
+    assert cen['rival_law'].get('ok', 0) == T['vb_rival_law_ok'], (cen['rival_law'], T['vb_rival_law_ok'])
+    assert T['vb_rival_law_bad'] == 0, T['vb_rival_law_bad']
+    assert cen['full']['rival'] > 0, "no cg_rival divergence: §8.H's stride law is evidenced by nothing"
+    # The per-field SCRIPT counts, which §35.8.2 and §36.9 publish.  They were computed and then
+    # neither printed nor asserted, so the published figures rested on nothing.
+    for f in _VERBATIM_L + _VERBATIM_L6:
+        assert cen['scripts'][f] == len(_VB_SCRIPT_SETS['full'][f]), (f, cen['scripts'][f], len(_VB_SCRIPT_SETS['full'][f]))
+        assert cen['scripts_preterm'][f] == len(_VB_SCRIPT_SETS['pre'][f]), (f, cen['scripts_preterm'][f], len(_VB_SCRIPT_SETS['pre'][f]))
+        assert cen['scripts_preterm'][f] <= cen['scripts'][f], (f, cen['scripts_preterm'][f], cen['scripts'][f])
+        assert (cen['scripts'][f] > 0) == (cen['full'][f] > 0), (f, cen['scripts'][f], cen['full'][f])
+        assert cen['scripts'][f] <= cen['full'][f], (f, cen['scripts'][f], cen['full'][f])
+    # NON-EMPTINESS.  Everything above is an equality, and an all-zero census satisfies every one of
+    # them.  Measured: the whole function passed on a census in which nothing had been counted.
+    assert cen['pairs'] > 0 and cen['pairs_preterm'] > 0, (cen['pairs'], cen['pairs_preterm'])
+    assert sum(cen['full'].values()) > 0, cen['full']
+    assert sum(cen['absent'].values()) > 0, cen['absent']
+    # And the finding itself: §36 exists because the two scopes DIFFER.  If they stopped differing
+    # this instrument would be measuring nothing, and it has to say so rather than read green.
+    assert len(cen['hidden']) > 0, "the two scopes no longer differ: §36's subject has vanished"
 
 
 # ---------------------------------------------------------------- audit
+# The per-field SCRIPT sets `audit()`'s own cell loop reaches, the counterpart to
+# `verbatim_field_census`'s `scripts`/`scripts_preterm`.  A module global rather than a `stats`
+# entry because `stats` is summed as ints and serialised to JSON, and these are sets.
+_VB_SCRIPT_SETS = {'full': {}, 'pre': {}}
+
 def audit(cgmap_override=None, quiet=False):
     global CGMAP
     saved = CGMAP
     if cgmap_override is not None: CGMAP = cgmap_override
+    _VB_SCRIPT_SETS['full'] = {f: set() for f in _VERBATIM_L + _VERBATIM_L6}
+    _VB_SCRIPT_SETS['pre'] = {f: set() for f in _VERBATIM_L + _VERBATIM_L6}
     result = {}
     for ci in range(20):
         rec = dict(name=NAMES[ci], own_group=ci + 1, violations=[], stats={})
@@ -3267,9 +3610,10 @@ def audit(cgmap_override=None, quiet=False):
                    # doc §36: the per-field verbatim census, accumulated in this loop as the second
                    # of the two instruments `_assert_verbatim_census` holds against each other.
                    vb_pairs=0, vb_pairs_preterm=0, vb_hidden=0, vb_hidden_dead=0,
-                   **{'vb_' + f: 0 for f in _VERBATIM_L},
-                   **{'vb_pre_' + f: 0 for f in _VERBATIM_L},
-                   **{'vb_absent_' + f: 0 for f in _VERBATIM_L})
+                   vb_rival_law_ok=0, vb_rival_law_bad=0,
+                   **{'vb_' + f: 0 for f in _VERBATIM_L + _VERBATIM_L6},
+                   **{'vb_pre_' + f: 0 for f in _VERBATIM_L + _VERBATIM_L6},
+                   **{'vb_absent_' + f: 0 for f in _VERBATIM_L + _VERBATIM_L6})
         vb_hides = []
         for koc, sec in KOC2SEC.items():
             an, pn = len(arc_tabs[sec]), len(ps2_tabs[sec][2])
@@ -3377,6 +3721,7 @@ def audit(cgmap_override=None, quiet=False):
                                     if _past: cls['vb_hidden_dead'] += 1
                                     continue
                                 cls['vb_' + _f] += 1
+                                _VB_SCRIPT_SETS['full'][_f].add((ci, sec, si))
                                 if _past:
                                     cls['vb_hidden'] += 1
                                     vb_hides.append(dict(table=sec, script=si, cell=cidx, field=_f,
@@ -3384,6 +3729,19 @@ def audit(cgmap_override=None, quiet=False):
                                                          dead=False))
                                 else:
                                     cls['vb_pre_' + _f] += 1
+                                    _VB_SCRIPT_SETS['pre'][_f].add((ci, sec, si))
+                        for _f in _VERBATIM_L6:          # the cgd-6 tail, §36.6's five fields
+                            if (_f in r) != (_f in pr):
+                                if not _d: cls['vb_absent_' + _f] += 1
+                            elif _f in r and r[_f] != pr[_f]:
+                                if _d: continue
+                                cls['vb_' + _f] += 1
+                                _VB_SCRIPT_SETS['full'][_f].add((ci, sec, si))
+                                if not _past:
+                                    cls['vb_pre_' + _f] += 1
+                                    _VB_SCRIPT_SETS['pre'][_f].add((ci, sec, si))
+                                if _f == 'rival':
+                                    cls['vb_rival_law_' + ('ok' if r[_f] * 5 == pr[_f] * 6 else 'bad')] += 1
                     se = r['se'] >> 4
                     # cg_se >>= 4 then bit 0x800 selects the per-character random-SE
                     # table (charset.c:2721-2727); only the non-random path indexes
@@ -3637,6 +3995,9 @@ def audit(cgmap_override=None, quiet=False):
                             manu_counterpart_divergent=mg['script_cls'].get('counterpart_divergent', 0),
                             manu_mset_control_ok=mg['mset_control_ok'],
                             manu_mset_control_bad=mg['mset_control_bad'],
+                            manu_mset_ground_unique=mg['mset_ground_unique'],
+                            manu_mset_ground_silent=mg['mset_ground_silent'],
+                            manu_mset_ground_multi=mg['mset_ground_multi'],
                             manu_bracket_disagree_cells=mg['bracket_disagree_cells'],
                             manu_bracket_disagree_collapse_lower=mg['bracket_disagree_collapse_lower'],
                             manu_collapse_raws=mg['collapse_raws'],
@@ -3668,6 +4029,28 @@ if __name__ == "__main__":
                 print("  %s: row %d %r overlaps row %d %r" % (o['character'], o['row_a'], o['a'], o['row_b'], o['b']))
         sys.exit(1)
     print("range-overlap check: 0 overlaps, 0 inversions (20/20 characters)")
+
+    # doc §8.T: and the check `--test-cg-ranges` structurally cannot make, because it compares rows
+    # only within one character's table.
+    _hull, _hx, _hn = check_range_hulls()
+    if _hull:
+        print("FATAL: %d CgRemapRange row(s) extend past their own measured hull (doc §8.T):" % len(_hull))
+        for r in _hull:
+            print("  %-7s row %d 0x%04X-0x%04X delta %+d: %d observation(s), hull %s, %d value(s) below "
+                  "and %d above; the overreach lands in %s"
+                  % (r['character'], r['row'], r['first'], r['last'], r['delta'], r['observed'],
+                     "none" if r['hull'] is None else "0x%04X-0x%04X" % r['hull'], r['below'], r['above'],
+                     ", ".join(r['foreign']) or "no other character's band"))
+        sys.exit(1)
+    print("range-hull check: %d of %d row(s) are exactly their measured hull; %d excused by name:"
+          % (_hn - len(_hx), _hn, len(_hx)))
+    for r in _hx:
+        print("  %-7s row %d 0x%04X-0x%04X delta %+d: hull 0x%04X-0x%04X over %d observation(s), "
+              "%d value(s) below and %d above -- %s"
+              % (r['character'], r['row'], r['first'], r['last'], r['delta'], r['hull'][0], r['hull'][1],
+                 r['observed'], r['below'], r['above'],
+                 RANGE_HULL_EXCUSED[(r['character'], r['first'], r['last'], r['delta'])]))
+    assert len(_hx) == len(RANGE_HULL_EXCUSED), (len(_hx), len(RANGE_HULL_EXCUSED))
 
     res = audit()
     json.dump(res, open(os.path.join(HERE, "cg_audit.json"), "w"), indent=1)
@@ -3776,6 +4159,21 @@ if __name__ == "__main__":
     print("  " + "  ".join("%s %d/%d%s" % (f, _cen['full'][f], _cen['preterm'][f],
                                            ("+%da" % _cen['absent'][f]) if _cen['absent'][f] else "")
                            for f in _VERBATIM_L))
+    # The cgd-6 TAIL, §36.6's five fields.  Not censused at all until now, which is how a corrected
+    # `cg_rival` figure that reproduces at neither scope got published.
+    print("  cgd-6 tail (arc_parse decodes it now; NOT in _VERBATIM_L, which is also _vmatch): "
+          + "  ".join("%s %d/%d%s" % (f, _cen['full'][f], _cen['preterm'][f],
+                                      ("+%da" % _cen['absent'][f]) if _cen['absent'][f] else "")
+                      for f in _VERBATIM_L6))
+    print("  cg_rival's 24-vs-20 stride law (doc §8.H): %d of %d divergence(s) satisfy "
+          "`arcade * 5 == ps2 * 6`, %d do not (asserted 0)"
+          % (_cen['rival_law'].get('ok', 0), _cen['full']['rival'], _cen['rival_law'].get('bad', 0)))
+    # The per-field SCRIPT counts §35.8.2 and §36.9 publish.  Computed since §36 landed, printed and
+    # asserted only now -- until this line they were a return value nothing read.
+    print("  scripts carrying at least one divergence, whole-span/pre-terminator (asserted against "
+          "audit()'s own script sets): "
+          + "  ".join("%s %d/%d" % (f, _cen['scripts'][f], _cen['scripts_preterm'][f])
+                      for f in _VERBATIM_L + _VERBATIM_L6 if _cen['scripts'][f]))
     print("  a count cut at the first terminator would hide %d divergence(s) over %d script(s), "
           "every one on a cell `k7_entry_walk` reaches (asserted; %d on a dead cell):"
           % (len(_cen['hidden']), len(set(h[:3] for h in _cen['hidden'])), _cen['hidden_dead']))
@@ -3807,9 +4205,18 @@ if __name__ == "__main__":
              T.get('manu_pin_identity_shift_mismatch', 0),
              sum(v for k, v in T.items() if k.startswith('manu_pin_shift_'))))
     print("  soundness control: multiset containment covers %d cell(s) this character's own oracle "
-          "CONFIRMS and %d it CONTRADICTS (asserted 0); %d cell(s) where the pinned pairing and the "
+          "CONFIRMS and %d it CONTRADICTS (asserted 0, but `divergent` is 0 cast-wide so that arm's "
+          "population is EMPTY and it cannot fail); %d cell(s) where the pinned pairing and the "
           "oracle disagree -> manu_ps2_content_diff"
           % (T['manu_mset_control_ok'], T['manu_mset_control_bad'], T['manu_ps2_content_diff']))
+    print("  the control that can fail: over %d ground-truth cell(s) the multiset test accepts ours "
+          "and only ours %d time(s), accepts nothing %d time(s), and accepts a delta the oracle "
+          "CONTRADICTS %d time(s) -- asserted against the pinned MSET_UNSOUND, on which no verdict rests"
+          % (T['manu_mset_ground_unique'] + T['manu_mset_ground_silent'] + T['manu_mset_ground_multi'],
+             T['manu_mset_ground_unique'], T['manu_mset_ground_silent'], T['manu_mset_ground_multi']))
+    for _u in MSET_UNSOUND:
+        print("    %-7s %s[%d] c%-3d raw 0x%04X oracle %+d, also accepted: %s"
+              % (_u[0], _u[1], _u[2], _u[3], _u[4], _u[5], ", ".join("%+d" % d for d in _u[6])))
     # doc §34: why the bracket_disagree class exists at all.  A collapse witness pins one PS2 sprite
     # that several arcade frames share; its delta is that merge's arithmetic and bounds no band.
     print("  bracket-disagree root cause: %d of %d such cell(s) have a COLLAPSE witness below, a real "
@@ -3886,6 +4293,7 @@ if __name__ == "__main__":
     # rows the grid declines -- printed right after those rows, because seven of them are its subject.
     _w5 = word5_lc_gate()
     _assert_word5_lc_gate(_w5)
+    _kn, _khs, _knc = _assert_word5_koc_population(_w5, res)
     _g = lambda k: _w5['word5'].get(k, 0)
     print("word 5's u8 pair (cg_next_ix|cg_status), cells whose two bytes differ -- identical / crossed / neither:")
     print("  L record, both decoders agreeing on the whole script's shape: %d / %d / %d   "
@@ -3910,13 +4318,21 @@ if __name__ == "__main__":
           "(`code:u16 | koc:u16`, %d out of range), %d take the word-5 half-swap (%d out of range), "
           "%d neither (%d out of range).  An out-of-range koc is read ONLY where word 0 does not "
           "convert as a header, so it is not a koc:"
-          % (sum(_k.values()), _k.get('header_ok', 0) + _k.get('header_oob', 0), _k.get('header_oob', 0),
+          % (sum(_k.values()) - _k.get('nocmp_oob', 0),
+             _k.get('header_ok', 0) + _k.get('header_oob', 0), _k.get('header_oob', 0),
              _k.get('halfswap_ok', 0) + _k.get('halfswap_oob', 0), _k.get('halfswap_oob', 0),
              _k.get('other_ok', 0) + _k.get('other_oob', 0), _k.get('other_oob', 0)))
+    # The population the claim is ABOUT is `audit()`'s, not the gate's, and the two are now asserted
+    # equal.  `no_ps2_bytes` is the part the half-swap cannot reach: the word-0 test needs four PS2
+    # bytes at the cell's offset and that script has none there, so the row is carried, not explained.
+    print("  the %d un-excused a_koc_oob row(s) audit() reports are exactly these %d gate row(s) "
+          "(asserted): %d adjudicated by the half-swap, %d with no PS2 bytes at the offset at all"
+          % (_kn, _kn, _khs, _knc))
     for r in _w5['koc_rows']:
-        print("  %-7s %-5s %4d c%-3d code %d  arcade koc %6d / ps2 koc %6d   arc %s  ps2 %s  [word 0: %s]"
+        print("  %-7s %-5s %4d c%-3d code %d  arcade koc %6d / ps2 koc %6s   arc %s  ps2 %s  [word 0: %s]"
               % (r['character'], r['table'], r['script'], r['cell'], r['code'], r['koc'],
-                 r['ps2_koc'], r['arcade'], r['ps2'], r['word0']))
+                 '--' if r['ps2_koc'] is None else r['ps2_koc'], r['arcade'],
+                 r['ps2'] or '(no PS2 bytes)', r['word0']))
     # doc §27: the over-declared spans, and what the digest hashes past the real data
     digest_in = sum(LOC[ci][sec][1] for ci in range(20) for sec in SECTIONS)
     junk = T['span_junk_bytes'] + sum(res[n]['stats']['caua_hosa_over_declared'] * 8 for n in NAMES)
@@ -3940,6 +4356,14 @@ if __name__ == "__main__":
     # answer.  Nothing else here lifts the void: a landing that is not a script start puts the
     # executor on a byte that is not a cell boundary, and the continuation of that decode is unbounded.
     _nimg = _assert_char_table_image()
+    _dlo, _dhi, _dn = assert_nmca_variable_koc_writers()
+    print("nmca writers with a VARIABLE koc: %d (`plpdm.c` -> `exset_char_move_init(.., now_koc, "
+          "dm17_to_nm23_change[..])`), reachable indices %d..%d -- so it cannot reach nmca[28], which "
+          "is what §35.8.3's \"no other koc\" needed and did not say (asserted)" % (_dn, _dlo, _dhi))
+    _ncf, _nff = _assert_cell_field_offsets()
+    print("cell field layout: %d field(s) over %d cgd-6 sprite cell(s) -- `_span_cell`'s ROM offsets "
+          "(parsed from structs.h's cg_type..cg_status block) and `char_table_image`'s walk agree on "
+          "every one, and no column compared is all-zero" % (_nff, _ncf))
     _lt = collections.Counter(r['cls'] for n in NAMES for r in res[n]['span_reach']['k7_dead_landing_targets'])
     assert _lt['script_start'] == 0, _lt
     print("read_char_table relocation: %d script pointer tables reproduce exactly; %d unresolvable "

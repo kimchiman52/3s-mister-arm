@@ -73,6 +73,12 @@ int CgRanges_Test_Tables(void) {
  * a smaller green run. */
 #define EXPECTED_SUBTESTS 4
 
+/* Total CgRemapRange rows across the twenty live tables, counted 2026-09-12.
+ * Re-derive with: cg_audit.py's CGMAP, sum(len(CGMAP[ci]['ranges'])). Raise it
+ * in the same commit that adds a row -- a row is a behaviour change and this is
+ * where it gets acknowledged. */
+#define EXPECTED_CG_RANGE_ROWS 68
+
 static int g_ran;
 static int g_fail;
 static int g_nosignal;
@@ -113,8 +119,20 @@ static void sub_a_live_tables(void) {
 
     CHECK(defects == 0, "live tables report %d defect(s); each was logged above", defects);
 
+    /* And the POPULATION, because `defects == 0` alone does not hold it. This
+     * used to print `NUM_CHARS`, which is a compile-time constant: it is the
+     * same 20 whether the tables are there or not. `CgTableDefects` now counts
+     * an empty `cg_maps[]` entry as a defect, which catches a whole table going
+     * missing; the row total catches a single row going missing, which no
+     * invariant over the surviving rows can see (68 rows -> 67 stays
+     * non-overlapping and non-inverted). Deliberately a literal. */
+    const size_t rows = ArcadeCharData_CgRangeRows();
+
+    CHECK(rows == EXPECTED_CG_RANGE_ROWS, "cg_maps[] holds %zu range row(s), expected exactly %d", rows,
+          EXPECTED_CG_RANGE_ROWS);
+
     if (defects == 0) {
-        printf("       0 defects across %d character tables\n", NUM_CHARS);
+        printf("       0 defects across %d character tables, %zu range rows\n", NUM_CHARS, rows);
     }
 }
 

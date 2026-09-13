@@ -13,7 +13,7 @@ Read this before citing it for anything.
 |---|---|
 | Path | `/Users/sb/Developer/cps3-sf3iii` (snapshot, **not a git checkout**; files dated 2026-09-01) |
 | ROM | `sfiii3nr1`, Japan 990512, NO CD — **the same set we decrypt to `tools/arcade-audit/rom.bin`** |
-| Size | ~109k lines of C, 11,367 files, 32 headers |
+| Size | **787,084** lines of C, 11,367 files, 32 headers *(re-measured 2026-09-12; the "~109k" this row used to carry was a `find … \| xargs wc -l \| tail` artifact — `xargs` runs `wc` once per batch and only the LAST batch's `total` survives the tail, which on this tree is 108,929. Re-derive with `find … -print0 \| xargs -0 cat \| wc -l`.)* |
 | Licence | MIT, "SFIII3 CPS3 decompilation contributors" |
 | Build | Windows-only PowerShell + a user-supplied Hitachi SHC r26. WSL and Linux explicitly unsupported. **Not runnable on this machine** |
 
@@ -23,7 +23,11 @@ Because it is not a git checkout there is no commit to stamp a citation against.
 Two tiers, and the difference decides how much a citation is worth:
 
 - **`src/ghidra/`** — raw Ghidra output, ~11.2k files. 2,947 named `FUN_<addr>.c`;
-  8,705 carry an `@ 06xxxxxx` header. **Addresses are rigorous here.** This is the
+  **8,613** carry an `@ 06xxxxxx` header *(re-measured 2026-09-12; the 8,705 this
+  line used to carry does not reproduce. `find src/ghidra -name '*.c' -exec grep
+  -lE '@ 06[0-9a-fA-F]{6}' {} + | wc -l` → 8,613. For the record, the alternate
+  `@ 0x06xxxxxx` header style is a further 1,079 files, and neither count nor
+  their union — 9,598 — is 8,705.)* **Addresses are rigorous here.** This is the
   tier worth citing for behaviour.
 - **`src/recovered/code/`** — reviewed, 95 files. `scripts/verify_build.py`'s
   `recovered_source_boundary` check *fails the build* if `undefined1/2/4/8`,

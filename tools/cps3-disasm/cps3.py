@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 import struct
 import sys
 
@@ -480,20 +481,39 @@ def function_extent(img: Image, start: int, max_len: int = 0x4000):
     return end, sorted(pool)
 
 
-def pool_map(img: Image, start: int, end: int):
+def pool_map(img: Image, start: int, end: int, scan_from: int = None):
     """Half-word addresses in [start,end) that are LITERAL DATA, not instructions.
 
-    A word is data when some instruction earlier in the range pc-relatively loads
-    it; SH-2 pc-relative loads reach forward only, so one forward pass that skips
-    what it has already marked is exact for this question.  Nothing else in this
-    file may decode a half-word without consulting this: `0x060C3240` is a pool
-    word inside Win_01000, and decoding its low half as an instruction yielded a
-    `bsr -> 0x060C260E` that does not exist -- a MANUFACTURED call, which the
-    "a census is a lower bound" caveat does not cover, because that caveat is
-    about calls the tool MISSES.
+    A word is data when some instruction pc-relatively loads it; SH-2 pc-relative
+    loads reach forward only, so one forward pass that skips what it has already
+    marked is exact for the words loaded from inside the walk.  Nothing else in
+    this file may decode a half-word without consulting this: `0x060C3240` is a
+    pool word inside Win_01000, and decoding its low half as an instruction
+    yielded a `bsr -> 0x060C260E` that does not exist -- a MANUFACTURED call,
+    which the "a census is a lower bound" caveat does not cover, because that
+    caveat is about calls the tool MISSES.
+
+    WHAT IT CANNOT SEE WITHOUT HELP -- a BORROWED pool.  The walk starts at
+    `start`, so a pool word that sits inside [start,end) but is loaded by an
+    instruction BEFORE it is not discovered, and is decoded as an instruction.
+    That is not hypothetical: `check_super_arts_attack_dc` (`0x0611F5C8`..
+    `0x0611FA18`) parks its pool past its own `rts`, at
+    `0x0611FA4A`..`0x0611FA62`, which is inside `execute_super_arts`
+    (`0x0611FA18`..`0x0611FC74`).  Ten half-words there decode as instructions,
+    including `0x0611FA56` = `0x03EC` -> `mov.b @(r0,r14),r3`, a byte access the
+    arcade does not make.  `function_extent` already reports those words as the
+    preceding routine's trailing pool; this could not use them.
+
+    Pass `scan_from` -- the start of the routine whose pool may reach in, normally
+    the PRECEDING routine's entry -- and the walk begins there instead, so the
+    borrowed words are resolved.  It is an explicit argument rather than a
+    fixed-size look-back because walking backwards into unknown bytes would
+    decode pool as pc-relative loads and mark real instructions as data, and THAT
+    direction is unsafe: these results are used to prove negatives, where a
+    missed access is a false negative and a spurious one is only noise.
     """
     pool = set()
-    a = start
+    a = min(scan_from, start) if scan_from is not None else start
     while a < end:
         if a in pool:
             a += 2
@@ -504,7 +524,7 @@ def pool_map(img: Image, start: int, end: int):
             for k in range(0, 4 if t[0] == "l" else 2, 2):
                 pool.add(lit + k)
         a += 2
-    return pool
+    return set(p for p in pool if start <= p < end)
 
 
 def call_census(img: Image, start: int, end: int, pool=None):
@@ -1092,14 +1112,14 @@ def cmd_selftest(img: Image, args) -> int:
         "0x060C37E8, 0x060C380A",
     )
 
-    # -- section 16.2: the three plcnt.c clamps the arcade does not have --
+    # -- section 16.3: the three plcnt.c clamps the arcade does not have --
     # Adjudicated 2026-09-12: all three are INERT, because every value the
     # arcade's own tables can hand the port's clamps is already inside the
     # clamp's range.  That is a property of ROM DATA, so it is checked here
     # rather than asserted in prose -- an edit to either table that moved a
     # value out of range would reopen the question silently otherwise.
     print("")
-    print("-- research-arcade-cg-data-accuracy.md section 16.2: the three ungated clamps --")
+    print("-- research-arcade-cg-data-accuracy.md section 16.3: the three ungated clamps --")
 
     # pl_piyo_tbl is the whole input to set_kizetsu_status's [56,72] clamp
     # (piyori_type[].genkai has no other writer anywhere in the port).
@@ -1196,7 +1216,7 @@ def cmd_selftest(img: Image, args) -> int:
         return (img.s16(r + 8), img.s16(r + 10))
 
     # Slots 0..2 are every Super_Arts value a shipped build can reach (section
-    # 16.2's writer enumeration).  Both clamps are no-ops across all of them.
+    # 16.3's writer enumeration).  Both clamps are no-ops across all of them.
     check(
         "slots 0..2: every gauge_len, all inside [0x40, 0x80]",
         str(sorted({_sa_pair(c, s)[0] for c in range(21) for s in range(3)})),
@@ -1318,9 +1338,28 @@ def cmd_selftest(img: Image, args) -> int:
         str([("mov.b", "@(8,r0),r0"), ("cmp/eq", "#3,r0"), ("bt", "0x611fa68")]),
     )
     check("  extent", function_extent(img, 0x0611FA18)[0], 0x0611FC74)
+    # THE BORROWED POOL.  check_super_arts_attack_dc parks its literals past its
+    # own `rts`, at 0x0611FA4A..0x0611FA62 -- inside this routine.  `pool_map`
+    # walks forward from its `start`, so on its own it never sees the loads that
+    # put them there and decodes ten half-words as instructions, including
+    # 0x0611FA56 = 0x03EC -> `mov.b @(r0,r14),r3`.  Every `_operands` call over
+    # this range therefore passes `scan_from` = the preceding routine's entry.
+    # Pinned in both directions so a regression in either is loud.
+    check(
+        "  its first 0x1A bytes are the previous routine's pool, resolved only with scan_from",
+        [hex(a) for a in sorted(set(pool_map(img, 0x0611FA18, 0x0611FC74, scan_from=0x0611F5C8))
+                                - set(pool_map(img, 0x0611FA18, 0x0611FC74)))],
+        ["0x611fa4a", "0x611fa4c", "0x611fa50", "0x611fa52", "0x611fa54",
+         "0x611fa56", "0x611fa58", "0x611fa5a", "0x611fa60", "0x611fa62"],
+    )
+    check(
+        "    and 0x0611FA56 is the literal 0x03EC, not a mov.b",
+        img.u16(0x0611FA56),
+        0x03EC,
+    )
     check(
         "  every byte access it makes",
-        _operands(img, 0x0611FA18, 0x0611FC74, "mov.b"),
+        _operands(img, 0x0611FA18, 0x0611FC74, "mov.b", scan_from=0x0611F5C8),
         [
             "@(10,r0),r0",
             "@(2,r2),r0",
@@ -1339,12 +1378,42 @@ def cmd_selftest(img: Image, args) -> int:
     )
     check(
         "  every add",
-        _operands(img, 0x0611FA18, 0x0611FC74, "add"),
+        _operands(img, 0x0611FA18, 0x0611FC74, "add", scan_from=0x0611F5C8),
         [
             "#-20,r0", "#-38,r0", "#48,r0", "#56,r0",
             "r0,r2", "r14,r1", "r14,r3", "r2,r3", "r3,r0", "r3,r2", "r3,r5",
         ],
     )
+    # The word and longword forms, which the negative needs and which only `mov.b`
+    # and `add` used to cover.  Both routines take the SA base in r14 (`mov r4,r14`
+    # in the prologue, and nothing writes r14 again in either), so a fixed SA
+    # displacement can only be reached by an IMMEDIATE-DISPLACEMENT form `@(N,Rm)`
+    # -- and neither routine has one at either width.  The total count is pinned
+    # beside the empty list so that "no displacement form" cannot come from a walk
+    # that found no `mov.w`/`mov.l` at all; `mov.b` is the positive control, where
+    # the same filter DOES return the SA offsets the verdict is about.
+    #
+    # Without the `scan_from` above, `mov.l` here reads 23 forms rather than 20:
+    # `r13,@(r0,r1)`, `r15,@(r0,r0)` and `r4,@(r0,r2)` are the borrowed pool
+    # decoded as stores, and pinning them would have pinned an artifact.
+    for _name, _lo, _hi, _sf, _nw, _nl, _byte in (
+        ("check_super_arts_attack_dc", 0x0611F5C8, 0x0611FA18, None, 54, 31,
+         ["@(10,r0),r0", "@(2,r3),r0", "@(2,r7),r0", "@(5,r3),r0", "r0,@(10,r3)"]),
+        ("execute_super_arts", 0x0611FA18, 0x0611FC74, 0x0611F5C8, 26, 20,
+         ["@(10,r0),r0", "@(2,r2),r0", "@(2,r3),r0", "@(5,r2),r0", "@(5,r3),r0",
+          "@(8,r0),r0", "r0,@(10,r2)"]),
+    ):
+        for _mn, _total in (("mov.w", _nw), ("mov.l", _nl)):
+            check(
+                "  %s: no %s displacement form, over %d form(s)" % (_name, _mn, _total),
+                _disp_operands(img, _lo, _hi, _mn, scan_from=_sf),
+                ([], _total),
+            )
+        check(
+            "  %s: its mov.b displacement forms -- the filter's positive control" % _name,
+            _disp_operands(img, _lo, _hi, "mov.b", scan_from=_sf)[0],
+            _byte,
+        )
     # The four gauge_type residuals sit in slot 3 only because the reachable
     # value set is identical on both sides.  0 and 3 are the two the port's
     # sag_union jump table dispatches differently, so this is the check that
@@ -1548,23 +1617,29 @@ def _sweep(img: Image, lo: int, hi: int):
     return out
 
 
-def _operands(img: Image, start: int, end: int, mnemonic: str):
+def _operands(img: Image, start: int, end: int, mnemonic: str, scan_from: int = None):
     """Every distinct operand form of `mnemonic` in [start,end), pool words skipped.
 
     Exhaustive where a grep over `dis` output is not: `Image.disasm` stops dead at
     the first half-word capstone cannot decode, and every literal pool holds one,
     so a single `disasm(start, end - start)` silently truncates -- it reported 6
     of the 11 `mov.b` forms in 0x0611F5C8 before this walked half-word by
-    half-word instead.  Pool half-words are skipped through `pool_map`, because
-    decoding one as an instruction manufactures accesses that do not exist
-    (README trap 3b).
+    half-word instead.
+
+    Pool half-words are skipped through `pool_map`, which resolves the words
+    loaded from inside the walk.  A pool BORROWED from a routine before `start` is
+    NOT skipped unless `scan_from` names that routine's entry -- see `pool_map`'s
+    own note, and pass it whenever the range is not the first routine of a run.
+    Without it the extra forms are MANUFACTURED, which for a negative finding is
+    the safe direction (a spurious access makes the negative harder to reach, and
+    cannot hide a real one) but makes the operand set wrong as a description.
 
     Used to prove a NEGATIVE: that a routine makes no byte access at a given
     struct displacement.  SH-2 `mov.b @(disp,Rm),R0` carries a 4-bit disp, so a
     displacement above 15 cannot be encoded at all -- reaching one needs an
     R0-index or an `add #imm` on the base, and both show up here.
     """
-    pool = pool_map(img, start, end)
+    pool = pool_map(img, start, end, scan_from)
     out = set()
     a = start
     while a < end:
@@ -1576,6 +1651,24 @@ def _operands(img: Image, start: int, end: int, mnemonic: str):
             out.add(ins[0].op_str)
         a += 2
     return sorted(out)
+
+
+_DISP_FORM = re.compile(r"@\(\d+,r\d+\)")
+
+
+def _disp_operands(img: Image, start: int, end: int, mnemonic: str, scan_from: int = None):
+    """The IMMEDIATE-DISPLACEMENT forms of `mnemonic` in [start,end) -- `@(N,Rm)`.
+
+    The distinction the `mov.b` checks below rest on: `@(2,r3),r0` reads a fixed
+    struct offset, `@(r0,r14),r0` reaches an arbitrary one through R0, and a
+    pc-relative literal load renders as a bare address.  Only the first kind names
+    a displacement, so this is the set to compare against a claim of the form
+    "nothing reads +38".  Returns (displacement forms, total forms of that
+    mnemonic) -- the second so an empty first can be told apart from a walk that
+    found no such instruction at all.
+    """
+    all_forms = _operands(img, start, end, mnemonic, scan_from)
+    return [o for o in all_forms if _DISP_FORM.search(o)], len(all_forms)
 
 
 def _sole_ref(img: Image, value: int):

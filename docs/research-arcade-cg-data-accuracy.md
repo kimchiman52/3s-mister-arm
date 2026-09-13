@@ -124,7 +124,10 @@ command and its observed output, or a named primary source. Things that were
   divergence counts 10 and 4 cells short.
 - **About to quote a per-field divergence count from §22?** §36 first. §22's
   `cg_att_ix` is 22 not 12, `cg_hit_ix` 13 not 9, `cg_cancel` 115 not
-  114, `cg_rival` 3,235 not 3,023, and §22.5's "242/206 live" are 245/207.
+  114, and §22.5's "242/206 live" are 245/207. **`cg_rival` was NOT one of
+  them** — §22.7's 3,023 is right, as the pre-terminator count, and §36.6's
+  "corrected" 3,235 reproduced at neither scope; the whole-span figure is
+  **3,270** (§36.6's own correction, third sitting).
   `cg_audit.py` now prints the census at **both** scopes on every run and
   asserts the two agree, so the narrow number can no longer travel alone.
 - **About to call a raw "ambiguous" because two cells want two deltas?** §35.2
@@ -1634,12 +1637,28 @@ set for the same reason.
 > DIVERGENT-free.
 >
 > **The other seven cells stay unfixed, and §35.2 replaces "unsettleable" with a
-> measured reason:** in five of the six raws the PS2 **re-authored the
+> measured reason:** ~~in five of the six raws the PS2 **re-authored the
 > animation** — it changed `cg_ctr`, `cg_type`, `cg_olc_ix` and the attack/hit
-> indices as well as the sprite — so cell *i* of the two releases is not the same
-> animation frame and the "disagreement" is not evidence about the raw. The
+> indices as well as the sprite~~ — so cell *i* of the two releases is not the
+> same animation frame and the "disagreement" is not evidence about the raw. The
 > majority reading is ours in five of six. **`0x546A` is worse than ambiguous:
 > the PS2 has no sprite for that frame at all** (§35.3).
+>
+> > **CORRECTION (third sitting): the "re-authored" mechanism is WITHDRAWN for
+> > this list and §35.8.6 already withdrew it generally — this STATUS block still
+> > carried it.** Measured per script (§35.8.1's table): of the seven verbatim-
+> > divergent scripts exactly **one** is re-authored, AKUMA `nmca[21]` (`cg_ctr`
+> > only, 4 of 16 cells). Of the raws this section lists, **HUGO `0x26C9`**'s host
+> > `btca[15]` diverges in **`cg_olc_ix` and nothing else** (3 of 4 cells, the
+> > same `0 -> 992` / `0 -> 1008` overlay attachment its four `dmca` siblings
+> > carry), and **YUN `0x129B`**'s host `nmca[26]` is **verbatim equal on every
+> > field** with a `pinned` L-pairing — nothing was re-authored there at all.
+> > NECRO `nmca[28]` is a PS2 **script clone**, a third mechanism again. The
+> > *conclusion* is unchanged and if anything firmer — cell *i* is still not
+> > comparable across the releases in these scripts, so the disagreement is still
+> > not evidence about the raw, and no row is warranted — but the stated mechanism
+> > was wrong for two of the six and imprecise for the rest. §35.8.1 and §35.8.6
+> > are the current account.
 >
 > The **policy inconsistency** this section flags below is **resolved** (§35.7),
 > in the direction §8.A already pointed. The rest of this section is the
@@ -3842,7 +3861,38 @@ disagreements are the durable part:
 
 #### Every writer of `Super_Arts[]`, and what bounds each
 
-`Super_Arts` is `s8[2]` (`workuser.c`). This is the whole set, from a tree-wide
+`Super_Arts` is `s8[2]` (`workuser.c`). ~~This is the whole set, from a tree-wide
+sweep of `src/` for both the plain and the chained
+`Arts_Y[…] = Super_Arts[…] = …` form — not the character-select path only.~~
+
+> **CORRECTION (§16.3, 2026-09-12, third sitting): the table is the whole
+> SHIPPED-REACHABLE set, not the whole set.** Two writers are missing, both in
+> `src/test/test_runner.c`, both inside that file's whole-file
+> `#if defined(DEBUG)`:
+>
+> * `maybe_force_training_scene_character_and_super_state` —
+>   `Super_Arts[player] = selected_super_arts[player];`
+> * `maybe_force_training_scene_super_confirm` —
+>   `Super_Arts[player] = Arts_Y[player];` (this one is bounded by `Arts_Y`, as
+>   the `Sel_Arts_Sub` row is)
+>
+> The first is a **third unvalidated raw-byte route** and it belongs in the
+> residual below, not here: `selected_super_arts` is `static Sint8[2]` filled by
+> `initialize_data` from a raw archive byte (`SDL_SeekIO(io, SUPER_ARTS_OFFSET,
+> …)` then `SDL_ReadIO(io, selected_super_arts, 2)`), armed by `--test-states`,
+> and **nothing clamps it** — the only guard on it is a bare `>= 0` sign test at
+> the write site, exactly like `fcade_force_setup`'s. `initialize_data` clamps
+> `characters[i]` two lines away and does not clamp this.
+>
+> **The shipped-build verdict is unaffected**, and was re-derived independently:
+> `test_runner.c` and `test_runner_utils.c` are both `#if defined(DEBUG)`
+> end to end, and `DEBUG` needs CMake config `Debug` or the off-by-default
+> `ENABLE_DEBUG_HOOKS` (`CMakeLists.txt`'s `DEBUG_HOOKS_GENEX`). A release build
+> parses `--test-states` into `configuration.test.states_path` and nothing reads
+> it — the same "parsed, dropped on the floor" shape the `--test-fcade-*` flags
+> have.
+
+The rows below are every writer a **shipped** build compiles, from a tree-wide
 sweep of `src/` for both the plain and the chained
 `Arts_Y[…] = Super_Arts[…] = …` form — not the character-select path only.
 
@@ -3855,7 +3905,7 @@ sweep of `src/` for both the plain and the chained
 | `sel_pl.c` -> `Sel_PL_1st` (`Arts_Y[ID] = Super_Arts[ID] = Last_Super_Arts[ID];`) | every `Last_Super_Arts` writer is itself in `[0,2]` — see below |
 | `demo02.c` -> `Setup_Demo_Arts` | `Arts_Rnd_Demo_Data[8] = { 0, 0, 0, 1, 1, 1, 2, 2 }`, indexed `random_16() & 7` |
 | `next_cpu.c` -> `Setup_Next_Fighter` (`= Setup_Com_Arts()`) | `Setup_Com_Arts` returns 1 (`EM_id == 0`), or `Arts_Rnd_Data[8] = { 0, 0, 0, 1, 1, 1, 2, 2 }`, or `Stock_Com_Arts[]` — which is only ever `-1` (`game.c` ×3, `manage.c`) or a previous `Setup_Com_Arts()` result, so the recursion closes at ≤ 2 |
-| `next_cpu.c` -> `Setup_Next_Fighter` (`= Debug_w[32] - 1`) | `Debug_w` is the `s8 Debug_w[72] = { 0 }` release stub (`debug_config.c`, the `#else // !DEBUG` arm) that nothing writes, so the `if (Debug_w[32])` guard is never entered at all; in a Debug build it is `debug_config.values`, clamped on every write to `debug_string_data[32].max`, which is **3** for `"CPU S.A"` — so the subtraction yields at most 2 |
+| `next_cpu.c` -> `Setup_Next_Fighter` (`= Debug_w[32] - 1`) | `Debug_w` is the `s8 Debug_w[72] = { 0 }` release stub (`debug_config.c`, the `#else // !DEBUG` arm) that nothing writes, so the `if (Debug_w[32])` guard is never entered at all. **CORRECTION (third sitting): "clamped on every write" is the wrong mechanism** — `debug_config.h` does `#define Debug_w debug_config.values`, so a direct `Debug_w[n] = x` never reaches `DebugConfig_Set` and never meets its clamp, and eight such direct writes exist outside `Debug.c` (`statcheck_runner.c` -> `StatcheckRunner_Prologue`; `test_runner.c` -> `initialize_default_data` and `apply_stage_override`; `texcash.c` ×5, indices 10 and 11). What actually bounds index 32 is that **nothing writes it by literal index at all** — the only two references, both in `next_cpu.c` -> `Setup_Next_Fighter`, are reads — so its sole writer is `Debug.c`'s menu through `Debug_w[Debug_Index]`, whose `> debug_string_data[Debug_Index].max` test is INCLUSIVE and whose `.max` for slot 32 (`"CPU S.A"`) is **3**. The reachable maximum is therefore exactly 3 and the subtraction yields at most 2 — the same conclusion, on the mechanism that is really holding it |
 | `pls03.c` -> `check_super_arts_attack` | `for (i = 0; i < 3; i++) Super_Arts[wk->wu.id] = i;` |
 | `menu.c` -> `Load_Replay_Sub` (`= Replay_w.game_infor.player_infor[ix].sa`) | `Replay_w.game_infor` has exactly ONE writer in this tree, `sys_sub.c` -> `Check_Replay`'s `memset(&Replay_w, 0, sizeof(Replay_w))`. The PS2's memory-card load into it is not in this port; the only other non-field-read reference is `&Replay_w.io_unit.key_buff[…]` in two bounds tests. So `sa` is 0 unconditionally |
 | `scene_jump.c` -> `SceneJump_ExecuteTrainingChain` (`= params->arts[ix]`) | its one shipped caller is `quick_training.c` -> `qt_begin`, which defaults `arts` to 0 and then fills it from `TrainingConfig_GetLastUsed` — and that copies out only on `>= 0 && < 3`, leaving the 0 in place otherwise |
@@ -3897,18 +3947,38 @@ itself:
   Neither flag has any caller in the tree. (A release build parses the flag and
   drops it on the floor, since the consumer is not compiled; it is not rejected
   the way `--test-instant-jump` and `--test-quick-training` are.)
-- **`#if defined(STATCHECK)` / `#if defined(DEBUG)`:** `scrd_game.c` (STATCHECK)
-  and `replay_game.c` (DEBUG) read the raw `Super_Arts` byte out of an archive
-  frame at `SUPER_ARTS_OFFSET` with no range check, and `statcheck_runner.c` ->
-  `StatcheckRunner_Prologue` writes it into `Last_Super_Arts[]`.
+- **`#if defined(STATCHECK)`:** `scrd_game.c` -> `scrd_read_match_setup` reads
+  the raw `Super_Arts` byte out of an archive frame at `SUPER_ARTS_OFFSET` with
+  no range check (`SDL_ReadIO(io, game->supers, 2)`), and `statcheck_runner.c` ->
+  `StatcheckRunner_Prologue` writes it into `Last_Super_Arts[]`, which reaches
+  `Super_Arts[]` through `sel_pl.c` -> `Sel_PL_1st`.
   `tools/fcade-replays/make_3sr.py` only *warns* on a value outside `[0,2]`
   (`"out of expected Super_Arts range [0,2]"`); it does not reject one.
+
+  > **CORRECTION (third sitting): this bullet also named `replay_game.c`
+  > (DEBUG) as a second reader of that byte, and that leg is miswired.**
+  > `replay_game.c` -> `ReplayGame_Parse` is the only thing in that file that
+  > parses the frame, and it has **no caller anywhere in `src/`** — its
+  > definition and its own header declaration are the only two references. It is
+  > dead code in this tree, so it reaches nothing and is not a route. The
+  > STATCHECK half above is real and unchanged.
+
+- **`#if defined(DEBUG)`, the third route, added by the third sitting:**
+  `test_runner.c` -> `initialize_data` reads the same `SUPER_ARTS_OFFSET` byte
+  into `selected_super_arts[2]` with no range check, armed by the unvalidated
+  `--test-states`, and `maybe_force_training_scene_character_and_super_state`
+  writes it into `Super_Arts[]` behind a bare `>= 0`. Same shape as the
+  `--test-fcade-*` route above, a different flag and a different file. See the
+  correction under the writer table.
 
 **The fix is one range test per flag in `args.c`, and it was deliberately not
 applied here** — it is an argument-validation change in a file this item does
 not otherwise touch, and adding the same `0..2` test the two neighbouring flags
 already carry would make the verdict above hold in every build rather than only
-in shipped ones. Recorded as a work item, not done.
+in shipped ones. Recorded as a work item, not done. It now covers **three**
+routes, not two: `--test-fcade-p1-arts` / `--test-fcade-p2-arts`, the STATCHECK
+archive byte, and `--test-states`' `selected_super_arts` — and the last two are
+file reads rather than flags, so the test for them belongs at the read site.
 
 #### Why the clamps stay: gating rejected, and removal rejected too
 
@@ -4027,10 +4097,21 @@ and the evidence are the block after this list.
   counterpart to compare *this routine* against, and whatever reads an EX-4th
   flag on the arcade is a different routine that does not reach this table
   through its sole literal referrer. ~~**Still open**, and it needs that routine
-  found before "port 1, ROM 0" means anything behavioural.~~ **CLOSED 2026-09-12
-  (second sitting): that routine was found, read, and has no EX-4th term — and
-  the port's arcade arm cannot read the field at all.** No code change; the
-  block below carries the evidence and the rejected fix.
+  found before "port 1, ROM 0" means anything behavioural.~~ ~~**CLOSED
+  2026-09-12 (second sitting): that routine was found, read, and has no EX-4th
+  term — and the port's arcade arm cannot read the field at all.**~~
+  **CORRECTION (§16.3, 2026-09-12, third sitting) — NOT CLOSED. The status
+  contradicted this section's own "what this sitting still cannot see".** Two
+  routines were found and read and neither carries an EX-4th term; that part
+  stands, and is now held by `cps3.py selftest` at both widths rather than at
+  `mov.b`/`add` alone. But the same section records that the arcade `sag_union`
+  family — the counterpart of the port's only `ex4th_exec` *readers* — **was not
+  read**, and that if one of those routines did read an EX-4th flag "the finding
+  would **invert**". An unread family fails toward the finding, so the status is
+  **STILL OPEN**: the two pinned routines carry no EX-4th term, and image-wide —
+  in the `sag_union` family specifically — it is unknown. No code change either
+  way; the block below carries the evidence for the measured part and the
+  rejected fix.
 - **Four `gauge_type` differences, all in the unreachable slot 3** (port
   characters 0, 6, 13 and 14: ROM 3, port 0). The ROM carries slot-3
   `gauge_type == 3` at five indices — 0, 6, 13, 14 and 15 — and index 15 is Shin
@@ -4077,12 +4158,17 @@ and the evidence are the block after this list.
 > is a dead table byte in the arm it was raised against. **No code change, and
 > the gated fix that residual implied would have been a no-op.**
 
-**There is no arcade routine that reads an EX-4th flag, and that is now a
-measured negative rather than a gap.** The item was left open pending exactly
-that routine. The two routines that would carry one — the arcade counterparts of
-the port's only `ex4th_*` writer and reader sites in `pls03.c` — are the arcade's
-`check_super_arts_attack_dc` and `execute_super_arts`. Both are pinned, both
-were read end to end, and neither touches the field.
+~~**There is no arcade routine that reads an EX-4th flag, and that is now a
+measured negative rather than a gap.**~~ **CORRECTED (third sitting): the two
+pinned routines carry no EX-4th term; image-wide it is UNKNOWN.** The claim as
+written was image-wide and this sitting's evidence is not — its own "what this
+sitting still cannot see" says so twice, once for the unread `sag_union` family
+and once for the absence of any image-wide negative. What IS measured: the two
+routines that would carry the *writer* side — the arcade counterparts of the
+port's `ex4th_*` sites in `pls03.c` — are `check_super_arts_attack_dc` and
+`execute_super_arts`; both are pinned, both were read end to end, and neither
+touches the field. The *reader* side is the `sag_union` family, and that was not
+read.
 
 | routine | extent | pinned by |
 |---|---|---|
@@ -4117,6 +4203,35 @@ R0-index or an `add #imm` on the base — and the only 38 in either routine is
 the `nmsa_a_ix - 38` arts index. Both the byte-access set and the `add` set are
 `cps3.py selftest` checks, so a table or a re-read that changes either fails
 loudly.
+
+> **CORRECTION (§16.3, 2026-09-12, third sitting): "pool-aware" was not true for
+> `execute_super_arts`, and the pinned sets only covered two mnemonics.**
+>
+> `_operands()` skipped pool half-words through `pool_map(start, end)`, which
+> discovers a pool word only from a pc-relative load **inside** that range. But
+> `check_super_arts_attack_dc` parks its literals past its own `rts`, at
+> `0x0611FA4A`..`0x0611FA62` — inside `execute_super_arts`. Ten half-words there
+> were decoded as instructions, including `0x0611FA56` = `0x03EC` →
+> `mov.b @(r0,r14),r3`. `pool_map` now takes a `scan_from` argument and the
+> selftest passes the preceding routine's entry, which resolves all ten; the
+> borrowed set and the literal are both pinned so the regression is loud.
+>
+> The byte-access set above is **unchanged** by this: the manufactured
+> `mov.b @(r0,r14),r3` duplicates a real instruction at `0x0611FA20`, so it added
+> no element. `mov.l` was the one that carried artifacts — 23 forms without
+> `scan_from`, 20 with, the three extra being `r13,@(r0,r1)`, `r15,@(r0,r0)` and
+> `r4,@(r0,r2)`, which are pool words read as stores. Had the widening below been
+> done first, it would have pinned them.
+>
+> And the sets were `mov.b` and `add` only, while the argument above is about
+> every width that can carry a displacement. The selftest now also pins, for
+> **both** routines, that there is **no** `mov.w` or `mov.l` immediate-
+> displacement form `@(N,Rm)` at all — over 54/31 forms for
+> `check_super_arts_attack_dc` and 26/20 for `execute_super_arts`, counts pinned
+> beside the empty list so "none" cannot come from a walk that found nothing —
+> with `mov.b`'s own displacement forms pinned as that filter's positive control.
+> Both routines take the SA base in `r14` (`mov r4,r14` in the prologue, never
+> rewritten), so a fixed SA displacement could only be reached by such a form.
 
 **Is it in scope under §6.1?** No — and for a reason §6.1 does not state. The
 values differ, so §6.1's "identical on both sides" exclusion does not apply.
@@ -5927,9 +6042,12 @@ Whether the two encodings produce identical trajectories was not verified
 > terminator* — what this section calls "live cells", four days before
 > `k7_entry_walk` existed — while §22.4's and §22.5's denominators were taken
 > over the whole decoded span. `cg_att_ix` is 22 not 12, `cg_hit_ix` 13 not 9,
-> `cg_cancel` 115 not 114, `cg_rival` 3,235 not 3,023. Every *verdict* below
-> survives; §36.6 re-measures all of them and §36.9 records what moved. The
-> original numbers are struck through in place rather than deleted.
+> `cg_cancel` 115 not 114. ~~`cg_rival` 3,235 not 3,023.~~ **`cg_rival`'s 3,023
+> was never wrong** — it is this subsection's own pre-terminator scope applied to
+> a sixth field, which §36.2's rule covers and §36.6 missed; the whole-span count
+> is **3,270**, and 3,235 reproduces at no scope at all (third sitting). Every
+> *verdict* below survives; §36.6 re-measures all of them and §36.9 records what
+> moved. The original numbers are struck through in place rather than deleted.
 
 Swept in the same run, cell-aligned live cells, so the next pass does not
 re-do them:
@@ -5940,7 +6058,11 @@ re-do them:
   `charset.c` -> `check_cm_extended_code`, `wk->cg_ix = (wk->cg_next_ix - 1)
   * wk->cgd_type`). A genuine one-byte Capcom difference in a caught-script
   loop-back; arcade-faithful as-is.
-- **`cg_rival`**: ~~3,023~~ **3,235 (§36.6)** divergences, and **100% of them
+- **`cg_rival`**: **3,023 pre-terminator / 3,270 whole-span** — this
+  subsection's 3,023 is the pre-terminator count and is correct at that scope;
+  ~~3,235 (§36.6)~~ is wrong at both and is withdrawn (third sitting). Both
+  figures now come from `cg_audit.py`'s census, which decodes the cgd-6 tail and
+  holds `cg_rival` at both scopes. **100% of them
   satisfy `arcade * 5
   == ps2 * 6`** — the RICT 24-vs-20 row stride already established in §15.4
   (four dead opponent slots per group, §8.H). Zero anomalies outside the
@@ -8748,16 +8870,35 @@ Cast-wide the walk finds **143 scripts with a phase switch** and ~~2,169~~
 
 ### 30.5 What changes status
 
-**Nothing becomes a live hazard, and nothing that was closed re-opens.** Every
+> **CORRECTION (§30.5, 2026-09-12, third sitting): both headline claims below are
+> stale on this tree, and §36.9 / §37 already recorded the replacements. Read
+> them, not this.** Re-measured from `cg_audit.json`:
+>
+> * **The 136 rows split 113 phantom / 23 not**, not 120 / 16. §37's `GRID_GEN[5]`
+>   correction is what moved them: `a_koc_oob` phantom went 51 → **44** and
+>   `a_se_oob` NOT-phantom went 0 → **15**. The total 136 is still unchanged.
+>   Current split by class: `a_effinit_oob` 53 phantom / 0 not; `a_koc_oob` 44 /
+>   **8**; `a_se_oob` 16 / **15**.
+> * **"Every `*_oob` row was already `dead` … and still is" is false.** 44 of the
+>   136 carry `dead: false` (92 carry `dead: true`). The paragraph was written
+>   before `_span_entry_seeds` added the C-side entries that revived them; the
+>   grid axis is still independent of reachability, which is the point the
+>   paragraph was making, but the liveness half of it no longer holds.
+> * The `a_koc_oob` row-level adjudication is **§37.4**, and there are **8**
+>   un-excused rows there, not 7 — see §37.4's own correction for the eighth
+>   (HUGO `nmca[49]` c24).
+
+~~**Nothing becomes a live hazard, and nothing that was closed re-opens.** Every
 `*_oob` row was already `dead` under `k7_entry_walk` (§28) and still is; the
-grid is a second, independent axis. What changes is *which* rows the artifact
+grid is a second, independent axis.~~ What changes is *which* rows the artifact
 story was entitled to excuse, and the answer is: fewer than it claimed, and for
 a different reason than it gave.
 
-**The 136 OOB-index rows split ~~119 / 17~~ 120 / 16** (re-derived 2026-09-07,
-§31.11: the band fix `92d89d8d` moved Twelve `nmca[46]` c30 from `unmodelled`
-to `phantom`, which is the whole of the movement — the total 136 is unchanged
-and no row changed class).
+**The 136 OOB-index rows split ~~119 / 17~~ ~~120 / 16~~ 113 / 23** (the
+120 / 16 figure was re-derived 2026-09-07, §31.11: the band fix `92d89d8d` moved
+Twelve `nmca[46]` c30 from `unmodelled` to `phantom`, which was the whole of the
+movement then — the total 136 is unchanged and no row changed class. §37 moved
+them again; see the correction above).
 
 - **120 `phantom`** — 53 `a_effinit_oob`, ~~50~~ **51** `a_koc_oob`, 16 `a_se_oob`. For
   these the audit now says *what the out-of-range index actually is*. All 53
@@ -9978,9 +10119,33 @@ measurements were not:
   not the 211, and putting it in the 211's place broke a sentence that was
   right.
 
-`cg_audit.py` now prints all three on every run — `3660` / `211` / `155`, plus
-the 18 cells the last-script cut accounts for — so the sentence is a line of
-output rather than prose that has to be trusted.
+`cg_audit.py` now prints all three on every run — ~~`3660`~~ **`3664`** / `211` /
+`155`, plus the 18 cells the last-script cut accounts for — so the sentence is a
+line of output rather than prose that has to be trusted.
+
+> **THE NODE COUNT MOVED 3,660 → 3,664 (2026-09-12, third sitting), and the cause
+> is a fixed instrument bug, not drift.** `_span_cell` read `cg_next_ix` from ROM
+> offset `+20`, which is `cg_add_xy`'s HIGH BYTE; the field is at `+22`
+> (`include/structs.h`: the cgd-6 tail is `cg_zoom | cg_rival | cg_add_xy` at
+> 16/18/20 then the u8 pair at 22/23, and `arcade_char_data.c` ->
+> `read_char_table` reads it in that order). The wrong byte took six distinct
+> values cast-wide; the right one takes 39, and they are cell indices up to 117.
+> `check_cm_extended_code` makes a nonzero `cg_next_ix` a jump to cell
+> `cg_next_ix - 1`, so correcting the offset adds real successor edges and the
+> closure reaches **four more** out-of-extent nodes. Direction: **more
+> reachable**, i.e. strictly more conservative. The frame count 211 and the
+> fail-open 155 are unchanged. Three other figures moved the same way and no
+> others: DUDLEY `span_reach.reachable_cells` 8,883 → **8,886** and
+> `reachable_cells_xcopy` 8,953 → **8,956**, TWELVE `reachable_cells_xcopy`
+> 9,727 → **9,728** and one of its `xcopy.unmodelled` lines 1 → 2 cells. TWELVE is
+> one of the two characters §37.4 leaves "reachability unmodelled", so its count
+> moving changes nothing about that verdict — it was already void.
+>
+> The offsets are now **parsed** from the `cg_type .. cg_status` declaration
+> rather than written as literals, and `_assert_cell_field_offsets()` cross-checks
+> seven named fields over all **32,904** cgd-6 sprite cells against
+> `char_table_image`'s independent walk, asserting no column compared is all-zero.
+> Proven red on the original `+20` before the fix was accepted.
 
 ### 32.6 §31.2's agreement statistic: 367 of 394, and all 27 disagreements adjudicated
 
@@ -11287,7 +11452,7 @@ Deriving the bounds as §33.9 requires, so the next pass does not have to:
 | char | raw | what a row would have to say | why it is refused |
 |---|---|---|---|
 | YUN | `0x129B` | `-1052` over `0x129B`..`0x129B` | would break 3 confirmed cells to fix 1; the 1 is a §34.6 content substitution |
-| NECRO | `0x1E5F` | `-1560` over `0x1E5F`..`0x1E5F` | would break 2 to fix 1; the 1 is in a re-authored script |
+| NECRO | `0x1E5F` | `-1560` over `0x1E5F`..`0x1E5F` | would break 2 to fix 1; the 1 is in ~~a re-authored script~~ **a script the PS2 CLONED from its own `nmca[27]`** (§35.8.1(c); corrected third sitting — that script was never re-authored, it was replaced wholesale, which is a stronger reason for the same refusal) |
 | HUGO | `0x26C9` | `-1822` over `0x26C9`..`0x26C9` | would break 5 to fix 1, including `btca[15]` c1 in the *same script* |
 | AKUMA | `0x5440` | `-3231` over `0x5440`..`0x5440` | would break 3 to fix 1; instrument B uniquely confirms ours |
 | AKUMA | `0x5441` | `-3233` over `0x5441`..`0x5441` | would break 4 to fix 1; instrument B uniquely confirms ours |
@@ -11730,15 +11895,37 @@ for it.
 clone of the PS2's own `nmca[27]`. Both releases treat the slot as spare; the
 arcade left its own content in it, the PS2 overwrote it with a copy of the live
 sibling. **This is why NECRO `nmca[28]`'s `cg_ctr` divergence is not a defect in
-either direction** — nothing plays the script.
+either direction** — no writer this enumeration can find asks for the script.
+
+> **CORRECTION (§35.8.3, 2026-09-12, third sitting): "nothing plays the script" is
+> stronger than the evidence, and the enumeration had a gap.**
+>
+> * The hand enumeration holds — it was redone cast-wide and found no writer
+>   supplying `(koc 0, ix 28)` — but "nothing plays it" is a claim about the
+>   arcade, and **neither leg of it is an instrument**. `k7_entry_walk(NECRO)`
+>   returns `set()` for `nmca[28]`, which under §31.10 is the *absence* of a
+>   liveness statement: NECRO has 4 landings the model cannot compute, so its
+>   whole dead set is void. A data change in that script would fail no gate.
+>   Corrected wording: no writer this enumeration can find asks for the script.
+> * **"`Player_damage` installs koc 1 at 12 sites and koc 6 at 15 sites, and no
+>   other koc" is not true as written.** `plpdm.c` -> `Damage_17000` calls
+>   `exset_char_move_init(&wk->wu, wk->wu.now_koc, dm17_to_nm23_change[wk->player_number])`
+>   — a **variable** koc, which can be `nmca`'s. It is harmless, and now for a
+>   measured reason rather than by omission: the index comes from
+>   `dm17_to_nm23_change[20]`, whose range is **37..103**, so it cannot reach
+>   index 28 whatever `now_koc` holds. That is the one enumerable part of this
+>   argument and `cg_audit.py` -> `assert_nmca_variable_koc_writers()` asserts it
+>   every run — the call site's existence, that its koc is still the variable one,
+>   and `min(dm17_to_nm23_change) > 28`.
 
 *The residual.* `k7_entry_walk` reports **0 dead cells** in it, but that
 instrument fails toward live for anything it cannot follow (§26.10.2) and is not
-evidence of a writer. The one thing not checked is whether the **arcade's own**
-dispatch tables differ from this port's `plpnm_lv_00_cps3[]` — that needs the
-CPS3 disassembly, was not done here, and is the only route by which the slot
-could be live on hardware. Recorded as the open edge of an otherwise closed
-argument.
+evidence of a writer — and for NECRO specifically its dead set is void, so it is
+not evidence of anything here. The one thing not checked is whether the
+**arcade's own** dispatch tables differ from this port's `plpnm_lv_00_cps3[]` —
+that needs the CPS3 disassembly, was not done here, and is the only route by
+which the slot could be live on hardware. Recorded as the open edge of an
+argument that is otherwise closed **at source level only**.
 
 ### 35.8.4 The frame-data golden verdict: NONE of the seven is reachable by the suite, and not because nobody authored an entry
 
@@ -11776,8 +11963,14 @@ two state handlers:
   measured window ends precisely when an `nmca` script resumes. No `nmca` cell's
   duration can ever fall inside a window.
 - **`dmca` and `btca` are exactly `routine_no[1] == 1`.** `plpdm.c` ->
-  `Player_damage` installs koc **1 at 12 sites and koc 6 at 15 sites, and no
-  other koc** (measured). r1 = 1 is the value the filter names and rejects.
+  `Player_damage` installs koc **1 at 12 sites and koc 6 at 15 sites** with those
+  literals, ~~and no other koc~~ **plus exactly one site whose koc is a
+  variable** — `Damage_17000`'s
+  `exset_char_move_init(&wk->wu, wk->wu.now_koc, dm17_to_nm23_change[…])`, which
+  can therefore install `nmca` (corrected third sitting; see §35.8.3's correction
+  for why it still cannot reach `nmca[28]`). r1 = 1 is the value the filter names
+  and rejects, which is unaffected either way — the filter is on `routine_no[1]`,
+  not on the koc.
 
 **The `adv` door is closed separately.** Most of the suite's 1,491 entries
 assert `adv`, and `adv` is the one number taken from the defender at all. It is
@@ -11867,9 +12060,12 @@ list. Under arcade balance the port passes the arcade's values through
 unchanged, which is what we want; what is unconfirmed is only that the arcade's
 values are what the arcade *renders*, and no oracle in this tree can say.
 
-- **This does not establish that the seven re-authored scripts render correctly
-  on device.** Nothing was observed on screen and no screenshot was taken — the
-  same limit §35.6 records for the four cells §35.1 fixed.
+- **This does not establish that the seven ~~re-authored~~ DIVERGENT scripts
+  render correctly on device.** Nothing was observed on screen and no screenshot
+  was taken — the same limit §35.6 records for the four cells §35.1 fixed.
+  *(Wording corrected third sitting: §35.8.1 and §35.8.6 established that only
+  **one** of the seven is re-authored; this bullet still said "re-authored" of all
+  seven, which §35.8.6's own withdrawal contradicts.)*
 - **NECRO `nmca[28]` is dead on a source-level argument, not a hardware one.**
   §35.8.3 enumerates every writer the port's C and the character data could
   supply and finds none, and the PS2 clone corroborates it — but the arcade's
@@ -11968,7 +12164,7 @@ reproduced one of them exactly while contradicting two:
 
 | field | §22.7 | §35.8 | agree? |
 |---|---|---|---|
-| `cg_olc_ix` | 296 cells, 107 scripts | 296 cells, 107 scripts | **yes, to the cell** |
+| `cg_olc_ix` | 296 cells *(§22.7 states the cell count only — "107 scripts" is **§35.8.2's** figure, not §22.7's; corrected third sitting)* | 296 cells, 107 scripts | **yes, to the cell** |
 | `cg_att_ix` | 12 | 22 | no |
 | `cg_hit_ix` | 9 | 13 | no |
 
@@ -11994,12 +12190,27 @@ ext            0             0
 canc         115           114        <- §22.7 published 114
 eff          223           220        <- §22.5 published 220 + 22 absent = 242 "live"
 eftype       185           184        <- §22.5 published 184 + 22 absent = 206 "live"
+rival       3270          3023        <- §22.7 published 3023   (added third sitting)
+zoom           3             3
+add_xy         0             0
+next_ix        1             1
+status         0             0
 ```
 
-**Five independent fields, all exact.** `att`, `hit` and `canc` land on §22.7's
-published numbers and `eff`/`eftype` on §22.5's, under one rule and with nothing
-fitted. `cg_olc_ix` agrees under both scopes because **not one** of its 296
-divergent cells sits past a terminator.
+**~~Five~~ SIX independent fields, all exact.** `att`, `hit`, `canc` and
+`cg_rival` land on §22.7's published numbers and `eff`/`eftype` on §22.5's, under
+one rule and with nothing fitted. `cg_olc_ix` agrees under both scopes because
+**not one** of its 296 divergent cells sits past a terminator.
+
+> **CORRECTION (third sitting): `cg_rival` is the sixth, and §36.6 mistook it for
+> an error.** This table originally stopped at `eftype` because the cgd-6 tail
+> (`zoom`, `rival`, `add_xy`, `next_ix`, `status`) was not decoded by
+> `arc_parse`/`ps2_parse` at all — they skipped its eight bytes — so the rule
+> could not be tested on it. §36.6 then "corrected" §22.7's 3,023 to 3,235, which
+> is the count at neither scope. With the tail decoded, 3,023 is the
+> pre-terminator count exactly, and the rule explains a sixth field. All five
+> tail fields are censused and asserted at both scopes now, so the table cannot
+> stop short again.
 
 **What §22 called the cut: "live".** §22 ran 2026-09-02. `k7_entry_walk` — this
 document's reachability model — did not exist until 2026-09-06 (§26.10.2,
@@ -12145,7 +12356,7 @@ scripts. **Bold** is a figure that moves.
 | `cg_extdat` divergences | 0 | 0 (+22 field-absence) | holds |
 | `cg_status` divergences | 0 | 0 | holds |
 | `cg_next_ix` divergences | exactly 1, ALEX `caca[19]` c8, arcade 9 → PS2 0 | exactly 1, same cell, same values | holds (see §36.8) |
-| `cg_rival` divergences | 3,023, 100% on the 24-vs-20 stride law | **3,235**, 100% on the stride law (`arcade * 5 == ps2 * 6`), 0 anomalies | number moves, verdict holds |
+| `cg_rival` divergences | 3,023, 100% on the 24-vs-20 stride law | **3,270** whole-span / **3,023** pre-terminator, 100% on the stride law (`arcade * 5 == ps2 * 6`), 0 anomalies | §22.7's number was the PRE-TERMINATOR one and is right at that scope; this row's own first answer, **3,235**, is wrong at both and is corrected (third sitting) |
 | `cg_olc_ix` divergences | 296 | 296, over 107 scripts | holds |
 | `cg_att_ix` divergences | 12 | **22**, over 18 scripts | **wrong, corrected** |
 | `cg_hit_ix` divergences | 9 | **13**, over 13 scripts | **wrong, corrected** |
@@ -12155,10 +12366,34 @@ scripts. **Bold** is a figure that moves.
 | `cg_zoom` raw divergences (§22.4) | 927 = 924 absence + 3 | 927 = 924 absence + 3 (YUN `caca[0]` c23/c24/c25, `0x4000` → 0) | holds under **both** scopes |
 | cgd-6 / cgd≥4 pair denominators | 29,887 / 93,947 | 29,887 / 93,947 | holds (whole span, dead included) |
 
-**The `cg_rival` number moves and the verdict does not.** 3,235 whole-span
+~~**The `cg_rival` number moves and the verdict does not.** 3,235 whole-span
 against §22.7's 3,023, and **every one of the 3,235 satisfies
 `arcade * 5 == ps2 * 6`** with zero anomalies — so the larger population makes
-the stride law *better* evidenced, not worse. §8.H is unaffected.
+the stride law *better* evidenced, not worse. §8.H is unaffected.~~
+
+> **CORRECTION (§36.6, 2026-09-12, third sitting): 3,235 is wrong and §22.7's
+> 3,023 was never wrong.** Re-derived over this section's own domain — the same
+> 124,953 live cell-aligned L pairs, 122,537 of them pre-terminator, both
+> reproduced exactly — `cg_rival` is **3,270 whole-span and 3,023
+> pre-terminator**, with 3,270 of 3,270 satisfying `arcade * 5 == ps2 * 6` and
+> zero anomalies. So 3,023 is §36.2's ONE RULE applied to a sixth field: it is
+> the pre-terminator count, correct at the scope §22.7 was measuring at, and it
+> should have joined `att`/`hit`/`canc`/`eff`/`eftype` in §36.2's table rather
+> than being listed as an error. The row above claiming it "moves" is itself the
+> error. 3,235 is not the count at either scope.
+>
+> **Why nothing caught it, which is the part that matters.** `cg_rival` is not in
+> `_VERBATIM_L`, and `arc_parse`/`ps2_parse` skipped the cgd-6 tail whole
+> (`q2 += 8`), so **no instrument held any of the five fields this section
+> publishes** — `cg_zoom`, `cg_rival`, `cg_add_xy`, `cg_next_ix`, `cg_status`.
+> That is exactly the failure §36.7 claims to have closed, on the one field where
+> §36.7's own census could not see it. Both parsers now decode the tail (kept out
+> of `_VERBATIM_L`, which is also `_vmatch`'s identity test and would change the
+> §34 oracle's verdicts), all five are censused at both scopes in both
+> accumulators and cross-checked, and the stride law is counted over every
+> divergence rather than quoted. The run now prints
+> `rival 3270/3023+924a` and `3270 of 3270 ... 0 do not (asserted 0)`. §8.H is
+> unaffected, and better evidenced than either write-up claimed.
 
 **`cg_cancel` 114 → 115.** The extra cell is ORO `saca[49]` c4, arcade 0 → PS2
 64. One cell, the same class §22.7 assigned (cancel-window balance), no new
@@ -12177,10 +12412,10 @@ and asserts the two agree — because the failure this replaces was not an
 arithmetic error, it was two instruments measuring different populations with
 nothing in the tree holding them against each other.
 
-- `verbatim_field_census()` walks the shape-OK domain independently and returns,
-  per field, `full` (whole span), `preterm` (before the first terminator) and
-  `absent` (the field present on one side only), plus `hidden` — the difference,
-  **enumerated as rows, not summarised as a count**.
+- `verbatim_field_census()` walks the shape-OK domain and returns, per field,
+  `full` (whole span), `preterm` (before the first terminator) and `absent` (the
+  field present on one side only), plus `hidden` — the difference, **enumerated
+  as rows, not summarised as a count**.
 - `audit()` accumulates the same census in its own cell loop, as `vb_*` counters
   in each character's `stats` (and the hidden rows under `verbatim` →
   `terminator_cut_hides` in `cg_audit.json`).
@@ -12197,6 +12432,36 @@ nothing in the tree holding them against each other.
 - Both scopes are **printed side by side** on every run, with the hidden rows
   listed underneath. The narrow number can still be quoted; it can no longer be
   quoted alone.
+
+> **CORRECTION (§36.7, 2026-09-12, third sitting): "two instruments" is two
+> ACCUMULATIONS over one parse, and four of the assertions could not fail.**
+> Stating the coverage exactly, since the point of this subsection is coverage:
+>
+> * `verbatim_field_census()` and `audit()`'s cell loop share `arc_parse`,
+>   `ps2_parse`, `_first_terminator`, `k7_entry_walk`, `_VERBATIM_L` and the shape
+>   predicate. What the cross-check catches is a **scope or filter change in one
+>   accumulator and not the other** — which is the §36 defect, and worth having.
+>   What it cannot catch is a change in the shared parse, which moves both
+>   together. That is `_assert_cell_field_offsets`' and `_assert_char_table_image`'s
+>   job, and the word "independently" is withdrawn.
+> * Every assertion was an **equality**, so the whole battery **passed on an
+>   all-zero census** — measured. Non-emptiness is asserted now: the pair counts,
+>   the divergence total, the absence total, and `len(hidden) > 0` (if the two
+>   scopes ever stopped differing, this instrument would be measuring nothing and
+>   has to say so).
+> * `hidden_dead` was asserted `== 0` on the census's half only, never against
+>   `audit()`'s own `vb_hidden_dead`, so that counter could hold any value at all
+>   — `T['vb_hidden_dead'] = 999` passed. Both halves are asserted now, and
+>   against each other.
+> * The per-field **script** counts §35.8.2 and §36.9 publish were computed and
+>   then neither printed nor asserted. They are both now, against `audit()`'s own
+>   per-field script sets, and printed on every run (`olc 107/107`, `rival
+>   282/263`, and so on).
+> * And the census did not cover the cgd-6 tail at all, which is how §36.6's
+>   `cg_rival` correction happened. See §36.6.
+>
+> All four vacuous cases were demonstrated red by mutation before the fix was
+> accepted, and green again after.
 
 ### 36.8 Found on the way, and NOT applied: §30.2's word-5 u8 pair does not swap — ~~OPEN~~ **VERIFIED AND APPLIED 2026-09-12 (§37)**
 
@@ -12314,9 +12579,15 @@ needs. It is *not* a `cg_number` question and moves neither `cells audited:
   through in place.
 - **§22.7's `cg_cancel` figure of 114 is WITHDRAWN.** 115 whole-span; the extra
   cell is ORO `saca[49]` c4 and it belongs to the same class.
-- **§22.7's `cg_rival` figure of 3,023 is WITHDRAWN.** 3,235 whole-span, and
+- ~~**§22.7's `cg_rival` figure of 3,023 is WITHDRAWN.** 3,235 whole-span, and
   **100% still satisfy the 24-vs-20 stride law with zero anomalies** — the
-  verdict §22.7 drew is better supported than it was.
+  verdict §22.7 drew is better supported than it was.~~
+  **CORRECTION (third sitting): the withdrawal is itself withdrawn.** 3,023 is
+  the correct PRE-TERMINATOR count and belongs in the list of five fields §36.2
+  explains rather than in this list of errors; the whole-span count is **3,270**,
+  and 3,235 is the count at no scope. 3,270 of 3,270 satisfy the stride law with
+  zero anomalies, so §22.7's verdict is better supported either way. See §36.6's
+  correction block for why no instrument held this field.
 - **§22.5's "242 live" / "206 live" are WITHDRAWN as liveness statements.**
   They are pre-first-terminator counts. The totals 245 and 207 are correct and
   are the whole-span counts; §22.5's namespace conclusion is untouched.
@@ -12587,9 +12858,29 @@ Both properties §30.3's table exists to show survive, and one improves: the
 plateau is now **3 through 8** bit-identical rather than 4 through 6, and the
 last column is still `0` at every threshold. 4 still sits inside it.
 
-### 37.4 The seven un-excused OOB rows, adjudicated
+### 37.4 The ~~seven~~ **eight** un-excused OOB rows, adjudicated
 
-All seven are `a_koc_oob` — a C cell whose code is 3, 4 or 5 (`comm_jmp` /
+> **CORRECTION (§37.4, 2026-09-12, third sitting): there are EIGHT, and the
+> eighth is the one the instrument could not see.** `HUGO nmca[49]` c24 is an
+> un-excused `a_koc_oob` row in `cg_audit.json` — `koc 6144`, `dead: false`,
+> `grid: past_prefix` — carrying the *same four bytes* `00 04 18 00` as the
+> DUDLEY/NECRO/TWELVE rows. `word5_lc_gate`'s (e) leg dropped it on
+> `if (o + 4 > L) continue`: that script's PS2 side is 64 bytes / 4 cells against
+> the arcade's 48, so there are **no PS2 bytes at cell 24 to compare**. The row
+> was never emitted, which is why `halfswap_oob == len(koc_rows)` read green at 7
+> over a population of 8.
+>
+> So **"the out-of-range `koc` population IS the half-swap population" is false as
+> stated.** It is true of the population the word-0 test can run on; one row is
+> outside that population entirely. The gate now emits such a row under its own
+> name (`no_ps2_bytes`), and a new assertion holds the gate's row set against
+> `audit()`'s own un-excused `a_koc_oob` set — `8 == 8`, symmetric difference
+> empty — so a row cannot silently leave the population again. Proven red by
+> mutation: restoring the `continue` makes the run stop with
+> `[('HUGO', 'nmca', 49, 24)]`.
+
+Seven of the eight are `a_koc_oob` rows the word-0 test can adjudicate; all eight
+are `a_koc_oob` — a C cell whose code is 3, 4 or 5 (`comm_jmp` /
 `comm_jpss` / `comm_jsr`) and whose `koc` is outside `char_table`
 (`include/structs.h` -> `u32* char_table[12]`; the audit's bound is now parsed
 from that declaration as `N_KOC`, not typed as a literal).
@@ -12604,18 +12895,21 @@ word**. Split every jump cell the two decoders agree is a C cell by which of the
 two its word 0 takes:
 
 ```
-7596 jump cells both decoders call a C cell
+7596 jump cells both decoders call a C cell, with PS2 bytes at the cell
   7559 convert as a C header (GRID_GEN[0])   out-of-range koc:  0
     30 convert as neither                    out-of-range koc:  0
-     7 take the word-5 half-swap             out-of-range koc:  7   <- all seven rows
+     7 take the word-5 half-swap             out-of-range koc:  7   <- seven of the eight rows
+   + 1 jump cell with NO PS2 bytes at all    out-of-range koc:  1   <- HUGO nmca[49] c24
 ```
 
-**7 of 7 against 0 of 7,589, in both directions.** The out-of-range `koc`
-population *is* the population whose word 0 does not convert the way a C header
-converts. So the value the audit reads there is not a `koc`: it is the low half
-of some record's word 5, read by a decoder whose cell boundary is not the data's
-— §30's grid-phantom finding arriving at a different word, by a route that never
-consults the grid walk.
+**7 of 7 against 0 of 7,589, in both directions — over the cells the test can
+run on.** Within that population the out-of-range `koc` population *is* the
+population whose word 0 does not convert the way a C header converts. So the
+value the audit reads there is not a `koc`: it is the low half of some record's
+word 5, read by a decoder whose cell boundary is not the data's — §30's
+grid-phantom finding arriving at a different word, by a route that never consults
+the grid walk. The eighth row is **outside that population** and the claim does
+not extend to it; it is adjudicated separately in the table below.
 
 | row | arcade / PS2 word 0 | arcade koc | PS2 koc | `dead` | `k7_entry_walk` for that character | verdict |
 |---|---|---|---|---|---|---|
@@ -12626,15 +12920,27 @@ consults the grid walk.
 | DUDLEY `nmca[32]` c10 | `00 04 18 00` / `04 00 18 00` | 6,144 | 24 | **true** | complete | **not a defect**, two instruments |
 | NECRO `nmca[49]` c24 | `00 04 18 00` / `04 00 18 00` | 6,144 | 24 | false | **void(4)** | **not a defect on the datum**; reachability unmodelled |
 | TWELVE `nmca[46]` c30 | `00 04 18 00` / `04 00 18 00` | 6,144 | 24 | false | **void(117)** | **not a defect on the datum**; reachability unmodelled |
+| HUGO `nmca[49]` c24 | `00 04 18 00` / **no PS2 bytes** | 6,144 | — | false | **void(2)** | **NEITHER LEG SETTLED.** The word-0 test cannot run (PS2 side is 64 B / 4 cells against the arcade's 48), and reachability is void. Carried, not explained |
 
-Three characters carry the *same four bytes* at the same cell shape —
-`00 04 18 00` against `04 00 18 00`, first u16 swapped, second half
-byte-identical — which is itself evidence that the relation is the converter's
-and not a per-character accident.
+~~Three~~ **Four** characters carry the *same four bytes* at the same cell shape
+— `00 04 18 00`, against `04 00 18 00` on the three where the PS2 has a
+counterpart: first u16 swapped, second half byte-identical — which is itself
+evidence that the relation is the converter's and not a per-character accident.
+
+**HUGO is the strictest row of the eight, and it is deliberately left that way.**
+Byte-identity with three rows whose word 0 provably takes the half-swap is real
+evidence that its datum is the same thing; it is not the measurement, because the
+measurement needs four PS2 bytes at that offset and there are none. Under the
+house rule that anything unmodelled fails toward the finding, both legs are open:
+the datum is *probably* not a `koc` and the reachability is void. It joins NECRO
+and TWELVE in §8.C / §8.L rather than being cleared — **recorded here, not given
+a worklist item of its own**, and now emitted by the gate on every run so it
+cannot be lost again.
 
 **Corroborating, not decisive: the PS2 counterpart is out of range too, in all
-seven.** The shipped PS2 game holds an out-of-range `jpss` destination at the
-same cell of the same script and does not crash. That is not §6.1's letter — the
+seven** — the seven with a PS2 counterpart cell. The shipped PS2 game holds an
+out-of-range `jpss` destination at the same cell of the same script and does not
+crash. HUGO has no counterpart cell, so this leg is silent there as well. That is not §6.1's letter — the
 *decoded* values differ, 48 against 12,288 and 6,144 against 24, because the two
 decoders read the same bytes at opposite endianness — but it is its substance:
 nothing the arcade adaptation did created this.
@@ -12693,15 +12999,30 @@ here, not given a worklist item of its own.**
     crosses and is never identical — so (a) reads real fields at real offsets;
   - **(d)** `GRID_GEN[5]` is **derived** from (a) rather than compared against a
     literal: whichever permutation the L records vote for is the one the table
-    must carry, so reverting the constant fails the run;
+    must carry, so reverting the constant fails the run. **CORRECTION (third
+    sitting): the derivation sat AFTER (a)'s `l_crossed == 0`, which made its
+    conditional dead — the only reachable branch was `(1,0,2,3)`, so it asserted
+    a literal against itself.** It is taken first now, so a data change that made
+    the u8 pair cross yields `(1,0,3,2)` and fails (a)'s leg is separate).
+    Demonstrated: with `l_crossed` forced above `l_identical`, (d) is the leg
+    that fires;
   - **(e)** the out-of-range `koc` population is exactly the non-header
     population, asserted in both directions (`header_oob == 0`,
-    `other_oob == 0`, `halfswap_ok == 0`, `halfswap_oob > 0`).
+    `other_oob == 0`, `halfswap_ok == 0`, `halfswap_oob > 0`);
+  - **(e′)** *added third sitting.* Every out-of-range `koc` is **emitted**, and
+    the two kinds sum to the rows: `halfswap_oob + nocmp_oob == len(koc_rows)`,
+    with the per-kind counts asserted against the rows that carry each. The old
+    form was `halfswap_oob == len(koc_rows)` and it was green at 7 over a
+    population of 8 — see §37.4's correction;
+  - **(e″)** *added third sitting.* `_assert_word5_koc_population()` holds the
+    gate's row set against **`audit()`'s own** un-excused `a_koc_oob` set, which
+    is the population (e) is a claim *about*. Equality both ways, non-empty. This
+    is what nothing checked.
 
 - The run prints both word-5 populations, the control, the derived generator, the
   one real `cg_next_ix` divergence **as a row**, the koc separation, and all
-  seven rows by name with their bytes. Rows, not counts: a future narrowing has
-  to delete evidence rather than quietly lose a number.
+  ~~seven~~ **eight** rows by name with their bytes. Rows, not counts: a future
+  narrowing has to delete evidence rather than quietly lose a number.
 
 `cells audited: 133901` and the violation TOTAL row do not move. Nothing in
 `src/` changed and no build was run.
@@ -12717,7 +13038,11 @@ here, not given a worklist item of its own.**
   it: `remap` enters the vote only through role 1's special case, so word 0 does
   not depend on `twelve_cg_ranges`. No reading in §30 rests on the exact value.
 - **§30.5's "the 136 OOB-index rows split 120 / 16" is superseded: 113 / 23.**
-  The 136 total is unchanged and the seven that moved are adjudicated in §37.4.
+  The 136 total is unchanged and the ~~seven~~ **eight** un-excused rows are
+  adjudicated in §37.4. §30.5 still carried the old split in its own text and now
+  carries a correction pointing here.
+- **§30.5's "Every `*_oob` row was already `dead` … and still is" is FALSE on this
+  tree** (third sitting): 44 of the 136 carry `dead: false`. Corrected in place.
 - **§36.8's control population is mis-stated.** "The `cg_add_xy` u16 in the same
   word, cells where its two bytes differ: crossed 27, identical 0" is the control
   over the **same 255 cells** row A measures. Over every shape-ok cgd-6 L cell

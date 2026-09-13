@@ -94,7 +94,17 @@ int ArcadeCharData_CgRangeDefects(const CgRemapRange* ranges, size_t count, cons
 /// also resolve by position). Returns the total defect count; 0 is the only
 /// acceptable answer. Called from `ArcadeCharData_Init` under DEBUG and by
 /// `--test-cg-ranges` in a test build.
+///
+/// A character whose `cg_maps[]` entry has no ranges at all counts as a defect:
+/// `CgRangeDefects(NULL, 0, ...)` is vacuously 0, so without that a dropped
+/// initializer read green while every raw for that character fell through to
+/// `default_delta`.
 int ArcadeCharData_CgTableDefects(void);
+
+/// Total `CgRemapRange` rows across all twenty `cg_maps[]` tables. Exposed so
+/// `--test-cg-ranges` can pin the population rather than print `NUM_CHARS`,
+/// which is a compile-time constant and proves nothing about the tables.
+size_t ArcadeCharData_CgRangeRows(void);
 #endif
 
 #endif

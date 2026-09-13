@@ -98,6 +98,7 @@ static const LocationData location_data[NUM_CHARS];
 static const size_t section_element_sizes[CHAR_DATA_SECTION_COUNT];
 #if defined(DEBUG) || defined(ENABLE_NETPLAY_TESTS)
 int ArcadeCharData_CgTableDefects(void);
+size_t ArcadeCharData_CgRangeRows(void);
 #endif
 
 static int SDLCALL compare_u32(const void* lhs, const void* rhs) {
@@ -1097,8 +1098,16 @@ static const CgRemapRange alex_cg_ranges[] = {
     { .first = 0x707B, .last = 0x7085, .delta = -0x667D },
 };
 
+// 0x7086 (not 0x7082) is the LOWEST raw Ryu's own scripts observe at this delta;
+// the row ran to 0x7082 and the four values 0x7082-0x7085 it reached over are
+// Alex's band (`alex_cg_ranges` above is 0x707B..0x7085, and Alex observes all
+// eleven of those). Zero Ryu cells carry 0x7082-0x7085 today, so tightening it
+// moves no cell and the digest does not change -- the same zero-blast-radius
+// argument §8.T made for the three rows it widened, run in the other direction.
+// Per-character `--test-cg-ranges` cannot see this: it checks overlap only
+// WITHIN one character's table, and these two rows are in different tables.
 static const CgRemapRange ryu_cg_ranges[] = {
-    { .first = 0x7082, .last = 0x7090, .delta = -0x62C6 },
+    { .first = 0x7086, .last = 0x7090, .delta = -0x62C6 },
 };
 
 static const CgRemapRange yun_cg_ranges[] = {
@@ -1176,7 +1185,12 @@ static const CgRemapRange ken_cg_ranges[] = {
 };
 
 static const CgRemapRange sean_cg_ranges[] = {
-    { .first = 0x70F4, .last = 0x70FF, .delta = -0x2F74 },
+    /* 0x70FE, not 0x70FF: the comment below and §8.T's own re-verification table
+       both give this band's measured hull as 0x70F4..0x70FE (11 observations),
+       and 0x70FF is `urien_cg_ranges`' first row's band START. Zero Sean cells
+       carry 0x70FF, so the tightening moves no cell and the digest does not
+       change. */
+    { .first = 0x70F4, .last = 0x70FE, .delta = -0x2F74 },
     /* cuca[64] and siblings, all measuring the same +0x3160 (doc §8.E /
        §7.3(i)), as ONE row over the band's measured hull (doc §8.T). This was
        8 discrete rows covering exactly the 8 observed raws -- the same
@@ -1648,12 +1662,56 @@ int ArcadeCharData_CgRangeDefects(const CgRemapRange* ranges, size_t count, cons
     return defects;
 }
 
+/* The label CgRangeDefects prints. It used to be the literal "cg_maps" for all
+ * twenty, so a real overlap could not name the character, let alone the array
+ * to edit. Indexed by Character, so a reordered enum mislabels rather than
+ * silently mismatching -- which is why the count is asserted below. */
+static const char* const cg_range_table_names[NUM_CHARS] = {
+    [CHAR_GILL] = "gill_cg_ranges",     [CHAR_ALEX] = "alex_cg_ranges",     [CHAR_RYU] = "ryu_cg_ranges",
+    [CHAR_YUN] = "yun_cg_ranges",       [CHAR_DUDLEY] = "dudley_cg_ranges", [CHAR_NECRO] = "necro_cg_ranges",
+    [CHAR_HUGO] = "hugo_cg_ranges",     [CHAR_IBUKI] = "ibuki_cg_ranges",   [CHAR_ELENA] = "elena_cg_ranges",
+    [CHAR_ORO] = "oro_cg_ranges",       [CHAR_YANG] = "yang_cg_ranges",     [CHAR_KEN] = "ken_cg_ranges",
+    [CHAR_SEAN] = "sean_cg_ranges",     [CHAR_URIEN] = "urien_cg_ranges",   [CHAR_AKUMA] = "akuma_cg_ranges",
+    [CHAR_CHUNLI] = "chunli_cg_ranges", [CHAR_MAKOTO] = "makoto_cg_ranges", [CHAR_Q] = "q_cg_ranges",
+    [CHAR_TWELVE] = "twelve_cg_ranges", [CHAR_REMY] = "remy_cg_ranges",
+};
+
+size_t ArcadeCharData_CgRangeRows(void) {
+    size_t rows = 0;
+
+    for (int character = 0; character < NUM_CHARS; character++) {
+        rows += cg_maps[character].range_count;
+    }
+
+    return rows;
+}
+
 int ArcadeCharData_CgTableDefects(void) {
     int defects = 0;
 
     for (int character = 0; character < NUM_CHARS; character++) {
+        /* A DROPPED TABLE is a defect, and has to be one here rather than in the
+         * harness. `CgRangeDefects(NULL, 0, ...)` returns 0, so a `cg_maps[]`
+         * entry that lost its `.ranges` / `.range_count` initializer -- every
+         * raw for that character silently falling through to `default_delta` --
+         * left `CgTableDefects() == 0` green. Every character has a table; the
+         * invariant is that none of them is allowed to stop having one. */
+        if (cg_maps[character].ranges == NULL || cg_maps[character].range_count == 0) {
+            defects++;
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "cg_maps[%d] (%s) has no ranges: every raw falls through to default_delta %+d", character,
+                         cg_range_table_names[character] ? cg_range_table_names[character] : "?",
+                         (int)cg_maps[character].default_delta);
+            continue;
+        }
+
+        if (cg_range_table_names[character] == NULL) {
+            defects++;
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "cg_range_table_names[%d] is unset", character);
+        }
+
         defects += ArcadeCharData_CgRangeDefects(cg_maps[character].ranges, cg_maps[character].range_count,
-                                                 "cg_maps");
+                                                 cg_range_table_names[character]);
     }
 
     /* Same guard for the cg_se pair tables: remap_cg_se takes the first
