@@ -90,7 +90,7 @@ echo "logs: ${out_dir}"
 echo
 
 # ---------------------------------------------------------------------------
-# 1/2. The two host configurations. Configure as well as build: a gate that
+# 1/2/3. The three host configurations. Configure as well as build: a gate that
 #      assumes somebody already ran cmake is a gate that silently tests a stale
 #      configuration, which is the same class of defect as not running at all.
 # ---------------------------------------------------------------------------
@@ -116,6 +116,30 @@ np_rc=$?
 [ $np_rc -eq 0 ] && record nptest-build GREEN || {
     record nptest-build RED
     grep -E "error:" "${out_dir}/build-nptest.log" | head -15
+}
+
+# The third configuration exists because neither of the two above compiles
+# `#if defined(STATCHECK)` code, so nothing here could see a break in it.
+# Measured 2026-09-13: the statcheck read in src/test/scrd_game.c ->
+# scrd_read_match_setup fed five unchecked archive bytes into Super_Arts,
+# My_char, Player_Color, New_Challenger and bg_w.stage, and bounding them
+# needed a Release + THREESX_STATCHECK=ON tree built BY HAND -- the gate could
+# not have caught a compile break in the fix it was verifying.
+#
+# It cannot be folded into either of the others. host-release leaves the option
+# OFF, and a Debug + THREESX_STATCHECK configure is a hard error by design
+# (CMakeLists.txt, "THREESX_STATCHECK is incompatible with a Debug build"), so
+# host-nptest cannot carry it either. The build dir name is the one the
+# pre-convert fleet already expects (tools/fcade-replays/auto-convert/setup.sh).
+cmake -S . -B build/host-statcheck -DCMAKE_BUILD_TYPE=Release \
+    -DENABLE_NETPLAY=ON -DNETPLAY_TEST_HOOKS=OFF -DTHREESX_STATCHECK=ON \
+    > "${out_dir}/configure-statcheck.log" 2>&1 \
+ && cmake --build build/host-statcheck -j "${jobs}" \
+    > "${out_dir}/build-statcheck.log" 2>&1
+sc_rc=$?
+[ $sc_rc -eq 0 ] && record statcheck-build GREEN || {
+    record statcheck-build RED
+    grep -E "error:" "${out_dir}/build-statcheck.log" | head -15
 }
 echo
 
