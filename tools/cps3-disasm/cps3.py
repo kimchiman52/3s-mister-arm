@@ -1424,6 +1424,211 @@ def cmd_selftest(img: Image, args) -> int:
         "[0, 1, 3]",
     )
 
+    print("")
+    print("-- 16.4: the arcade sag_union family, the EX-4th residual's last unread routines --")
+    # The item 16.3 left live: the port's only `ex4th_exec` READERS are the two
+    # `if (wk->sa->ex4th_exec)` in `plmain.c` -> `sag_union_ps2`, and the arcade
+    # counterparts of that routine -- whatever `sag_union` dispatches to under
+    # arcade balance -- had never been read.  If one of them read an EX-4th flag
+    # the finding inverted from "PS2-only feature" into "our arcade arm omits an
+    # arcade read".  It does not: none of the three touches SA +38/+39, and none
+    # touches +9 (mp) either.  Everything below is what that rests on.
+    #
+    # The anchor is the jump TABLE, not any routine's shape.  0x065EAF98 occurs
+    # once, has one literal referrer, and the instruction that loads it sits in
+    # the arcade `about_gauge_process`; four half-words later the dispatch reads
+    # SA+8 (gauge_type) and `shll2`s it, which is what makes the entries 32-bit
+    # and the table the port's `sag_union_cps3_jump_table`.
+    check("sag_union jump table 0x065EAF98: sole literal referrer (pool word)", _sole_ref(img, 0x065EAF98)[0], 0x06119D80)
+    check("  loaded by the instruction at", _sole_ref(img, 0x065EAF98)[1], 0x06119D54)
+    check("  -> enclosing routine = about_gauge_process", 0x06119D4A, 0x06119D4A)
+    check(
+        "    which is a real start: the previous routine's rts + delay slot end at",
+        (img.is_rts(0x06119D46), 0x06119D48 + 2),
+        (True, 0x06119D4A),
+    )
+    check("    and it is reached by pool word from 2 call sites", len(pool_words(img, 0x06119D4A, 4)), 2)
+    check(
+        "  the dispatch: gauge_type is SA+8, shll2 makes the entries 32-bit",
+        str([(i.mnemonic, i.op_str) for i in img.disasm(0x06119D56, 10)]),
+        str([("mov.l", "@(r0,r14),r2"), ("mov.b", "@(8,r2),r0"), ("shll2", "r0"),
+             ("mov.l", "@(r0,r1),r3"), ("jsr", "@r3")]),
+    )
+    # FOUR entries, and the bound is a second table's own anchor rather than the
+    # dispatch, which bound-checks nothing: 0x065EAFA8 is the next family's base
+    # and has its own sole literal referrer.  [0] == [2] is the port's
+    # `{ sag_union_0, sag_union_1, sag_union_0, sag_union_3 }` in the ROM.
+    check("  table[0..3]", [hex(img.u32(0x065EAF98 + 4 * i)) for i in range(4)],
+          ["0x611a032", "0x611a14e", "0x611a032", "0x611a39e"])
+    check("    [0] == [2], as the port's jump table has sag_union_0 twice",
+          img.u32(0x065EAF98) == img.u32(0x065EAFA0), True)
+    check("    the entry count is bounded by the NEXT table's own referrer", _sole_ref(img, 0x065EAFA8)[1], 0x0611A710)
+    # Boundaries read off the instructions, and corroborated the way 16.3's
+    # `set_kizetsu_status` boundary should have been: each variant's start is a
+    # pool word ONLY in this table (2 slots for the shared one, 1 each for the
+    # others), so the table entries ARE their call sites -- nothing else in the
+    # image enters them.  Here `find_function_start`'s rts-scan agrees with the
+    # instructions for all three, which is worth recording only because at
+    # 0x0611856C it did not.
+    for _name, _start, _end, _slots in (
+        ("sag_union_0", 0x0611A032, 0x0611A14E, 2),
+        ("sag_union_1", 0x0611A14E, 0x0611A39A, 1),
+        ("sag_union_3", 0x0611A39E, 0x0611A4A8, 1),
+    ):
+        check("  %s extent" % _name, function_extent(img, _start)[0], _end)
+        check("    its rts + delay slot end the extent", (img.is_rts(_end - 4), _end), (True, _end))
+        check("    find_function_start agrees with the instructions", find_function_start(img, _start), _start)
+        check("    literal referrers, all of them jump-table slots", len(pool_words(img, _start, 4)), _slots)
+    # sag_union_1 ends at 0x0611A39A and sag_union_3 starts at 0x0611A39E: the 4
+    # bytes between are a bare `rts; nop` with no literal referrer and no branch
+    # to it.  Pinned so that a later reader does not fold it into either variant.
+    check("  the 4-byte rts/nop between sag_union_1 and sag_union_3 has no referrer",
+          (function_extent(img, 0x0611A39A)[0], len(pool_words(img, 0x0611A39A, 4))), (0x0611A39E, 0))
+    # BORROWED POOLS, the trap that manufactured a `mov.b @(r0,r14),r3` in
+    # `execute_super_arts`.  All three variants share literals: sag_union_0 loads
+    # 0x0611A1CE/0x0611A1D0 (inside sag_union_1) and sag_union_1 loads
+    # 0x0611A3E4..0x0611A3F2 (inside sag_union_3), so every walk below passes
+    # `scan_from`.  Pinned in both directions so a regression in either is loud.
+    for _name, _lo, _hi, _sf, _borrowed in (
+        ("sag_union_0", 0x0611A032, 0x0611A14E, 0x06119EA4, ["0x611a0c0", "0x611a0c2"]),
+        ("sag_union_1", 0x0611A14E, 0x0611A39A, 0x0611A032, ["0x611a1d0", "0x611a1d2"]),
+        ("sag_union_3", 0x0611A39E, 0x0611A4A8, 0x0611A14E,
+         ["0x611a3e4", "0x611a3e6", "0x611a3e8", "0x611a3ec", "0x611a3f0", "0x611a3f2"]),
+    ):
+        check(
+            "  %s: pool half-words resolved only with scan_from" % _name,
+            [hex(a) for a in sorted(set(pool_map(img, _lo, _hi, scan_from=_sf)) - set(pool_map(img, _lo, _hi)))],
+            _borrowed,
+        )
+    # THE VERDICT, in the three pieces it needs.
+    #
+    # (1) Every IMMEDIATE-DISPLACEMENT form, at all three widths.  SH-2 carries a
+    #     4-bit displacement: unscaled for mov.b (max +15), x2 for mov.w (max
+    #     +30), x4 for mov.l (max +60, multiples of 4).  So the ONLY displacement
+    #     form that could touch +38/+39 at all is `mov.l @(36,Rm)`, whose 4 bytes
+    #     span 36..39 -- and no variant has one; the widest mov.l displacement in
+    #     the family is 28.  +9 is likewise unreachable: mov.w/mov.l cannot
+    #     address it, and no mov.b displacement form names 9.  Totals are pinned
+    #     beside each list so an empty or short list cannot come from a walk that
+    #     found nothing.
+    _MOV_FORMS = {
+        "sag_union_0": ["#0,r5", "#1,r6", "#2,r0", "#20,r0", "#20,r1", "#34,r0", "#36,r0", "#38,r0",
+                        "r5,r0", "r6,r0"],
+        "sag_union_1": ["#-1,r0", "#0,r5", "#1,r6", "#16,r2", "#16,r3", "#2,r0", "#20,r0", "#20,r1",
+                        "#3,r0", "#32,r3", "#34,r0", "#36,r0", "#38,r0", "#4,r3", "r5,r0", "r6,r0"],
+        "sag_union_3": ["#0,r5", "#1,r6", "#2,r0", "#20,r0", "#20,r1", "#3,r0", "#34,r0",
+                        "r5,r0", "r6,r0"],
+    }
+    # The only base shifts in the family are sag_union_1's two `add r0,rN`, both
+    # `mov #16,rN` + `add r0,rN` + `mov.w rM,@rN` -- SA+16 (sa_rno), already in
+    # the displacement set above.  Every other `add` is +/-1 on a LOADED VALUE
+    # (the store and id_arts words), not on a pointer.
+    _ADD_FORMS = {
+        "sag_union_0": ["#-1,r1", "#1,r2"],
+        "sag_union_1": ["#-1,r1", "#1,r2", "r0,r2", "r0,r3"],
+        "sag_union_3": ["#-1,r2"],
+    }
+    # 0x0611A2DE and 0x0611A3EE are two bytes of alignment padding between a word
+    # literal and the 4-aligned long literal that follows it, so `pool_map` never
+    # marks them (nothing loads them) and `written_regs` cannot model 0x0000.
+    _PAD = {
+        "sag_union_0": [],
+        "sag_union_1": [("0x611a2de", "0x0")],
+        "sag_union_3": [("0x611a3ee", "0x0")],
+    }
+    for _name, _lo, _hi, _sf, _b, _w, _l in (
+        ("sag_union_0", 0x0611A032, 0x0611A14E, 0x06119EA4,
+         (["@(10,r0),r0", "r0,@(10,r3)"], 6),
+         (["@(16,r0),r0", "r0,@(16,r2)", "r0,@(16,r3)"], 12),
+         ([], 4)),
+        ("sag_union_1", 0x0611A14E, 0x0611A39A, 0x0611A032,
+         (["@(10,r0),r0", "@(13,r7),r0", "r0,@(10,r2)", "r0,@(10,r3)", "r0,@(13,r3)"], 13),
+         (["@(16,r0),r0", "@(22,r6),r0", "@(24,r3),r0", "@(8,r4),r0",
+           "r0,@(16,r2)", "r0,@(16,r3)", "r0,@(24,r6)", "r0,@(26,r3)"], 28),
+         (["@(12,r4),r0", "@(24,r7),r2", "@(28,r7),r3", "r2,@(24,r7)", "r5,@(24,r2)"], 13)),
+        ("sag_union_3", 0x0611A39E, 0x0611A4A8, 0x0611A14E,
+         (["@(10,r0),r0", "r0,@(10,r3)"], 6),
+         (["@(16,r0),r0", "r0,@(16,r2)", "r0,@(16,r3)"], 10),
+         (["r5,@(24,r3)"], 4)),
+    ):
+        for _mn, _want in (("mov.b", _b), ("mov.w", _w), ("mov.l", _l)):
+            check(
+                "  %s: every %s displacement form (%d form(s) total)" % (_name, _mn, _want[1]),
+                _disp_operands(img, _lo, _hi, _mn, scan_from=_sf),
+                _want,
+            )
+        # (2) Every constant a register can hold, and every base shift.  An
+        #     `@(r0,Rm)` access names no displacement, so an SA offset can only
+        #     get there as an immediate in one of the two registers, or by
+        #     shifting an SA base.  `mov #imm` and `add` are the complete set of
+        #     ways this family does either.  38 is present in two variants and is
+        #     PLW-relative both times -- `wk->wu.routine_no[1] != 4`, pinned
+        #     below.  39 and 9 never appear as an immediate at all.
+        check("  %s: every mov form -- the complete constant set" % _name,
+              _operands(img, _lo, _hi, "mov", scan_from=_sf), _MOV_FORMS[_name])
+        check("  %s: every add form -- the complete base-shift set" % _name,
+              _operands(img, _lo, _hi, "add", scan_from=_sf), _ADD_FORMS[_name])
+        # (3) No call and no indirect transfer, so no helper can read the field
+        #     on their behalf; and r4 (the PLW argument) is never written, which
+        #     is what makes "base r4 = PLW, base rN = the SA pointer loaded from
+        #     PLW+0x3F0" hold for every access above.  The UNKNOWN half-words are
+        #     returned rather than swallowed and are pinned to be the 0x0000
+        #     alignment padding inside a pool, not an unmodelled instruction.
+        check("  %s: no jsr/bsr/jmp -- nothing can read the field on its behalf" % _name,
+              [o for _m in ("jsr", "bsr", "jmp", "bsrf", "braf")
+               for o in _operands(img, _lo, _hi, _m, scan_from=_sf)], [])
+        check("  %s: nothing writes r4, the PLW argument" % _name,
+              _reg_writers(img, _lo, _hi, 4, scan_from=_sf)[0], [])
+        check("    and its UNKNOWN-encoding half-words are 0x0000 pool padding",
+              [(a, hex(img.u16(int(a, 16)))) for a in _reg_writers(img, _lo, _hi, 4, scan_from=_sf)[1]],
+              _PAD[_name])
+    # The two `mov #38,r0` sites, named because 38 is the one immediate in the
+    # family that could have been an SA offset.  Both are followed immediately by
+    # a PLW-based read -- `wk->wu.routine_no[1]`, whose port counterpart is the
+    # `(wk->sa->saeff_ok != 1) || (wk->wu.routine_no[1] != 4)` term.
+    for _site in (0x0611A108, 0x0611A242):
+        check(
+            "  mov #38,r0 at %s is PLW-relative, not SA+38" % hex(_site),
+            str([(i.mnemonic, i.op_str) for i in img.disasm(_site, 6)]),
+            str([("mov", "#38,r0"), ("mov.w", "@(r0,r4),r0"), ("cmp/eq", "#4,r0")]),
+        )
+    # And the STRUCTURAL leg, independent of the offsets: the one site where the
+    # PS2 arm consults ex4th_exec is the store decrement,
+    # `if (ex4th_exec) store = 0; else store--`.  In all three arcade variants
+    # that site is an unconditional `add #-1` on the SA+34 word -- gated only by
+    # pcon_dp_flag in _0 and _1, and by nothing in _3, exactly as the port's
+    # arcade arm has it.  There is no second condition to have held an EX-4th
+    # test, so the negative does not depend on the offset argument alone.
+    for _name, _site, _want in (
+        ("sag_union_0", 0x0611A0E4,
+         [("mov", "#34,r0"), ("mov.w", "@(r0,r3),r1"), ("add", "#-1,r1"), ("mov.w", "r1,@(r0,r3)")]),
+        ("sag_union_1", 0x0611A216,
+         [("mov", "#34,r0"), ("mov.w", "@(r0,r3),r1"), ("add", "#-1,r1"), ("mov.w", "r1,@(r0,r3)")]),
+        ("sag_union_3", 0x0611A44A,
+         [("mov", "#34,r0"), ("mov.w", "@(r0,r3),r2"), ("add", "#-1,r2"), ("mov.w", "r2,@(r0,r3)")]),
+    ):
+        check(
+            "  %s: the store decrement is unconditional (SA+34, no EX-4th test)" % _name,
+            str([(i.mnemonic, i.op_str) for i in img.disasm(_site, 8)]),
+            str(_want),
+        )
+    # The one guard _0 and _1 do have on it is pcon_dp_flag, and _3 has none:
+    # both shapes are what the port's arcade arm already writes, and neither
+    # leaves room for a second test.
+    for _name, _site in (("sag_union_0", 0x0611A0D8), ("sag_union_1", 0x0611A20A)):
+        check(
+            "  %s: that guard is pcon_dp_flag (0x02068C67) and nothing else" % _name,
+            str([(i.mnemonic, i.op_str) for i in img.disasm(_site, 6)]),
+            str([("mov.l", "0x%x,r2" % (0x0611A1D0 if _site == 0x0611A0D8 else 0x0611A2E0)),
+                 ("mov.b", "@r2,r3"), ("tst", "r3,r3")]),
+        )
+        check("    the literal it loads", img.u32(0x0611A1D0 if _site == 0x0611A0D8 else 0x0611A2E0), 0x02068C67)
+    check(
+        "  sag_union_3 reaches its decrement with no flag test at all",
+        str([(i.mnemonic, i.op_str) for i in img.disasm(0x0611A446, 6)]),
+        str([("mov.w", "0x611a544,r0"), ("mov.l", "@(r0,r4),r3"), ("mov", "#34,r0")]),
+    )
+
     # ------------------------------------------------------------------
     # Regressions.  Every check below FAILED before the commit that added it;
     # each names the wrong answer the tool used to give.  They exist because
@@ -1669,6 +1874,36 @@ def _disp_operands(img: Image, start: int, end: int, mnemonic: str, scan_from: i
     """
     all_forms = _operands(img, start, end, mnemonic, scan_from)
     return [o for o in all_forms if _DISP_FORM.search(o)], len(all_forms)
+
+
+def _reg_writers(img: Image, start: int, end: int, reg: int, scan_from: int = None):
+    """(sites that DEFINITELY write `reg`, half-words whose encoding is UNKNOWN).
+
+    The companion to `_operands` for the other half of a struct-offset negative.
+    An `@(r0,Rm)` access names no displacement, so which of R0/Rm holds the
+    pointer and which the constant is decided by what wrote them -- and that
+    argument is only as good as "the argument register is never rewritten".
+    This is the check that says so, and it returns the UNKNOWN sites alongside
+    rather than swallowing them, because an unmodelled encoding is exactly where
+    a write could hide: a caller that ignores the second list has proved nothing.
+
+    Pool half-words are skipped through `pool_map`, so pass `scan_from` on any
+    range that can host a borrowed pool -- the same rule as `_operands`.
+    """
+    pool = pool_map(img, start, end, scan_from)
+    writers, unknown = [], []
+    a = start
+    while a < end:
+        if a in pool:
+            a += 2
+            continue
+        w = img.written_regs(a)
+        if w is None:
+            unknown.append(hex(a))
+        elif reg in w:
+            writers.append(hex(a))
+        a += 2
+    return writers, unknown
 
 
 def _sole_ref(img: Image, value: int):

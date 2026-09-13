@@ -146,7 +146,10 @@ command and its observed output, or a named primary source. Things that were
   re-open it. Its one residual, the two ungated System Direction modifiers, is
   **gated as of 2026-09-06**: §16.1. The seven neighbouring `*_omake` modifiers
   are gated too (§16.2, 2026-09-07), and the three `plcnt.c` clamps §16.2 left
-  unadjudicated are **closed as inert, no code change** (§16.3, 2026-09-12).
+  unadjudicated are **closed as inert, no code change** (§16.3, 2026-09-12). The
+  last item that could still have inverted a landed conclusion — whether an
+  arcade `sag_union_*` reads an EX-4th flag — is **read and negative** (§16.4,
+  2026-09-13).
 
 ---
 
@@ -270,7 +273,7 @@ command and its observed output, or a named primary source. Things that were
 | **Selected OVIX index past the OVIX** | **CHANGED 2026-09-07** (§31.8). Seven characters (Ibuki's live one from §18.6(i), six more post-terminator) now read `reach-unmodelled(ovix-oob …)` instead of `ok`; `residual_audit.py` forces `part_reachable` for them. The §6.1 verdict on Ibuki's overrun itself is unchanged |
 | Upstream issue #363 | **OPEN** upstream; our findings not yet reported (§13) |
 | **The other 13 sections** (issue **#325**) | **AUDITED, no defect** — differences enumerated and classified (§15) |
-| **Arcade command tables** (input recognition) | **CLOSED — no bug** (§16). §16's one residual — `cmd_data_set` applying the PS2-only `blok_b_omake`/`blok_r_omake` System Direction modifiers to arcade command records with no gate — is **LANDED 2026-09-06** (§16.1): the arcade's own `cmd_data_set` (`0x060B299C`) is 310 straight-line bytes with no branch and no call, so it applies neither; both are now gated to 0 under arcade balance, PS2 arm unchanged. Digest unmoved (`e96e88beec2ac2b5`), as §8.O predicted. §16.1 also settles the netplay question §16 left open: System Direction is never exchanged, hashed or checked, but the netplay arm reads `system_dir[2]`, which nothing writes after boot. The seven neighbouring `*_omake` modifiers are **GATED 2026-09-07** (§16.2), and the three `plcnt.c` clamps that pass left unadjudicated are **CLOSED 2026-09-12 as inert, no code change** (§16.3): `Super_Arts == 3` is unreachable in a shipped build, so neither `SA_DATA` clamp can bind, and the arcade's own `pl_piyo_tbl` (`0x065EAC70`) holds the same 21 values ours does, min 56 max 72 |
+| **Arcade command tables** (input recognition) | **CLOSED — no bug** (§16). §16's one residual — `cmd_data_set` applying the PS2-only `blok_b_omake`/`blok_r_omake` System Direction modifiers to arcade command records with no gate — is **LANDED 2026-09-06** (§16.1): the arcade's own `cmd_data_set` (`0x060B299C`) is 310 straight-line bytes with no branch and no call, so it applies neither; both are now gated to 0 under arcade balance, PS2 arm unchanged. Digest unmoved (`e96e88beec2ac2b5`), as §8.O predicted. §16.1 also settles the netplay question §16 left open: System Direction is never exchanged, hashed or checked, but the netplay arm reads `system_dir[2]`, which nothing writes after boot. The seven neighbouring `*_omake` modifiers are **GATED 2026-09-07** (§16.2), and the three `plcnt.c` clamps that pass left unadjudicated are **CLOSED 2026-09-12 as inert, no code change** (§16.3): `Super_Arts == 3` is unreachable in a shipped build, so neither `SA_DATA` clamp can bind, and the arcade's own `pl_piyo_tbl` (`0x065EAC70`) holds the same 21 values ours does, min 56 max 72. §16.3's one remaining live item — the unread arcade `sag_union` family, which could have inverted the EX-4th verdict — is **READ and NEGATIVE 2026-09-13** (§16.4): the jump table is `0x065EAF98`, its three variants are `0x0611A032`/`0x0611A14E`/`0x0611A39E`, none touches SA +38/+39/+9, and all three decrement `store` unconditionally. No code change |
 | **`location_data[]` over-declared spans** | **CLOSED 2026-09-06 — no code change, defended by the audit** (§27). Both consequences adjudicated: (1) no path the engine can take forms a cell index inside any over-declared tail — every writer of `cg_ix` is modelled in `cg_audit.py` -> `span_closure()`, and the only cells reachable past a first terminator are 18 in-bounds script cells of Dudley `caca[6]`/`saca[87]` and Elena `atca[159]`; Remy's CAUA/HOSA tails are never indexed (`max cuix` 6 of 7, `max hoix` 11 of 12). (2) `ArcadeCharData_ComputeDigest` does hash 49,288 B (1.90% of its 2,590,884 B input) of decoded ROM past the real data, but the ROM is SHA-256-pinned to one revision (`rom_load.c`) and the decode is a pure function of it, so every peer hashes the same bytes: harmless, and deliberately NOT tightened (a digest move forces a lockstep client update). Real ends re-derived by reach, not by §19's terminator scan; §19.7's `Real end` column corrected in 14 spans |
 | **Residual (second-door) bounds** | **AUDITED, FIXED** `a5bc6a5b` — pre-fix baseline was 6 violations, all Remy → Gill's group; current tree measures 0 (§17.3, §17.5); tooling `residual_audit.py` (§8.K) |
 | **Under-declared (truncating) spans** | **CLOSED — none exist.** 500/500 spans COVERED (§19) |
@@ -4129,10 +4132,17 @@ and the evidence are the block after this list.
   family — the counterpart of the port's only `ex4th_exec` *readers* — **was not
   read**, and that if one of those routines did read an EX-4th flag "the finding
   would **invert**". An unread family fails toward the finding, so the status is
-  **STILL OPEN**: the two pinned routines carry no EX-4th term, and image-wide —
-  in the `sag_union` family specifically — it is unknown. No code change either
-  way; the block below carries the evidence for the measured part and the
-  rejected fix.
+  ~~**STILL OPEN**~~: the two pinned routines carry no EX-4th term, and
+  image-wide — in the `sag_union` family specifically — it is unknown. No code
+  change either way; the block below carries the evidence for the measured part
+  and the rejected fix.
+  **CLOSED 2026-09-13 (§16.4): the family was found and read, and the finding
+  does NOT invert.** All three arcade routines the jump table selects were read
+  exhaustively; none touches SA +38/+39, none touches +9, and at the one site
+  where the PS2 arm consults `ex4th_exec` — the `store` decrement — all three
+  are unconditional. The negative is now bounded over the routines that decide
+  the question rather than over two of the five, and it is still **not**
+  image-wide. §16.4 states the scope.
 - **Four `gauge_type` differences, all in the unreachable slot 3** (port
   characters 0, 6, 13 and 14: ROM 3, port 0). The ROM carries slot-3
   `gauge_type == 3` at five indices — 0, 6, 13, 14 and 15 — and index 15 is Shin
@@ -4354,13 +4364,14 @@ reason a naive comparison reports 51 differences instead of 6.
 
 ##### What this sitting still cannot see
 
-- **The arcade `sag_union` family was not read.** The port's only `ex4th_exec`
-  readers are in `sag_union_ps2`, which `sag_union` calls in the PS2 arm only,
-  so nothing there can change the verdict above — but if one of the arcade
-  routines the port models as `sag_union_0`, `sag_union_1` and `sag_union_3` did
-  read an EX-4th flag, the finding would **invert** into "the port's arcade arm
-  omits an arcade read", and nothing here rules that out. Recorded as live, not
-  dismissed.
+- ~~**The arcade `sag_union` family was not read.**~~ **READ 2026-09-13 — see
+  §16.4.** The bullet as written stands as the pre-fix record: the port's only
+  `ex4th_exec` readers are in `sag_union_ps2`, which `sag_union` calls in the PS2
+  arm only, so nothing there could change the verdict above — but if one of the
+  arcade routines the port models as `sag_union_0`, `sag_union_1` and
+  `sag_union_3` had read an EX-4th flag, the finding would have **inverted** into
+  "the port's arcade arm omits an arcade read". It does not. This was the last
+  item that could have inverted the conclusion, and it came back negative.
 - **There is no image-wide negative, and this sitting does not claim one.**
   `mov #38,r0` (`0xE026`) occurs **1,184** times half-word-aligned in the image
   and `mov #39,r0` (`0xE027`) 12 times, pool words included; a crude
@@ -4368,7 +4379,8 @@ reason a naive comparison reports 51 differences instead of 6.
   leaves **38** candidates, and none was run down, because the base register of
   each would have to be traced to a `plw[i].sa` pointer to mean anything. The
   negative here is scoped to the two pinned routines and to the table's sole
-  literal referrer. It is not "nowhere in the ROM".
+  literal referrer — **five** routines plus one dispatch fragment after §16.4,
+  still not 1,184 sites. It is not "nowhere in the ROM".
 - **No in-game measurement**, as with §16.2's seven and §16.3's three.
 - **The corpora are structurally blind to all of it.**
   `statcheck_compare.c` names none of `gauge_len`, `store_max` or `genkai`, and
@@ -4401,6 +4413,173 @@ reason a naive comparison reports 51 differences instead of 6.
   the all-super-arts variant has no ROM counterpart at all; its slots 0..2 were
   checked for clamp binding only, not for content, and its slot 3 only for the
   two differences named above.
+
+
+### 16.4 The arcade `sag_union` family: READ 2026-09-13 — no EX-4th read, the finding does not invert
+
+§16.3's EX-4th item rested on two routines and named the gap itself: the arcade
+`sag_union` family — the counterpart of the port's only `ex4th_exec` **readers**
+— had never been disassembled, and if one of those routines read an EX-4th flag
+the finding inverted from "PS2-only feature" into "the port's arcade arm omits an
+arcade read". **It does not. No arcade `sag_union_*` reads an EX-4th flag.** No
+code changed and the digest did not move — this section parses no span.
+
+Three routines, three variants, one dispatch. Every address below is pinned by
+the house method and held by `cps3.py selftest`'s §16.4 block.
+
+#### How the family was found, and what bounds it
+
+The anchor is the **jump table**, not any routine's shape or position:
+
+| thing | address | pinned by |
+|---|---|---|
+| the jump table | `0x065EAF98` | occurs once as a u32; **one** literal referrer, the pool word `0x06119D80`, loaded by the instruction at `0x06119D54` |
+| arcade `about_gauge_process` | `0x06119D4A` | the enclosing routine of that instruction. A real start: the previous routine's `rts` is at `0x06119D46` and its delay slot at `0x06119D48`. Corroborated the way §16.3's `set_kizetsu_status` boundary should have been — `0x06119D4A` appears as a pool word at **two** call sites |
+| arcade `sag_union_0` | `0x0611A032` | table `[0]` and `[2]` |
+| arcade `sag_union_1` | `0x0611A14E` | table `[1]` |
+| arcade `sag_union_3` | `0x0611A39E` | table `[3]` |
+
+The dispatch itself is five instructions at `0x06119D56`: `mov.l @(r0,r14),r2`
+(the `sa` pointer, `PLW+0x3F0`), `mov.b @(8,r2),r0` (**`gauge_type`, SA+8**),
+`shll2 r0`, `mov.l @(r0,r1),r3`, `jsr @r3`. The `shll2` is what makes the entries
+32-bit; guessing that width is how a plausible wrong table gets read.
+
+**The table is four entries, and the bound is not the dispatch** — the arcade
+bound-checks `gauge_type` no more than the port's `[4]` does. It is the next
+table: `0x065EAFA8` has its own sole literal referrer (`0x0611A710`, in a
+different routine), so `0x065EAF98..0x065EAFA7` is the whole of this one.
+`[0] == [2] == 0x0611A032` is the port's
+`{ sag_union_0, sag_union_1, sag_union_0, sag_union_3 }` in the ROM, and that
+duplicate is the structural corroboration that this is the right table.
+
+**Extents, read off the instructions** — `function_extent` and
+`find_function_start` both agree with the instruction reads for all three, which
+is worth recording only because at `0x0611856C` they did not:
+
+- `sag_union_0` `0x0611A032`..`0x0611A14E` (284 bytes, `rts` at `0x0611A14A`)
+- `sag_union_1` `0x0611A14E`..`0x0611A39A` (588 bytes, `rts` at `0x0611A396`)
+- `sag_union_3` `0x0611A39E`..`0x0611A4A8` (266 bytes, `rts` at `0x0611A4A4`)
+
+Between `sag_union_1` and `sag_union_3` sit four bytes of bare `rts; nop` with no
+literal referrer and no branch to them; pinned so a later reader does not fold
+them into either variant. Each variant's start is a literal **only** in this
+table — two slots for the shared one, one each for the others — so the table
+entries are their call sites, and a screen of every `bra`/`bsr`/`bt`/`bf` in the
+whole ±0x1200 window around them found no direct branch to any of the three.
+
+**Borrowed pools, the trap that manufactured a `mov.b @(r0,r14),r3` in
+`execute_super_arts`, are present here too and all three walks pass
+`scan_from`:** `sag_union_0` parks literals at `0x0611A1CE`/`0x0611A1D0`, inside
+`sag_union_1`; `sag_union_1` parks six half-words at
+`0x0611A3E4`..`0x0611A3F2`, inside `sag_union_3`. Without `scan_from` those
+decode as instructions. Pinned in both directions.
+
+#### The enumeration, and the three legs it rests on
+
+`SA_WORK` is 44 bytes — the stride the arcade itself uses, `mov #44,r5` — with
+`ex4th_full` at +38, `ex4th_exec` at +39 and `mp` at +9 (`structs.h` ->
+`SA_WORK`). **The complete set of SA bytes the three variants touch is
+{0,1, 10, 13, 16,17, 20, 22,23, 24..27, 28..31, 34,35, 36,37}** — 21 of 44.
+Bytes 2..9, 11, 12, 14, 15, 18, 19, 21, 32, 33 and **38..43** are neither read
+nor written by any of them.
+
+1. **Every immediate-displacement form, at all three widths.** SH-2 carries a
+   4-bit displacement: unscaled for `mov.b` (max +15), ×2 for `mov.w` (max +30),
+   ×4 for `mov.l` (max +60, multiples of 4). So the only displacement form that
+   could touch +38/+39 **at all** is `mov.l @(36,Rm)`, whose four bytes span
+   36..39 — and no variant has one; the widest `mov.l` displacement in the family
+   is 28. +9 is likewise unreachable: `mov.w`/`mov.l` cannot address it and no
+   `mov.b` displacement form names 9. Each list is pinned beside its total form
+   count, so an empty list cannot come from a walk that found nothing.
+2. **Every constant, and every base shift.** An `@(r0,Rm)` access names no
+   displacement, so an SA offset can only arrive as an immediate in one of the
+   two registers or by shifting an SA base. `mov #imm` and `add` are the complete
+   set of ways this family does either, and both sets are pinned per variant. The
+   only immediate ≥ 38 anywhere in the family is `#38,r0`, twice
+   (`0x0611A108`, `0x0611A242`), and both are immediately followed by
+   `mov.w @(r0,r4),r0` / `cmp/eq #4,r0` — **`PLW`+38, `wk->wu.routine_no[1]`**,
+   whose port counterpart is the `(saeff_ok != 1) || (routine_no[1] != 4)` term.
+   39 and 9 never appear as an immediate at all. The only base shifts are
+   `sag_union_1`'s two `add r0,rN` after `mov #16,rN` — SA+16, already in the
+   displacement set.
+3. **No call, and `r4` is never written.** None of the three contains a `jsr`,
+   `bsr`, `jmp`, `bsrf` or `braf`, so no helper reads the field on their behalf,
+   and no branch leaves the extent. Nothing writes `r4`, which is what makes
+   "base `r4` = the `PLW` argument, base `rN` = the `sa` pointer loaded from
+   `PLW+0x3F0`" hold for every access enumerated. The only half-words whose
+   encoding `written_regs` cannot model are `0x0611A2DE` and `0x0611A3EE`, both
+   `0x0000` — two bytes of alignment padding between a word literal and the
+   4-aligned long that follows it, which nothing loads and `pool_map` therefore
+   never marks. They are pinned as padding rather than swallowed.
+
+#### The structural leg, which does not depend on the offsets at all
+
+The one place the PS2 arm consults the field is the `store` decrement:
+`plmain.c` -> `sag_union_ps2` does `if (wk->sa->ex4th_exec) store = 0; else
+store--;` in both its `gt2 == 0` and `gt2 == 1` arms. In the arcade that site is
+an **unconditional** `mov #34,r0` / `mov.w @(r0,r3),rN` / `add #-1,rN` /
+`mov.w rN,@(r0,r3)` on the SA+34 word, in all three variants
+(`0x0611A0E4`, `0x0611A216`, `0x0611A44A`). The only guard on it in `_0` and `_1`
+is `pcon_dp_flag` (`0x02068C67`, `mov.b @r2,r3` / `tst r3,r3`); `_3` has no flag
+test at all — exactly the two shapes the port's arcade arm already writes. There
+is no second condition that could have held an EX-4th test, so the negative
+survives the offset argument being wrong.
+
+Two independent legs, as §16.3's clamps had: the offset enumeration, and the
+structural read at the one site that matters.
+
+#### What the negative now covers — and what it still does not
+
+**It covers**, exhaustively and at the instruction level: arcade
+`sag_union_0`/`_1`/`_3`, the dispatch fragment in `about_gauge_process`
+(`0x06119D4A`..`0x06119D62`), and §16.3's `check_super_arts_attack_dc` and
+`execute_super_arts`. That is every routine the port's `ex4th_full`/`ex4th_exec`
+sites have an arcade counterpart in — the writer side and the reader side both.
+
+**It is still not image-wide, and this section does not claim it is.** §16.3's
+1,184 `mov #38,r0` sites and its 38-candidate R0-index screen are as unrun as
+they were; nothing here touches them. What changed is that the unread set no
+longer contains a routine that could invert the conclusion.
+
+Three further limits, stated because the house rule is that unmodelled fails
+toward the finding:
+
+- **The arcade's `SA_WORK` field layout is not byte-identical to the port
+  struct's in the 9..21 band, so "+38 = `ex4th_full`" is an inference from
+  `structs.h`, not an arcade-side anchor.** The arcade uses **word** fields where
+  the port has two `s8`s: `sa_rno` is a word at +16 (`mov.w @(16,r0),r0`,
+  `mov.w r0,@(16,r2)`) and `ex_rno` a word at +18 (arcade `eag_union`,
+  `0x06119EA4`), and `ex` is a byte at **+12** where the port's struct has `ba`.
+  The stride is 44 either way. The negative stated above is therefore an
+  **offset** claim, not a field-name claim: bytes 38..43 are untouched, whatever
+  lives there. It holds under the port's layout and under any layout that puts an
+  EX-4th flag in the last six bytes. A field-name claim about +38 on the arcade
+  side would need its own anchor and does not have one.
+  One consequence worth naming and dismissing: the arcade writing a **word** at
+  +16 would clobber the port's `sa_rno2` (+17), which the port's arcade arm
+  leaves alone. Harmless — `sa_rno2`'s only readers in the tree are the two
+  `switch (wk->sa->sa_rno2)` inside `sag_union_ps2`, i.e. the PS2 arm.
+- **No in-game measurement**, as everywhere else in §16.
+- **The corpora are blind**, for the reason §16.3 already recorded:
+  `statcheck_compare.c` names none of these fields.
+
+#### A residual this reading created, NOT adjudicated here
+
+Reading `sag_union_1` end to end made one unrelated divergence visible, and it is
+recorded rather than acted on because it is a different field with a different
+writer set and settling it needs its own arcade reading:
+
+> The port's **arcade** `sag_union_1` guards the gauge drain with three terms —
+> `wk->sa_stop_flag != 1`, the target's `sa_stop_flag != 1`, and
+> `!(wk->spmv_ng_flag2 & DIP2_SA_GAUGE_NO_DEPLETE)`. The arcade's case-4 guard
+> (`0x0611A288`..`0x0611A29C`) is **exactly two** byte tests, both on `PLW+0x41C`
+> — `wk`'s own and, through `wk->wu.target_adrs` at `PLW+12`, the target's. There
+> is no third test, and no access to a `spmv_ng_flag2` offset anywhere in the
+> routine. So the port's arcade arm carries a term the arcade routine does not.
+> Whether that is a real divergence depends on where the arcade tests that DIP
+> bit instead, if it does — which was not read. **Live, not dismissed**, and
+> deliberately out of this section's scope: nothing above depends on it, and the
+> EX-4th verdict is unaffected either way.
 
 ---
 
