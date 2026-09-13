@@ -4007,7 +4007,9 @@ prose.
 Recorded so they are not lost, and explicitly *not* claimed as defects — each
 needs its own arcade reading, which is the error §16 exists to prevent. The
 first two bullets are the six real port-versus-ROM field differences the
-realigned comparison found; the rest are structural notes.
+realigned comparison found; the rest are structural notes. **Those first two
+bullets got that arcade reading on 2026-09-12 and are now closed** — the verdicts
+and the evidence are the block after this list.
 
 - **Oro's `ex4th_full` differs from the arcade on two REACHABLE slots: SA1 and
   SA3, port 1, ROM 0.** Oro is the only character with a non-zero `ex4th_full`
@@ -4024,12 +4026,18 @@ realigned comparison found; the rest are structural notes.
   port's `set_super_arts_status` writes that it does not. So there is no arcade
   counterpart to compare *this routine* against, and whatever reads an EX-4th
   flag on the arcade is a different routine that does not reach this table
-  through its sole literal referrer. **Still open**, and it needs that routine
-  found before "port 1, ROM 0" means anything behavioural.
+  through its sole literal referrer. ~~**Still open**, and it needs that routine
+  found before "port 1, ROM 0" means anything behavioural.~~ **CLOSED 2026-09-12
+  (second sitting): that routine was found, read, and has no EX-4th term — and
+  the port's arcade arm cannot read the field at all.** No code change; the
+  block below carries the evidence and the rejected fix.
 - **Four `gauge_type` differences, all in the unreachable slot 3** (port
   characters 0, 6, 13 and 14: ROM 3, port 0). The ROM carries slot-3
   `gauge_type == 3` at five indices — 0, 6, 13, 14 and 15 — and index 15 is Shin
-  Akuma, which has no port row to differ from.
+  Akuma, which has no port row to differ from. **CLOSED 2026-09-12 (second
+  sitting)**, both sides re-measured and the consumer named — see below. Slot 3's
+  unreachability is the whole verdict here, and unlike the clamps there is no
+  second leg under it.
 - **`super_arts_DATA` differs from `super_arts_data` at slot 3 for characters 13
   and 14, in `gauge_type`** (`data` 0, `DATA` 3) — i.e. `DATA` agrees with the
   ROM there and `data` does not. Neither field is clamped and neither slot is
@@ -4050,6 +4058,147 @@ realigned comparison found; the rest are structural notes.
 - ~~`plcnt.c`'s comments above `sa_store_max_omake` and `kizetsu_genkai_omake`
   restate §16.2's imprecise sentence.~~ **Fixed in the same pass that found it**
   — both now say what is true, and the change is comment-only.
+
+#### Both field residuals, adjudicated 2026-09-12 (second sitting) — EX-4th is a PS2 feature, and the gate already holds
+
+> **CORRECTION (§16.3, 2026-09-12, second sitting): the `ex4th_full` bullet's
+> premise is wrong.** It says "the port consumes the field live (`pls03.c`, the
+> EX-4th gate and `ex4th_exec`)". The port consumes it live **in the PS2 arm
+> only**. Every site that *reads* either field sits on the PS2 side of an
+> `ArcadeBalance_IsEnabled()` branch, or inside a routine the arcade arm never
+> calls: `pls03.c` -> `check_super_arts_attack_dc`'s four `ex4th_full` reads and
+> its two `ex4th_exec` writes, `pls03.c` -> `execute_super_arts`'s two
+> `ex4th_exec = 0`, and `plmain.c` -> `sag_union_ps2`'s two
+> `if (wk->sa->ex4th_exec)` — the field's only readers, in a routine `sag_union`
+> calls only in the PS2 arm. The one **ungated** pair is `plcnt.c` ->
+> `set_super_arts_status` and `set_super_arts_status_dc`, which copy the table
+> field into `super_arts[ix]` in both arms — so Oro's 1 genuinely does reach SA
+> work under arcade balance, and nothing there ever looks at it. "Port 1, ROM 0"
+> is a dead table byte in the arm it was raised against. **No code change, and
+> the gated fix that residual implied would have been a no-op.**
+
+**There is no arcade routine that reads an EX-4th flag, and that is now a
+measured negative rather than a gap.** The item was left open pending exactly
+that routine. The two routines that would carry one — the arcade counterparts of
+the port's only `ex4th_*` writer and reader sites in `pls03.c` — are the arcade's
+`check_super_arts_attack_dc` and `execute_super_arts`. Both are pinned, both
+were read end to end, and neither touches the field.
+
+| routine | extent | pinned by |
+|---|---|---|
+| arcade `check_super_arts_attack_dc` | `0x0611F5C8`..`0x0611FA16` | `cmdshot_conv_tbl`'s **value** is not an anchor — five routines load `0x065EBABC`. Its **pool slot** is: `0x0611F6B8` has exactly one loader, `0x0611F60C`, inside this routine |
+| arcade `execute_super_arts` | `0x0611FA18`..`0x0611FC72` | begins where the routine above ends, and opens with the same two statements the port's does — `permited_koa \|= 1` on `cancel_timer == 0`, then the `gauge_type != 3 && pcon_dp_flag` return (`mov.b @(8,r0),r0` / `cmp/eq #3,r0`) |
+
+Both boundaries were read off the instructions, not off `find_function_start` —
+the trap this section already paid for once. `0x0611F5C8` is a prologue
+(`mov.l r14,@-r15` / `mov r4,r14`) sitting after the previous routine's `rts` at
+`0x0611F5AA` and that routine's pool; the terminal `rts` is `0x0611FA14`. Here
+the hint and the instructions **agree**, which is worth writing down only
+because last time they did not.
+
+**What the two routines touch, exhaustively.** `SA_WORK` is 44 bytes — the
+stride the arcade itself uses, `mov #44,r5` — with `ex4th_full` at +38 and
+`ex4th_exec` at +39. Every byte access `check_super_arts_attack_dc` makes is at
+SA +2 (`nmsa_g_ix`), +5 (`nmsa_a_ix`) or +10 (`ok`); `execute_super_arts` adds
++8 (`gauge_type`). Nothing reads +38, nothing writes +39, and **nothing reads +9
+(`mp`) either** — so the port's PS2-arm term `ex4th_full && (mp != 1)` has no
+arcade counterpart in either half of the one routine that would carry it. The
+arcade's `j == 3` guard is `!(btix & 0x600)` and nothing else, in both loops,
+with exactly two exits: `j != 3`, and that mask.
+
+That enumeration is not an eyeball pass, and it is not a grep over `dis` output
+either — `Image.disasm` stops dead at the first half-word capstone cannot
+decode, and every literal pool holds one, so a single call silently truncates
+(it reported 6 of the 11 `mov.b` forms before `_operands` walked half-word by
+half-word instead). What makes the negative tractable at all is the encoding:
+SH-2 `mov.b @(disp,Rm),R0` carries a **4-bit** displacement, so +38 and +39
+cannot be reached by a displacement form at all. Reaching them needs an
+R0-index or an `add #imm` on the base — and the only 38 in either routine is
+the `nmsa_a_ix - 38` arts index. Both the byte-access set and the `add` set are
+`cps3.py selftest` checks, so a table or a re-read that changes either fails
+loudly.
+
+**Is it in scope under §6.1?** No — and for a reason §6.1 does not state. The
+values differ, so §6.1's "identical on both sides" exclusion does not apply.
+But the arcade's `super_arts_data` holds 0 in **all 84** records of that column
+*and* its sole literal referrer never reads the column, so the arcade has no
+path from the field to anything at all. A column that is uniformly zero and
+never read is not arcade data the port got wrong; it is a PS2 addition parked in
+a shared struct. The comparison is well-posed after all — it just comes out
+"PS2-only feature", which is a different answer from "wrong value" and closes
+the item instead of deferring it.
+
+**The gated fix, stated and rejected.** It would have been
+`super_arts_data[9][0].ex4th_full` and `[9][2].ex4th_full` to 0 under arcade
+balance — Oro, `Super_Arts` 0 and 2, which is what §16.3's "SA1 and SA3" names —
+with the PS2 arm keeping 1, and the same two records of `super_arts_DATA`, which
+carry the field identically. It is wrong on both legs. The table is a single
+`const` shared by both arms, so the only shapes available are a second table or
+a runtime branch; and there is no reader to branch *at*, because `pls03.c`'s
+four `ex4th_full` reads and `plmain.c` -> `sag_union_ps2`'s two `ex4th_exec`
+reads are all unreachable when `ArcadeBalance_IsEnabled()`. Gating a field
+nothing reads is the same no-op §16.3 rejected for the three clamps, for the
+same reason. `is_enabled` is assigned in `ArcadeBalance_Init` alone, called once
+from `main.c`, so the arm cannot flip mid-match and a PS2-set `ex4th_exec`
+cannot leak into an arcade-balance round either. **No code change. The digest
+did not move — this pass parses no span.**
+
+**The four `gauge_type` differences: closed, and their consumer is now named.**
+The realigned sweep was re-run from the ROM and the C independently of §16.3's:
+**874 of 880** fields identical, six differences, nothing else moved. Port
+slot-3 `gauge_type` is uniform **0** across all 20 characters of
+`super_arts_data`; the ROM holds **3** at arcade indices 0, 6, 13, 14 and
+**15** — Shin Akuma, which has no port row. Slot 3's unreachability still covers
+them.
+
+What §16.3 did not name is what would happen if it did not. `gauge_type` is
+neither clamped nor compared, but `plmain.c` -> `sag_union` **dispatches** on it
+under arcade balance: `sag_union_cps3_jump_table[wk->sa->gauge_type]` over
+`{ sag_union_0, sag_union_1, sag_union_0, sag_union_3 }`. Port 0 selects
+`sag_union_0`, ROM 3 selects `sag_union_3` — a different super-art state
+machine, not a different number. Two further readers test `gauge_type != 3`
+(`plcnt.c` -> `check_sa_type_rebirth`, `pls03.c` -> `execute_super_arts`)
+and would invert with it. So the reachability verdict is **load-bearing** for
+these four in a way it was not for the clamps: the clamps had a second,
+data-side leg that closed them even if reachability were wrong, and these four
+have none. The index stays in bounds either way — the reachable `gauge_type`
+value set is `{0, 1, 3}` on both sides, so the `[4]` jump table is never
+over-indexed — which makes this a wrong-state-machine hazard rather than an
+out-of-bounds one. The unbounded `--test-fcade-p1-arts` / `--test-fcade-p2-arts`
+flags are therefore the live route for these four exactly as they are for the
+clamps, and the same one-range-test-per-flag fix closes both. Still not done.
+
+**The `NUM_CHARS` trap, verified rather than repeated.** `pl_piyo_tbl`'s Shin
+Akuma row is `#if defined(CPS3)`, and `CMakeLists.txt`'s "Feature toggles" block
+contains `# CPS3` — commented out — so `constants.h` takes its `NUM_CHARS 20`
+arm and every build compiles 20 rows, not 21. Both SA tables are a hard `[20]`
+and do not track it. The realignment the comparison needs (port 0..14 = arcade
+0..14, port 15..19 = arcade 16..20) is the consequence, and it is the whole
+reason a naive comparison reports 51 differences instead of 6.
+
+##### What this sitting still cannot see
+
+- **The arcade `sag_union` family was not read.** The port's only `ex4th_exec`
+  readers are in `sag_union_ps2`, which `sag_union` calls in the PS2 arm only,
+  so nothing there can change the verdict above — but if one of the arcade
+  routines the port models as `sag_union_0`, `sag_union_1` and `sag_union_3` did
+  read an EX-4th flag, the finding would **invert** into "the port's arcade arm
+  omits an arcade read", and nothing here rules that out. Recorded as live, not
+  dismissed.
+- **There is no image-wide negative, and this sitting does not claim one.**
+  `mov #38,r0` (`0xE026`) occurs **1,184** times half-word-aligned in the image
+  and `mov #39,r0` (`0xE027`) 12 times, pool words included; a crude
+  four-instruction-window screen for an R0-indexed `mov.b` after one of them
+  leaves **38** candidates, and none was run down, because the base register of
+  each would have to be traced to a `plw[i].sa` pointer to mean anything. The
+  negative here is scoped to the two pinned routines and to the table's sole
+  literal referrer. It is not "nowhere in the ROM".
+- **No in-game measurement**, as with §16.2's seven and §16.3's three.
+- **The corpora are structurally blind to all of it.**
+  `statcheck_compare.c` names none of `gauge_len`, `store_max` or `genkai`, and
+  none of `ex4th_full`, `ex4th_exec` or `gauge_type` either — its only
+  super-art-adjacent comparison is `piyori_type[i].now.quantity.h`. A clean
+  corpus sweep would have been a meaningless sentence here, so none was run.
 
 #### What none of this can see
 

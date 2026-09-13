@@ -1243,6 +1243,119 @@ def cmd_selftest(img: Image, args) -> int:
     )
 
     # ------------------------------------------------------------------
+    # Section 16.3, second sitting: the ex4th_full residual asked for "the
+    # arcade routine that reads an EX-4th flag".  The two routines where the
+    # port has one are the arcade's check_super_arts_attack_dc and
+    # execute_super_arts; neither touches SA work +38 / +39.  Pinned so that
+    # stays a failing check rather than a sentence.
+    # ------------------------------------------------------------------
+    # cmdshot_conv_tbl's VALUE is not an anchor -- five routines load it.  The
+    # POOL SLOT is: each slot has one loader, and 0x0611F6B8 is this routine's.
+    check("cmdshot_conv_tbl 0x065EBABC: pool slots holding it", len(pool_words(img, 0x065EBABC)), 5)
+    check("  pool slot 0x0611F6B8 has exactly one loader", [hex(a) for a in loaders_of(img, 0x0611F6B8)], ["0x611f60c"])
+    check("  -> arcade check_super_arts_attack_dc", find_function_start(img, 0x0611F60C), 0x0611F5C8)
+    # Boundary read off the instructions, not off the rts-scan hint (README
+    # trap 4): previous routine's rts 0x0611F5AA, its pool 0x0611F5AE..0x0611F5C6,
+    # prologue 0x0611F5C8, terminal rts 0x0611FA14.
+    check("  the previous routine ends with an rts at 0x0611F5AA", img.is_rts(0x0611F5AA), True)
+    check(
+        "  and 0x0611F5C8 is a prologue, not a tail",
+        str([(i.mnemonic, i.op_str) for i in img.disasm(0x0611F5C8, 4)]),
+        str([("mov.l", "r14,@-r15"), ("mov", "r4,r14")]),
+    )
+    check("  terminal rts at 0x0611FA14, so the extent ends", function_extent(img, 0x0611F5C8)[0], 0x0611FA18)
+    # The `j == 3` guard, both loops, has exactly TWO exits: j != 3, and the
+    # 0x0600 mask on btix.  The port's PS2 arm ORs a second term onto the mask
+    # test -- `wk->sa->ex4th_full && (wk->sa->mp != 1)` -- and there is no room
+    # for it here.
+    for side, lo, hi, mask, cont in (
+        ("g-side", 0x0611F74E, 0x0611F772, 0x0611F81E, "0x611f830"),
+        ("a-side", 0x0611F934, 0x0611F958, 0x0611FA50, "0x611f9fc"),
+    ):
+        check("  %s j==3 guard: the mask it tests" % side, img.u16(mask), 0x0600)
+        check("    its j != 3 exit falls into the loop body", _operands(img, lo, hi, "bf"), [hex(hi)])
+        check("    its mask exit is the loop's continue", _operands(img, lo, hi, "bt"), [cont])
+    # THE verdict.  SA_WORK is 44 bytes (the arcade's own stride, `mov #44,r5`
+    # at 0x061186A4) with ex4th_full at +38 and ex4th_exec at +39 (structs.h).
+    # Every byte access the routine makes is SA +2 (nmsa_g_ix), +5 (nmsa_a_ix)
+    # or +10 (ok); the rest are PLW-relative (0x3E5 cancel_timer, 0x462, 0x221
+    # cg_cancel), cp-relative (waza_r at +246) or the two absolute globals.
+    # Nothing reads +38, nothing writes +39, and nothing reads +9 (mp) either.
+    check(
+        "arcade check_super_arts_attack_dc: every byte access it makes",
+        _operands(img, 0x0611F5C8, 0x0611FA18, "mov.b"),
+        [
+            "@(10,r0),r0",
+            "@(2,r3),r0",
+            "@(2,r7),r0",
+            "@(5,r3),r0",
+            "@(r0,r14),r0",
+            "@(r0,r14),r2",
+            "@(r0,r5),r5",
+            "@r3,r1",
+            "@r3,r7",
+            "r0,@(10,r3)",
+            "r12,@(r0,r14)",
+        ],
+    )
+    check(
+        "  every add: no +38/+39 base shift, and -38 is the arts index",
+        _operands(img, 0x0611F5C8, 0x0611FA18, "add"),
+        [
+            "#-1,r13", "#-20,r0", "#-38,r0", "#-4,r15", "#22,r1", "#22,r2", "#4,r15", "#48,r0",
+            "r0,r1", "r0,r2", "r0,r3", "r1,r3", "r14,r1", "r14,r3", "r14,r7",
+            "r2,r0", "r2,r3", "r3,r0", "r3,r2", "r3,r7",
+        ],
+    )
+    # execute_super_arts is the port's other ex4th_exec writer (two `= 0`, PS2
+    # arm).  Its arcade counterpart begins where the routine above ends, and
+    # opens with the same two statements: permited_koa |= 1 on cancel_timer == 0,
+    # then the `gauge_type != 3 && pcon_dp_flag` return.  Same negative, and it
+    # also never writes +19 (gt2), which the port likewise gates to the PS2 arm.
+    check(
+        "arcade execute_super_arts 0x0611FA18: its gauge_type test reads SA+8",
+        str([(i.mnemonic, i.op_str) for i in img.disasm(0x0611FA34, 6)]),
+        str([("mov.b", "@(8,r0),r0"), ("cmp/eq", "#3,r0"), ("bt", "0x611fa68")]),
+    )
+    check("  extent", function_extent(img, 0x0611FA18)[0], 0x0611FC74)
+    check(
+        "  every byte access it makes",
+        _operands(img, 0x0611FA18, 0x0611FC74, "mov.b"),
+        [
+            "@(10,r0),r0",
+            "@(2,r2),r0",
+            "@(2,r3),r0",
+            "@(5,r2),r0",
+            "@(5,r3),r0",
+            "@(8,r0),r0",
+            "@(r0,r14),r0",
+            "@(r0,r14),r3",
+            "@(r0,r5),r5",
+            "@r2,r4",
+            "@r3,r0",
+            "r0,@(10,r2)",
+            "r3,@(r0,r14)",
+        ],
+    )
+    check(
+        "  every add",
+        _operands(img, 0x0611FA18, 0x0611FC74, "add"),
+        [
+            "#-20,r0", "#-38,r0", "#48,r0", "#56,r0",
+            "r0,r2", "r14,r1", "r14,r3", "r2,r3", "r3,r0", "r3,r2", "r3,r5",
+        ],
+    )
+    # The four gauge_type residuals sit in slot 3 only because the reachable
+    # value set is identical on both sides.  0 and 3 are the two the port's
+    # sag_union jump table dispatches differently, so this is the check that
+    # would fail if either table's gauge_type column moved.
+    check(
+        "residual: ROM gauge_type over the reachable slots 0..2",
+        str(sorted({img.data[img.off(sad + (c * 4 + s) * 16 + 7)] for c in range(21) for s in range(3)})),
+        "[0, 1, 3]",
+    )
+
+    # ------------------------------------------------------------------
     # Regressions.  Every check below FAILED before the commit that added it;
     # each names the wrong answer the tool used to give.  They exist because
     # the failure mode of this tool is not a crash, it is a confident sentence.
@@ -1433,6 +1546,36 @@ def _sweep(img: Image, lo: int, hi: int):
                     b -= 2
         a = end
     return out
+
+
+def _operands(img: Image, start: int, end: int, mnemonic: str):
+    """Every distinct operand form of `mnemonic` in [start,end), pool words skipped.
+
+    Exhaustive where a grep over `dis` output is not: `Image.disasm` stops dead at
+    the first half-word capstone cannot decode, and every literal pool holds one,
+    so a single `disasm(start, end - start)` silently truncates -- it reported 6
+    of the 11 `mov.b` forms in 0x0611F5C8 before this walked half-word by
+    half-word instead.  Pool half-words are skipped through `pool_map`, because
+    decoding one as an instruction manufactures accesses that do not exist
+    (README trap 3b).
+
+    Used to prove a NEGATIVE: that a routine makes no byte access at a given
+    struct displacement.  SH-2 `mov.b @(disp,Rm),R0` carries a 4-bit disp, so a
+    displacement above 15 cannot be encoded at all -- reaching one needs an
+    R0-index or an `add #imm` on the base, and both show up here.
+    """
+    pool = pool_map(img, start, end)
+    out = set()
+    a = start
+    while a < end:
+        if a in pool:
+            a += 2
+            continue
+        ins = img.disasm(a, 2)
+        if ins and ins[0].mnemonic == mnemonic:
+            out.add(ins[0].op_str)
+        a += 2
+    return sorted(out)
 
 
 def _sole_ref(img: Image, value: int):
