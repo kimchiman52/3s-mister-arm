@@ -653,7 +653,7 @@ so "per window" and "per second" are the same number. What charges this
 bucket, from the shipped client: the joiner's REGISTER resend inside the
 punch race at 500 ms ⇒ **2/s per joiner**, for the signalling budget
 (`CFG_KEY_NETPLAY_DIRECT_P2P_SIGNAL_BUDGET_MS`, 8 s default,
-`src/port/config/config.c:152`); the host's re-REGISTER worker at
+`src/port/config/config.c:146`); the host's re-REGISTER worker at
 `CFG_KEY_NETPLAY_DIRECT_P2P_REGISTER_INTERVAL_MS`, default 5000 ms
 (`config.c:152`) with a 1000 ms floor ⇒ **1/s worst case**, 0.2/s at the
 default — and this leg must never be starved, because losing it is
@@ -1900,7 +1900,7 @@ the neutralisation record.
     measured in §8.4a.
   - When it is **lost**, the host learns only from the reply DELIVER to
     its own next REGISTER (`rendezvous-server.js:714`), and that
-    interval is **5 000 ms** (`src/port/config/config.c:111`, read at
+    interval is **5 000 ms** (`src/port/config/config.c:152`, read at
     `src/netplay/direct_p2p.c:2972`). One lost datagram therefore places
     the host's race start at a roughly uniform point in the next 5 s —
     **which is exactly where the band sits at production constants**,
