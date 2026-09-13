@@ -227,13 +227,19 @@ void RpConvertStatusCancel(void);
  * REMOTE is enabled (host "" => disabled). */
 
 typedef struct RpProxyConfig {
-    char host[256]; /* "" when unset / file missing => remote disabled */
+    char host[256]; /* "" => remote DISABLED; only `replay-proxy-host = off` or
+                     * an unreadable config file produces it now */
     int port;       /* defaults to 3479 */
 } RpProxyConfig;
 
-/* Load host/port from `config_path`. Always fully writes *out (host "", port
- * 3479 defaults first). Returns true if the file was opened (even if the keys
- * are absent — the defaults then stand), false if the file could not be read. */
+/* Load host/port from `config_path`. Always fully writes *out. Returns true if
+ * the file was opened (even if the keys are absent), false if it could not be
+ * read — and on false the host is "", i.e. disabled.
+ *
+ * An absent or EMPTY `replay-proxy-host` in a file that opened resolves to
+ * RP_DEFAULT_PROXY_HOST (replay_proxy.c), which is what gives the installed
+ * base the weekly-best refresh without a config edit. `off` (any case) is the
+ * operator's disable and is the only value that yields an empty host. */
 bool RpConfigLoadFrom(const char* config_path, RpProxyConfig* out);
 
 /* Convenience: RpConfigLoadFrom() against the canonical on-device game config

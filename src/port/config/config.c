@@ -79,6 +79,14 @@ typedef struct ConfigEntry {
 #define DEFAULT_REPLAYS_ROOT "./replays"
 #endif
 
+/* Host of the VPS fcade-proxy the wrapper's weekly-best refresh talks to
+ * (CFG_KEY_REPLAY_PROXY_HOST). MIRRORED FROM RP_DEFAULT_PROXY_HOST in
+ * vendor/Main_MiSTer/replay_proxy.c, which is the copy that actually decides
+ * whether the refresh runs; this one only seeds a freshly written config file.
+ * The two are held equal by tools/gates/check_replay_proxy_host_default.py --
+ * no build sees both literals, so nothing else can catch the drift. */
+#define DEFAULT_REPLAY_PROXY_HOST "46.62.244.55"
+
 static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_FULLSCREEN, .type = CFG_BOOL, .value.b = true },
     { .key = CFG_KEY_WINDOW_WIDTH, .type = CFG_INT, .value.i = DEFAULT_WINDOW_WIDTH },
@@ -96,16 +104,22 @@ static const ConfigEntry default_entries[] = {
     { .key = CFG_KEY_HOLD_TO_PAUSE, .type = CFG_STRING, .value.s = DEFAULT_HOLD_TO_PAUSE },
     { .key = CFG_KEY_REPLAYS_ROOT, .type = CFG_STRING, .value.s = DEFAULT_REPLAYS_ROOT },
     { .key = CFG_KEY_REPLAYS_MAX_MB, .type = CFG_INT, .value.i = 200 },
-    /* Remote replay browse. Empty host = remote disabled (a no-config boot
-     * stays local-only). Default port is the fcade-proxy's default
-     * (tools/fcade-proxy README).
+    /* Remote replay refresh. Default port is the fcade-proxy's default
+     * (tools/fcade-proxy README); `replay-proxy-host = off` disables.
      *
      * These two rows are load-bearing even though nothing under src/ reads
      * them: write_defaults() below seeds the on-device config file from this
      * table, and the HPS wrapper's RpConfigLoadFrom()
      * (vendor/Main_MiSTer/replay_proxy.c) parses that file for exactly these
-     * two literal key names. Do not delete them as "unused". */
-    { .key = CFG_KEY_REPLAY_PROXY_HOST, .type = CFG_STRING, .value.s = "" },
+     * two literal key names. Do not delete them as "unused".
+     *
+     * The host here only makes a FRESHLY WRITTEN config file self-documenting.
+     * It cannot be what enables the feature, because write_defaults() runs only
+     * when Config_Init() fails to fopen() the file: an install that already has
+     * one keeps whatever it has forever. The wrapper's RP_DEFAULT_PROXY_HOST is
+     * what actually reaches those devices, and the two literals are held equal
+     * by tools/gates/check_replay_proxy_host_default.py. */
+    { .key = CFG_KEY_REPLAY_PROXY_HOST, .type = CFG_STRING, .value.s = DEFAULT_REPLAY_PROXY_HOST },
     { .key = CFG_KEY_REPLAY_PROXY_PORT, .type = CFG_INT, .value.i = 3479 },
     { .key = CFG_KEY_SHOW_FPS, .type = CFG_STRING, .value.s = "off" },
     { .key = CFG_KEY_VIDEO_DRIVER_ORDER, .type = CFG_STRING, .value.s = DEFAULT_VIDEO_DRIVER_ORDER },

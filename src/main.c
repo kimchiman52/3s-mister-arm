@@ -1177,7 +1177,8 @@ static void game_step_0() {
          * not taken; sdl_app.c draws it in the overlay pass instead so a
          * held frame still carries it. */
         VersusScore_Draw();
-        /* Shuffle-viewer chrome (the HOLD START TO SKIP hint). Inert without
+        /* Shuffle-viewer chrome: the HOLD START TO SKIP hint, and the RS_EMPTY
+         * line that says why nothing is playing. Inert without
          * --watch-replays. */
         ReplayShuffle_Draw();
         /* The viewer's private cover, LAST and in front of everything (z =

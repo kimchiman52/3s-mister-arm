@@ -47,6 +47,32 @@
  * run. */
 #define RP_DEFAULT_REPLAYS_ROOT "/media/fat/games/3s-arm/replays"
 
+/* Compiled-in default for `replay-proxy-host`, mirrored by the game's defaults
+ * table (src/port/config/config.c -> DEFAULT_REPLAY_PROXY_HOST) and held equal
+ * to it by tools/gates/check_replay_proxy_host_default.py.
+ *
+ * WHY THIS LITERAL EXISTS AND THE DEFAULTS TABLE IS NOT ENOUGH. Config_Init()
+ * writes the defaults file only when fopen() of it FAILS -- that is, only on a
+ * boot with no config file at all. Every device that has ever run the game
+ * already has a config file carrying `replay-proxy-host` with the empty value
+ * the table used to ship, and nothing ever rewrites it. So changing the table
+ * alone reaches fresh installs only, and replay_sync.c -> rs_idle_check() goes
+ * on logging "no replay-proxy-host configured, remote refresh disabled" forever
+ * on every existing one. That is why the weekly-best refresh had never run on
+ * a user's machine. The wrapper supplying its own default is what fixes the
+ * installed base, because the wrapper ships in the release ZIP.
+ *
+ * Unlike RP_DEFAULT_REPLAYS_ROOT above, this is NOT merely a pre-first-boot
+ * stand-in: it deliberately overrides an empty value in an existing file. */
+#define RP_DEFAULT_PROXY_HOST "46.62.244.55"
+
+/* The operator's off switch. `off` is this codebase's convention for a
+ * string-typed disable (`show-fps = off` in the same defaults table), and it
+ * leaves the host EMPTY -- so every "no replay-proxy-host configured" path
+ * stays exactly the disable it already was. A host of "" no longer means
+ * disabled; only this does. */
+#define RP_PROXY_HOST_OFF "off"
+
 /* ---- libc string helper (strlcpy without a glibc-2.38 dependency, matching
  * replay_scan.c's rb_strlcpy) ---------------------------------------------- */
 
@@ -1250,6 +1276,28 @@ bool RpConfigLoadFrom(const char* config_path, RpProxyConfig* out) {
     }
 
     fclose(f);
+
+    /* An empty host at this point means the file said nothing useful about it:
+     * either the key is absent, or -- the case that matters -- it is present
+     * with the empty value every pre-default install still carries. Supply the
+     * compiled-in host so the installed base gets the refresh without anyone
+     * editing a config file. An explicit `off` is the ONLY thing that keeps the
+     * host empty, and an empty host is still what every disabled path keys on:
+     * rs_idle_check() in replay_sync.c, plus the three RP_ERR_DISABLED guards on
+     * `params->host[0] == '\0'` in RpSearch, RpFetch3sr and RpConvertStatus.
+     * Those three inherit this decision rather than making their own: the only
+     * code that fills a params->host is replay_sync.c (from s_cfg.host, for the
+     * search and fetch legs), and RpConvertStatus has no caller at all today.
+     *
+     * The two failure returns above are deliberately NOT given the default: a
+     * config file that cannot be opened means the game has never run on this
+     * device, and there is nothing to refresh into yet. */
+    if (ascii_casecmp(out->host, RP_PROXY_HOST_OFF) == 0) {
+        out->host[0] = '\0';
+    } else if (out->host[0] == '\0') {
+        rp_strlcpy(out->host, RP_DEFAULT_PROXY_HOST, sizeof(out->host));
+    }
+
     return true;
 }
 

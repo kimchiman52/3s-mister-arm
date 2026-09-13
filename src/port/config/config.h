@@ -164,10 +164,9 @@
  * eviction. 0 disables eviction entirely (delete-only). Default 200 MB. */
 #define CFG_KEY_REPLAYS_MAX_MB "replays-max-mb"
 
-/* Remote replay browse over the VPS fcade-proxy (tools/fcade-proxy), spoken
- * as plain TCP. REPLAY_PROXY_HOST is the proxy host/IP; "" (the default)
- * leaves remote browsing DISABLED so a no-config boot is local-only.
- * REPLAY_PROXY_PORT is the proxy's TCP port (proxy default 3479).
+/* Remote replay refresh over the VPS fcade-proxy (tools/fcade-proxy), spoken
+ * as plain TCP. REPLAY_PROXY_HOST is the proxy host/IP; `off` disables the
+ * refresh. REPLAY_PROXY_PORT is the proxy's TCP port (proxy default 3479).
  *
  * DO NOT DELETE THESE AS "UNUSED". Nothing under src/ reads either key —
  * the consumer is the HPS OSD wrapper, not the game. config.c's
@@ -175,7 +174,11 @@
  * and vendor/Main_MiSTer/replay_proxy.c -> RpConfigLoadFrom() parses that
  * same file looking for exactly the two literal key names below. Dropping
  * either row silently breaks the wrapper's proxy configuration with no
- * game-side symptom. See docs/config.md. */
+ * game-side symptom. See docs/config.md.
+ *
+ * The host default in config.c is a MIRROR of the wrapper's own
+ * RP_DEFAULT_PROXY_HOST, not the thing that enables the feature — an install
+ * with an existing config file never has this table applied to it. */
 #define CFG_KEY_REPLAY_PROXY_HOST "replay-proxy-host"
 #define CFG_KEY_REPLAY_PROXY_PORT "replay-proxy-port"
 

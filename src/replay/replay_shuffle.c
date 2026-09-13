@@ -2,8 +2,9 @@
  * replay_shuffle.c — the weekly-best shuffle viewer.
  *
  * Plays the cached `.3sr` set back to back, forever, in a random order that
- * is re-drawn from a fresh entropy seed on every boot. No persistence, no
- * end state, no empty-state UI: an empty cache simply has nothing to play.
+ * is re-drawn from a fresh entropy seed on every boot. No persistence and no
+ * end state. An empty cache has nothing to play, but it does SAY so — see
+ * RS_EMPTY in ReplayShuffle_Draw for why silence was the wrong answer.
  *
  * WHY THE CHAINING LOOP LOOKS LIKE THIS. Five properties of the C1 player
  * (src/replay/replay_player.c) dictate the shape of this file; each one is a
@@ -98,6 +99,7 @@
 #include "port/config/config.h"
 #include "port/paths.h"
 #include "sf33rd/AcrSDK/common/pad.h"
+#include "sf33rd/Source/Common/PPGWork.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include "sf33rd/Source/Game/system/sys_sub.h"
 #include "sf33rd/Source/Game/system/work_sys.h"
@@ -124,6 +126,16 @@
  * so the transition line reads as a second line of the same message. */
 #define RS_SKIP_HINT_Y 214
 #define RS_TRANSITION_Y 116
+
+/* RS_EMPTY's one line shares the transition row rather than inventing a second
+ * message position: this module has exactly one message row, and in RS_EMPTY
+ * there is no terminal overlay above it to read as a first line. Measured with
+ * tools/ui-text/strwidth.py against the 384 px centred budget
+ * (docs/ui-text-width.md): 264 px and 228 px, against 128 px for
+ * "HOLD START TO SKIP" and 96 px for "NEXT REPLAY...". */
+#define RS_EMPTY_Y RS_TRANSITION_Y
+#define RS_EMPTY_NO_CYCLE_MSG "WAITING FOR THE FIRST REPLAY DOWNLOAD"
+#define RS_EMPTY_NONE_PLAYABLE_MSG "NO PLAYABLE REPLAYS ON THE CARD"
 
 /* Frames the terminal overlay is left on screen before the next replay is
  * loaded. Mirrors the deleted browser's RB_RETURN_LINGER_FRAMES, and stays
@@ -916,8 +928,11 @@ void ReplayShuffle_Tick(void) {
             rs_scan();
             if (s_count <= 0) {
                 /* Decision: the OSD row is unconditional, so an empty cache is
-                 * an ordinary outcome. Nothing to play, no empty-state screen
-                 * — the attract loop just keeps running. */
+                 * an ordinary outcome — the attract loop keeps running rather
+                 * than the viewer failing. It is no longer SILENT, though: the
+                 * user got here by picking "Watch Replays" and restarting the
+                 * core, so RS_EMPTY draws a line saying which of the two empty
+                 * cases this is (ReplayShuffle_Draw). */
                 SDL_Log("replay-shuffle: no playable replays under '%s' — nothing to show; attract continues",
                         ReplayShuffle_GetRoot());
                 s_state = RS_EMPTY;
@@ -1110,18 +1125,54 @@ static void draw_skip_hint(void) {
 }
 
 void ReplayShuffle_Draw(void) {
-    if (s_state == RS_OFF || s_state == RS_UNINIT || s_state == RS_EMPTY) {
+    if (s_state == RS_OFF || s_state == RS_UNINIT) {
         return;
     }
 
-    /* Same boot-order guard the C1 overlay carries: SSPutStrProP renders
-     * through ppgScrList, whose texture group is only bound by
-     * Scrscreen_Init() inside Init_Task_1st. Drawing before that is a
-     * guaranteed segfault. ppgScrList is declared in PPGWork.h, which
-     * replay_overlay.c includes for exactly this reason; ReplayShuffle_Draw
-     * only ever runs from RS_PLAYING / RS_TRANSITION, both of which are
-     * reached long after Init_Task completes (RS_WAIT_BOOT gates on
-     * task[TASK_INIT].condition == 0), so no extra guard is needed here. */
+    /* Boot-order guard, the same one replay_overlay.c -> ReplayOverlay_Draw and
+     * hud_strip.c -> HudStrip_Visible carry: SSPutStrProP renders through
+     * ppgScrList, whose texture group is bound by exactly one statement in the
+     * tree (sc_sub.c -> Scrscreen_Init) inside Init_Task_1st, and drawing before
+     * that sends njDrawSprite through a NULL tex -- a guaranteed segfault,
+     * reproduced on MiSTer and under the dummy video driver.
+     *
+     * This guard used to be argued away, on the grounds that Draw only ever
+     * DREW from RS_PLAYING / RS_TRANSITION. RS_EMPTY now draws too, so the
+     * argument has to be re-made, and it does still hold: every path into
+     * RS_EMPTY is downstream of the RS_WAIT_BOOT gate on
+     * `task[TASK_INIT].condition == 0 && G_No[0] == 1` -- the boot path,
+     * rs_start_next()'s two bailouts, and the RS_TRANSITION rescan all sit
+     * behind it -- and ppgScrList.tex is assigned once and never cleared, so
+     * nothing walks it back afterwards.
+     *
+     * The guard goes in anyway. It is one pointer compare on a path that is
+     * already off the video-critical route, the premise it replaces is a
+     * whole-of-boot-order argument that the next state added here would have to
+     * re-derive, and the two other SSPutStrProP callers outside the engine both
+     * check it rather than reason about it. Matching them is cheaper than being
+     * right twice. */
+    if (ppgScrList.tex == NULL) {
+        return;
+    }
+
+    if (s_state == RS_EMPTY) {
+        /* The reported symptom this answers: picking "Watch Replays" with an
+         * empty cache restarted the core into a silent attract loop with no
+         * explanation, because RS_EMPTY drew nothing at all.
+         *
+         * The two cases need different things from the user, so they get
+         * different lines. s_manifest_mtime is rs_manifest_mtime()'s value as of
+         * the last rs_scan(), and every path into RS_EMPTY scans first, so it is
+         * current here -- read from the cache rather than stat()ing the card 60
+         * times a second from a draw path. Zero means no manifest.json exists,
+         * and since the wrapper renames it into place LAST, that genuinely means
+         * replay_sync has never completed a cycle: the user is waiting on the
+         * network, not on the card. Non-zero means a cycle finished and left
+         * nothing this viewer can launch. */
+        SSPutStrProP(1, RS_CANVAS_W, RS_EMPTY_Y, RS_ATR, RS_COL,
+                     s_manifest_mtime == 0 ? RS_EMPTY_NO_CYCLE_MSG : RS_EMPTY_NONE_PLAYABLE_MSG, RS_PRIO);
+        return;
+    }
 
     if (s_state == RS_TRANSITION) {
         /* MUST be drawn from game_step_0's HELD-frame branch as well as the

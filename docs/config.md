@@ -296,19 +296,39 @@ device speaks only a plain length-framed JSON protocol, so no TLS or cookie
 ever lives on-device.
 
 Defaults:
-- `replay-proxy-host`: `""` (empty — **remote browsing disabled**; the device
-  is local-only)
+- `replay-proxy-host`: `46.62.244.55` — the live proxy. **The refresh is on by
+  default**, including on installs that predate this default (see below).
 - `replay-proxy-port`: `3479` (the proxy's default port)
 
+**To turn the refresh off**, set the host to `off` (any case):
+
+```ini
+replay-proxy-host = off
+```
+
+Nothing else disables it. An empty value, or the key removed entirely, now
+*enables* the refresh — those are the states an untouched config is in, and
+treating them as "off" is what kept the feature from ever running.
+
 Notes:
+- **Existing installs get the default without editing their config.** The
+  wrapper carries the host compiled in (`RP_DEFAULT_PROXY_HOST` in
+  `vendor/Main_MiSTer/replay_proxy.c`) and substitutes it for an absent or empty
+  value. This matters because the game writes its defaults file only when there
+  is no config file at all, so every device that has ever launched the game keeps
+  whatever its file already says — for the life of this feature that was an empty
+  host, and the refresh had never run anywhere. The copy in
+  `src/port/config/config.c` only makes a freshly written file self-documenting;
+  the two literals are held equal by
+  `tools/gates/check_replay_proxy_host_default.py`.
+- A value that is present and non-empty always wins over the compiled-in
+  default, so a host you set by hand is never overridden.
 - **The game does not read these keys.** The consumer is the HPS wrapper's
   `replay_sync` module, which parses them out of the on-device config file
   (`RpConfigLoadFrom()` in `vendor/Main_MiSTer/replay_proxy.c`) to decide
-  whether the daily weekly-best refresh may run at all — an empty host means
-  no refresh, and the device plays only what is already cached. The game's
-  only role is that its config defaults table is what seeds the file, so the
-  two rows must stay in `src/port/config/config.c` even though nothing under
-  `src/` reads them.
+  whether the daily weekly-best refresh may run at all. A config file the
+  wrapper cannot open at all also disables it — that means the game has never
+  run on this device and there is nothing to refresh into yet.
 - Both the in-game REMOTE browse tab and the OSD replay menu that once used
   these keys are gone; nothing on the device browses Fightcade interactively
   any more. The only remaining consumer is the unattended daily refresh.

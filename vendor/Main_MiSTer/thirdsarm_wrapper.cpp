@@ -2676,6 +2676,25 @@ int wait_for_child(pid_t child, bool service_ui, FILE *wrapper_log)
 	uint64_t term_deadline_ms = 0;
 	bool term_escalated = false;
 
+	// Say out loud that forced mode suppresses the service block below, once per
+	// process. Without this the suppression is INVISIBLE: a forced launch simply
+	// produces a last-run.log with no `replay_sync:` lines in it, which is
+	// indistinguishable from the refresh being broken -- and "no replay_sync:
+	// lines" was the whole symptom of the missing proxy-host default, so the one
+	// diagnostic a reader would reach for had two possible meanings.
+	//
+	// Forced mode is set only by THIRDSARM_WRAPPER_FORCE, which nothing shipped
+	// sets; it comes from tools/mister/misterctl.sh (probe-wrapper, run-wrapper).
+	// So this line appears in dev captures and never on a user's device.
+	static bool logged_forced_suppression = false;
+	if (!service_ui && !logged_forced_suppression)
+	{
+		logged_forced_suppression = true;
+		write_log_line(wrapper_log,
+		               "forced_mode_service_suppressed=1 skipped=replay_sync,ui,osd,input reason="
+		               "waitpid_blocks_in_forced_mode");
+	}
+
 	for (;;)
 	{
 		pid_t rc = waitpid(child, &status, service_ui ? WNOHANG : 0);
@@ -2741,7 +2760,9 @@ int wait_for_child(pid_t child, bool service_ui, FILE *wrapper_log)
 		// Only reached when service_ui is true. In `forced` mode waitpid()
 		// blocks above and this whole block is skipped, so no refresh happens
 		// on a forced/probe launch -- that is fine: the refresh is a daily
-		// background chore, not a launch prerequisite.
+		// background chore, not a launch prerequisite. The
+		// forced_mode_service_suppressed line above records it in last-run.log
+		// so an absence of `replay_sync:` lines is not read as a defect.
 		ReplaySyncTick();
 		HandleUI();
 		OsdUpdate();

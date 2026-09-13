@@ -508,11 +508,25 @@ The in-game local replay browser (`replay-browser` config key / `--replay-browse
   `.3sr`/`.meta.json` are never evicted. Set `0` to disable eviction (delete-only).
 - **Delete**: MP (SWK_NORTH) on a highlighted row opens a confirm prompt; LK (SWK_SOUTH) confirms
   and removes that replay's `.3sr` + `.meta.json` + any raw files in the same directory.
-- **Remote browse + download** (`replay-proxy-host`/`replay-proxy-port`): MK (SWK_EAST) toggles the
-  browser to a REMOTE tab that searches the VPS `fcade-proxy` (`tools/fcade-proxy`) over plain TCP;
-  LK downloads the highlighted replay's **raw** Fightcade stream into
-  `<root>/<quarkid>/`. On-device conversion is a NO-GO (Step B3), so a downloaded dir lands in the
-  LOCAL list marked `NEEDS CONVERSION` and is not playable until converted off-device.
+- **Remote browse + download** (`replay-proxy-host`/`replay-proxy-port`): **the weekly-best refresh
+  is ON by default**, on existing installs as well as fresh ones — the wrapper supplies the proxy
+  host compiled in, so no config edit is needed. Set `replay-proxy-host = off` to disable it; see
+  [docs/config.md](config.md). To confirm a cycle actually ran, grep `logs/last-run.log` for
+  `replay_sync:` and expect the pair
+
+  ```
+  replay_sync: refresh due (now ..., due ..., manifest ...); root=... proxy=...:3479 since=...
+  replay_sync: cycle end (...): N fetched, N already cached, N failed, set N (cap N)
+  ```
+
+  `refresh due` with no `cycle end` is a cycle that started and did not finish. No `replay_sync:`
+  lines at all means either the host resolved to empty (`off`, or no config file yet) or the launch
+  was a forced/probe one — a forced launch skips the whole service block and now says so with a
+  `forced_mode_service_suppressed=1` line in the same log.
+- The OSD's **Watch Replays** row restarts the core into the shuffle viewer. With an empty cache it
+  no longer boots into a silent attract loop: it prints `WAITING FOR THE FIRST REPLAY DOWNLOAD` when
+  no `manifest.json` exists yet (no cycle has completed) or `NO PLAYABLE REPLAYS ON THE CARD` when
+  one has and left nothing launchable.
 - **Raw-fetch → desktop-convert → push-back flow**: pull the raw `<quarkid>/` dir back to a desktop
   (it carries the `inputs`/`savestate`/`summary.json` layout `tools/replay_preprocessor.py` already
   expects — same names as the Python fetch tool), run `tools/replay_preprocessor.py` +

@@ -133,6 +133,30 @@ The reset is disabled while a recording or replay is running, so a
 recorded dummy sequence cannot be knocked out of sync.
 
 
+REPLAYS
+-------
+
+3S-ARM downloads a small set of the week's best-rated Fightcade matches in
+the background, once a day, while you play. They are stored under
+/media/fat/games/3s-arm/replays/ and you can watch them from the OSD
+(press F12 or the MiSTer menu button) with "Watch Replays", which plays them
+back to back in a random order until you leave.
+
+Nothing is uploaded and no account is involved. The download needs your
+MiSTer to have working internet; the first set can take a few minutes to
+appear after boot. Until it does, "Watch Replays" says WAITING FOR THE FIRST
+REPLAY DOWNLOAD.
+
+To turn the downloads off, SSH into your MiSTer and edit
+/media/fat/games/3s-arm/config. Find the replay-proxy-host line and set it
+to off:
+
+  replay-proxy-host = off
+
+Already-downloaded replays stay watchable. To cap the disk the set may use,
+change replays-max-mb (200 by default).
+
+
 OVERCLOCK
 ---------
 

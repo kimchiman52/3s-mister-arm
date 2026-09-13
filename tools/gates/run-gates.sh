@@ -65,6 +65,7 @@ GATES=(
     "reclaim-window|slot-reclaim staleness vs the CLIENT cadences it is derived from -- #130"
     "constant-time-compare|the punch-token compare's SHAPE, which no unit test can see -- #132"
     "versus-score-reset-sites|the win tally's three VersusScore_Reset sites, which no harness can drive -- docs/versus-score.md"
+    "replay-proxy-host-default|the replay-proxy-host default, written twice in two binaries that share only an INI file"
     "host-diagnostic-parity|diagnostics the host's fortified libc headers hide -- #106"
     "doc-citation-baselines|tools/doc-citations/check_baselines.py (breach AND slack)"
     "arm-cross-build|cross-compile the shipped config for ARM -- #106 (needs --arm)"
@@ -449,6 +450,35 @@ elif [ $rc -eq 1 ]; then
     record versus-score-reset-sites RED; cat "${out_dir}/versus-score-reset-sites.log"
 else
     record versus-score-reset-sites ERROR; cat "${out_dir}/versus-score-reset-sites.log"
+fi
+echo
+
+# ---------------------------------------------------------------------------
+# 4e. The replay-proxy-host default -- the device-side weekly-best refresh.
+#
+# Same cross-tree coupling as 4b/4c, and the same reason it cannot be an
+# assertion: the host is written down twice, in the HPS wrapper
+# (RP_DEFAULT_PROXY_HOST) and in the game's config defaults table
+# (DEFAULT_REPLAY_PROXY_HOST), and the two are separate binaries whose only
+# shared channel is an INI file parsed by string. No TU sees both.
+#
+# The wrapper copy is the one that matters: Config_Init() writes the defaults
+# file ONLY when fopen() of it fails, so an install that already has a config
+# never picks up a change to the table -- which is how the refresh came to have
+# never run on any user's machine. Drift is silent in both directions and
+# neither is a crash; the only symptom is the ABSENCE of `replay_sync:` lines
+# in logs/last-run.log.
+# ---------------------------------------------------------------------------
+echo "=== replay-proxy-host default ==="
+python3 tools/gates/check_replay_proxy_host_default.py \
+    > "${out_dir}/replay-proxy-host-default.log" 2>&1
+rc=$?
+if [ $rc -eq 0 ]; then
+    record replay-proxy-host-default GREEN
+elif [ $rc -eq 1 ]; then
+    record replay-proxy-host-default RED; cat "${out_dir}/replay-proxy-host-default.log"
+else
+    record replay-proxy-host-default ERROR; cat "${out_dir}/replay-proxy-host-default.log"
 fi
 echo
 
