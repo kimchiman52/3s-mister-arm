@@ -1107,14 +1107,58 @@ def cmd_selftest(img: Image, args) -> int:
     slot_pp, insn_pp = _sole_ref(img, pl_piyo_tbl)
     check("pl_piyo_tbl 0x065EAC70: sole literal referrer (pool word)", slot_pp, 0x0611864C)
     check("  loaded by the instruction at", insn_pp, 0x061185D8)
-    check("  -> enclosing routine = set_kizetsu_status", find_function_start(img, insn_pp) if insn_pp else None, 0x0611856C)
-    piyo = [img.s16(pl_piyo_tbl + i * 2) for i in range(21)]
+    # find_function_start answers 0x0611856C here, and that is NOT
+    # set_kizetsu_status -- it is the routine BEFORE it, which leaves through a
+    # tail `jmp @r2` the rts-scan does not treat as a terminator (README trap 4:
+    # the enclosing-routine address is a hint, never an identity, which is why
+    # `refs` prints it with a `~`).  Section 16.3's first pass reported the hint
+    # as the answer.  Both are pinned: the hint so a change in the scan is
+    # noticed, and the real boundary so the hint is never mistaken for it again.
     check(
-        "pl_piyo_tbl's 21 arcade values == plcnt.c's, entry for entry",
+        "  -> find_function_start's rts-scan HINT (walks past the tail jmp)",
+        find_function_start(img, insn_pp) if insn_pp else None,
+        0x0611856C,
+    )
+    check(
+        "  ... that hint's routine ends at a tail jmp @r2 + delay slot, 0x061185CA",
+        str([(i.mnemonic, i.op_str) for i in img.disasm(0x061185CA, 4)]),
+        str([("jmp", "@r2"), ("mov.l", "@r15+,r14")]),
+    )
+    check(
+        "  -> so set_kizetsu_status really starts at 0x061185CE, on its arg exts",
+        str([(i.mnemonic, i.op_str) for i in img.disasm(0x061185CE, 2)]),
+        str([("exts.w", "r4,r7")]),
+    )
+    check(
+        "  ... and ends at the rts at 0x06118604 + delay slot (0x061185CE..0x06118606)",
+        str([(i.mnemonic, i.op_str) for i in img.disasm(0x06118604, 4)]),
+        str([("rts", ""), ("mov.l", "r3,@(12,r5)")]),
+    )
+    piyo = [img.s16(pl_piyo_tbl + i * 2) for i in range(21)]
+    # "entry for entry" is against plcnt.c AS WRITTEN -- its Shin Akuma row at
+    # index 15 is `#if defined(CPS3)`, and CPS3 is commented out in
+    # CMakeLists.txt, so a build compiles 20 of these 21.  Min/max are 56/72
+    # either way, which is the only thing the clamp verdict needs.
+    check(
+        "pl_piyo_tbl's 21 arcade values == plcnt.c's as written, entry for entry",
         str(piyo),
         "[72, 72, 64, 64, 72, 64, 72, 64, 64, 72, 64, 64, 64, 64, 56, 56, 64, 64, 72, 64, 56]",
     )
     check("  ... min/max 56/72, so the [56,72] clamp cannot bind", "%d/%d" % (min(piyo), max(piyo)), "56/72")
+    check(
+        "  ... and with the CPS3-only row dropped, as any build compiles it",
+        "%d/%d" % (min(piyo[:15] + piyo[16:]), max(piyo[:15] + piyo[16:])),
+        "56/72",
+    )
+    # The 42-byte value run is NOT the anchor: it occurs twice.  The second hit
+    # is its own sole-referrer anchor in an unrelated routine -- recorded so the
+    # scan is not re-run and the coincidence is not re-discovered as a conflict.
+    check(
+        "pl_piyo_tbl's 42-byte value run occurs TWICE, so it is not an anchor",
+        [hex(a) for a in img.occurrences(b"".join(struct.pack(">h", v) for v in piyo))],
+        ["0x61b86c8", "0x65eac70"],
+    )
+    check("  the other hit 0x061B86C8 is loaded by an unrelated routine", _sole_ref(img, 0x061B86C8)[1], 0x060D9E78)
     # The gap between the read (0x061185F8) and the genkai store (0x061185FC)
     # holds one instruction, and it sign-extends the INDEX for the next
     # statement.  No cmp, no branch: the arcade copies the table value.
@@ -1135,6 +1179,15 @@ def cmd_selftest(img: Image, args) -> int:
         "set_super_arts_status: gauge_len then store_max, both plain mov.w copies",
         str([(i.mnemonic, i.op_str) for i in img.disasm(0x061186D2, 8)]),
         str([("mov.w", "@(8,r6),r0"), ("mov.w", "r0,@(22,r5)"), ("mov.w", "@(10,r6),r0"), ("mov.w", "r0,@r1")]),
+    )
+    # Section 16.3's ex4th_full residual rests on this pair: the byte copies run
+    # SA_DATA +0..+5 and then jump straight to +7, so the arcade routine never
+    # reads +6 (ex4th_full) at all.  If a future read of this routine finds a +6
+    # copy, that residual is well-posed after all and must be re-opened.
+    check(
+        "set_super_arts_status: the byte copies skip SA_DATA+6 -- +5 then +7",
+        str([(i.mnemonic, i.op_str) for i in img.disasm(0x061186CA, 8)]),
+        str([("mov.b", "@(5,r6),r0"), ("mov.b", "r0,@(7,r5)"), ("mov.b", "@(7,r6),r0"), ("mov.b", "r0,@(8,r5)")]),
     )
 
     def _sa_pair(c, s):
@@ -1173,6 +1226,20 @@ def cmd_selftest(img: Image, args) -> int:
         "slot 3 is not all-zero -- dtm is 65536 in every one of the 21 records",
         str(sorted({img.u32(sad + (c * 4 + 3) * 16 + 12) for c in range(21)})),
         "[65536]",
+    )
+    # The two residuals section 16.3(f) names, on the ROM side.  They are NOT
+    # part of the clamp verdict; they are pinned so that "port 1 / ROM 0" and
+    # "four slot-3 gauge_type differences" stay checkable without re-deriving
+    # the table, and so a table edit cannot quietly make them go away.
+    check(
+        "residual: the arcade's ex4th_full (SA_DATA+6) is 0 in all 84 records",
+        str(sorted({img.data[img.off(sad + (c * 4 + s) * 16 + 6)] for c in range(21) for s in range(4)})),
+        "[0]",
+    )
+    check(
+        "residual: arcade slot-3 gauge_type == 3 for exactly these characters",
+        str([c for c in range(21) if img.data[img.off(sad + (c * 4 + 3) * 16 + 7)] == 3]),
+        "[0, 6, 13, 14, 15]",
     )
 
     # ------------------------------------------------------------------
