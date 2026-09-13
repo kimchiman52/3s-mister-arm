@@ -327,6 +327,27 @@ const SA_DATA super_arts_DATA[20][4] = { { { 20, 24, 25, 0, 0, 0, 0, 3, 120, 2, 
                                            { 21, 0, 0, 0, 0, 0, 0, 0, 120, 2, 65536 },
                                            { 0, 0, 0, 0, 0, 0, 0, 0, 64, 1, 65536 } } };
 
+/* Both SA tables are subscripted by My_char (`set_super_arts_status` /
+ * `set_super_arts_status_dc` below), the same domain pl_piyo_tbl uses -- so
+ * their row count is NUM_CHARS, not an independent 20. It IS 20 today because
+ * `# CPS3` is commented out in CMakeLists.txt's feature toggles and
+ * constants.h's #else arm then gives 20.
+ *
+ * Asserted rather than written as `[NUM_CHARS][4]`: under CPS3, NUM_CHARS is 21
+ * AND Shin Akuma is inserted at index 15, so resizing alone would leave rows
+ * 15..19 holding Chun-Li..Remy data under the arcade's Shin Akuma..Twelve ids
+ * and row 20 zero-filled. That trades a one-row overread for a silent
+ * misalignment across six characters. The assertion refuses the build instead,
+ * which costs nothing in the only configuration that compiles: measured
+ * 2026-09-13, a Release host configure with -DCPS3 already fails with 7 errors
+ * in charset.c before reaching this file. */
+_Static_assert(sizeof(super_arts_data) / sizeof(super_arts_data[0]) == NUM_CHARS,
+               "super_arts_data needs one row per character: reorder its rows for the CPS3 character "
+               "ids (Shin Akuma at 15) and resize, do not just resize");
+_Static_assert(sizeof(super_arts_DATA) / sizeof(super_arts_DATA[0]) == NUM_CHARS,
+               "super_arts_DATA needs one row per character: reorder its rows for the CPS3 character "
+               "ids (Shin Akuma at 15) and resize, do not just resize");
+
 const s16 pl_piyo_tbl[NUM_CHARS] = {
     72, // Gill
     72, // Alex

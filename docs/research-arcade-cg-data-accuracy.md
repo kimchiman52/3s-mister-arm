@@ -3881,8 +3881,19 @@ sweep of `src/` for both the plain and the chained
 > `initialize_data` from a raw archive byte (`SDL_SeekIO(io, SUPER_ARTS_OFFSET,
 > …)` then `SDL_ReadIO(io, selected_super_arts, 2)`), armed by `--test-states`,
 > and **nothing clamps it** — the only guard on it is a bare `>= 0` sign test at
-> the write site, exactly like `fcade_force_setup`'s. `initialize_data` clamps
-> `characters[i]` two lines away and does not clamp this.
+> the write site, exactly like `fcade_force_setup`'s. ~~`initialize_data` clamps
+> `characters[i]` two lines away and does not clamp this.~~
+>
+> > **CORRECTION (§16.3, 2026-09-13): that last sentence was false, and it
+> > understated the hole.** `initialize_data` clamped NEITHER. The two reads sat
+> > two lines apart and were the same bare `SDL_ReadIO(io, …, 2)` with no test of
+> > any kind; what IS clamped is `configuration.test.characters[player]`, in
+> > `initialize_default_data`, by `args.c`'s `0..19` test on `--test-p1-character`
+> > — a different value on a different route, which the archive read then
+> > overwrites. The `characters` half was the worse of the two, because `My_char`
+> > subscripts the 20-row FIRST dimension of `super_arts_data` while `Super_Arts`
+> > subscripts a `[4]` whose fourth slot at least exists. Both are bounded at the
+> > read as of 2026-09-13 (`read_bounded_archive_pair`); see the residual list.
 >
 > **The shipped-build verdict is unaffected**, and was re-derived independently:
 > `test_runner.c` and `test_runner_utils.c` are both `#if defined(DEBUG)`
@@ -3971,14 +3982,24 @@ itself:
   `--test-fcade-*` route above, a different flag and a different file. See the
   correction under the writer table.
 
-**The fix is one range test per flag in `args.c`, and it was deliberately not
-applied here** — it is an argument-validation change in a file this item does
+~~**The fix is one range test per flag in `args.c`, and it was deliberately not
+applied here**~~ — it is an argument-validation change in a file this item does
 not otherwise touch, and adding the same `0..2` test the two neighbouring flags
 already carry would make the verdict above hold in every build rather than only
-in shipped ones. Recorded as a work item, not done. It now covers **three**
+in shipped ones. ~~Recorded as a work item, not done.~~ It covers **three**
 routes, not two: `--test-fcade-p1-arts` / `--test-fcade-p2-arts`, the STATCHECK
 archive byte, and `--test-states`' `selected_super_arts` — and the last two are
 file reads rather than flags, so the test for them belongs at the read site.
+
+**Two of the three are DONE as of 2026-09-13** — the two `#if defined(DEBUG)`
+ones, both by rejection rather than by clamping; see the residual list below for
+the bound, the reason and the demonstration. **The `#if defined(STATCHECK)`
+route is still open**: `scrd_game.c` -> `scrd_read_match_setup` still reads
+`game->supers` with no range check, and `tools/fcade-replays/make_3sr.py` still
+only warns. It was left because it is a third build configuration and a
+different harness, not because it is any better bounded than the two that were
+closed — so the verdict above now holds in the shipped and DEBUG builds and
+**not** in a STATCHECK one.
 
 #### Why the clamps stay: gating rejected, and removal rejected too
 
@@ -4124,18 +4145,54 @@ and the evidence are the block after this list.
   ROM there and `data` does not. Neither field is clamped and neither slot is
   reachable; noted because the previous pass placed this difference in
   `ex4th_full`.
-- **`--test-fcade-p1-arts` / `--test-fcade-p2-arts` are unbounded** where the
+- ~~**`--test-fcade-p1-arts` / `--test-fcade-p2-arts` are unbounded** where the
   neighbouring `--test-p1-super-art` / `--test-p2-super-art` are validated. One
   range test each in `args.c` closes it; not done here, because this item's
   scope was the clamps and a test-harness argument check is not an
-  arcade-accuracy change.
-- **`super_arts_data[20][4]` does not track `NUM_CHARS`.** `pl_piyo_tbl` and
+  arcade-accuracy change.~~ **CLOSED 2026-09-13.** Both flags now carry the same
+  `!= -1 && (< 0 || > 2)` test the two neighbouring flags do, in `args.c`'s
+  `fcade_*` validation block, and `--test-fcade-p1-arts`' help text says `0-2`
+  rather than "raw arcade byte". **Rejected, not clamped** — the flag *names* the
+  setup under test, so a clamped value would run the harness against a match the
+  caller did not ask for and report it as a pass. Demonstrated, not inspected:
+  `3` and `-5` exit 1 with "must be between 0 and 2" while `2` and `-1` fall
+  through to the next check, in BOTH host configs — including Release, where the
+  consumer is not compiled and the flag used to be parsed and dropped.
+- ~~**`--test-states`' archive `Super_Arts` byte is unbounded**, the third route
+  under "The two harness builds where it IS reachable" above.~~ **CLOSED
+  2026-09-13**, at the read rather than at a flag, because the value arrives in a
+  file. `test_runner.c` -> `read_bounded_archive_pair` replaces the two bare
+  `SDL_ReadIO` pairs in `initialize_data` and refuses the run — `SDL_Log` +
+  `exit(2)`, the idiom `fcade_load_stream` already uses for a malformed stream
+  file — on any byte outside range, `Super_Arts` against `0..2` and `My_char`
+  against `0..NUM_CHARS-1`. Rejected for the same reason as the flags, with the
+  file's name in the argument: the archive IS the setup, so a clamp reports a
+  pass on a match the archive does not describe. Demonstrated on crafted
+  single-frame archives: `Super_Arts[0] = 3` and `Super_Arts[1] = 7` exit 2,
+  `My_char[1] = 20` exits 2 and `= 19` does not, and a legal `(2, 11) / (2, 0)`
+  frame runs on past the check.
+- ~~**`super_arts_data[20][4]` does not track `NUM_CHARS`.** `pl_piyo_tbl` and
   `pl_nr_piyo_tbl` are `[NUM_CHARS]` and grow to 21 under `CPS3`; both SA tables
   are a hard `[20]` in the non-`CPS3` character order. Harmless today — `CPS3`
   is commented out in `CMakeLists.txt`, so `NUM_CHARS` is 20 and the two
   orderings coincide — and recorded only because defining `CPS3` would shift the
   SA tables against `My_char` and read one row past `super_arts_data`. No claim
-  here depends on it.
+  here depends on it.~~ **CLOSED 2026-09-13 by assertion, not by resizing.** Two
+  `_Static_assert`s in `plcnt.c`, above `pl_piyo_tbl`, hold each table's row count
+  equal to `NUM_CHARS`. Resizing to `[NUM_CHARS][4]` was the other option offered
+  and it is the wrong one: `CPS3` does not merely add a 21st character, it inserts
+  Shin Akuma at index 15, so a resize alone would leave rows 15..19 holding
+  Chun-Li..Remy data under the arcade's Shin Akuma..Twelve ids and row 20
+  zero-filled — trading a one-row overread for a silent six-character
+  misalignment, which is the failure this bullet exists to prevent. The
+  assertion's message says "reorder its rows … do not just resize" for that
+  reason. It costs nothing in any configuration that builds: **measured
+  2026-09-13, a Release host configure with `-DCPS3` fails with 7 errors in
+  `charset.c`** (`-Wint-to-pointer-cast` ×5, `-Wint-conversion`, one undeclared
+  `wu`) before the linker is ever reached, so `CPS3` is not a configuration that
+  can be regressed. Both assertions were confirmed non-vacuous by compiling
+  `plcnt.c` alone with `-DCPS3`: each fires with "expression evaluates to
+  '20 == 21'".
 - ~~`plcnt.c`'s comments above `sa_store_max_omake` and `kizetsu_genkai_omake`
   restate §16.2's imprecise sentence.~~ **Fixed in the same pass that found it**
   — both now say what is true, and the change is comment-only.
@@ -4281,13 +4338,17 @@ value set is `{0, 1, 3}` on both sides, so the `[4]` jump table is never
 over-indexed — which makes this a wrong-state-machine hazard rather than an
 out-of-bounds one. The unbounded `--test-fcade-p1-arts` / `--test-fcade-p2-arts`
 flags are therefore the live route for these four exactly as they are for the
-clamps, and the same one-range-test-per-flag fix closes both. Still not done.
+clamps, and the same one-range-test-per-flag fix closes both. ~~Still not
+done.~~ **Done 2026-09-13** for those two flags and for `--test-states`; the
+STATCHECK archive byte still reaches `gauge_type` this way.
 
 **The `NUM_CHARS` trap, verified rather than repeated.** `pl_piyo_tbl`'s Shin
 Akuma row is `#if defined(CPS3)`, and `CMakeLists.txt`'s "Feature toggles" block
 contains `# CPS3` — commented out — so `constants.h` takes its `NUM_CHARS 20`
-arm and every build compiles 20 rows, not 21. Both SA tables are a hard `[20]`
-and do not track it. The realignment the comparison needs (port 0..14 = arcade
+arm and every build compiles 20 rows, not 21. Both SA tables are still written
+as a hard `[20]`, but as of 2026-09-13 they no longer *silently* fail to track
+it: two `_Static_assert`s in `plcnt.c` refuse the build if the row count and
+`NUM_CHARS` ever disagree. The realignment the comparison needs (port 0..14 = arcade
 0..14, port 15..19 = arcade 16..20) is the consequence, and it is the whole
 reason a naive comparison reports 51 differences instead of 6.
 

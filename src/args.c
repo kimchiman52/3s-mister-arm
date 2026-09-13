@@ -190,6 +190,18 @@ static void verify_configuration(Configuration* configuration) {
     if (test->fcade_max_frames < 0) {
         error_out_with_code("--test-fcade-max-frames must be >= 0.", EXIT_CODE_RUNTIME_ERROR);
     }
+    /* Same 0..2 bound as --test-p1-super-art above, and for the reason that
+     * flag has it: test_runner.c -> fcade_force_setup writes these straight
+     * into Super_Arts[], whose fourth SA_DATA slot no shipped build can
+     * select (docs/research-arcade-cg-data-accuracy.md §16.3). Rejected, not
+     * clamped -- a clamp would run the harness against a setup the caller did
+     * not ask for and report it as a pass. */
+    if (test->fcade_p1_arts != -1 && (test->fcade_p1_arts < 0 || test->fcade_p1_arts > 2)) {
+        error_out_with_code("--test-fcade-p1-arts must be between 0 and 2.", EXIT_CODE_RUNTIME_ERROR);
+    }
+    if (test->fcade_p2_arts != -1 && (test->fcade_p2_arts < 0 || test->fcade_p2_arts > 2)) {
+        error_out_with_code("--test-fcade-p2-arts must be between 0 and 2.", EXIT_CODE_RUNTIME_ERROR);
+    }
     if (!is_supported_test_scene_preset(test->scene_preset)) {
         error_out_with_code("--test-scene-preset must be one of stage-heavy, effect-heavy, super-heavy, "
                             "yun-sa3-repeat, yun-sa3-repeat-pressure, q-sa1-repeat, q-sa1-repeat-pressure, "
@@ -883,7 +895,7 @@ void read_args(int argc, const char* argv[], Configuration* configuration) {
         OPT_INTEGER(0,
                     "test-fcade-p1-arts",
                     &configuration->test.fcade_p1_arts,
-                    "Force P1's Super Arts (raw arcade byte) during --test-fcade-inputs setup injection. "
+                    "Force P1's Super Arts (0-2) during --test-fcade-inputs setup injection. "
                     "-1 (default) = off.",
                     NULL,
                     0,

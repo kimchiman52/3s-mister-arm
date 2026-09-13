@@ -1210,6 +1210,44 @@ static u16 read_input_buff(SDL_IOStream* io, Sint64 offset) {
     return buff;
 }
 
+/* Read a two-byte P1/P2 pair out of a --test-states archive frame and REFUSE
+ * the run if either byte is outside 0..max.
+ *
+ * Both pairs this reads are engine table subscripts: characters[] reaches
+ * My_char and so super_arts_data[NUM_CHARS][4]'s first dimension, and
+ * selected_super_arts[] reaches Super_Arts[] and so its second, whose fourth
+ * slot no shipped build can select (docs/research-arcade-cg-data-accuracy.md
+ * §16.3 -- that unreachability is what holds the three SA clamps inert). The
+ * archive byte is raw, so 0..255, and --test-states takes no validation of its
+ * own.
+ *
+ * Reject rather than clamp: the value IS the setup under test, so a clamped
+ * one runs the harness against a match the archive does not describe and
+ * reports it as a pass. Loud and early is the same choice args.c makes for
+ * --test-p1-super-art, and the same SDL_Log + exit(2) fcade_load_stream makes
+ * for a malformed stream file. */
+static void read_bounded_archive_pair(SDL_IOStream* io, Sint64 offset, const char* what, int max, Sint8* out) {
+    Uint8 raw[2];
+
+    SDL_SeekIO(io, offset, SDL_IO_SEEK_SET);
+
+    if (SDL_ReadIO(io, raw, sizeof(raw)) != sizeof(raw)) {
+        SDL_Log("--test-states: archive frame is too short to hold %s at offset 0x%llX",
+                what,
+                (unsigned long long)offset);
+        exit(2);
+    }
+
+    for (int player = 0; player < 2; player++) {
+        if ((int)raw[player] > max) {
+            SDL_Log("--test-states: archive frame holds %s[%d] = %u, outside 0..%d", what, player, raw[player], max);
+            exit(2);
+        }
+
+        out[player] = (Sint8)raw[player];
+    }
+}
+
 static void initialize_data() {
     initialize_default_data();
 
@@ -1251,11 +1289,8 @@ static void initialize_data() {
         // This ensures we read the latest data
 
         if (in_game && !did_set_char_data) {
-            SDL_SeekIO(io, MY_CHAR_OFFSET, SDL_IO_SEEK_SET);
-            SDL_ReadIO(io, characters, 2);
-
-            SDL_SeekIO(io, SUPER_ARTS_OFFSET, SDL_IO_SEEK_SET);
-            SDL_ReadIO(io, selected_super_arts, 2);
+            read_bounded_archive_pair(io, MY_CHAR_OFFSET, "My_char", NUM_CHARS - 1, characters);
+            read_bounded_archive_pair(io, SUPER_ARTS_OFFSET, "Super_Arts", 2, selected_super_arts);
 
             did_set_char_data = true;
         }
