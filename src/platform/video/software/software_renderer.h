@@ -29,6 +29,16 @@ int SoftwareRenderer_HoldLastFrame();
 void SoftwareRenderer_SnapshotHeldBase();
 /* Rasterize the queued geometry over the canvas as it stands (no clear). */
 void SoftwareRenderer_RenderOverlay();
+/* True when a held frame has a base buffer to be restored from, i.e. when it is
+ * safe to composite this frame's overlays over it with RenderOverlay. False only
+ * when the Init allocation failed; compositing then has no clean canvas to start
+ * from and each frame's text would accumulate on the last one's, so the caller
+ * must hold the frame WITHOUT an overlay pass (the pre-0f45de57 behaviour). */
+bool SoftwareRenderer_HoldCanComposite(void);
+#ifdef NETPLAY_TEST_HOOKS
+/* Test-only: free the held base to reach the degraded path above. */
+void SoftwareRenderer_TestHook_DropHeldBase(void);
+#endif
 int SoftwareRenderer_GetPerfPeakQuads(void);
 
 // Canvas accessor for the host app driver to present (SDL streaming texture, DRM dumb buffer, etc.).

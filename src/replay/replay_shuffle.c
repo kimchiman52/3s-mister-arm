@@ -880,6 +880,39 @@ static bool rs_handle_skip(void) {
     return true;
 }
 
+/* Is the engine still in the attract loop?
+ *
+ * WHY THIS PREDICATE EXISTS. RS_EMPTY is the one viewer state that leaves the
+ * PAD LIVE: no `.3sr` is loaded, so ReplayPlayer_Tick returns on its
+ * `if (!loaded)` and never overwrites p1sw_buff/p2sw_buff with injected words.
+ * The user can therefore coin in out of attract and walk to the menu, a local
+ * Versus match or Training while the viewer is still sitting in RS_EMPTY --
+ * and RS_EMPTY is not a terminal state, so it keeps ticking and drawing over
+ * whatever they went to. Both of those have to stop at the edge of attract:
+ *
+ *   - the status line would otherwise stay centred at RS_EMPTY_Y over live
+ *     gameplay, indefinitely;
+ *   - the manifest poll's resume would otherwise call rs_start_next() ->
+ *     ReplayPlayer_LoadAndStart(), whose only refusal is a live netplay
+ *     session and which runs Soft_Reset_Sub() unconditionally -- i.e. it would
+ *     yank the user out of their own match and start a replay over it.
+ *
+ * G_No[0] == 1 AND NOT Demo_Flag == 0. Both look like "in attract"; only the
+ * first is. G_No[0] indexes game.c -> Main_Jmp_Tbl[3] = { Wait_Auto_Load,
+ * Loop_Demo, Game }, so 1 IS the attract dispatch, and Next_Title_Sub() (the
+ * coin-in out of attract) sets G_No[0] = 2 in the same breath as Demo_Flag = 1.
+ * But Demo_Flag returns to 0 on paths that are NOT attract: sel_pl.c ->
+ * Sel_PL_Cont_3rd() clears it whenever `G_No[1] != 1`, which is character
+ * select, under G_No[0] == 2. Gating on Demo_Flag would leave the status line
+ * drawn over the character-select screen.
+ *
+ * Rollback-safe with no new state: G_No is already GS_SAVE'd / GS_LOAD'd
+ * (src/netplay/game_state.c), so this reads a field both peers agree on and
+ * adds nothing to EXPECTED_GAME_STATE_SIZE. */
+bool ReplayShuffle_EngineInAttract(void) {
+    return G_No[0] == 1;
+}
+
 void ReplayShuffle_Tick(void) {
     /* RS_OFF is the only permanent state. RS_EMPTY is NOT: it means "nothing
      * playable was on the card the last time we looked", and the wrapper's
@@ -1050,7 +1083,25 @@ void ReplayShuffle_Tick(void) {
          *
          * Gated on the manifest mtime, not a dirent count, for the same reason
          * as the RS_TRANSITION rescan: the wrapper renames manifest.json into
-         * place LAST, so a half-fetched set never triggers a scan. */
+         * place LAST, so a half-fetched set never triggers a scan.
+         *
+         * Held at the edge of attract (ReplayShuffle_EngineInAttract): RS_EMPTY
+         * leaves the pad live, so the user may be in the menu or a local match
+         * right now, and resuming means ReplayPlayer_LoadAndStart ->
+         * Soft_Reset_Sub() over the top of it.
+         *
+         * The gate wraps the WHOLE arm, poll included, and that is load-bearing
+         * rather than tidy. Gating only the resume would let the poll rescan and
+         * advance s_manifest_mtime while out of attract; the next poll would then
+         * see mtime == s_manifest_mtime, decline to rescan, and the viewer would
+         * sit on a full set forever without ever starting it. Skipping the stat
+         * too leaves the mtime stale, so the first poll after the user returns to
+         * attract still sees the change and resumes -- within
+         * RS_EMPTY_POLL_FRAMES, since the counter is not reset here either. */
+        if (!ReplayShuffle_EngineInAttract()) {
+            break;
+        }
+
         s_empty_poll_frames += 1;
         if (s_empty_poll_frames >= RS_EMPTY_POLL_FRAMES) {
             s_empty_poll_frames = 0;
@@ -1156,6 +1207,20 @@ void ReplayShuffle_Draw(void) {
     }
 
     if (s_state == RS_EMPTY) {
+        /* Attract only. RS_EMPTY is the one state that leaves the pad live (no
+         * `.3sr` loaded => ReplayPlayer_Tick returns on `!loaded`), so the user
+         * can be in the menu, a local Versus match or Training while the viewer
+         * is still in RS_EMPTY -- and RS_EMPTY is not terminal, so without this
+         * the line stays centred over their game indefinitely. Re-tested every
+         * frame rather than latched once, which is what also covers RS_EMPTY
+         * being ENTERED from outside attract (the RS_TRANSITION rescan and
+         * rs_start_next()'s bailouts all can): the line simply stays off until
+         * attract comes back. See ReplayShuffle_EngineInAttract for why the
+         * predicate is G_No[0] and not Demo_Flag. */
+        if (!ReplayShuffle_EngineInAttract()) {
+            return;
+        }
+
         /* The reported symptom this answers: picking "Watch Replays" with an
          * empty cache restarted the core into a silent attract loop with no
          * explanation, because RS_EMPTY drew nothing at all.

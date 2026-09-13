@@ -48,8 +48,12 @@ What is asserted:
      would ship the feature switched off while looking configured, and
      RP_PROXY_HOST_OFF is still defined for RpConfigLoadFrom() to compare
      against.
-  F. RpConfigLoadFrom() still consumes both macros -- a default nothing applies
-     is the original defect, restored.
+  F. RpConfigLoadFrom() still consumes both macros IN CODE -- a default nothing
+     applies is the original defect, restored. "In code" is load-bearing: the
+     test is a whole-identifier match over the body with comments AND string
+     literals blanked (code_only), because a substring test over the raw body
+     was satisfied by `;//RP_DEFAULT_PROXY_HOST` and by
+     `rp_log("RP_DEFAULT_PROXY_HOST")`, both of which apply nothing.
 
 Exit codes: 0 = the two agree, 1 = they do not, 2 = a file or a definition
 could not be located (itself a failure: a check that silently finds nothing is
@@ -83,6 +87,64 @@ def find_string_define(text, name):
     """
     pat = re.compile(r'(?m)^\s*#\s*define\s+' + re.escape(name) + r'\s+"([^"]*)"\s*$')
     return pat.findall(text)
+
+
+def code_only(text):
+    """Blank out comments and string/char literals in ONE left-to-right pass,
+    leaving real code tokens (and the original line structure) behind.
+
+    Why a scanner and not more regexes. strip_comments() above is a sequence of
+    independent substitutions, and two shapes get past it -- both measured
+    against check F, which asks whether RpConfigLoadFrom still MENTIONS the
+    macros:
+
+      * `foo();//RP_DEFAULT_PROXY_HOST` -- its trailing-`//` pattern requires
+        whitespace before the slashes (so that a `://` inside a URL literal
+        survives), and there is none after a `;`.
+      * `rp_log("RP_DEFAULT_PROXY_HOST")` -- string literals are never touched,
+        so a macro named only in a log message satisfied a substring test.
+
+    Neither can be fixed by adding another independent substitution, because
+    deciding whether a given `//` opens a comment REQUIRES knowing whether it
+    sits inside a string literal, and vice versa. A single pass knows.
+
+    Newlines are preserved so line structure is unchanged; every other consumed
+    character becomes a space, so tokens cannot be accidentally joined.
+    """
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+            out.append("".join("\n" if ch == "\n" else " " for ch in text[i:end]))
+            i = end
+        elif c == "/" and i + 1 < n and text[i + 1] == "/":
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            out.append(" " * (end - i))
+            i = end
+        elif c in ('"', "'"):
+            quote = c
+            out.append(" ")
+            i += 1
+            while i < n:
+                if text[i] == "\\" and i + 1 < n:
+                    out.append("  ")
+                    i += 2
+                    continue
+                if text[i] == quote:
+                    out.append(" ")
+                    i += 1
+                    break
+                out.append("\n" if text[i] == "\n" else " ")
+                i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def extract_function(text, signature_re):
@@ -209,16 +271,24 @@ def main():
             f"only place the wrapper default is applied, so this check no "
             f"longer knows that it is applied at all")
     else:
-        if "RP_DEFAULT_PROXY_HOST" not in loader:
-            failures.append(
-                "RpConfigLoadFrom() no longer references RP_DEFAULT_PROXY_HOST "
-                "-- an empty `replay-proxy-host` is back to meaning disabled, "
-                "and the installed base gets no refresh again")
-        if "RP_PROXY_HOST_OFF" not in loader:
-            failures.append(
-                "RpConfigLoadFrom() no longer references RP_PROXY_HOST_OFF -- "
-                "the operator has no way to turn the refresh off, and "
-                "docs/config.md says they do")
+        # A CODE reference, as a whole identifier. A substring test over the raw
+        # body accepted a macro named only in a comment `//` had not stripped or
+        # inside a string literal -- see code_only() for the two measured shapes.
+        # Either would report a default that is applied when it is not, which is
+        # exactly the original defect this check was written to keep out.
+        loader_code = code_only(loader)
+        for macro, why in (
+                ("RP_DEFAULT_PROXY_HOST",
+                 "an empty `replay-proxy-host` is back to meaning disabled, and "
+                 "the installed base gets no refresh again"),
+                ("RP_PROXY_HOST_OFF",
+                 "the operator has no way to turn the refresh off, and "
+                 "docs/config.md says they do")):
+            if re.search(r"\b" + macro + r"\b", loader_code) is None:
+                failures.append(
+                    f"RpConfigLoadFrom() no longer references {macro} in code "
+                    f"(a mention in a comment or a string literal does not "
+                    f"count) -- {why}")
 
     if errors:
         print(f"{TAG} ERROR: this check could not find what it guards; it now "

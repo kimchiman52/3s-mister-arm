@@ -59,6 +59,7 @@
 #include "netplay/stun.h"
 #include "platform/video/software/software_renderer.h"
 #include "rendering/game_renderer.h"
+#include "replay/replay_shuffle.h" /* ReplayShuffle_EngineInAttract: the RS_EMPTY gate */
 #include "sf33rd/Source/Common/PPGWork.h"
 #include "sf33rd/Source/Game/engine/workuser.h"
 #include "sf33rd/Source/Game/menu/menu.h"
@@ -105,7 +106,7 @@ static int checks_run = 0;
  * computes, so commenting a call out of the dispatch is a FAILURE and
  * not a smaller green run. The assertion floor catches the other shape:
  * a test that runs but whose body was short-circuited. */
-#define EXPECTED_TESTS 22
+#define EXPECTED_TESTS 23
 
 /* The real figure is 1100 and is printed in the summary. This sits below
  * it and above what a short-circuited run would produce. Not an exact
@@ -2319,6 +2320,39 @@ static int unit_no_draw_frame_hold(void) {
                 memcpy(completed, canvas, bytes);
                 EXPECT_TRUE("hold-composites-no-stale-base", SoftwareRenderer_HoldLastFrame() == 0);
                 EXPECT_TRUE("hold-composites-keeps-unsnapshotted-frame", memcmp(completed, canvas, bytes) == 0);
+
+                /* An unsnapshotted base is NOT a reason to refuse the overlay:
+                 * the game never advances during CONNECTING, so no RenderFrame
+                 * and no snapshot happen for the whole connect wait, and the
+                 * countdown has to be composited anyway. Pinned here because
+                 * gating the caller on held_base_VALID instead of on the buffer
+                 * would silently re-break 0f45de57. */
+                EXPECT_TRUE("hold-can-composite-without-snapshot", SoftwareRenderer_HoldCanComposite());
+
+                /* --- The degraded path: Init's held_base malloc failed. ---
+                 * A missing BUFFER is different from a stale base, because no
+                 * hold can ever restore: each overlay pass lands on the previous
+                 * one's output. Assert both halves -- that the accumulation is
+                 * real (so the gate is not decoration), and that the predicate
+                 * the caller checks reports it. Pixel (30,30) is overlay one,
+                 * (40,40) overlay two; with a base, (30,30) is gone by the
+                 * second pass (hold-composites-old-overlay-gone above). */
+                SoftwareRenderer_TestHook_DropHeldBase();
+                EXPECT_FALSE("hold-no-base-cannot-composite", SoftwareRenderer_HoldCanComposite());
+
+                memcpy(base, canvas, bytes);
+                EXPECT_TRUE("hold-no-base-discards-geometry", SoftwareRenderer_HoldLastFrame() == 0);
+                EXPECT_TRUE("hold-no-base-keeps-canvas", memcmp(base, canvas, bytes) == 0);
+
+                Renderer_DrawUIBitmap(30.0f, 30.0f, 1.0f, &green, 1, 1, 0xFFFFFFFFu);
+                SoftwareRenderer_RenderOverlay();
+                SoftwareRenderer_HoldLastFrame();
+                Renderer_DrawUIBitmap(40.0f, 40.0f, 1.0f, &blue, 1, 1, 0xFFFFFFFFu);
+                SoftwareRenderer_RenderOverlay();
+                EXPECT_TRUE("hold-no-base-second-overlay-drawn",
+                            memcmp(base + off40, (const unsigned char*)canvas + off40, px_bytes) != 0);
+                EXPECT_TRUE("hold-no-base-first-overlay-accumulates",
+                            memcmp(base + off30, (const unsigned char*)canvas + off30, px_bytes) != 0);
             }
             free(base);
         }
@@ -2870,6 +2904,71 @@ static int unit_versus_score_post_confirm_load(void) {
     return (fail_count == fails_before) ? 0 : 1;
 }
 
+/* The attract gate the RS_EMPTY shuffle-viewer state hangs on.
+ *
+ * RS_EMPTY is the only viewer state that leaves the pad live -- nothing is
+ * loaded, so replay_player.c -> ReplayPlayer_Tick returns on `!loaded` and never
+ * injects over p1sw_buff -- so the user can coin out of attract while the viewer
+ * is still idling. Both the status line and the manifest poll's resume are gated
+ * on this predicate; the resume matters more than the line, because
+ * ReplayPlayer_LoadAndStart refuses only for a live netplay session and runs
+ * Soft_Reset_Sub() unconditionally, i.e. it would reset a match in progress.
+ *
+ * The point of the table below is the Demo_Flag rows. `Demo_Flag == 0` reads
+ * like "in attract" and is the wrong predicate: sel_pl.c -> Sel_PL_Cont_3rd()
+ * clears it on character select (`G_No[1] != 1`), under G_No[0] == 2. */
+static int unit_replay_shuffle_attract_gate(void) {
+    tests_run++;
+    fprintf(stderr, "[test_netplay_units] replay_shuffle_attract_gate: the RS_EMPTY line and resume are "
+                    "confined to the attract loop\n");
+    const int fails_before = fail_count;
+
+    const u8 saved_g_no[4] = { G_No[0], G_No[1], G_No[2], G_No[3] };
+    const s8 saved_demo = Demo_Flag;
+
+    /* game.c -> Main_Jmp_Tbl[3] = { Wait_Auto_Load, Loop_Demo, Game }. */
+    G_No[0] = 1; /* Loop_Demo: the attract loop */
+    G_No[1] = 1;
+    Demo_Flag = 0; /* Next_Demo_Loop() sets both of these together */
+    EXPECT_TRUE("shuffle-attract-loop-demo", ReplayShuffle_EngineInAttract());
+
+    /* Next_Title_Sub(): the coin-in out of attract sets G_No[0]=2, Demo_Flag=1. */
+    G_No[0] = 2;
+    Demo_Flag = 1;
+    EXPECT_FALSE("shuffle-attract-title-excluded", ReplayShuffle_EngineInAttract());
+
+    G_No[1] = 2; /* Game02: a live match -- menu, local Versus or Training */
+    EXPECT_FALSE("shuffle-attract-match-excluded", ReplayShuffle_EngineInAttract());
+
+    /* THE Demo_Flag TRAP. Sel_PL_Cont_3rd() clears Demo_Flag on character
+     * select while G_No[0] is still 2. A `Demo_Flag == 0` gate would call this
+     * attract and draw the RS_EMPTY line over the select screen. */
+    G_No[1] = 12; /* Game12: character select */
+    Demo_Flag = 0;
+    EXPECT_FALSE("shuffle-attract-char-select-excluded-despite-demo-flag-0",
+                 ReplayShuffle_EngineInAttract());
+
+    /* Boot, before the attract loop is reached, is not attract either. */
+    G_No[0] = 0; /* Wait_Auto_Load */
+    EXPECT_FALSE("shuffle-attract-boot-excluded", ReplayShuffle_EngineInAttract());
+
+    /* Returning to attract re-opens the gate: it is re-read every frame rather
+     * than latched, which is what lets RS_EMPTY be ENTERED outside attract (the
+     * RS_TRANSITION rescan, rs_start_next()'s bailouts) and simply stay quiet
+     * until attract comes back. */
+    G_No[0] = 1;
+    EXPECT_TRUE("shuffle-attract-reentry-reopens", ReplayShuffle_EngineInAttract());
+
+    G_No[0] = saved_g_no[0];
+    G_No[1] = saved_g_no[1];
+    G_No[2] = saved_g_no[2];
+    G_No[3] = saved_g_no[3];
+    Demo_Flag = saved_demo;
+
+    fprintf(stderr, "[test_netplay_units] replay_shuffle_attract_gate OK\n");
+    return (fail_count == fails_before) ? 0 : 1;
+}
+
 /* ================================================================== */
 
 int Netplay_Test_NetplayUnits(void) {
@@ -2900,6 +2999,7 @@ int Netplay_Test_NetplayUnits(void) {
     rc |= unit_rematch_match_start_state();
     rc |= unit_versus_score_lifetime();
     rc |= unit_versus_score_post_confirm_load();
+    rc |= unit_replay_shuffle_attract_gate();
 
     fprintf(stderr, "[test_netplay_units] summary: %d test(s), %d assertion(s), "
                     "%d failure(s)\n", tests_run, checks_run, fail_count);

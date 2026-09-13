@@ -57,7 +57,24 @@ void dict_read(FILE* file, DictIterator iterator) {
             p++;
         }
 
-        // Skip empty/comment lines
+        // Skip empty/comment lines. A `#` is a comment ONLY here, as the first
+        // non-blank character of a line; an inline `#` is deliberately NOT
+        // stripped, so `key = value # note` keeps ` # note` in the value (the
+        // %[^\n] scanset below runs to end-of-line and trim() touches only
+        // whitespace).
+        //
+        // That matches the wrapper's own parser byte for byte
+        // (vendor/Main_MiSTer/replay_proxy.c -> RpConfigLoadFrom), which reads
+        // THE SAME FILE from a separate binary. Their agreeing is the property
+        // worth protecting: adding inline stripping to one side alone creates a
+        // divergence in what a config line means. Adding it to both would
+        // truncate legitimate values -- `replays-root` and
+        // `netplay-direct-p2p-handoff-path` are filesystem paths where `#` is
+        // legal, and this function also parses keymap.c's file.
+        //
+        // Both parsers move together or neither does. See the longer note at
+        // RpConfigLoadFrom for the one user-visible symptom (`replay-proxy-host
+        // = off # note` reads as a hostname, not the disable sentinel).
         if (*p == '\0' || *p == '#') {
             continue;
         }

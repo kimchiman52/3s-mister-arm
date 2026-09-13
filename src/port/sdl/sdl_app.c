@@ -3564,10 +3564,19 @@ void SDLApp_EndFrame() {
              * the held picture and the live status text are not mutually
              * exclusive. */
             SoftwareRenderer_HoldLastFrame();
-            NetplayScreen_Render();
-            NetstatsRenderer_Render();
-            VersusScore_Draw();
-            SoftwareRenderer_RenderOverlay();
+            /* The overlay pass needs a base the hold can restore from. Without
+             * one (the held-base allocation failed at Init) compositing would
+             * draw this frame's text on top of the LAST frame's, every frame --
+             * "(8s)" over "(7s)" over "(6s)" -- so degrade to the pre-0f45de57
+             * behaviour instead: hold the frame, draw no overlay. True in every
+             * build where that 172 KB malloc succeeded, so this changes nothing
+             * on the shipped path. */
+            if (SoftwareRenderer_HoldCanComposite()) {
+                NetplayScreen_Render();
+                NetstatsRenderer_Render();
+                VersusScore_Draw();
+                SoftwareRenderer_RenderOverlay();
+            }
         } else if (netplay_session_live) {
             /* Game pass, then remember it as the base a later held frame
              * restores, then the overlays on top. One canvas memcpy per

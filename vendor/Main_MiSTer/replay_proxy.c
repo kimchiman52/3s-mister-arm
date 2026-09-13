@@ -1247,6 +1247,26 @@ bool RpConfigLoadFrom(const char* config_path, RpProxyConfig* out) {
     if (f == NULL)
         return false;
 
+    /* A `#` is a comment ONLY as the first non-blank character of a line. An
+     * inline `#` is deliberately NOT stripped here, so
+     * `replay-proxy-host = off # note` yields the host `off # note`, which
+     * fails the RP_PROXY_HOST_OFF compare below (ascii_casecmp is a whole-string
+     * compare) and is then kept as a hostname -- the opposite of what the
+     * operator meant.
+     *
+     * Left alone on purpose, and the reason is the OTHER parser. The game reads
+     * this same file with config_helpers.c -> dict_read(), which behaves
+     * IDENTICALLY: full-line `#` only, no inline stripping, whitespace-trimmed
+     * value. The two agreeing is the property that matters, because they parse
+     * one file from two binaries that share no code. Adding inline stripping
+     * here alone would CREATE the divergence; adding it to both would silently
+     * truncate legitimate values for the free-form string keys -- `replays-root`
+     * and `netplay-direct-p2p-handoff-path` are filesystem paths, where `#` is
+     * a legal character, and dict_read() is shared with keymap.c besides.
+     *
+     * So the narrow bug (one key, one documented spelling `off`) is cheaper to
+     * live with than the broad one. If this is ever revisited, both parsers move
+     * together or neither does. */
     char line[512];
     while (fgets(line, sizeof(line), f)) {
         char* cursor = line;

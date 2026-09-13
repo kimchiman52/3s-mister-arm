@@ -1851,8 +1851,12 @@ bool SoftwareRenderer_Init(bool nearest_filter, int scale) {
     }
 
     /* Plain heap, not MMA: nothing presents this buffer, the canvas is
-     * memcpy'd from it. NULL degrades to the pre-compositing hold (the
-     * canvas is kept as-is), which is why Init does not fail on it. */
+     * memcpy'd from it. NULL degrades to the pre-0f45de57 hold -- the canvas is
+     * kept as-is and NO overlay pass runs -- which is why Init does not fail on
+     * it over a cosmetic 172 KB. That degrade is only correct because the caller
+     * consults SoftwareRenderer_HoldCanComposite() before compositing; without
+     * that check the overlay pass would run on a canvas nothing can restore and
+     * each frame's text would pile up on the last one's ("(8s)" over "(7s)"). */
     held_base = malloc(canvas_bytes);
     held_base_valid = false;
 
@@ -1946,6 +1950,42 @@ int SoftwareRenderer_HoldLastFrame() {
     }
     return discarded;
 }
+
+/* May the caller composite overlays over a held frame?
+ *
+ * Only asks whether a base BUFFER exists -- deliberately not whether a base is
+ * currently VALID. The two are different questions and only the first one is
+ * safe to gate on:
+ *
+ *   - held_base == NULL (the Init malloc failed) means no hold can EVER restore,
+ *     so every overlay pass accumulates on the previous one, forever. That is
+ *     the case this predicate exists to refuse.
+ *   - held_base != NULL && !held_base_valid means no snapshot has been taken
+ *     SINCE the last RenderFrame. Refusing here would re-break 0f45de57: the
+ *     game does not advance at all during NETPLAY_SESSION_CONNECTING, so no
+ *     RenderFrame and no SnapshotHeldBase run for the whole connect wait, and
+ *     the "Syncing with opponent (Ns)..." countdown would vanish again. It does
+ *     not accumulate in practice because NETPLAY_SESSION_TRANSITIONING is never
+ *     held (netplay.c -> should_hold_last_frame covers CONNECTING and RUNNING
+ *     only), so every TRANSITIONING frame takes the game pass AND the snapshot
+ *     that CONNECTING then restores.
+ *
+ * So this returns true in every build where the allocation succeeded, which is
+ * what keeps it from changing shipped behaviour. */
+bool SoftwareRenderer_HoldCanComposite(void) {
+    return canvas != NULL && held_base != NULL;
+}
+
+#ifdef NETPLAY_TEST_HOOKS
+/* Release the held base to simulate the Init malloc having failed, so the unit
+ * harness can drive the degraded path that is otherwise reachable only under
+ * memory exhaustion. Test-only: there is no way back except Quit + Init. */
+void SoftwareRenderer_TestHook_DropHeldBase(void) {
+    free(held_base);
+    held_base = NULL;
+    held_base_valid = false;
+}
+#endif
 
 const SWCanvasPixel* SoftwareRenderer_GetCanvas(int* out_width, int* out_height, int* out_pitch_bytes) {
     if (out_width != NULL) {

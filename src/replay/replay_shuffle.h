@@ -64,6 +64,15 @@ void ReplayShuffle_Tick(void);
  * through SSPutStrProP. Read-only over engine and player state. */
 void ReplayShuffle_Draw(void);
 
+/* True while the engine is dispatching the attract loop (game.c ->
+ * Main_Jmp_Tbl[1] == Loop_Demo). The RS_EMPTY status line and the RS_EMPTY
+ * manifest-poll resume are both gated on it, because RS_EMPTY is the one viewer
+ * state that leaves the pad live and so can outlive attract. Exported for the
+ * unit harness; see the definition for why the predicate is G_No[0] and not
+ * Demo_Flag, and why gating the whole poll arm (not just the resume) is what
+ * keeps the poll working. */
+bool ReplayShuffle_EngineInAttract(void);
+
 /* Stop the viewer for the rest of the session WITHOUT touching the loaded
  * replay. `reason` is logged (never NULL-checked away: pass a literal).
  *
